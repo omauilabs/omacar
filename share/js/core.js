@@ -236,6 +236,11 @@ async function req(path, opts) {
 export const api = {
   snapshot: () => req("/api/snapshot"),
   live: () => req("/api/live"),
+  // The two routes the Connect button rests on. Everything that knows their
+  // shape is in the "connecting" section below, so a change on the server side
+  // is one edit here rather than three across the views.
+  adapter: () => req("/api/adapter"),
+  daemon: (action) => req("/api/daemon", { method: "POST", body: JSON.stringify({ action }) }),
   history: (q) => req("/api/history?" + new URLSearchParams(q)),
   trips: (n) => req("/api/trips?n=" + (n || 20)),
   records: (q) => req("/api/records?" + new URLSearchParams(q || {})),
@@ -334,6 +339,138 @@ class Store extends EventTarget {
 }
 
 export const store = new Store();
+
+// ---------------------------------------------------------------- connecting
+// One button, and the whole contract behind it in one place.
+//
+// The empty states used to read "no daemon — run: omacar daemon start", which
+// tells somebody standing at a car to leave the app, find a terminal and type
+// a command the app could perfectly well have run for them. The views now ask
+// for a connection instead, and every assumption about how the server offers
+// one lives here rather than being spread across the screens that need it.
+//
+// The contract, as the server exposes it:
+//   GET  /api/adapter -> { port, kind, name, warning, running }
+//        port     the device connect.resolve() found, or null when there is none
+//        kind     "wired" | "bench" | "override", as resolve() reports it
+//        name     an optional human description ("FTDI adapter"); absent is fine
+//        warning  connect.serial_group_warning(port), or null
+//        running  whether a daemon is already up
+//   POST /api/daemon { action: "start" | "stop" } -> 2xx once the daemon is
+//        alive, otherwise the usual { error: "..." } with a 4xx or 5xx, which
+//        req() has already turned into the message on the thrown Error.
+// Anything missing from the GET degrades to a plain "Connect" button, so a
+// server that does not carry the route yet is a smaller label rather than a
+// broken screen.
+
+// Words for the kinds resolve() can report, for when the server does not send
+// a friendlier name of its own.
+const ADAPTER_KINDS = { bench: "bench emulator", override: "port override" };
+
+export async function adapterState() {
+  try {
+    const a = await api.adapter();
+    return {
+      known: true,
+      port: a.port || null,
+      kind: a.kind || null,
+      name: a.name || ADAPTER_KINDS[a.kind] || null,
+      warning: a.warning || null,
+      running: !!a.running,
+    };
+  } catch {
+    // An older server, or a route that is not there. Not knowing which port we
+    // would use is no reason to hide the button — connecting still works, the
+    // label just cannot name the hardware.
+    return { known: false, port: null, kind: null, name: null, warning: null, running: false };
+  }
+}
+
+// Naming the port on the button is the difference between a promise and
+// evidence: the tool has already looked, and it is telling you what it found.
+export function adapterLabel(a) {
+  if (!a || !a.port) return "Connect";
+  return (a.name ? `${a.name} on ${a.port}` : a.port) + " — Connect";
+}
+
+// `omacar daemon start` waits about ten seconds for a pidfile, and a cold
+// adapter can spend several more detecting its baud rate before the first
+// sample lands. Twenty-two seconds is long enough for the slow honest case and
+// short enough that a dead cable does not leave a spinner up indefinitely.
+const CONNECT_TIMEOUT_MS = 22000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// One calm sentence for each way this goes wrong. The server's own refusals are
+// already written in this voice — the serial group hint in particular is the
+// exact sentence that fixes the most common failure on Arch — so anything not
+// recognised here is passed through unchanged rather than flattened into a
+// generic failure the user can do nothing with.
+function connectFailure(msg) {
+  // The CLI prefixes its own refusals with "omacar:", which is right in a
+  // terminal and reads as debug output on a dashboard.
+  const raw = String(msg || "").replace(/^omacar:\s*/i, "").trim();
+  const m = raw.toLowerCase();
+  if (m.includes("no adapter") || m.includes("no port"))
+    return "No adapter found. Plug the cable into the car's port and try again.";
+  if (m.includes("simulat"))
+    return "The simulator is running. Stop it first, then connect.";
+  if (m.includes("group") || m.includes("readable") || m.includes("permission"))
+    return raw;
+  if (m.includes("read-only") || m.includes("cockpit") || m === "403")
+    return "This screen is read-only. Connect from the machine OmaCar is running on.";
+  if (m === "404")
+    return "This copy of the server cannot start the daemon yet.";
+  if (m.includes("did not start") || m.includes("failed to start") || m.includes("could not start"))
+    return "The daemon did not start.";
+  return raw ? `The daemon did not start — ${raw}` : "The daemon did not start.";
+}
+
+// Ask for a connection and wait until the car is actually answering.
+//
+// Success is judged on live data, not on the exit status of the start command:
+// the daemon is alive well before the car has said anything, and a button that
+// goes green on "the process exists" is the kind of dishonesty this tool is
+// meant not to have. Resolves to { ok, message, adapter } and never rejects —
+// every failure is a sentence the caller can put on screen.
+export async function connectCar(onStep) {
+  const step = typeof onStep === "function" ? onStep : () => {};
+  const adapter = await adapterState();
+  // Two refusals worth making without shelling anything, because both are
+  // certain and both would otherwise cost the user the full timeout first.
+  if (adapter.known && !adapter.port)
+    return { ok: false, adapter,
+             message: "No adapter found. Plug the cable into the car's OBD-II port and try again." };
+  if (adapter.warning)
+    return { ok: false, adapter, message: adapter.warning };
+
+  step("Connecting…");
+  try {
+    await api.daemon("start");
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    // A daemon that is already up is not a failure, it is the state we were
+    // asking for. Fall through and let the car decide whether we are connected.
+    if (!/already/i.test(msg)) return { ok: false, adapter, message: connectFailure(msg) };
+  }
+
+  const until = Date.now() + CONNECT_TIMEOUT_MS;
+  while (Date.now() < until) {
+    await sleep(700);
+    await store.refreshLive();
+    if (store.connected) return { ok: true, adapter, message: "" };
+  }
+
+  // Started, still nothing. The daemon publishes what it is waiting for, so
+  // repeat that rather than inventing a diagnosis of our own.
+  const status = String((store.sample && store.sample.status) || "");
+  if (/wait|ignition|asleep/i.test(status))
+    return { ok: false, adapter,
+             message: "The adapter is connected but the car is not answering. Turn the ignition on." };
+  return { ok: false, adapter,
+           message: status ? `Not connected yet — ${status}`
+                           : "Connected to the adapter, but the car has not answered. Check the plug is seated in the car's port." };
+}
 
 // ---------------------------------------------------------------- toasts
 export function toast(msg, tone) {

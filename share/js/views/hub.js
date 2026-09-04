@@ -10,7 +10,8 @@
 // It is not a simplified OmaCar. Nothing is removed; the secondary row reaches
 // every view the rail does. It is the same app laid out for a different hand.
 
-import { h, store, dist, U } from "../core.js";
+import { h, store, dist, U, readOnly,
+         adapterState, connectCar } from "../core.js";
 import { ICONS } from "../icons.js";
 import { explain } from "../learn.js";
 import { radio, radioPlayer } from "../radio.js";
@@ -133,6 +134,41 @@ function redrawFx() {
   if (btn) btn.textContent = effectLabel();
 }
 
+// The Connect state lives out here for the same reason the effect canvas does:
+// the hub rebuilds itself on every live sample, so anything held inside draw()
+// would be thrown away several times a second -- including, while somebody is
+// looking at it, the word "Connecting".
+let adapter = null;        // what /api/adapter reported, null until it answers
+let connecting = false;
+let connectNote = "";      // the one calm sentence a failed attempt leaves behind
+let redrawHub = null;      // set while the view is mounted, so the button can repaint
+
+async function startConnect() {
+  if (connecting) return;
+  connecting = true;
+  connectNote = "";
+  if (redrawHub) redrawHub();
+  const r = await connectCar();
+  connecting = false;
+  adapter = r.adapter || adapter;
+  connectNote = r.ok ? "" : r.message;
+  if (redrawHub) redrawHub();
+}
+
+// What the sub-line under the car's name says when there is no car talking.
+// The port goes here rather than on the button because in car mode the button
+// is a target for a thumb at arm's length, and "Connect" is the whole of what
+// it needs to say; the evidence that OmaCar has already found the adapter
+// belongs in the line of prose next to it.
+function offlineLine() {
+  if (connecting) return "Connecting…";
+  if (connectNote) return connectNote;
+  if (adapter && adapter.warning) return adapter.warning;
+  if (adapter && adapter.port) return "Not connected · " + adapter.port;
+  if (adapter && adapter.known) return "Not connected — no adapter found";
+  return "Not connected";
+}
+
 export default function hub(root) {
   // Subscribe ONCE, outside draw(). The first version of this re-entered hub()
   // from inside its own listener, so every repaint added another listener to
@@ -148,6 +184,10 @@ export default function hub(root) {
     draw(root);
     root.scrollTop = top;
   };
+  redrawHub = redraw;
+  // Ask which port is there once per mount. Nothing depends on the answer --
+  // the button works without it -- so a failure is simply a quieter sub-line.
+  adapterState().then((a) => { adapter = a; if (redrawHub && !store.connected) redrawHub(); });
   fxHost = document.createElement("div");
   fxHost.className = "fx-host";
   root.appendChild(fxHost);
@@ -160,6 +200,7 @@ export default function hub(root) {
   draw(root);
   return () => {
     offLive(); offCar(); offRadio();
+    redrawHub = null;
     if (fxStop) { fxStop(); fxStop = null; }
     if (fxHost) { fxHost.remove(); fxHost = null; }
     fxMode = null;
@@ -168,6 +209,10 @@ export default function hub(root) {
 
 function draw(root) {
   const car = store.car;
+  // A note left by a failed attempt describes a moment, not the car. Once
+  // something is answering it has stopped being true, so it does not survive
+  // to be shown again after the next drop-out.
+  if (store.connected) connectNote = "";
 
   root.appendChild(h("div.hub",
     h("div.hub-head",
@@ -175,8 +220,14 @@ function draw(root) {
         h("div.hub-title", car && car.name ? car.name : "OmaCar"),
         h("div.hub-sub", store.connected
           ? (store.sample.protocol || "connected")
-          : "not connected — plug in the adapter")),
+          : offlineLine())),
       h("div.row", { style: { gap: "8px" } },
+        // A cockpit is read-only by design, so it gets the state and no button.
+        store.connected || readOnly ? null : h("button.hub-exit", {
+          onclick: startConnect,
+          disabled: connecting,
+          title: "Start talking to the car",
+        }, connecting ? "Connecting…" : "Connect"),
         h("button.hub-exit.hub-look", {
           onclick: () => { saveLook(nextLook(savedLook())); redrawFx(); },
           title: lookById(savedLook()).note + "  (tap to change)",
