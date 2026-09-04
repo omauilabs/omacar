@@ -41,6 +41,7 @@
 #   omacar ai [triage|owner|predict|code P0135|ask "..."]
 #                             the diagnostic advisor — reads this car's own
 #                             numbers and tells you what is actually wrong
+#   omacar card [--quiet]     rebuild the rollup the bar panel and dock read
 #   omacar state              key=value status for the bar widget
 #   omacar server status|stop the loopback server the app is served from
 #   omacar help               this text
@@ -162,6 +163,15 @@ daemon_pid() {
 daemon_start() {
   omacar_need_env
   if daemon_pid >/dev/null; then echo "daemon already running (pid $(daemon_pid))"; return; fi
+  # The mirror of the guard in sim_start. daemon.py refuses to run beside the
+  # simulator too, but it refuses by exiting BEFORE it writes the pidfile --
+  # so without this the poll below spends ten seconds waiting for a file that
+  # is never coming and then blames the car. The two processes fight over the
+  # same live.json, so this is a real refusal, not a convenience.
+  if sim_pid >/dev/null; then
+    echo "omacar: the simulator is running — stop it first (omacar sim stop)" >&2
+    exit 1
+  fi
   setsid -f "$OMACAR_PY" "$ROOT/lib/daemon.py" >"$OMACAR_STATE/daemon.log" 2>&1
   local i
   for i in $(seq 1 40); do
@@ -563,6 +573,11 @@ print()
       run) shift 2 || true; exec python3 "$ROOT/lib/watch.py" "$@" ;;
       *) if p=$(watch_pid); then echo "running (pid $p)"; else echo "not running"; fi ;;
     esac ;;
+  # Under the venv interpreter like every other module that imports lib/,
+  # rather than under a bare python3. lib/ai.py is the cautionary tale: it is
+  # dispatched with plain python3 and so cannot see anything the venv has, for
+  # no reason other than the line having been written that way once.
+  card) shift; exec "$OMACAR_PY" "$ROOT/lib/card.py" "$@" ;;
   state) state ;;
   server) case "${2:-status}" in stop) server_stop ;; *) server_status ;; esac ;;
   help | --help | -h) usage ;;

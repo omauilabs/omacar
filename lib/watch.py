@@ -31,9 +31,11 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import card      # noqa: E402
 import concerns  # noqa: E402
 import hotplug  # noqa: E402
 import prune    # noqa: E402
@@ -49,6 +51,9 @@ FEED_KEEP = 20
 CONFIG = os.path.expanduser("~/.config/omarchy/omacar-watch.json")
 
 POLL = 2.0
+# How often the bar panel's rollup is rebuilt. See Watch.card() for why it is
+# a minute rather than every pass.
+CARD_EVERY = 60.0
 # A trip ends when the engine has been off this long. Long enough to survive a
 # stall at a light and a fuel stop, short enough that the summary arrives while
 # you are still standing next to the car.
@@ -241,6 +246,11 @@ class Watch:
         # the watchdog is already the one process that is always awake, and a
         # second timer is a second thing to discover is not running.
         self.last_compact = self.state.get("compacted", 0)
+        # The bar panel's rollup, on the same argument as compaction. Not
+        # persisted, unlike `compacted`: a watchdog that has just started is
+        # exactly when a card most wants rebuilding, and it costs a second.
+        self.last_card = 0.0
+        self.card_thread = None
         # Hotplug without root: notice a serial port that was not there a
         # moment ago and ask the daemon to take it. The udev rule does this
         # properly and instantly; this is the version that needs nothing from
@@ -272,6 +282,7 @@ class Watch:
             self.faults(now)
         if self.persist_state:
             self.hotplug(now)
+            self.card(now)
             self.housekeep(now)
             self.persist()
 
@@ -469,6 +480,49 @@ class Watch:
         self.raise_alert("hotplug", "Adapter plugged in",
                          f"Starting the daemon on {port}.", "low")
         hotplug.start_daemon()
+
+    def card(self, now):
+        """Keep the bar panel's rollup fresh.
+
+        Same argument as housekeep() below: this is the one OmaCar process
+        that is always awake, so it is where a job that has to happen whether
+        or not anybody has the app open belongs. A second timer would be a
+        second thing to discover has not been running.
+
+        A MINUTE, NOT EVERY PASS. The watchdog wakes twice a second and the
+        card costs about a second to build — a full pass over the daily
+        rollups, the fault list, the service book and the trend engine. Doing
+        that on every tick would spend most of a core to republish a file
+        whose figures move on the scale of a trip, and the panel only rereads
+        it when the kernel says it changed. A minute keeps today's distance
+        honest while you are actually driving, which is the fastest anything
+        on that card genuinely moves, and it is the cadence the panel already
+        expects: its own belt-and-braces reload timer runs at the same rate.
+
+        IN A THREAD, because the watchdog's job is to notice a car overheating
+        within a few seconds and it must not be a second late for a cosmetic
+        reason. The build is entirely read-only — one SQLite connection opened
+        and closed inside the thread — so nothing here can collide with the
+        rules running alongside it. At most one at a time: if a build is
+        somehow still going a minute later, the next one is skipped rather
+        than queued behind it. The thread is a daemon so a hung read can never
+        keep the watchdog from exiting when it is asked to stop.
+        """
+        if now - self.last_card < CARD_EVERY:
+            return
+        if self.card_thread is not None and self.card_thread.is_alive():
+            return
+        self.last_card = now
+        self.card_thread = threading.Thread(target=self.build_card, daemon=True)
+        self.card_thread.start()
+
+    def build_card(self):
+        try:
+            card.write()
+        except Exception as e:                            # noqa: BLE001
+            # The panel showing a stale card is a small problem. A watchdog
+            # that died writing one is the problem it exists to not be.
+            print(f"  card refresh failed: {e}", file=sys.stderr, flush=True)
 
     def housekeep(self, now):
         """Once a day, and never while the car is being driven — a VACUUM
