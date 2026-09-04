@@ -420,7 +420,10 @@ kiosk_idle_release() {
 }
 
 kiosk() {
-  local view="${1:-drive}"
+  # The hub, matching the app's own HOME. This defaulted to "drive" while the
+  # app landed on the hub, so which screen the tablet showed first depended on
+  # whether the adapter happened to be answering at launch.
+  local view="${1:-hub}"
   local base; base="$(app_base)"
   case "$base" in
     file://*) echo "omacar: the loopback server did not start; kiosk needs it" >&2; exit 1 ;;

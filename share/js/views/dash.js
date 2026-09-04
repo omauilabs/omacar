@@ -124,7 +124,7 @@ export default function dash(root) {
     }
   }
 
-  const off = store.on("car", () => { /* the bar and rail repaint; this view is
+  const off = store.on("car", () => { /* the vehicle bar and navigation repaint; this view is
     cheap enough to leave until the user navigates back. */ });
   return off;
 }

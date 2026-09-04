@@ -8,9 +8,10 @@
      decides it should, and a tool you cannot open and repair is the same trap
      in a different colour.
 
-     Layout is a fixed rail, a fixed vehicle bar, and one scrolling view. The
-     vehicle identity NEVER leaves the screen: every scan tool that has ever
-     shown somebody the wrong car's data got there by letting it. -->
+     Layout is a fixed vehicle bar at the top, one scrolling view, and a
+     navigation block pinned to the bottom. The vehicle identity NEVER leaves
+     the screen: every scan tool that has ever shown somebody the wrong car's
+     data got there by letting it. -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OmaCar</title>
@@ -23,7 +24,6 @@
      was written, was correct, and was never linked here at all. -->
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/fonts.css">
-<link rel="stylesheet" href="css/nav.css">
 <link rel="stylesheet" href="css/radio.css">
 <link rel="stylesheet" href="css/replay.css">
 <link rel="stylesheet" href="css/car3d.css">
@@ -65,31 +65,32 @@
 <link rel="modulepreload" href="js/vendor/d3.min.js">
 
 <div id="app" class="app" data-booting="1">
-  <nav class="rail" aria-label="Sections">
-    <button type="button" class="rail-mark" id="btn-hub"
-            title="Car dashboard — gauges, codes, radio">
-      <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-        <circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.7"/>
-        <circle cx="12" cy="12" r="3" fill="currentColor"/>
-        <path d="M12 3v5.6M5.2 16.4l4.5-2.6M18.8 16.4l-4.5-2.6"
-              stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-      </svg>
-    </button>
-    <div class="rail-items" id="rail"></div>
-    <div class="rail-foot">
-      <button type="button" class="rail-btn" id="btn-learn"
-              title="Learn mode — explain what everything means"
-              aria-pressed="false">Learn</button>
-      <button type="button" class="rail-btn" id="btn-privacy"
-              title="Hide the VIN and plate, for photographs"
-              aria-pressed="false">◉</button>
-      <button type="button" class="rail-btn" id="btn-units" title="Toggle units">mi</button>
-    </div>
-  </nav>
-
   <header class="vbar" id="vbar"></header>
 
   <main class="stage" id="stage" tabindex="-1"></main>
+
+  <!-- THE NAVIGATION COMES AFTER THE STAGE, AND THAT IS DELIBERATE.
+       It is placed by grid area, not by position:fixed on a DOM-first
+       element. Put visually-bottom navigation first in the document and every
+       keyboard user pays five tab stops before reaching a word of the screen
+       they just opened — the accessibility failure that "just make it fixed"
+       always ships with. Reading order, focus order and visual order are the
+       same order here.
+
+       The document itself does not scroll; .stage does. So this block is
+       already outside the scroller and needs no hide-on-scroll behaviour —
+       and it never hides. In a moving car, navigation that comes and goes is
+       navigation you look down to hunt for.
+
+       Both rows are filled by main.js, which builds them once and afterwards
+       only updates their text and their state. -->
+  <nav class="navbar" id="navbar" aria-label="Sections">
+    <div class="subbar">
+      <div class="subbar-lead" id="subbar-lead"></div>
+      <div class="subbar-chips" id="subbar-chips"></div>
+    </div>
+    <div class="tabbar" id="tabbar"></div>
+  </nav>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div class="modal-host" id="modal-host" hidden></div>

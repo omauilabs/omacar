@@ -84,8 +84,8 @@ const CARDS = [
       "Plugged into the car, OmaCar switches to the car hub: big touch targets, "
       + "high contrast for sunlight, and a badge on every tile so you can see "
       + "what needs attention without opening it.",
-      "Unplugged, it returns to the workshop layout — a dense rail with room for "
-      + "charts and tables.",
+      "Unplugged, it stays exactly where it is and offers you the hub rather "
+      + "than taking you there.",
       "Navigate away by hand and it stays where you put it. Software that drags "
       + "you back to a screen you just left is software you end up fighting.",
     ],
@@ -99,7 +99,7 @@ const CARDS = [
       "Learn mode adds an explanation to each screen. It hides nothing; it only "
       + "adds. Deciding what you are allowed to understand about your own car is "
       + "the vendor's move, not ours.",
-      "The ? button at the bottom of the rail turns it on and off.",
+      "The gear at the right of the vehicle bar turns it on and off.",
     ],
     action: { label: "Turn on Learn mode", run: () => { learn.on = true; } },
   },
