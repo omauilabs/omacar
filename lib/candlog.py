@@ -57,9 +57,19 @@ def _payload(el, elmlib, lines, service, req):
 
 
 def read_trusted(el, elmlib):
-    """The standard channels, from this connection, right now."""
+    """The standard channels, from this connection, right now.
+
+    The broadcast address comes from the protocol rather than from the "7DF"
+    literal that used to be here. 7DF is 11-bit CAN's functional address and
+    nothing else's, so on the 29-bit car this tool was written for the header
+    was refused, the exception left read_trusted before its loop, and the
+    burst recorded candidates with no yardstick beside them -- which is a row
+    the correlator cannot use and cannot tell from a quiet drive.
+    """
+    import protocols
     out = {}
-    el.set_header("7DF")
+    if not elmlib.aim(el, protocols.broadcast(getattr(el, "protocol", None))):
+        return out
     for req, name, decode in TRUSTED_PIDS:
         try:
             data = _payload(el, elmlib, el.request(req), 0x01, req)
@@ -81,8 +91,13 @@ def read_candidates(el, elmlib, cands):
     """Every candidate identifier, as its raw payload hex."""
     out = {}
     for c in cands:
+        # A candidate whose header this protocol cannot use is left out of the
+        # row entirely. It must not be read on the previous candidate's
+        # address: two identifiers sharing one module's answers is exactly the
+        # false correlation this whole file exists to avoid.
+        if not elmlib.aim(el, c["header"]):
+            continue
         try:
-            el.set_header(c["header"])
             lines = el.raw(c["request"], patient=True, timeout=4.0)
             data = _payload(el, elmlib, lines, int(c["request"][:2], 16), c["request"])
         except Exception:                                     # noqa: BLE001
