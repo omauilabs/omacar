@@ -20,20 +20,30 @@ export default function dash(root) {
   const ready = car.readiness || {};
   const perf = car.perf;
 
-  const verdict = crit.length ? "bad" : (faults.length || (svc && svc.overdue)) ? "warn" : "ok";
+  // Incomplete monitors count towards the verdict, because a car that cannot
+  // be tested is a car you cannot register, and a green card carrying the words
+  // "not emissions-ready" is the kind of small contradiction that makes people
+  // stop trusting the rest of the screen.
+  const notReady = ready.ready === false;
+  const verdict = crit.length ? "bad"
+    : (faults.length || notReady || (svc && svc.overdue)) ? "warn" : "ok";
+  // One line, and the shortest true one. This used to be a headline followed by
+  // a paragraph restating it, above four tiles restating both -- the same three
+  // facts three to five times inside one viewport. The tiles keep the detail;
+  // the headline is only the verdict.
+  const smog = notReady ? " · not emissions-ready" : "";
   const headline = crit.length
-    ? `${crit.length} fault${crit.length > 1 ? "s" : ""} needing attention now`
+    ? `${crit.length} fault${crit.length > 1 ? "s" : ""} need attention now`
     : faults.length
-      ? `${faults.length} active fault${faults.length > 1 ? "s" : ""}, none urgent`
-      : "No active faults";
+      ? `${faults.length} fault${faults.length > 1 ? "s" : ""}${smog}`
+      : notReady ? `No faults${smog}` : "All clear";
 
   // ---- the verdict ----
   root.appendChild(h("section.card.tint-" + verdict,
     h("div.row.wrapline",
       h("div", { style: { minWidth: "0" } },
         h("div.eyebrow", "Vehicle status"),
-        h("div.title", { style: { fontSize: "1.5rem", marginTop: "2px" } }, headline),
-        h("p.lede", { style: { marginTop: "6px" } }, summary(car))),
+        h("div.title", { style: { fontSize: "1.5rem", marginTop: "2px" } }, headline)),
       h("div.right.row.wrapline", { style: { gap: "8px" } },
         h("button.btn.primary", { onclick: () => { location.hash = "#scan"; } }, "Full system scan"),
         store.aiOn
@@ -149,21 +159,6 @@ function alertStrip() {
     box.appendChild(card);
   }).catch(() => { /* the watchdog may not be running; that is not an error */ });
   return box;
-}
-
-function summary(car) {
-  const bits = [];
-  const f = car.active_faults || [];
-  if (f.length) {
-    const mods = new Set(f.map((x) => (x.module || {}).id).filter(Boolean));
-    bits.push(`${f.length} code${f.length > 1 ? "s" : ""} across ${mods.size || 1} module${mods.size > 1 ? "s" : ""}`);
-  }
-  if (car.readiness && !car.readiness.ready) bits.push("emissions monitors incomplete");
-  if (car.service && car.service.overdue) bits.push(`${car.service.overdue} service item overdue`);
-  else if (car.service && car.service.next && car.service.next.life <= 15)
-    bits.push(`${car.service.next.item.toLowerCase()} due soon`);
-  if (!bits.length) bits.push("Nothing stored, nothing overdue, monitors complete");
-  return bits.join("  ·  ") + ".";
 }
 
 function tile(k, v, note, tone, onclick) {
