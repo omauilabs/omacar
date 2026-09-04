@@ -10,7 +10,8 @@
 // It is not a simplified OmaCar. Nothing is removed; the secondary row reaches
 // every view the rail does. It is the same app laid out for a different hand.
 
-import { h, store, dist, U } from "../core.js";
+import { h, store, dist, U, readOnly,
+         adapterState, connectCar } from "../core.js";
 import { ICONS } from "../icons.js";
 import { explain } from "../learn.js";
 import { radio, radioPlayer } from "../radio.js";
@@ -91,16 +92,21 @@ function badgeFor(id, car) {
 
 // Four numbers, chosen because they are the ones a driver actually glances at,
 // and sized so they can be read without leaning in.
-const VITALS = [
-  { label: "Speed", unit: () => U.units.speed,
-    get: (v) => (v.SPEED != null ? Math.round(v.SPEED * U.units.km) : "--") },
-  { label: "RPM", unit: () => "",
-    get: (v) => (v.RPM != null ? Math.round(v.RPM) : "--") },
-  { label: "Coolant", unit: () => "°",
-    get: (v) => (v.COOLANT_TEMP != null ? Math.round(v.COOLANT_TEMP) : "--") },
-  { label: "Trip", unit: () => U.units.dist,
-    get: (v, car) => (car.trip_km != null ? dist(car.trip_km, false) : "--") },
-];
+function vitals() {
+  const v = store.values || {};
+  const car = store.car || {};
+  const items = [
+    ["Speed", v.SPEED != null ? Math.round(v.SPEED * U.units.km) : "--", U.units.speed],
+    ["RPM", v.RPM != null ? Math.round(v.RPM) : "--", ""],
+    ["Coolant", v.COOLANT_TEMP != null ? Math.round(v.COOLANT_TEMP) : "--", "°"],
+    ["Trip", car.trip_km != null ? dist(car.trip_km, false) : "--", U.units.dist],
+  ];
+  return h("div.hub-vitals",
+    ...items.map(([label, val, unit]) =>
+      h("div.hub-vital",
+        h("div.hub-vital-v", String(val), unit ? h("span.hub-vital-u", unit) : null),
+        h("div.hub-vital-k", label))));
+}
 
 function effectLabel() { return lookById(savedLook()).label; }
 
@@ -128,60 +134,100 @@ function redrawFx() {
   if (btn) btn.textContent = effectLabel();
 }
 
-// BUILT ONCE, UPDATED IN PLACE.
-//
-// This screen used to rebuild itself entirely -- title, vitals, the radio
-// transport, six tiles and every SVG icon in them -- from inside a listener on
-// `live`. That event fires every 250ms while a fast view is open, so four
-// times a second the whole hub was destroyed and made again.
-//
-// That is what the blinking was. A new node has no history: hover states drop,
-// every CSS transition restarts from its initial value, and the icons are
-// re-decoded on each pass. It was worse than cosmetic -- the volume slider
-// could not be dragged, because the element under your finger stopped existing
-// four times a second.
-//
-// Four numbers and six badges actually change. Those are the only things this
-// touches now; the structure is built once and left alone.
+// The Connect state lives out here for the same reason the effect canvas does:
+// the hub rebuilds itself on every live sample, so anything held inside draw()
+// would be thrown away several times a second -- including, while somebody is
+// looking at it, the word "Connecting".
+let adapter = null;        // what /api/adapter reported, null until it answers
+let connecting = false;
+let connectNote = "";      // the one calm sentence a failed attempt leaves behind
+let redrawHub = null;      // set while the view is mounted, so the button can repaint
+
+async function startConnect() {
+  if (connecting) return;
+  connecting = true;
+  connectNote = "";
+  if (redrawHub) redrawHub();
+  const r = await connectCar();
+  connecting = false;
+  adapter = r.adapter || adapter;
+  connectNote = r.ok ? "" : r.message;
+  if (redrawHub) redrawHub();
+}
+
+// What the sub-line under the car's name says when there is no car talking.
+// The port goes here rather than on the button because in car mode the button
+// is a target for a thumb at arm's length, and "Connect" is the whole of what
+// it needs to say; the evidence that OmaCar has already found the adapter
+// belongs in the line of prose next to it.
+function offlineLine() {
+  if (connecting) return "Connecting…";
+  if (connectNote) return connectNote;
+  if (adapter && adapter.warning) return adapter.warning;
+  if (adapter && adapter.port) return "Not connected · " + adapter.port;
+  if (adapter && adapter.known) return "Not connected — no adapter found";
+  return "Not connected";
+}
+
 export default function hub(root) {
+  // Subscribe ONCE, outside draw(). The first version of this re-entered hub()
+  // from inside its own listener, so every repaint added another listener to
+  // the store and the old ones were never removed -- by the end of a drive
+  // that is hundreds of handlers all redrawing the same screen.
+  const redraw = () => {
+    const top = root.scrollTop;
+    // Everything EXCEPT the effect canvas. The previous version cleared every
+    // child, and since the hub repaints on each live sample the canvas was
+    // destroyed within a second of being created -- the effect appeared to do
+    // nothing at all, because it was being deleted rather than never starting.
+    for (const n of Array.from(root.children)) if (n !== fxHost) n.remove();
+    draw(root);
+    root.scrollTop = top;
+  };
+  redrawHub = redraw;
+  // Ask which port is there once per mount. Nothing depends on the answer --
+  // the button works without it -- so a failure is simply a quieter sub-line.
+  adapterState().then((a) => { adapter = a; if (redrawHub && !store.connected) redrawHub(); });
   fxHost = document.createElement("div");
   fxHost.className = "fx-host";
   root.appendChild(fxHost);
   fxMode = null;
   redrawFx();
 
-  const title = h("div.hub-title", "OmaCar");
-  const sub = h("div.hub-sub", "");
+  const offLive = store.on("live", redraw);
+  const offCar = store.on("car", redraw);
+  const offRadio = radio.on(redraw);
+  draw(root);
+  return () => {
+    offLive(); offCar(); offRadio();
+    redrawHub = null;
+    if (fxStop) { fxStop(); fxStop = null; }
+    if (fxHost) { fxHost.remove(); fxHost = null; }
+    fxMode = null;
+  };
+}
 
-  const vitalEls = VITALS.map((spec) => {
-    const unit = h("span.hub-vital-u", spec.unit());
-    const value = h("div.hub-vital-v", "--");
-    value.appendChild(unit);
-    return { spec, value, unit,
-             el: h("div.hub-vital", value, h("div.hub-vital-k", spec.label)) };
-  });
-
-  const tiles = PRIMARY.map((t) => {
-    const el = h("button.hub-tile", {
-      onclick: () => { location.hash = "#" + t.id; },
-    });
-    el.appendChild(h("div.hub-ico"));
-    el.firstChild.appendChild(svg(ICONS[t.id], 34));
-    el.appendChild(h("div.hub-label", t.label));
-    el.appendChild(h("div.hub-hint", t.hint));
-    return { t, el, badge: null };
-  });
-
-  // The radio keeps its own slot. It is rebuilt on radio events -- a play, a
-  // pause, a track change -- which happen when somebody does something, not
-  // four times a second.
-  const radioSlot = h("div.hub-radio");
-  radioSlot.appendChild(radioPlayer());
+function draw(root) {
+  const car = store.car;
+  // A note left by a failed attempt describes a moment, not the car. Once
+  // something is answering it has stopped being true, so it does not survive
+  // to be shown again after the next drop-out.
+  if (store.connected) connectNote = "";
 
   root.appendChild(h("div.hub",
     h("div.hub-head",
-      h("div", title, sub),
+      h("div",
+        h("div.hub-title", car && car.name ? car.name : "OmaCar"),
+        h("div.hub-sub", store.connected
+          ? (store.sample.protocol || "connected")
+          : offlineLine())),
       h("div.row", { style: { gap: "8px" } },
+        // A cockpit is read-only by design, so it gets the state and no button.
+        store.connected || readOnly ? null : h("button.hub-exit", {
+          onclick: startConnect,
+          disabled: connecting,
+          title: "Start talking to the car",
+        }, connecting ? "Connecting…" : "Connect"),
         h("button.hub-exit.hub-look", {
           onclick: () => { saveLook(nextLook(savedLook())); redrawFx(); },
           title: lookById(savedLook()).note + "  (tap to change)",
@@ -191,69 +237,28 @@ export default function hub(root) {
           title: "Leave car mode",
         }, "Workshop"))),
 
-    h("div.hub-vitals", ...vitalEls.map((x) => x.el)),
+    vitals(),
 
     explain(h, "hub"),
 
-    radioSlot,
+    radioPlayer(),
 
-    h("div.hub-grid", ...tiles.map((x) => x.el)),
+    h("div.hub-grid",
+      ...PRIMARY.map((t) => {
+        const b = badgeFor(t.id, car);
+        const tile = h("button.hub-tile", {
+          onclick: () => { location.hash = "#" + t.id; },
+          "aria-label": t.label + (b ? ", " + b.text : ""),
+        });
+        tile.appendChild(h("div.hub-ico"));
+        tile.firstChild.appendChild(svg(ICONS[t.id], 34));
+        tile.appendChild(h("div.hub-label", t.label));
+        tile.appendChild(h("div.hub-hint", t.hint));
+        if (b) tile.appendChild(h("div.hub-badge.tone-" + b.tone, b.text));
+        return tile;
+      })),
 
     h("div.hub-more",
       ...SECONDARY.map((t) =>
         h("button.hub-chip", { onclick: () => { location.hash = "#" + t.id; } }, t.label)))));
-
-  function update() {
-    const car = store.car;
-    const v = store.values || {};
-
-    const name = car && car.name ? car.name : "OmaCar";
-    if (title.textContent !== name) title.textContent = name;
-    const state = store.connected
-      ? (store.sample.protocol || "connected")
-      : "not connected — plug in the adapter";
-    if (sub.textContent !== state) sub.textContent = state;
-
-    for (const x of vitalEls) {
-      const text = String(x.spec.get(v, car || {}));
-      // Written only when it differs. Assigning the same string still dirties
-      // the node and costs a layout pass, four times a second, per number.
-      if (x.value.firstChild.nodeValue !== text) x.value.firstChild.nodeValue = text;
-      const u = x.spec.unit();
-      if (x.unit.textContent !== u) x.unit.textContent = u;
-    }
-
-    for (const x of tiles) {
-      const b = badgeFor(x.t.id, car);
-      if (!b) {
-        if (x.badge) { x.badge.remove(); x.badge = null; }
-      } else {
-        if (!x.badge) {
-          x.badge = h("div.hub-badge");
-          x.el.appendChild(x.badge);
-        }
-        if (x.badge.textContent !== b.text) x.badge.textContent = b.text;
-        const cls = "hub-badge tone-" + b.tone;
-        if (x.badge.className !== cls) x.badge.className = cls;
-      }
-      const label = x.t.label + (b ? ", " + b.text : "");
-      if (x.el.getAttribute("aria-label") !== label) x.el.setAttribute("aria-label", label);
-    }
-  }
-
-  function remountRadio() {
-    radioSlot.replaceChildren(radioPlayer());
-  }
-
-  update();
-
-  const offLive = store.on("live", update);
-  const offCar = store.on("car", update);
-  const offRadio = radio.on(remountRadio);
-  return () => {
-    offLive(); offCar(); offRadio();
-    if (fxStop) { fxStop(); fxStop = null; }
-    if (fxHost) { fxHost.remove(); fxHost = null; }
-    fxMode = null;
-  };
 }

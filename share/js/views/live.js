@@ -6,7 +6,8 @@
 // against the real display and moving it would have been a good way to break
 // something that worked.
 
-import { h, store, temp, econ, U } from "../core.js";
+import { h, store, temp, econ, U, readOnly,
+         adapterState, adapterLabel, connectCar } from "../core.js";
 import { makeRing } from "../ring.js";
 
 const MAX_SPEED_KPH = 180, MAX_RPM = 7000;
@@ -46,11 +47,31 @@ export default function live(root) {
       cell("stft", "Short fuel trim"), cell("ltft", "Long fuel trim"))));
 
   const basisEl = h("span.muted");
+  // The status line is held rather than looked up by id on every paint. It used
+  // to be written with textContent, which is why the old copy could only ever
+  // be a sentence telling the user to go and run a command in a terminal: there
+  // is no way to hang a button off a text node. Keeping the element means the
+  // strip can carry a control as well as a state.
+  const dotEl = h("span.dot", { id: "live-dot" });
+  const statusEl = h("span", { id: "live-status" }, "connecting…");
+  const connectBtn = h("button.btn.primary.sm", { hidden: true, onclick: onConnect }, "Connect");
+  // One line under the button for whatever went wrong, or for the serial group
+  // hint, which is the single most useful sentence this screen can show on a
+  // fresh Arch install and until now was only ever printed to a terminal.
+  const hintEl = h("span.muted");
+
+  // What connect.resolve() found, once the server has told us. Fetched at mount
+  // so the button can name the port before it is pressed rather than after.
+  let adapter = null;
+  let connecting = false;
+
   root.appendChild(h("div.card.flat",
     h("div.row.wrapline",
-      h("span.dot", { id: "live-dot" }),
-      h("span", { id: "live-status" }, "connecting…"),
+      dotEl,
+      statusEl,
+      connectBtn,
       basisEl,
+      hintEl,
       h("div.seg.right", ["econ", "normal", "sport"].map((m) => h("button", {
         "aria-pressed": m === mode ? "true" : "false",
         onclick: (e) => {
@@ -92,12 +113,20 @@ export default function live(root) {
     set("stft", v.SHORT_FUEL_TRIM_1 === undefined || v.SHORT_FUEL_TRIM_1 === null ? "—" : v.SHORT_FUEL_TRIM_1.toFixed(1) + " %");
     set("ltft", v.LONG_FUEL_TRIM_1 === undefined || v.LONG_FUEL_TRIM_1 === null ? "—" : v.LONG_FUEL_TRIM_1.toFixed(1) + " %");
 
-    const dot = document.getElementById("live-dot");
-    if (dot) dot.className = "dot" + (store.connected ? " ok live" : " bad");
-    const st = document.getElementById("live-status");
-    if (st) st.textContent = store.connected
-      ? `${s.port || "connected"}  ·  ${s.protocol || ""}`
-      : (s.status || "no daemon") + " — run: omacar daemon start";
+    dotEl.className = "dot" + (store.connected ? " ok live" : connecting ? " warn" : " bad");
+    if (store.connected) {
+      statusEl.textContent = `${s.port || "connected"}  ·  ${s.protocol || ""}`;
+      hintEl.textContent = "";
+    } else if (connecting) {
+      statusEl.textContent = "connecting…";
+    } else {
+      // Whatever the daemon last said about itself, and nothing invented on top
+      // of it. "not connected" is the honest floor when it has said nothing.
+      statusEl.textContent = s.status || "not connected";
+    }
+    // A cockpit is deliberately read-only — serve.py refuses the write — so it
+    // gets the state without a control that could not work.
+    connectBtn.hidden = store.connected || readOnly;
 
     // Say which way efficiency was measured. A ring that looks authoritative
     // while guessing is worse than one that admits it estimated.
@@ -121,6 +150,38 @@ export default function live(root) {
                      maxSpeed: MAX_SPEED_KPH, maxRpm: MAX_RPM });
     raf = requestAnimationFrame(tick);
   }
+
+  // The whole of the Connect behaviour. It deliberately does not touch the
+  // gauges: the ring keeps drawing its last values while the daemon starts, and
+  // goes live of its own accord the moment a sample arrives.
+  async function onConnect() {
+    if (connecting) return;
+    connecting = true;
+    connectBtn.disabled = true;
+    connectBtn.textContent = "Connecting…";
+    hintEl.textContent = "";
+    paint();
+    const r = await connectCar();
+    connecting = false;
+    if (!alive) return;                 // the view was left mid-connect
+    adapter = r.adapter || adapter;
+    connectBtn.disabled = false;
+    connectBtn.textContent = adapterLabel(adapter);
+    hintEl.textContent = r.ok ? "" : r.message;
+    paint();
+  }
+
+  adapterState().then((a) => {
+    if (!alive) return;
+    adapter = a;
+    connectBtn.textContent = adapterLabel(a);
+    // Said before the button is pressed, not after: if the device is there but
+    // unreadable, or not there at all, the user can fix it while reading. A car
+    // that is already talking needs none of it.
+    if (store.connected) return;
+    if (a.warning) hintEl.textContent = a.warning;
+    else if (a.known && !a.port) hintEl.textContent = "No adapter found — plug the cable into the car's OBD-II port.";
+  });
 
   const off = store.on("live", paint);
   paint();
