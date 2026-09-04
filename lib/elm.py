@@ -9,6 +9,7 @@ which means "wrong header". python-obd collapses both to null.
 Read-only is enforced here, at the bottom of the stack, rather than trusted
 to callers.
 """
+import sys
 import time
 
 import serial
@@ -203,6 +204,15 @@ class Elm:
         never answered by the car -- indistinguishable from a module that is
         not there. Catching it here turns hours of "0 responders" into one
         clear sentence.
+
+        THIS STILL RAISES, DELIBERATELY. A caller with a list of addresses to
+        get through wants to skip the bad one and carry on, and aim() below is
+        that caller's form. But the loops that RECORD what they asked --
+        discover's module map, autodisc's frontier -- must not be able to skip
+        an address by accident, and a return value they forgot to check would
+        let them: the header would stay pointed at the previous module, the
+        request would go out anyway, and one ECU's answer would be filed under
+        ten addresses. An exception cannot be forgotten.
         """
         if header == self.header:
             return
@@ -258,6 +268,45 @@ class Elm:
             self.ser.close()
         except Exception:
             pass
+
+
+# Headers already refused once, so a sweep of two hundred identifiers against
+# a wrong-shaped address says so once rather than two hundred times.
+_REFUSED = set()
+
+
+def aim(el, header):
+    """Point a connection at one address. True if it is now pointed there.
+
+    This is set_header for a caller that has other addresses to try. It exists
+    because the alternative -- widening header_ok until nothing is refused --
+    would put us back where 0b1fc1f found us: the adapter accepts a
+    wrong-width header, the car never answers, and the sweep reports the
+    module as absent. Refusing is right; crashing the whole sweep over one
+    address is not.
+
+    False means WE DID NOT ASK, and it is not the same fact as silence.
+    Callers must skip the address rather than send the request anyway: with
+    the header unchanged the request would go to whatever module was
+    addressed last, and its answer would be recorded against this one.
+
+    A free function rather than a method so that anything holding a connection
+    can use it -- ops and candlog are handed one, and the test doubles that
+    stand in for an ECU implement set_header and nothing else.
+    """
+    try:
+        el.set_header(header)
+        return True
+    except ValueError as why:
+        key = (getattr(el, "protocol", None), header)
+        if key not in _REFUSED:
+            _REFUSED.add(key)
+            # set_header prefixes its own message; this line already names the
+            # tool by being on its stderr, so drop the second "omacar:".
+            said = str(why)
+            said = said[8:] if said.startswith("omacar: ") else said
+            print(f"  skipping {header}: {said}", file=sys.stderr, flush=True)
+        return False
 
 
 def classify(lines, service, request=None):

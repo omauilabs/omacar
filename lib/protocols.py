@@ -127,6 +127,122 @@ def header_ok(dpn, header):
     return True, ""
 
 
+# ---------------------------------------------------------------- addressing
+
+def broadcast(dpn):
+    """The address every module on this bus listens to.
+
+    Callers used to write the functional broadcast inline -- `"7DF"` in
+    ops.clear_codes and candlog.read_trusted, `"07DF"` in prospect.moving.
+    Both are 11-bit CAN literals, and only one of them is even the right
+    length for it; on the 29-bit CAN this project's own development car
+    speaks, the functional address is `18DB33F1` and neither literal reaches
+    anything. The table above already knows the answer for every protocol, so
+    ask it rather than assume the wire.
+
+    Spaces are stripped because the pre-CAN entries are written `68 6A F1` to
+    be readable as three bytes and ATSH wants the digits.
+
+    An unknown protocol falls back to `7DF` rather than to nothing. That is
+    not a guess about the car: it is what every one of these call sites did
+    unconditionally before, so a connection that never recorded a protocol --
+    the bench emulator, a test double -- behaves exactly as it did.
+    """
+    p = describe(dpn)
+    if not p:
+        return "7DF"
+    return p["default_header"].replace(" ", "")
+
+
+# The addresses worth asking one at a time, once the broadcast has told you
+# somebody is home.
+#
+# These are kept as ADDRESSES rather than headers because the header is a
+# different shape on every family and the address is the part that carries the
+# meaning. physical() below builds the header.
+#
+# 11-bit CAN is the odd one out: ISO 15765-4 fixes the eight legislated
+# request identifiers as 7E0-7E7 and fixes nothing about which module sits
+# behind which, beyond 7E0 being the engine. Labelling the rest by function
+# would be inventing knowledge, so they are numbered. On the CR-Z the IMA
+# motor and battery controllers answer on the neighbours of 7E0, which is
+# where the six-address default in `prospect` came from.
+MODULES_CAN11 = [
+    ("7E0", "engine"),
+    ("7E1", "ECU 2"),
+    ("7E2", "ECU 3"),
+    ("7E3", "ECU 4"),
+    ("7E4", "ECU 5"),
+    ("7E5", "ECU 6"),
+    ("7E6", "ECU 7"),
+    ("7E7", "ECU 8"),
+]
+
+# 29-bit CAN addresses one module per byte, and those bytes DO carry meaning
+# across makes. This list is the one discover.CANDIDATE_HEADERS already sweeps,
+# kept here in address form so that file can be pointed at it without changing
+# what it asks.
+MODULES_29BIT = [
+    ("10", "engine"),
+    ("18", "transmission"),
+    ("28", "ABS / brakes"),
+    ("01", "body"),
+    ("03", "hybrid / battery"),
+    ("04", "hybrid / motor"),
+    ("0E", "gateway / other"),
+    ("40", "airbag / restraints"),
+    ("60", "instrument cluster"),
+    ("6A", "climate"),
+]
+
+# J1850, ISO 9141-2 and KWP2000 all use a three-byte header of format, target
+# and source. The targets below are the ISO 14230 conventional ones. UNTESTED
+# BY THIS PROJECT -- see the module docstring; they are here so a sweep on a
+# pre-CAN car asks something plausible instead of nothing, not because anyone
+# has watched a 1999 car answer them.
+MODULES_PRECAN = [
+    ("10", "engine"),
+    ("18", "transmission"),
+    ("28", "ABS / brakes"),
+]
+
+
+def physical(dpn):
+    """[(header, label)] -- the modules worth addressing directly, shaped for
+    this protocol.
+
+    Every caller that wants "the list of modules" has so far written its own,
+    and every one of them wrote it for a single protocol: prospect's is 11-bit
+    CAN with a leading zero that fits neither, dtc's and discover's are 29-bit
+    only. A car on the other protocol gets a list it cannot use, which is not
+    a wrong answer from the module -- it is a question that never left the
+    adapter.
+
+    An unknown protocol returns the 11-bit list, for the same reason
+    broadcast() falls back to 7DF: it is what the callers assumed before, so
+    nothing that works today starts failing.
+
+    J1939 returns nothing at all. Heavy trucks address by PGN and source
+    address rather than by an ISO 15765 diagnostic pair, so a list of
+    18DAxxF1 headers would be confidently wrong, and a caller that gets an
+    empty list can say "I do not know how to sweep this bus" -- which is true.
+    """
+    p = describe(dpn)
+    if not p:
+        return [(h, lbl) for h, lbl in MODULES_CAN11]
+    if p["family"] == FAMILY_J1939:
+        return []
+    if p["family"] == FAMILY_CAN:
+        if p["header_digits"] == 3:
+            return [(h, lbl) for h, lbl in MODULES_CAN11]
+        return [("18DA%sF1" % addr, lbl) for addr, lbl in MODULES_29BIT]
+    # Three-byte header: keep this protocol's own format and source bytes and
+    # vary only the target, so the shape stays whatever the table says works.
+    base = p["default_header"].replace(" ", "")
+    fmt, src = base[:2], base[4:6]
+    return [(fmt + addr + src, lbl) for addr, lbl in MODULES_PRECAN]
+
+
 # Sweep pacing. CAN can be hammered; a 10.4 kbaud line cannot, and the ELM's
 # own timeout has to be long enough for a slow car to finish a reply.
 def pacing(dpn):

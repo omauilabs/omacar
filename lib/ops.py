@@ -86,22 +86,44 @@ def clear_codes(el, headers=None, on_step=None):
     """
     on_step = on_step or (lambda *a: None)
     import elm as elmlib
+    import protocols
     results = {"generic": None, "modules": {}}
 
     # 1. Generic emissions clear, broadcast.
-    el.set_header("7DF")
+    #
+    # The broadcast address was the literal "7DF" and this line sat OUTSIDE
+    # the try below, so on a 29-bit car -- which is what the development
+    # vehicle is -- set_header raised straight out of the function and
+    # /api/clear answered 500 with a transport exception. Ask protocols for
+    # the address, and let a refusal be a recorded result like any other,
+    # because "we did not send it" is a fact the caller has to see: api.py
+    # decides whether to clear our own stored faults from these kinds, and it
+    # must never do that on the strength of a request that never left.
+    broadcast = protocols.broadcast(getattr(el, "protocol", None))
     on_step("generic", "mode 04")
-    try:
-        lines = el.request("04")
-        kind, detail, _ = elmlib.classify(lines, 0x04, "04")
-        results["generic"] = {"kind": kind, "detail": detail}
-    except Exception as e:                                     # noqa: BLE001
-        results["generic"] = {"kind": "error", "detail": str(e)[:120]}
+    if not elmlib.aim(el, broadcast):
+        results["generic"] = {"kind": "skipped",
+                              "detail": f"{broadcast} is not a valid address "
+                                        f"on this protocol"}
+    else:
+        try:
+            lines = el.request("04")
+            kind, detail, _ = elmlib.classify(lines, 0x04, "04")
+            results["generic"] = {"kind": kind, "detail": detail}
+        except Exception as e:                                 # noqa: BLE001
+            results["generic"] = {"kind": "error", "detail": str(e)[:120]}
 
     # 2. Per-module UDS clear. FFFFFF is "all groups of DTCs".
     for header in (headers or []):
-        el.set_header(header)
         on_step(header, "0x14")
+        if not elmlib.aim(el, header):
+            # Skipping is the whole point: with the header unchanged, 14FFFFFF
+            # would go to whichever module was addressed last and clear ITS
+            # codes under this one's name.
+            results["modules"][header] = {
+                "kind": "skipped",
+                "detail": "not a valid address on this protocol"}
+            continue
         try:
             lines = el.request("14FFFFFF")
             kind, detail, _ = elmlib.classify(lines, 0x14, "14FFFFFF")
@@ -197,7 +219,16 @@ def run_reset(el, spec, on_step=None):
     if not requests:
         raise Refused("this definition has no requests")
 
-    el.set_header(header)
+    # A reset definition names its own module address, and an address of the
+    # wrong shape for this car's protocol is a fact about the definition, not
+    # a transport failure. Refused is what the UI knows how to show, and it
+    # says which vehicle the definition was written for.
+    try:
+        el.set_header(header)
+    except ValueError as why:
+        raise Refused(f"this definition addresses {header}, which is not a "
+                      f"valid address on the protocol this car negotiated. "
+                      f"({why})")
     out = []
     for i, req in enumerate(requests):
         req = req.replace(" ", "").upper()

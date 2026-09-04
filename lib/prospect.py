@@ -29,9 +29,20 @@ import connect  # noqa: E402
 import elm as elmlib  # noqa: E402
 import profile as profilelib  # noqa: E402
 
-# Honda 11-bit diagnostic addresses. 7E0/7E8 is the engine pair; hybrids put
-# the motor and battery controllers on the neighbouring addresses.
-DEFAULT_HEADERS = ["07E0", "07E1", "07E2", "07E3", "07E4", "07E5"]
+# WHY THERE IS NO LONGER A LITERAL LIST HERE.
+#
+# This was ["07E0" ... "07E5"] -- Honda's 11-bit diagnostic addresses, with a
+# leading zero, written when the only car in the room was known to be on
+# 11-bit CAN. It is wrong twice over. Four hex digits is not a valid ATSH
+# header on EITHER CAN protocol: 11-bit wants three and 29-bit wants eight, so
+# after 0b1fc1f every one of these is refused, and before it every one was
+# accepted by the adapter and then never answered by the car. And the
+# development vehicle is a CR-Z, which is 29-bit -- so the default list could
+# not reach the very car it was written for.
+#
+# The addresses now come from protocols.physical() once the adapter has told
+# us what it negotiated, which is the only moment the right shape is knowable.
+# `--headers` still overrides, for the person who knows better than the table.
 
 DIM, BOLD, GREEN, YELLOW, RESET = "\033[2m", "\033[1m", "\033[32m", "\033[33m", "\033[0m"
 
@@ -44,8 +55,17 @@ def parse_range(spec, width):
 
 
 def moving(el):
-    """True if the car reports any road speed. Refuse to sweep if so."""
-    el.set_header("07DF")
+    """True if the car reports any road speed. Refuse to sweep if so.
+
+    The broadcast address is asked of protocols, not written here. This line
+    used to be `set_header("07DF")`, which is malformed on both CAN protocols,
+    and ops.preflight calls straight into this function: the ValueError landed
+    in preflight's bare except, mv came back None, and every clear on every
+    CAN car was refused with "road speed could not be read" -- a guard failing
+    closed for a reason that had nothing to do with the car.
+    """
+    import protocols
+    el.set_header(protocols.broadcast(getattr(el, "protocol", None)))
     kind, _, data = elmlib.classify(el.request("010D"), 0x01, "010D")
     if kind != "positive" or len(data) < 6:
         return None                      # cannot tell — caller decides
@@ -59,7 +79,14 @@ def sweep(el, headers, service, pids, delay, on_progress):
     found, tried = [], 0
     total = len(headers) * len(pids)
     for header in headers:
-        el.set_header(header)
+        # A header this protocol cannot use is skipped whole, not swept with
+        # whatever address was set last. Sweeping it anyway would file one
+        # module's answers under another module's name, which is the same
+        # class of untruth as a scan tool inventing hardware.
+        if not elmlib.aim(el, header):
+            tried += len(pids)
+            on_progress(tried, total, header, "", "skip")
+            continue
         dead = 0
         for pid in pids:
             req = f"{service:02X}{pid:0{4 if service == 0x22 else 2}X}"
@@ -86,7 +113,13 @@ def resample(el, found, rounds, delay, on_progress):
     series = {id(f): [f["sample"]] for f in found}
     for r in range(rounds):
         for f in found:
-            el.set_header(f["header"])
+            # It answered during the sweep, so this cannot normally fail --
+            # but if it does, an empty sample is the honest record. Re-asking
+            # on the previous responder's header would produce a byte that
+            # "never moves" and quietly bury a real candidate.
+            if not elmlib.aim(el, f["header"]):
+                series[id(f)].append("")
+                continue
             kind, _, data = elmlib.classify(el.request(f["request"]), f["service"], f["request"])
             series[id(f)].append(data if kind == "positive" else "")
             time.sleep(delay)
@@ -109,7 +142,9 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="omacar prospect", add_help=True)
     ap.add_argument("--service", default="0x21",
                     help="read-only service to sweep: 0x21 (Honda) or 0x22 (UDS)")
-    ap.add_argument("--headers", default=",".join(DEFAULT_HEADERS))
+    ap.add_argument("--headers", default="",
+                    help="module addresses to sweep; default: the ones this "
+                         "protocol uses")
     ap.add_argument("--range", dest="rng", default="",
                     help="PID range in hex, e.g. 00-FF or 0000-01FF")
     ap.add_argument("--delay", type=float, default=0.06)
@@ -141,7 +176,6 @@ def main(argv):
                  "  stop it with: omacar daemon stop")
     atexit.register(connect.release_port)
 
-    headers = [h.strip().upper() for h in args.headers.split(",") if h.strip()]
     width = 2 if service == 0x22 else 1
     pids = parse_range(args.rng, width) if args.rng else parse_range("00-FF", 1) \
         if service != 0x22 else parse_range("0000-00FF", 2)
@@ -174,6 +208,49 @@ def main(argv):
             el.set_timeout(int(pace["atst"], 16) * 4)
         except (ValueError, AttributeError, TypeError):
             pass
+
+    # WHICH ADDRESSES TO ASK, AND WHY NOT BEFORE NOW.
+    #
+    # A header's shape is a property of the wire, not of the car's make, so
+    # the list cannot be assembled until the adapter has said what it
+    # negotiated -- which is why this sits after init() rather than next to
+    # the argument parser where a default belongs. --headers still wins: the
+    # table is a starting point for a sweep, not an authority on somebody
+    # else's vehicle.
+    if args.headers.strip():
+        headers = [h.strip().upper() for h in args.headers.split(",") if h.strip()]
+    else:
+        headers = [h for h, _label in protocols.physical(el.protocol)]
+        if not headers:
+            el.close()
+            sys.exit(f"\n  {protocols.summary(el.protocol)}\n"
+                     "  I do not know how this bus addresses its modules, so I\n"
+                     "  will not guess at addresses to flood it with.\n\n"
+                     "  If you know them:  omacar prospect --headers ...\n")
+        print(f"  {DIM}addresses: {', '.join(headers)}{RESET}")
+
+    # A RANGE WIDER THAN THE IDENTIFIER THE SERVICE TAKES.
+    #
+    # `--service 0x21 --range F100-F1FF` builds "21F100" -- a two-byte
+    # identifier on a service whose identifier is one byte. The adapter sends
+    # it happily, the module cannot parse it, and 256 malformed questions come
+    # back as 256 silences, which reads as "nothing on this car" rather than
+    # "you asked wrong". F1xx is a 0x22 range; this catches the confusion.
+    #
+    # The digit count is the same expression sweep() formats with rather than
+    # protocols.id_width(), deliberately: id_width falls back to four digits
+    # for anything that is not 0x21, which is right for UDS and wrong for mode
+    # 09, and a guard that disagrees with the request it is guarding is
+    # theatre. When the pre-CAN services land and the width starts varying by
+    # protocol, both should move to id_width together.
+    digits = 4 if service == 0x22 else 2
+    biggest = pids[-1] if len(pids) else 0
+    if biggest >= (1 << (4 * digits)):
+        el.close()
+        sys.exit(f"\n  service 0x{service:02X} takes a {digits}-digit "
+                 f"identifier, and {biggest:X} does not fit in one.\n"
+                 f"  Two-byte ranges like F190-F19F belong to 0x22:\n\n"
+                 f"      omacar prospect --service 0x22 --range {args.rng}\n")
 
     # The safety gate. A sweep floods the bus with unknown requests; doing
     # that while the car is moving is not a risk worth taking for data.
@@ -275,8 +352,13 @@ def main(argv):
 
     draft = profilelib.write_draft(
         os.path.join(connect.STATE, "profiles", args.car + ".draft.toml"),
+        # The protocol recorded here was hardcoded to CAN 11/500 -- the one
+        # this project happened to be written against. A profile is a claim
+        # about a specific vehicle, and naming the wrong bus in it makes every
+        # candidate underneath unverifiable by anyone else.
         {"slug": args.car, "description": "drafted by omacar prospect",
-         "protocol": "ISO 15765-4 (CAN 11/500)", "discovered": stamp},
+         "protocol": (prof["name"] if prof else f"unknown ({el.protocol})"),
+         "discovered": stamp},
         live or found)
 
     print(f"  raw log   {raw}")
