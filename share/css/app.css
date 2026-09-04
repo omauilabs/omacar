@@ -69,8 +69,16 @@
 
 * { box-sizing: border-box; }
 /* The background goes on the root element too, so there is never a frame in
-   which this page is white — which is the other half of the auto-dark trap. */
-html { font-size: 15px; background: var(--ground); }
+   which this page is white — which is the other half of the auto-dark trap.
+   The root was 15px, which sounds like a rounding error and is not: nearly
+   half the font sizes in this file are .85rem or below, so a 15px root put a
+   good deal of the interface under 11px and the smallest labels under 8px. On
+   a workshop screen at arm's length, and in any crop of a filmed screen, type
+   that small stops being read and starts being texture. 16px costs nothing --
+   the layout is grid and flex throughout, and the drive-mode block sizes
+   itself off the viewport rather than the root -- and it lifts every token in
+   the file by a twentieth without touching a single one of them. */
+html { font-size: 16px; background: var(--ground); }
 body {
   margin: 0; background: var(--ground); color: var(--ink);
   font-family: var(--mono); font-size: .92rem; line-height: 1.5;
@@ -126,7 +134,15 @@ button { font: inherit; color: inherit; }
   content: ""; position: absolute; left: -10px; top: 12px; bottom: 12px;
   width: 3px; border-radius: 0 3px 3px 0; background: var(--ink);
 }
-.rail-item .lbl { font-size: .52rem; letter-spacing: .07em; margin-top: 2px; }
+/* .58rem and not more. The rail button is a fixed 46px square under a 26px
+   icon, and the longest label in main.js's view table is "Service" -- seven
+   monospaced characters. At .62rem those seven characters measure wider than
+   the button they sit in, and the rail is the one element on screen in every
+   single view, so it is the last place to accept a wrap or a clip. Growing the
+   button instead was the other option and it is worse: nineteen views already
+   need more rail than a short viewport has, and taller buttons mean the nav
+   scrolls sooner. */
+.rail-item .lbl { font-size: .58rem; letter-spacing: .07em; margin-top: 2px; }
 .rail-item .pip {
   position: absolute; top: 7px; right: 7px; min-width: 15px; height: 15px;
   border-radius: 8px; background: var(--bad); color: var(--on-bad);
@@ -191,18 +207,26 @@ canvas { display: block; width: 100%; }
 .sect { display: grid; gap: 12px; }
 .sect > .head { display: flex; align-items: baseline; gap: 12px; }
 .eyebrow {
-  font-size: .6rem; letter-spacing: .2em; color: var(--faint);
+  /* Tracking comes down as the size goes up: .2em was buying legibility that
+     the extra pixels now buy properly, and at .72rem it only pulls the words
+     apart. */
+  font-size: .72rem; letter-spacing: .12em; color: var(--faint);
   text-transform: uppercase; font-weight: 600;
 }
 .title { font-size: 1.16rem; font-weight: 600; letter-spacing: -.015em; }
-.lede { color: var(--dim); font-size: .84rem; max-width: 74ch; }
-.muted { color: var(--faint); font-size: .74rem; }
+.lede { color: var(--dim); font-size: .95rem; max-width: 74ch; }
+.muted { color: var(--faint); font-size: .82rem; }
 .right { margin-left: auto; }
 .row { display: flex; align-items: center; gap: 10px; }
 .wrapline { flex-wrap: wrap; }
 .grid { display: grid; gap: 14px; }
 .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Sizes itself to what is actually in it. A fixed three-column grid
+   holding two cards leaves a third of the row empty, which reads as a
+   missing card rather than as a short list -- worst on the screens that
+   only show exceptions, where two entries is the good outcome. */
+.g-fit { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 @media (max-width: 1000px) { .g4 { grid-template-columns: repeat(2, minmax(0,1fr)) } .g3 { grid-template-columns: repeat(2, minmax(0,1fr)) } }
 @media (max-width: 660px)  { .g4, .g3, .g2 { grid-template-columns: 1fr } }
@@ -212,10 +236,10 @@ canvas { display: block; width: 100%; }
 
 /* ------------------------------------------------------------------ stats */
 .stat-tile { display: grid; gap: 3px; }
-.stat-tile .k { font-size: .58rem; letter-spacing: .17em; color: var(--faint); text-transform: uppercase; }
+.stat-tile .k { font-size: .72rem; letter-spacing: .17em; color: var(--faint); text-transform: uppercase; }
 .stat-tile .v { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 .stat-tile .v small { font-size: .62rem; color: var(--faint); font-weight: 400; margin-left: 4px; letter-spacing: .08em; }
-.stat-tile .n { font-size: .7rem; color: var(--dim); }
+.stat-tile .n { font-size: .8rem; color: var(--dim); }
 .stat-tile.big .v { font-size: 2.6rem; }
 .v.ok { color: var(--ok) } .v.warn { color: var(--warn) } .v.bad { color: var(--bad) }
 .n.ok { color: var(--ok) } .n.warn { color: var(--warn) } .n.bad { color: var(--bad) }
@@ -237,7 +261,7 @@ canvas { display: block; width: 100%; }
 /* ------------------------------------------------------------------ pills */
 .pill {
   display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
-  border-radius: 20px; font-size: .64rem; letter-spacing: .07em; font-weight: 600;
+  border-radius: 20px; font-size: .74rem; letter-spacing: .07em; font-weight: 600;
   background: var(--track); color: var(--dim); white-space: nowrap;
 }
 .pill.ok   { background: var(--ok-bg);   color: var(--ok) }
@@ -280,9 +304,12 @@ input[type="text"]:focus, textarea:focus { outline: none; border-color: var(--in
 textarea { resize: vertical; min-height: 66px; }
 
 /* ----------------------------------------------------------------- tables */
-.tbl { width: 100%; border-collapse: collapse; font-size: .76rem; }
+.tbl { width: 100%; border-collapse: collapse; font-size: .86rem; }
 .tbl th {
-  text-align: left; font-size: .58rem; letter-spacing: .16em; color: var(--faint);
+  /* Same trade as .eyebrow: the header went up a quarter and the tracking came
+     down, so a column heading is easier to read without being wider than the
+     numbers underneath it. */
+  text-align: left; font-size: .72rem; letter-spacing: .12em; color: var(--faint);
   text-transform: uppercase; font-weight: 600; padding: 0 10px 8px 0;
   border-bottom: 1px solid var(--edge);
 }
@@ -335,7 +362,7 @@ textarea { resize: vertical; min-height: 66px; }
 .finding h3 { font-size: .92rem; font-weight: 600; }
 .finding .why { color: var(--dim); font-size: .78rem; }
 .finding .cites { display: flex; flex-wrap: wrap; gap: 5px; }
-.cite { font-size: .58rem; color: var(--faint); background: var(--hair); border-radius: 4px;
+.cite { font-size: .7rem; color: var(--faint); background: var(--hair); border-radius: 4px;
         padding: 2px 6px; letter-spacing: .04em; }
 .conf { display: flex; align-items: center; gap: 7px; font-size: .64rem; color: var(--faint); }
 .conf .meter { width: 54px; }

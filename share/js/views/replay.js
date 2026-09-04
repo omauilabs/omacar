@@ -129,21 +129,36 @@ export default function replay(root) {
     if (!canvas || !rows.length) return;
     const channels = picked.map((k, i) => {
       const c = CHANNELS.find((x) => x.key === k);
-      return { key: k, label: c ? c.label : k, tint: PALETTE[i % PALETTE.length] };
+      // scope() reads each channel through `get`, because the data lab hands it
+      // converted values rather than raw ones (data.js does the unit maths in
+      // its own accessor). Replay stores display units in the row already, so
+      // the accessor is a plain lookup -- but it has to be here, or scope()
+      // throws on ch.get and the canvas stays blank while the readout tiles
+      // below it keep updating, which is why this looked half-working.
+      return { key: k, label: c ? c.label : k, tint: PALETTE[i % PALETTE.length],
+               get: (r) => r[k] };
     });
     scope(canvas, { rows, channels, height: 260 });
     // The cursor line, drawn over the scope rather than by it, so scrubbing
     // does not mean re-rendering every trace.
+    //
+    // fit() inside scope() has already applied setTransform(dpr,...), so this
+    // context measures in CSS pixels. Scaling by the device ratio a second time
+    // put the cursor at twice its true offset on any HiDPI screen -- off the
+    // right edge for anything past halfway through the drive.
     const ctx = canvas.getContext("2d");
-    const dpr = canvas.width / canvas.clientWidth || 1;
     const frac = rows.length > 1 ? cursor / (rows.length - 1) : 0;
-    const x = (4 + frac * (canvas.clientWidth - 8)) * dpr;
+    const x = 4 + frac * (canvas.clientWidth - 8);
     ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,.55)";
-    ctx.lineWidth = 1 * dpr;
+    // A theme token rather than white: in the night-red look a white line is
+    // the brightest thing on a screen deliberately kept dark.
+    ctx.strokeStyle = getComputedStyle(document.documentElement)
+      .getPropertyValue("--ink").trim() || "#E7F0EE";
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvas.height);
+    ctx.lineTo(x, canvas.clientHeight);
     ctx.stroke();
     ctx.restore();
   }
