@@ -6,6 +6,8 @@ what the car said.
 
     GET  /api/snapshot          the whole car in one read
     GET  /api/live              the current sample
+    GET  /api/adapter           what there is to connect to, and what is running
+    POST /api/daemon            start or stop the process that reads the car
     GET  /api/history           samples over a span, decimated to fit a graph
     GET  /api/service-history   what has actually been done, newest first
     GET  /api/documents         the document library for this vehicle
@@ -507,6 +509,165 @@ def save_recording(label, t0, t1):
     return {"id": rid, "rows": len(series), "channels": st}
 
 
+# ---- the daemon -------------------------------------------------------------
+#
+# WHY THE APP IS ALLOWED TO START A PROCESS.
+#
+# Until this existed, an app that could not see a daemon told the person to
+# open a terminal and type `omacar daemon start` — an instruction printed by a
+# program perfectly capable of doing the thing itself. The bar plugin has had a
+# start button for months; the workshop had a sentence. This is that button's
+# other half.
+#
+# It shells `bin/omacar daemon start` rather than importing daemon.py and
+# forking, because that script is where starting a daemon is DEFINED: it finds
+# the venv, refuses a second one, redirects the log and detaches with setsid. A
+# second implementation of all that in here would be a second thing to keep
+# right, and they would drift.
+#
+# NOTHING FROM THE REQUEST REACHES THE COMMAND LINE. The argument vector is a
+# fixed pair of literals; the body chooses between "start" and "stop" and
+# contributes nothing else. There is deliberately no port, path or device
+# argument: the daemon resolves the adapter itself through connect.resolve(),
+# so such an argument would buy nothing and would put a caller's string into a
+# subprocess.
+
+def _omacar(*args, timeout=30):
+    """Run the project's own CLI with a fixed argument vector."""
+    import subprocess
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    return subprocess.run([os.path.join(root, "bin", "omacar"), *args],
+                          timeout=timeout, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, check=False)
+
+
+def _last_line(text):
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+def _networked():
+    """True when this API is answering something other than loopback.
+
+    api.py cannot import serve.py — serve.py imports us — so the flag is read
+    off the module object serve.py already keeps it on, which is __main__
+    whenever serve.py is the script being run, and it always is.
+
+    The fallback is the safe reading of "could not tell": loopback, which is
+    what every caller that is not the server (the CLI, the tests) genuinely is.
+    A cockpit sets that flag on itself before it answers its first request, so
+    it can never be the thing this fails to recognise.
+    """
+    for name in ("serve", "__main__"):
+        mod = sys.modules.get(name)
+        if mod is not None and hasattr(mod, "LOOPBACK_ONLY"):
+            return not mod.LOOPBACK_ONLY
+    return False
+
+
+def adapter():
+    """What OmaCar can see to connect to, in one read.
+
+    The point of this endpoint is the label. The app used to offer "not
+    connected — plug in the adapter", which is what you write when you do not
+    know what is there; naming the device that IS there turns a sentence into a
+    button somebody can believe.
+    """
+    import connect as _connect
+    import hotplug
+    port, kind = _connect.resolve()
+    # `name` is the noun the button says out loud and `label` is the whole
+    # phrase, so a caller can either compose its own sentence or take ours.
+    # Neither invents a make: this reports what resolve() found, and "FTDI" or
+    # "OBDLink" would be a guess dressed as a reading.
+    name = {"bench": "bench emulator", "override": "port override"}.get(
+        kind, "adapter" if port else None)
+    label = f"{name} on {port}" if port else "no adapter"
+    return {
+        "port": port, "kind": kind, "name": name, "label": label,
+        # connect.serial_group_warning() is the one sentence that fixes the
+        # commonest hard failure on Arch — the user not being in the serial
+        # group — and until now it was only ever printed to a terminal that
+        # nobody who needed it was looking at.
+        "warning": _connect.serial_group_warning(port),
+        "running": hotplug.daemon_running(),
+        "simulator": hotplug.sim_running(),
+    }
+
+
+def _daemon_state(action, changed, note):
+    out = adapter()
+    out.update({"action": action, "changed": changed, "note": note})
+    return out
+
+
+def daemon_control(action):
+    """Start or stop the gauge daemon. (status, payload), as the routes want.
+
+    Every refusal names the one thing that would fix it, because this is the
+    first button a new person presses and a "could not start" with no reason is
+    exactly the experience the button exists to remove.
+    """
+    import hotplug
+    if action not in ("start", "stop"):
+        return 400, {"error": "action must be start or stop"}
+    if _networked():
+        # A cockpit is a screen for a car, not a console for the machine in the
+        # workshop. It may look at the gauge; it may not start processes on
+        # somebody else's laptop. (serve.py refuses every write from a cockpit
+        # anyway unless it was started with --control, which is a promise about
+        # commanding the CAR — this keeps that promise from stretching.)
+        return 403, {"error": "the daemon is controlled from the machine it "
+                              "runs on, not from a cockpit display"}
+
+    if action == "stop":
+        if not hotplug.daemon_running():
+            return 200, _daemon_state("stop", False, "the daemon was not running")
+        try:
+            proc = _omacar("daemon", "stop")
+        except Exception as e:                                # noqa: BLE001
+            return 500, {"error": f"could not stop the daemon: {e}"}
+        # Asked and answered separately: the CLI's exit code says it sent the
+        # signal, and only the pidfile says the daemon acted on it.
+        if hotplug.daemon_running():
+            return 500, {"error": "could not stop the daemon: "
+                                  + (_last_line(proc.stderr) or "it is still running")}
+        return 200, _daemon_state("stop", True, "the daemon has stopped")
+
+    if hotplug.daemon_running():
+        # Not an error: two people, or two tabs, pressing Connect is a normal
+        # thing to happen, and the honest answer is that it is already running.
+        return 200, _daemon_state("start", False, "the daemon was already running")
+    if hotplug.sim_running():
+        # The simulator writes live.json five times a second and so does the
+        # daemon. Two writers do not merge; the gauge flickers between two
+        # cars. `omacar sim start` has always refused while the daemon is up,
+        # and this is the other direction of the same rule.
+        return 409, {"error": "the simulator is running — stop it first "
+                              "(omacar sim stop)"}
+    info = adapter()
+    if not info["port"]:
+        return 409, {"error": "no adapter — plug one in, "
+                              "or run: omacar bench start"}
+    if info["warning"]:
+        return 409, {"error": info["warning"]}
+    try:
+        proc = _omacar("daemon", "start")
+    except Exception as e:                                    # noqa: BLE001
+        return 500, {"error": f"could not start the daemon: {e}"}
+    if not hotplug.daemon_running():
+        # bin/omacar tails the daemon's own log onto stderr when it gives up,
+        # so the last line is the specific complaint rather than our guess.
+        why = _last_line(proc.stderr)
+        return 500, {"error": "the daemon did not start" + (f": {why}" if why else "")}
+    # It is RUNNING, which is not the same as connected: it may be sitting in
+    # front of a car whose ignition is off, waiting, which is now a state it
+    # survives. Whoever pressed the button watches /api/live for that.
+    return 200, _daemon_state(
+        "start", True,
+        "the daemon is running — the gauges come up as soon as the car answers")
+
+
 # ---- routing ----------------------------------------------------------------
 
 def qint(query, name, default, lo=None, hi=None):
@@ -588,7 +749,17 @@ def handle_get(path, query):
         return 200, {"vehicles": garage.vehicles(), "current": garage.current()}
     if path == "/api/plugins":
         import plugins
-        return 200, {"plugins": plugins.discover(), "views": plugins.views(),
+        # Projected rather than handed over whole. discover() carries each
+        # plugin's absolute directory and its entire manifest, which is right
+        # for the CLI that prints it and wrong here: the directory sits under
+        # the user's home, so the reply names them and the shape of their
+        # machine, and the manifest is the plugin author's file rather than
+        # anything the app reads. What a plugin IS, not where it lives.
+        keep = ("id", "ok", "problem", "name", "description", "version",
+                "author", "provides")
+        return 200, {"plugins": [{k: p.get(k) for k in keep}
+                                 for p in plugins.discover()],
+                     "views": plugins.views(),
                      "hooks": plugins.HOOKS}
     if path == "/api/service-history":
         import history
@@ -630,6 +801,8 @@ def handle_get(path, query):
         # key rather than letting a hand-edited drive log become a 500.
         import ima
         return 200, ima.summary()
+    if path == "/api/adapter":
+        return 200, adapter()
     if path == "/api/theme":
         # The mtime rides along so the app can re-apply on a theme change
         # without re-parsing anything it already has.
@@ -681,6 +854,8 @@ def handle_post(path, body):
         data = json.loads(body or "{}")
     except ValueError:
         data = {}
+    if path == "/api/daemon":
+        return daemon_control(str(data.get("action") or "").strip().lower())
     if path == "/api/scan":
         return 200, scan()
     if path == "/api/record":
