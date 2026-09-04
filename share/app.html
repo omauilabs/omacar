@@ -32,6 +32,38 @@
 <link rel="stylesheet" href="css/ima.css">
 <link rel="stylesheet" href="css/omaplay.css">
 
+<!-- The palette on paper.
+     app.css already declares a print palette on :root, and it never arrives:
+     main.js applies the Omarchy theme as INLINE custom properties on the root
+     element, and an inline declaration outranks any stylesheet rule, print
+     media query or not. So a printed report came out in the dark theme's
+     near-white ink on white paper — a page of headings you cannot read, which
+     is the one artefact here that leaves the machine.
+
+     The surfaces are app.css's own print values, re-asserted at the only
+     weight that beats an inline declaration. The five semantic colours are new
+     here, because app.css does not print them at all: a theme's amber is
+     chosen to carry on a near-black panel and on white paper it is a smudge,
+     so paper gets darker versions of the same five meanings. Nothing here
+     changes the screen. -->
+<style>
+  @media print {
+    :root {
+      --ground: #fff !important; --panel: #fff !important; --panel-2: #fff !important;
+      --ink: #111 !important; --dim: #444 !important; --faint: #666 !important;
+      --edge: #ccc !important;
+      --ok: #1B7A4B !important; --warn: #8A5A05 !important; --bad: #A32A1B !important;
+      --info: #17558F !important; --ai: #4B3FA8 !important;
+    }
+  }
+</style>
+
+<!-- d3 is an ES module like everything else here, so the import in
+     js/charts-d3.js is the whole of its wiring. This line only asks the
+     browser to start fetching it alongside the HTML rather than two module
+     hops later; drop it and the app still works. -->
+<link rel="modulepreload" href="js/vendor/d3.min.js">
+
 <div id="app" class="app" data-booting="1">
   <nav class="rail" aria-label="Sections">
     <button type="button" class="rail-mark" id="btn-hub"

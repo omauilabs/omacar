@@ -10,8 +10,9 @@
 // run, and left out silently when it has not. A report should never be waiting
 // on a language model.
 
-import { h, clear, store, api, dist, econ, fullDate, isoDate, lifeTone,
-         sevTone, shortDate, vol, money, U } from "../core.js";
+import { h, clear, store, api, dist, econ, econVal, fullDate, isoDate, lifeTone,
+         sevTone, shortDate, vol, money, MONTH_NAMES, U } from "../core.js";
+import { lollipop, bars, barsLine } from "../charts-d3.js";
 
 export default function report(root) {
   const car = store.car;
@@ -70,11 +71,10 @@ export default function report(root) {
           + `${new Set(active.map((f) => (f.module || {}).id)).size > 1 ? "s" : ""}`
         : "No faults stored in any control unit"),
     h("div.grid.g3", { style: { marginTop: "14px" } },
-      line("Emissions readiness", ready.ready ? "Ready to test"
-        : `${ready.incomplete} monitor${ready.incomplete === 1 ? "" : "s"} incomplete`,
+      line("Emissions readiness", ready.ready ? "Ready" : `${ready.incomplete} incomplete`,
         ready.ready ? "ok" : "warn"),
-      line("On-board self-tests", failed.length ? `${failed.length} past the limit`
-        : marginal.length ? `${marginal.length} close to the limit` : "All within limits",
+      line("On-board self-tests", failed.length ? `${failed.length} past limit`
+        : marginal.length ? `${marginal.length} close` : "All clear",
         failed.length ? "bad" : marginal.length ? "warn" : "ok"),
       line("Service", svc ? (svc.overdue ? `${svc.overdue} overdue`
         : svc.due ? `${svc.due} due soon` : "Up to date") : "—",
@@ -113,26 +113,55 @@ export default function report(root) {
           m.why ? h("p.muted", m.why) : null)))));
   }
 
-  // ---- on-board tests worth flagging ----
-  if (failed.length || marginal.length) {
-    const tbl = table(["Self-test", "Component", "Measured", "Limit", "Verdict"]);
-    for (const t of failed.concat(marginal)) {
-      const bad = t.pass === false;
-      tbl.body.appendChild(h("tr",
-        h("td", t.name),
-        h("td.muted", t.component),
-        h("td.num", { style: { fontWeight: "600", color: bad ? "var(--bad)" : "var(--warn)" } },
-          `${t.value} ${t.unit}`),
-        h("td.num.muted", t.hi !== null && t.hi !== undefined ? `max ${t.hi}`
-          : t.lo !== null && t.lo !== undefined ? `min ${t.lo}` : "—"),
-        h("td", bad ? "Past the limit"
-          : `Passing at ${Math.round(t.headroom * 100)}% of the limit`)));
-    }
-    root.appendChild(h("div.card", h("div.eyebrow", "On-board self-tests"),
+  // ---- on-board self-tests ----
+  //
+  // Charted for every test that has a limit, tabled only for the ones worth
+  // reading a number off. The chart is the part that answers the question the
+  // owner actually has — is this car about to fail something — because a
+  // column of values beside a column of limits makes the reader do eleven
+  // divisions before it says anything at all.
+  const ranked = m6.filter((t) => Number.isFinite(t.headroom))
+    .slice().sort((a, b) => b.headroom - a.headroom);
+  if (ranked.length) {
+    const fig = h("div", { style: { marginTop: "14px" } });
+    const card = h("div.card", h("div.eyebrow", "On-board self-tests"),
       h("p.muted", { style: { marginTop: "4px" } },
         "The engine's own measurements against the manufacturer's limits. A test "
         + "passing close to its limit has not failed yet."),
-      h("div", { style: { marginTop: "10px", overflowX: "auto" } }, tbl.el)));
+      fig);
+    root.appendChild(card);
+
+    if (failed.length || marginal.length) {
+      const tbl = table(["Self-test", "Component", "Measured", "Limit", "Verdict"]);
+      for (const t of failed.concat(marginal)) {
+        const bad = t.pass === false;
+        tbl.body.appendChild(h("tr",
+          h("td", t.name),
+          h("td.muted", t.component),
+          h("td.num", { style: { fontWeight: "600", color: bad ? "var(--bad)" : "var(--warn)" } },
+            `${t.value} ${t.unit}`),
+          h("td.num.muted", t.hi !== null && t.hi !== undefined ? `max ${t.hi}`
+            : t.lo !== null && t.lo !== undefined ? `min ${t.lo}` : "—"),
+          h("td", bad ? "Past the limit"
+            : `Passing at ${Math.round(t.headroom * 100)}% of the limit`)));
+      }
+      card.appendChild(h("div.eyebrow", { style: { marginTop: "18px" } },
+        "Past or near the limit"));
+      card.appendChild(h("div", { style: { marginTop: "10px", overflowX: "auto" } }, tbl.el));
+    }
+
+    // After the card is in the document, so the chart can measure the width it
+    // has been given rather than guess one.
+    requestAnimationFrame(() => lollipop(fig, ranked.map((t) => ({
+      label: t.name,
+      value: t.headroom,
+      tone: t.pass === false ? "bad" : t.headroom > 0.85 ? "warn" : "ok",
+      right: Math.round(t.headroom * 100) + "%",
+      title: `${t.name}: ${t.value} ${t.unit} against `
+        + (t.hi !== null && t.hi !== undefined ? `a maximum of ${t.hi}`
+          : `a minimum of ${t.lo}`) + ` ${t.unit}`,
+    })), { empty: "No self-test results stored yet",
+           aria: "Each self-test as a percentage of its limit" }));
   }
 
   // ---- service ----
@@ -151,19 +180,57 @@ export default function report(root) {
           : null, i.due_on ? isoDate(i.due_on) : null].filter(Boolean).join("  ·  ")),
         h("td.muted", i.last_on ? isoDate(i.last_on) : "—")));
     }
+    const lives = svc.items.filter((i) => Number.isFinite(i.life));
+    const fig = h("div", { style: { marginTop: "12px" } });
     root.appendChild(h("div.card", h("div.eyebrow", "Maintenance"),
-      h("div", { style: { marginTop: "10px", overflowX: "auto" } }, tbl.el)));
+      h("p.muted", { style: { marginTop: "4px" } },
+        "Life left on each item, on the car's own countdown."),
+      lives.length ? fig : null,
+      h("div", { style: { marginTop: "16px", overflowX: "auto" } }, tbl.el)));
+
+    if (lives.length) {
+      requestAnimationFrame(() => bars(fig, lives.map((i) => ({
+        label: i.item,
+        value: Math.max(0, i.life),
+        tone: lifeTone(i.life) || "ok",
+        right: Math.max(0, i.life) + "%",
+        title: `${i.item}: ${Math.max(0, i.life)}% of its interval left`
+          + (i.last_on ? `, last done ${isoDate(i.last_on)}` : ""),
+      })), { mark: 15, caption: "book it", aria: "Service life left, worst first" }));
+    }
   }
 
   // ---- how it has been driven ----
   const p = car.perf;
   if (p && p.year) {
-    root.appendChild(h("div.card", h("div.eyebrow", "Use since records began"),
+    const months = p.months || [];
+    const fig = h("div", { style: { marginTop: "16px" } });
+    root.appendChild(h("div.card",
+      h("div.row.wrapline",
+        h("div.eyebrow", "Use since records began"),
+        months.length > 1
+          ? h("div.right.row", { style: { gap: "14px" } },
+              h("span.chan", h("span.swatch", { style: { background: "var(--info)",
+                width: "9px", height: "9px", borderRadius: "2px" } }), U.units.dist),
+              h("span.chan", h("span.swatch", { style: { background: "var(--warn)" } }),
+                U.units.econ))
+          : null),
       h("div.grid.g4", { style: { marginTop: "12px" } },
-        line("This year", dist(p.year.km)),
-        line("Average economy", econ(p.year.lphk)),
-        line("Fuel", vol(p.year.litres) + (p.year.cost ? `  ·  ${money(p.year.cost)}` : "")),
-        line("Records from", isoDate(p.since)))));
+        line("This year", dist(p.year.km), null, true),
+        line("Average economy", econ(p.year.lphk), null, true),
+        line("Fuel", vol(p.year.litres) + (p.year.cost ? `  ·  ${money(p.year.cost)}` : ""),
+          null, true),
+        line("Records from", isoDate(p.since), null, true)),
+      months.length > 1 ? fig : null));
+
+    if (months.length > 1) {
+      requestAnimationFrame(() => barsLine(fig, months.map((m) => ({
+        label: MONTH_NAMES[parseInt(m.month.split("-")[1], 10) - 1][0],
+        bar: (m.km || 0) * U.units.km,
+        line: econVal(m.lphk),
+      })), { lineUnit: U.units.econ,
+             aria: `Distance and economy by month, in ${U.units.dist} and ${U.units.econ}` }));
+    }
   }
 
   // ---- the owner-facing summary, if one exists ----
@@ -210,10 +277,17 @@ export default function report(root) {
       sign("Inspected by"), sign("Date"))));
 }
 
-function line(k, v, tone) {
+// The verdict tiles are the headline of the handout and are left at the
+// stylesheet's full 1.7rem: this page is read at arm's length, on paper, by
+// somebody who did not run the scan. Only the four use-since-records figures
+// are stepped down, because they are a footnote to the verdict rather than a
+// second one — and because a fuel figure with a cost beside it wraps at 1.7rem
+// in a quarter of the page.
+function line(k, v, tone, small) {
   return h("div.stat-tile",
     h("div.k", k),
-    h("div.v" + (tone ? "." + tone : ""), { style: { fontSize: "1.05rem" } }, v));
+    h("div.v" + (tone ? "." + tone : ""),
+      small ? { style: { fontSize: "1.15rem" } } : null, v));
 }
 
 function table(cols) {
