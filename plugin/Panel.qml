@@ -159,10 +159,32 @@ Panel {
   // stopped hours ago and left its claim on disk", and those want different
   // things from the user.
   readonly property string staleNote: (sample.connected === true && !root.liveFresh && root.liveAge > 0) ? "daemon stopped " + root.since(root.liveAge) : ""
+  // ONE THRESHOLD IS NOT ENOUGH TO SAY "DRIVING".
+  //
+  // A single 3 kph line means a car in traffic, or rolling up to a junction,
+  // crosses it several times a minute -- and the state dot, the status line
+  // and the tooltip all flip with it, once a second, while nothing about the
+  // situation has actually changed. Flickering state is read as a broken
+  // readout, not as a precise one.
+  //
+  // So the line moves depending on which side of it we are already on:
+  // it takes 3 kph to be called driving and a drop below 1 kph to stop being
+  // called it. Schmitt trigger, in other words, and the same trick a
+  // speedometer needle uses to sit still at a standstill.
+  //
+  // Held in its own property and written from the sample rather than computed
+  // inside the state_ binding, because a binding that reads and writes the
+  // same property is a binding loop; this way the dependency runs one way,
+  // live -> wasDriving -> state_.
+  property bool wasDriving: false
+  onLiveChanged: {
+    var d = (root.live.speed || 0) > (root.wasDriving ? 1 : 3)
+    if (d !== root.wasDriving) root.wasDriving = d
+  }
   readonly property string state_: {
     if (!connected) return "offline"
     var s = live.speed || 0, r = live.rpm || 0
-    if (s > 3) return "driving"
+    if (s > (root.wasDriving ? 1 : 3)) return "driving"
     if (r > 200) return "idling"
     return "parked"
   }
@@ -187,8 +209,32 @@ Panel {
         root.daemonStarting = false
         // The wrapper prints its failure rather than exiting loudly, so the
         // text is the only signal worth reading.
-        root.startError = text.indexOf("did not start") >= 0
-          ? "could not start — is the ignition on?" : ""
+        //
+        // It is read rather than pattern-matched down to one guess. The old
+        // code mapped every failure onto "is the ignition on?", which was
+        // wrong for the most common one by far -- the simulator holding the
+        // port, which has nothing to do with the ignition and is fixed by a
+        // different action. The wrapper already writes one good sentence per
+        // cause, so the honest thing is to show it. Ignition stays as the
+        // fallback for a silent failure, because a car that is not awake is
+        // the reason a start times out with nothing to say.
+        var t = (text || "").trim()
+        var line = ""
+        var lines = t.split("\n")
+        for (var i = lines.length - 1; i >= 0; i--) {
+          var candidate = lines[i].trim().replace(/^omacar:\s*/, "")
+          if (candidate.length > 0) { line = candidate; break }
+        }
+        if (line.length === 0) {
+          root.startError = ""
+        } else if (t.indexOf("daemon running") >= 0) {
+          root.startError = ""
+        } else if (t.indexOf("did not start") >= 0 && lines.length <= 1) {
+          root.startError = "could not start — is the ignition on?"
+        } else {
+          // Long enough to be a sentence, short enough for the panel's width.
+          root.startError = line.length > 96 ? line.substring(0, 95) + "…" : line
+        }
       }
     }
   }
@@ -220,7 +266,19 @@ Panel {
     root.daemonStopping = true
     stopDaemon.running = true
   }
-  readonly property int issues: car.issues || 0
+  // HOW MANY FAULTS, FROM WHICHEVER PRODUCER IS FEEDING US.
+  //
+  // Two things write this panel's cache. The rollup script that exists today
+  // hands over a pre-counted `issues` integer; the `omacar card` snapshot that
+  // is replacing it hands over `active_faults`, the list itself, and no count
+  // at all. Reading only one of them means the hero pill goes quietly wrong
+  // the day the other one lands -- and a pill that reads "no faults" over a
+  // Health tab listing codes is worse than no pill.
+  //
+  // So: prefer the list when it is there, because a length cannot disagree
+  // with the rows underneath it, and fall back to the count when it is not.
+  readonly property int issues: car.active_faults
+    ? car.active_faults.length : (car.issues || 0)
 
   // Worth lighting the bar for: something is past due, or a code has set in
   // the last few days. A fault that has been standing since the spring is on
@@ -413,60 +471,127 @@ Panel {
   }
 
   // ---- data ----------------------------------------------------------------
-  Process {
-    id: loadCache
-    command: ["bash", "-c", "cat \"$1\" 2>/dev/null || echo '{}'", "x", root.cache]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var d
-        try { d = JSON.parse(text) } catch (e) { return }
-        // Compared before assigning: this runs on a timer and every row in the
-        // panel binds to it, so an unconditional write rebuilds the lot.
-        if (JSON.stringify(d) !== JSON.stringify(root.car)) root.car = d
-      }
+  //
+  // FOUR SMALL FILES, READ WITHOUT FORKING ANYTHING.
+  //
+  // These four were read with `bash -c 'cat "$1" || echo {}'`. The `||` is
+  // what makes it expensive: it stops bash from exec-replacing itself, so
+  // every read cost two forks and two execs. Twenty reads a minute with the
+  // panel shut, ninety-six with it open, and a single click on the bar icon
+  // could issue eight process creations in one turn of the event loop --
+  // against a shell process holding a GL context and a large QML heap, whose
+  // page tables are copied on every one of them. That is the only thing in
+  // this plugin that got worse the longer the session ran, and it is what the
+  // menu bar stalling on a click actually was.
+  //
+  // FileView reads the file on Quickshell's own I/O thread and, with
+  // watchChanges, is told by the kernel when it changes rather than asking.
+  // Three of these four now have no timer at all.
+  //
+  // Two things about the shim are worth writing down, because both are silent
+  // when got wrong. `text` is a FUNCTION here, not a property -- the Process
+  // idiom of reading a bare `text` in the handler yields undefined. And
+  // `fileChanged` is a notification, not a reload: the content does not come
+  // back until reload() is called, which is why every FileView in the shell
+  // is written with `onFileChanged: reload()`.
+  //
+  // printErrors is off throughout. A file that no daemon has written yet is
+  // the ordinary state of a fresh install, not something to log once a second.
+  function parsedJson(t) {
+    var s = String(t || "")
+    if (s === "") return null
+    var d
+    try { d = JSON.parse(s) } catch (e) { return null }
+    return (d && typeof d === "object") ? d : null
+  }
+
+  FileView {
+    id: cacheView
+    path: root.cache
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.readCache(text())
+    onFileChanged: reload()
+    // The `|| echo '{}'` the bash reader used to end with. Without it a file
+    // that is deleted, renamed away, or caught zero-length mid-rollup simply
+    // never fires onLoaded, and the panel goes on showing a car that is no
+    // longer there instead of falling back to "No car".
+    onLoadFailed: root.readCache("{}")
+  }
+
+  function readCache(t) {
+    var d = root.parsedJson(t)
+    if (!d) return
+    // Compared before assigning: every row in the panel binds to this, so an
+    // unconditional write rebuilds the lot for a file that is usually
+    // byte-for-byte what we already had.
+    if (JSON.stringify(d) !== JSON.stringify(root.car)) root.car = d
+  }
+
+  // BELT AND BRACES, ONCE A MINUTE -- FOR ALL THREE WATCHED FILES.
+  //
+  // All three are written to a temp file and renamed over the old one, so the
+  // thing being watched is replaced rather than modified. Quickshell copes
+  // with that -- every config file the shell watches is written the same way
+  // by an editor -- but the failure if it ever did not would be a panel
+  // quietly showing yesterday, which is the one failure worth insuring
+  // against. Three reads of three small files a minute is the whole premium.
+  //
+  // The insurance covers alerts.json most of all, not least. The rollup is
+  // refreshed by an explicit Refresh button, so a stalled cache has a way out
+  // that a user can find; the alert feed has none, and arriving promptly is
+  // the entire point of it. lib/watch.py writes it with os.replace on every
+  // single alert, so it is also the file whose inode is destroyed most often.
+  Timer {
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: {
+      cacheView.reload()
+      alertsView.reload()
+      dismissedView.reload()
     }
   }
 
-  Process {
-    id: loadAlerts
-    command: ["bash", "-c", "cat \"$1\" 2>/dev/null || echo '{}'", "x", root.alertFile]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var d
-        try { d = JSON.parse(text) } catch (e) { return }
-        if (JSON.stringify(d) !== JSON.stringify(root.alerts)) root.alerts = d
-      }
-    }
+  FileView {
+    id: alertsView
+    path: root.alertFile
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.readAlerts(text())
+    onFileChanged: reload()
+    onLoadFailed: root.readAlerts("{}")
   }
 
-  Process {
-    id: loadDismissed
-    command: ["bash", "-c", "cat \"$1\" 2>/dev/null || echo '{}'", "x", root.dismissFile]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var d
-        try {
-          d = JSON.parse(text)
-        } catch (e) {
-          return
-        }
-        if (!d || typeof d !== "object")
-          return
-        // Anything the file now confirms can stop being carried locally.
-        var ids = d.ids || []
-        var still = []
-        for (var i = 0; i < root.pendingDismiss.length; i++)
-          if (ids.indexOf(root.pendingDismiss[i]) < 0)
-            still.push(root.pendingDismiss[i])
-        if (still.length !== root.pendingDismiss.length)
-          root.pendingDismiss = still
-        if (JSON.stringify(d) !== JSON.stringify(root.dismissed))
-          root.dismissed = d
-      }
-    }
+  function readAlerts(t) {
+    var d = root.parsedJson(t)
+    if (!d) return
+    if (JSON.stringify(d) !== JSON.stringify(root.alerts)) root.alerts = d
+  }
+
+  FileView {
+    id: dismissedView
+    path: root.dismissFile
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.readDismissed(text())
+    onFileChanged: reload()
+    onLoadFailed: root.readDismissed("{}")
+  }
+
+  function readDismissed(t) {
+    var d = root.parsedJson(t)
+    if (!d) return
+    // Anything the file now confirms can stop being carried locally.
+    var ids = d.ids || []
+    var still = []
+    for (var i = 0; i < root.pendingDismiss.length; i++)
+      if (ids.indexOf(root.pendingDismiss[i]) < 0)
+        still.push(root.pendingDismiss[i])
+    if (still.length !== root.pendingDismiss.length)
+      root.pendingDismiss = still
+    if (JSON.stringify(d) !== JSON.stringify(root.dismissed))
+      root.dismissed = d
   }
 
   Process {
@@ -500,7 +625,10 @@ Panel {
       + "os.replace(t, p)\n"
       + "PYEOF\n",
       "x", root.dismissFile, "", "0"]
-    onExited: if (!loadDismissed.running) loadDismissed.running = true
+    // Re-read the file we just wrote. The watcher would tell us about it a
+    // moment later anyway, but a dismissal that appears to come back for even
+    // one frame is the kind of thing people stop trusting a button over.
+    onExited: dismissedView.reload()
   }
 
   function dismissAlert(a) {
@@ -538,28 +666,52 @@ Panel {
     writeDismiss.running = true
   }
 
-  Process {
-    id: loadLive
-    command: ["bash", "-c", "cat \"$1\" 2>/dev/null || echo '{}'", "x", root.liveFile]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try { root.sample = JSON.parse(text) } catch (e) { root.sample = ({}) }
-      }
-    }
+  // THE ONE FILE THAT IS NOT WATCHED, and deliberately.
+  //
+  // live.json is rewritten five times a second while the daemon is running.
+  // Watching it would hand this panel five wake-ups, five reads and five
+  // rounds of binding invalidation a second for a readout no one can follow
+  // faster than about one -- so this is the file to throttle rather than the
+  // file to subscribe to. The timer below asks for it once a second with the
+  // panel open and once every five with it shut.
+  FileView {
+    id: liveView
+    path: root.liveFile
+    watchChanges: false
+    printErrors: false
+    onLoaded: root.readLive(text())
   }
 
-  // KEEPS TICKING WITH THE PANEL SHUT, and that is the point.
+  function readLive(t) {
+    var d = root.parsedJson(t)
+    if (!d) return
+    // The same guard the three readers above have had all along, and this one
+    // wanted it most. `live` below is an object LITERAL, so assigning `sample`
+    // mints a new identity whether or not a single number moved -- and that
+    // invalidates state_, engineOn, connected, the tooltip and every row of
+    // the Now tab. With the car parked and the daemon stopped, the file does
+    // not change from one read to the next, so nothing downstream should move
+    // either.
+    if (JSON.stringify(d) !== JSON.stringify(root.sample)) root.sample = d
+  }
+
+  // THE PANEL'S ONLY REMAINING CLOCK, and it keeps ticking with the panel
+  // shut, which is the point.
   //
-  // This used to run only while the panel was open, on the reasoning that
-  // nobody is reading the live file otherwise. That stopped being true the
-  // moment the bar icon turned green on `connected`: freshness is measured
-  // against nowSec, so a frozen clock and a frozen sample meant the icon kept
-  // whatever colour it had when the panel closed -- green, forever, over an
-  // adapter that had been unplugged for hours.
+  // The cache, the alert feed and the dismissal list are all told when they
+  // change now, so their three timers are gone. This one is left because the
+  // file it reads changes faster than it is worth hearing about, and because
+  // nowSec has to keep moving: freshness is measured against it, so a frozen
+  // clock and a frozen sample once meant the icon kept whatever colour it had
+  // when the panel closed -- green, forever, over an adapter that had been
+  // unplugged for hours.
   //
   // Slower when shut, because reading one small file every five seconds is
-  // cheap and being wrong in the bar is not.
+  // cheap and being wrong in the bar is not. Changing the interval restarts
+  // the timer, which with triggeredOnStart gives a fresh reading the moment
+  // the panel opens -- nobody wants a reading from a minute ago while staring
+  // at the thing that shows it. That restart used to be expensive, because
+  // what it kicked was two processes; now it is one file read.
   Timer {
     interval: root.opened ? 1000 : 5000
     running: true
@@ -567,42 +719,21 @@ Panel {
     triggeredOnStart: true
     onTriggered: {
       root.nowSec = Date.now() / 1000
-      if (!loadLive.running) loadLive.running = true
+      liveView.reload()
     }
   }
 
-  Timer {
-    interval: root.opened ? 10000 : 60000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: if (!loadCache.running) loadCache.running = true
-  }
-
-  // Alerts are cheap to read and the whole point of them is arriving promptly,
-  // so this one keeps ticking whether or not the panel is open.
-  Timer {
-    interval: root.opened ? 4000 : 15000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: {
-      if (!loadAlerts.running) loadAlerts.running = true
-      if (!loadDismissed.running) loadDismissed.running = true
-    }
-  }
-
-  // Re-read the moment the panel opens — nobody wants a reading from a minute
-  // ago while staring at the thing that shows it.
   onOpenedChanged: {
     // Always come back to the panel itself. Reopening onto the notifications
     // page -- most likely emptied, since that is why you were there -- would
     // look like the panel had lost its contents.
+    //
+    // Nothing is kicked from here any more. The three explicit reads that
+    // used to live here were the worst of the fork storm -- up to eight
+    // process creations in the one turn of the event loop that also had to
+    // build the panel -- and every one of them is now either already current
+    // via the watcher or covered by the timer above restarting.
     notifOpen = false
-    if (!opened) return
-    if (!loadCache.running) loadCache.running = true
-    if (!loadLive.running) loadLive.running = true
-    if (!loadDismissed.running) loadDismissed.running = true
   }
 
   Process { id: act }
@@ -612,10 +743,13 @@ Panel {
     act.running = true
   }
   function refreshNow() {
-    run(["bash", "-c", "liquid-glass-car --quiet >/dev/null 2>&1"])
+    run(["bash", "-c", "omacar card --quiet >/dev/null 2>&1"])
     recheck.restart()
   }
-  Timer { id: recheck; interval: 1200; onTriggered: if (!loadCache.running) loadCache.running = true }
+  // The rollup takes a moment to run. The watcher will notice its rename on
+  // its own, so this is only here to make Refresh feel like it did something
+  // even if the run produced a byte-identical file.
+  Timer { id: recheck; interval: 1200; onTriggered: cacheView.reload() }
   function openCluster() { run(["bash", "-c", "omacar >/dev/null 2>&1 &"]) }
 
   // ---- the bar button ------------------------------------------------------
@@ -623,22 +757,25 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // A WIDER, larger canvas than a bar icon normally gets.
+    // A quarter larger than the shell's icon canvas, and derived from it.
     //
-    // BarIconButton draws iconComponent into a square of Style.bar.iconCanvas,
-    // which is 16px. A 3.3:1 coupe in a 16px square is 16 wide and 4.8 tall,
-    // and 4.8px of height is why it reads as small. Growing the canvas grows
-    // the car proportionally; the slot grows with it so the neighbouring
-    // widgets keep their spacing instead of being crowded.
-    opticalSize: 38
-    slotSize: 42
+    // The wheel is square, so unlike the coupe it already fills whatever
+    // canvas it is given and needs no 3.3:1 correction -- the 38px the coupe
+    // needed would put a 36px disc in a 26px bar. A quarter over the token
+    // resolves to 20px on this theme, which keeps the ~3px of air above and
+    // below that stops an icon looking wedged in, lands on whole device pixels
+    // at a 1.25 display scale, and follows the theme if it ever resizes its
+    // bar. The slot is left alone so neighbouring widgets keep their spacing;
+    // an OmaCar button wider than everything beside it was the other half of
+    // what made the coupe look wrong.
+    opticalSize: Math.round(Style.bar.iconCanvas * 1.25)
     // Lit when the engine is turning, or when something wants attention now.
     // NOT for any standing fault: a code the car has held since June would
     // leave the icon permanently on, and an indicator that is always lit is
     // an indicator nobody reads.
     active: root.engineOn || root.attention
 
-    iconComponent: Car {
+    iconComponent: SteeringWheel {
       // GREEN whenever the link to the car is live.
       //
       // "active" already lights the button for engine-on or an alert, but both
@@ -650,11 +787,14 @@ Panel {
               ? root.cGreen
               : (button.active && button.useActiveColor ? button.activeColor : button.foreground)
       running: root.engineOn
-      // A quarter turn while moving. Not a spin — a wheel that never stops
-      // turning is a busy indicator, and this one means "the car is going
-      // somewhere", which it says better by leaning than by whirling.
-      spin: root.state_ === "driving" ? 0.42 : 0
-      Behavior on spin { NumberAnimation { duration: 900; easing.type: Easing.OutBack } }
+      // NO LEAN, AND NO ANIMATION. `spin` is left at its default of nought.
+      //
+      // The 0.42 this carried came from the coupe, where spin is turns per
+      // second and feeds an animation. On the wheel it is a static angle in
+      // radians, which is 24 degrees -- and with three spokes at -90, 21.6 and
+      // 158.4 degrees, a 24 degree offset does not read as a lean, it reads as
+      // an icon someone failed to align. Movement is already said twice over
+      // here: green for a live link, a filled hub while the engine turns.
     }
 
     tooltipText: {
@@ -1202,7 +1342,7 @@ Panel {
               }
             }
 
-            Car {
+            SteeringWheel {
               id: heroWheel
               // ALWAYS drawn, faint when there is no link.
               //
@@ -1221,14 +1361,30 @@ Panel {
               anchors.right: parent.right
               // A proportion of the panel rather than a fixed size, so it stays
               // the same relative weight whatever width the bar gives us.
-              width: Math.round(parent.width * 0.38)
-              // Derived from the artwork's own 3.3:1, not forced square. A
-              // square box would leave the coupe floating in empty space.
-              height: Math.round(width / heroWheel.aspect)
+              //
+              // 0.16 where the coupe had 0.38. The two numbers describe the
+              // same picture: a 3.3:1 coupe at 0.38 of a ~468px panel was 178
+              // wide and 54 tall, and it is the HEIGHT the eye weighs. A
+              // square wheel at 0.38 would be a 178px disc owning the whole
+              // hero; at 0.16 it is 75px, a shade taller than the car it
+              // replaces, which is right for the mark the app is named after.
+              width: Math.round(parent.width * 0.16)
+              // Square, because a wheel is. `aspect` was a Car property and
+              // does not exist here -- reading it would give width/undefined
+              // and collapse the height binding to NaN.
+              height: width
               tint: root.dim(root.engineOn ? 0.85 : root.connected ? 0.55 : 0.16)
               running: root.engineOn
-              spin: root.state_ === "driving" ? 0.42 : 0
-              Behavior on spin { NumberAnimation { duration: 900; easing.type: Easing.OutBack } }
+              // NO `spin` AT ALL, deliberately.
+              //
+              // The two components mean different things by the word. Car.qml
+              // turned `spin` into the DURATION of an infinite wheel
+              // animation; SteeringWheel.qml passes it straight to
+              // ctx.rotate as RADIANS. Carrying the old 0.42 across would not
+              // have spun anything -- it would have hung the wheel at a
+              // permanent 24-degree tilt. The wheel says "running" with its
+              // hub, which is the convention the bar icon already uses, so
+              // there is nothing left for rotation to add.
             }
 
             Column {
@@ -1503,6 +1659,7 @@ Panel {
                 height: loadLabel.implicitHeight
                 SectionLabel { id: loadLabel; text: "ENGINE LOAD" }
                 Muted {
+                  anchors.right: parent.right
                   text: Math.round(root.live.load || 0) + "%"
                     + (root.live.throttle !== undefined
                        ? "   ·   throttle " + Math.round(root.live.throttle) + "%" : "")
@@ -1674,6 +1831,7 @@ Panel {
                 height: monthsLabel.implicitHeight
                 SectionLabel { id: monthsLabel; text: "TWELVE MONTHS" }
                 Row {
+                  anchors.right: parent.right
                   spacing: Style.space(9)
                   Row {
                     spacing: Style.space(4)
@@ -1775,8 +1933,19 @@ Panel {
                   width: parent.width
                   height: tripRow.implicitHeight + Style.space(6)
 
+                  // Anchored to both edges, and it has to be.
+                  //
+                  // Every column in this row is sized as a fraction of
+                  // `parent.width`, and a Row with no width of its own takes
+                  // its width from its children -- so the children were asking
+                  // the row how wide it was while the row was asking them.
+                  // Qt breaks that with a binding loop warning and whatever
+                  // width it had reached; both anchors give the row a real
+                  // width to divide up instead.
                   Row {
                     id: tripRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: Style.space(10)
 
@@ -1850,8 +2019,18 @@ Panel {
                             root.severityColor(modelData.severity).b, 0.35)
                   : root.dim(0.10)
 
+                // Both edges, which is also what re-arms the margin below.
+                //
+                // Every child here is `width: parent.width` and wraps, so a
+                // column with no width of its own is a binding loop dragging
+                // WordWrap re-layout -- the most expensive thing in Qt Quick --
+                // behind it every time the cache lands. And
+                // anchors.margins does nothing without an edge to hold it off,
+                // which is why these cards had text sitting on their borders.
                 Column {
                   id: faultCol
+                  anchors.left: parent.left
+                  anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   anchors.margins: Style.space(10)
                   spacing: Style.space(4)
@@ -1872,6 +2051,7 @@ Panel {
                     }
 
                     Pill {
+                      anchors.right: parent.right
                       anchors.verticalCenter: codeText.verticalCenter
                       label: modelData.status
                       tint: modelData.active ? root.severityColor(modelData.severity)
@@ -1999,8 +2179,13 @@ Panel {
                                     root.lifeColor(root.svc ? root.svc.next.life : null).g,
                                     root.lifeColor(root.svc ? root.svc.next.life : null).b, 0.38)
 
+              // Both edges, for the same two reasons as faultCol above: the
+              // children are all parent.width, and the margin is inert without
+              // a horizontal anchor to hold it off.
               Column {
                 id: nextCol
+                anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.margins: Style.space(12)
                 spacing: Style.space(6)
@@ -2021,6 +2206,7 @@ Panel {
                   }
 
                   Text {
+                    anchors.right: parent.right
                     anchors.baseline: nextName.baseline
                     text: root.svc ? Math.max(0, root.svc.next.life) + "%" : ""
                     color: root.lifeColor(root.svc ? root.svc.next.life : null)
@@ -2075,6 +2261,7 @@ Panel {
                 height: bookLabel.implicitHeight
                 SectionLabel { id: bookLabel; text: "THE BOOK" }
                 Muted {
+                  anchors.right: parent.right
                   text: root.svc
                     ? (root.svc.due > 0 ? root.svc.due + " due or due soon" : "nothing due")
                     : ""
@@ -2122,6 +2309,7 @@ Panel {
                     }
 
                     Text {
+                      anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
                       text: Math.max(0, modelData.life) + "%"
                       color: root.lifeColor(modelData.life)

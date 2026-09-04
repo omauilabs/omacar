@@ -23,11 +23,21 @@ Canvas {
   onTintChanged: requestPaint()
   onRunningChanged: requestPaint()
   onSpinChanged: requestPaint()
+  // Both dimensions, not just the width. A Canvas is only repainted when it is
+  // asked to be, and the bar hands this one its size in two steps -- a width
+  // first and a height a frame later. Watching width alone meant the repaint
+  // happened while the height was still nought, and the wheel never came back.
   onWidthChanged: requestPaint()
+  onHeightChanged: requestPaint()
 
   onPaint: {
     var ctx = getContext("2d")
+    // reset() returns the context's state -- transform, stroke, fill -- to its
+    // defaults; it does not erase what was already drawn. Without the clear,
+    // a repaint at a new angle or a new size leaves the previous wheel
+    // underneath the new one, which at bar sizes reads as a smeared ring.
     ctx.reset()
+    ctx.clearRect(0, 0, width, height)
     var s = Math.min(width, height)
     if (s < 4) return
     var r = s / 2
