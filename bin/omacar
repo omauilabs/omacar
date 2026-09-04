@@ -41,6 +41,7 @@
 #   omacar ai [triage|owner|predict|code P0135|ask "..."]
 #                             the diagnostic advisor — reads this car's own
 #                             numbers and tells you what is actually wrong
+#   omacar card [--quiet]     rebuild the rollup the bar panel and dock read
 #   omacar roadmap [--check]  regenerate the measured half of doc/ROADMAP.md
 #   omacar state              key=value status for the bar widget
 #   omacar demo start|stop|status|trash
@@ -311,6 +312,15 @@ daemon_pid() {
 daemon_start() {
   omacar_need_env
   if daemon_pid >/dev/null; then echo "daemon already running (pid $(daemon_pid))"; return; fi
+  # The mirror of the guard in sim_start. daemon.py refuses to run beside the
+  # simulator too, but it refuses by exiting BEFORE it writes the pidfile --
+  # so without this the poll below spends ten seconds waiting for a file that
+  # is never coming and then blames the car. The two processes fight over the
+  # same live.json, so this is a real refusal, not a convenience.
+  if sim_pid >/dev/null; then
+    echo "omacar: the simulator is running — stop it first (omacar sim stop)" >&2
+    exit 1
+  fi
   setsid -f "$OMACAR_PY" "$ROOT/lib/daemon.py" >"$OMACAR_STATE/daemon.log" 2>&1
   local i
   for i in $(seq 1 40); do
@@ -741,7 +751,7 @@ print()
       start) demo_start ;;
       # How the bar widget refreshes while the demo is on. It cannot set the
       # environment itself, so it asks us to do it.
-      cache) demo_env; exec "$0" panel-cache --quiet ;;
+      cache) demo_env; exec "$0" card --quiet ;;
       stop) demo_stop ;;
       trash) demo_trash ;;
       *) demo_status ;;
@@ -752,6 +762,11 @@ print()
   # is in the profile pool. It rewrites doc/ROADMAP.md only when one of
   # those numbers has actually moved, so it is safe to run in a hook.
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
+  # Under the venv interpreter like every other module that imports lib/,
+  # rather than under a bare python3. lib/ai.py is the cautionary tale: it is
+  # dispatched with plain python3 and so cannot see anything the venv has, for
+  # no reason other than the line having been written that way once.
+  card) shift; exec "$OMACAR_PY" "$ROOT/lib/card.py" "$@" ;;
   state) state ;;
   server) case "${2:-status}" in stop) server_stop ;; *) server_status ;; esac ;;
   help | --help | -h) usage ;;
