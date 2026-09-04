@@ -60,11 +60,42 @@
   --bright:   #FFFFFF;
   --bright-2: #C8D4D2;
 
-  --rail: 62px;
   --vbar: 58px;
   --r: 10px;
 
+  /* The navigation block, and the floor under every target in it.
+     48px is the floor and 56px the default, not 44: 44 is Apple's figure for
+     a phone held still in one hand, Material says 48dp and Microsoft says
+     9mm, and none of the three was derived for a tablet bolted to a dashboard
+     on a road with potholes in it. The reference machine is a 12.3in Surface
+     at 1368x912 CSS px, where 48 CSS px is about 9.1mm of glass.
+
+     These are declared here rather than written into the components because
+     the density block below moves all five at once. A component rule that
+     states a raw pixel target again is a component that will not follow. */
+  --tap:     48px;
+  --tap-lg:  56px;
+  --tabbar:  72px;
+  --subtabs: 48px;
+  /* Physical bezels and rounded corners, which the kiosk build does have and
+     a desktop browser reports as zero. There was not one env() in this file
+     before the bar existed, and the bar is the one thing that sits in the
+     part of the screen a mount can cover. */
+  --safe-b:  env(safe-area-inset-bottom, 0px);
+  --nav: calc(var(--subtabs) + var(--tabbar) + var(--safe-b));
+
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* Cabin density, keyed on the input device and NOT on the width.
+   Every other responsive fallback in this file is a width breakpoint, and on
+   the reference hardware every one of them answers "desktop": the Surface is
+   1368 CSS px wide and driven by a thumb. `pointer: coarse` is the only query
+   that tells the truth about that machine, so the size step lives here and
+   the .svc-entry and .drive-row width queries further down are the ones that
+   are wrong, not this. */
+@media (pointer: coarse) {
+  :root { --tap: 56px; --tap-lg: 64px; --tabbar: 84px; --subtabs: 56px; }
 }
 
 * { box-sizing: border-box; }
@@ -79,6 +110,13 @@
    itself off the viewport rather than the root -- and it lifts every token in
    the file by a twentieth without touching a single one of them. */
 html { font-size: 16px; background: var(--ground); }
+/* THE DOCUMENT DOES NOT SCROLL. .stage does.
+   Without this a sub-pixel rounding of 100vh -- one pixel, on this machine --
+   is enough to give the page a full-height scrollbar, and a classic scrollbar
+   on Linux costs 15px of width and paints a grey gutter down the side of a
+   filmed screen for a document that has nothing to scroll to. Scoped to
+   `screen` so printing still paginates normally. */
+@media screen { html { overflow: hidden; } }
 body {
   margin: 0; background: var(--ground); color: var(--ink);
   font-family: var(--mono); font-size: .92rem; line-height: 1.5;
@@ -88,75 +126,212 @@ h1, h2, h3, p, ul, ol, figure { margin: 0; }
 ul, ol { padding: 0; list-style: none; }
 button { font: inherit; color: inherit; }
 
+/* One column, three rows, and the middle one is the only thing that scrolls.
+   The height is fixed rather than a minimum so the navigation row is a real
+   row of the viewport instead of something dragged into place with
+   position:fixed — which is what lets it be last in the document and still
+   be at the bottom of the screen. */
 .app {
-  display: grid; min-height: 100vh;
-  grid-template-columns: var(--rail) 1fr;
-  grid-template-rows: var(--vbar) 1fr;
-  grid-template-areas: "rail vbar" "rail stage";
+  display: grid; height: 100vh;
+  grid-template-columns: 1fr;
+  grid-template-rows: var(--vbar) 1fr var(--nav);
+  grid-template-areas: "vbar" "stage" "navbar";
 }
 /* No fade-in. A diagnostic tool that animates its own arrival looks broken
    for the first fifth of a second, and on a slow first paint it looks broken
    for longer than that. */
 .app[data-booting="1"] .stage { visibility: hidden; }
 
-/* ---------------------------------------------------------------- the rail */
-.rail {
-  grid-area: rail; background: var(--ground); border-right: 1px solid var(--edge);
-  display: flex; flex-direction: column; align-items: center;
-  padding: 10px 0 12px; gap: 4px; position: sticky; top: 0; height: 100vh;
+/* ------------------------------------------------------ the navigation
+   The rail that used to be here has been deleted, markup and all.
+
+   It could not be both things at once. Nineteen destinations in a 62px
+   vertical strip needed a scroller, then labels capped at .58rem, then a
+   "More" popup holding thirteen of them, and then it had to promote whichever
+   hidden view you were looking at INTO itself so that "you are here" could be
+   shown at all. Two of those rules are in this file's own history with
+   comments admitting the fit had already failed.
+
+   Keeping it behind a media query for wide windows was the obvious
+   compromise, and it is not available: every width query in this stylesheet
+   answers "desktop" on a 1368x912 tablet, which is exactly the machine this
+   redesign exists for -- desktop-SIZED and driven by a thumb. Nor is anything
+   lost horizontally, because .wrap is capped at 1180px, so the 62px the rail
+   gives back buys no reading width at all. */
+.navbar {
+  grid-area: navbar; min-width: 0;
+  display: flex; flex-direction: column;
+  background: var(--panel); border-top: 1px solid var(--edge);
+  padding-bottom: var(--safe-b);
 }
-.rail-mark { color: var(--faint); margin-bottom: 10px; flex: none; }
-/* The rail scrolls, and its buttons do not squash.
-   Seventeen views need ~950px of rail. Without these two rules a shorter
-   viewport did both of the wrong things at once: flex-shrink squeezed every
-   button below its 46px hit target, AND the tail of the list -- Garage, Learn,
-   Report, Live, Drive -- was clipped with no scrollbar and no way to reach it.
-   The nav silently lost five destinations. */
-.rail-items {
-  display: flex; flex-direction: column; gap: 3px; flex: 1; width: 100%;
-  align-items: center;
-  overflow-y: auto; overflow-x: hidden;
+
+/* ---- the sub-tab chip row ---- */
+.subbar {
+  height: var(--subtabs); flex: none; min-width: 0;
+  display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  border-bottom: 1px solid var(--edge);
+}
+/* A RESERVED SLOT, not a slot that appears.
+   Sized rather than shrink-wrapped, and its button is hidden with visibility
+   rather than display, so the chips to the right sit at exactly the same x
+   whether or not there is anything in it. Letting it collapse meant that the
+   moment the adapter answered, "Car connected — open the hub" appeared and
+   pushed the whole row 261px sideways -- and a stale sample ages out after
+   fifteen seconds, so a flaky ELM327 at a set of lights did it over and over
+   while somebody was reading a code. You reach for Scan, the row moves, you
+   land on Readiness. */
+.subbar-lead {
+  flex: none; width: 15rem; min-width: 15rem; overflow: hidden;
+}
+@media (max-width: 900px) { .subbar-lead { width: 9rem; min-width: 9rem; } }
+/* Scrolls sideways, never wraps.
+   A chip row that wraps changes the height of the navigation block, which
+   moves the tab bar out from under a thumb already travelling towards it.
+   Care has five chips and the row is 1368px wide, so this only ever matters
+   on a narrower mount -- which is the case where it matters most. */
+.subbar-chips {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
   scrollbar-width: none;                 /* Firefox */
   -ms-overflow-style: none;
 }
-.rail-items::-webkit-scrollbar { width: 0; height: 0; }
-.rail-foot { flex: none; }
+.subbar-chips::-webkit-scrollbar { width: 0; height: 0; }
+/* The label a screen that is off the navigation wears instead of lighting a
+   tab it does not belong to. */
+.subbar-here {
+  flex: none; white-space: nowrap; padding: 0 4px;
+  color: var(--dim); font-size: .82rem; letter-spacing: .04em;
+}
 
-.rail-item {
-  width: 46px; height: 46px; flex: none; border: 0; border-radius: var(--r);
+.chip {
+  flex: none; min-height: var(--tap); padding: 0 16px; white-space: nowrap;
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--edge-2); border-radius: 999px;
+  background: transparent; color: var(--dim); font: inherit; font-size: .86rem;
+  cursor: pointer; transition: background .12s, color .12s, border-color .12s;
+  /* A short label must not produce a short target: "Hub" is three characters
+     and would otherwise be half the width of "Readiness". */
+  min-width: 64px; justify-content: center;
+}
+.chip[aria-current="page"] {
+  background: var(--raise); color: var(--ink); border-color: var(--faint);
+}
+.chip:active { background: var(--raise); border-color: var(--faint); }
+/* Greyed, never hidden. A write-capable screen that vanishes while the car is
+   moving is a screen somebody hunts for at 60 mph, which is worse than one
+   they cannot press. */
+.chip[disabled] { opacity: .45; cursor: default; }
+/* The lock is drawn, not spelled. The label used to gain " · stopped only",
+   which changed the chip's width and slid every chip after it sideways as
+   speed crossed the threshold -- and speed is noisy at walking pace, so it
+   fired at exactly the traffic light where a thumb is already moving. A glyph
+   in a fixed-width slot says the same thing and moves nothing. */
+/* The slot is ALWAYS there, and only the glyph inside it comes and goes.
+   A lock that appears would move the chip's right edge and slide the chips
+   after it -- which is the very bug this replaced. Reserving the space costs
+   about 1.6em on every write-capable chip, permanently, and moves nothing
+   ever. Only the chips that can ever lock carry it, so Hub and Codes are not
+   padded for a state they cannot reach. */
+.chip[data-write]::after {
+  content: "\1F512"; display: inline-block; width: 1em; margin-left: 8px;
+  font-size: .8em; text-align: center; visibility: hidden;
+}
+.chip[data-write].chip-locked::after { visibility: visible; opacity: .8; }
+/* The left slot: either where you came from, or the offer to open the hub
+   because the adapter has answered. It is a chip and not a jump -- software
+   must not drag somebody off a fault code because the ELM327 re-linked at a
+   set of lights. */
+.chip-lead {
+  display: block; width: 100%; line-height: calc(var(--tap) - 2px);
+  padding: 0 14px; overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
+}
+.chip-lead.chip-link {
+  color: var(--info); background: var(--info-bg);
+  border-color: color-mix(in srgb, var(--info) 45%, var(--edge-2));
+}
+
+/* ---- the tab bar ---- */
+.tabbar {
+  flex: 1; min-height: var(--tabbar);
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  align-items: stretch; gap: 2px; padding: 0 6px 4px;
+}
+.tab {
+  position: relative; min-height: var(--tap-lg); padding: 0;
+  border: 0; border-top: 3px solid transparent;
   background: transparent; color: var(--faint); cursor: pointer;
-  display: grid; place-items: center; position: relative;
-  transition: background .14s, color .14s;
+  display: grid; place-items: center;
 }
-.rail-item:hover { color: var(--dim); background: var(--hair); }
-.rail-item[aria-current="page"] { color: var(--ink); background: var(--raise); }
-.rail-item[aria-current="page"]::before {
-  content: ""; position: absolute; left: -10px; top: 12px; bottom: 12px;
-  width: 3px; border-radius: 0 3px 3px 0; background: var(--ink);
+.tab-in {
+  display: grid; justify-items: center; gap: 3px;
+  min-width: 68px; padding: 7px 12px; border-radius: 14px;
+  transition: background .12s, color .12s;
 }
-/* .58rem and not more. The rail button is a fixed 46px square under a 26px
-   icon, and the longest label in main.js's view table is "Service" -- seven
-   monospaced characters. At .62rem those seven characters measure wider than
-   the button they sit in, and the rail is the one element on screen in every
-   single view, so it is the last place to accept a wrap or a clip. Growing the
-   button instead was the other option and it is worse: nineteen views already
-   need more rail than a short viewport has, and taller buttons mean the nav
-   scrolls sooner. */
-.rail-item .lbl { font-size: .58rem; letter-spacing: .07em; margin-top: 2px; }
-.rail-item .pip {
-  position: absolute; top: 7px; right: 7px; min-width: 15px; height: 15px;
-  border-radius: 8px; background: var(--bad); color: var(--on-bad);
-  font-size: .56rem; font-weight: 700; display: grid; place-items: center;
-  padding: 0 3px; border: 2px solid var(--ground);
+.tab-lbl { font-size: .82rem; letter-spacing: .04em; }
+
+/* THREE SIGNALS FOR THE CURRENT TAB, NOT A TINT.
+   looks.js ships a red-only night palette in which every hue collapses to a
+   lightness, so "the current one is the blue one" is not a statement that
+   survives to 2am on a dark road. The current tab is therefore the one with a
+   filled pill behind its icon and label, a 3px edge along the top of its
+   slot, and aria-current="page" for anything reading the page aloud. The edge
+   is a transparent border on every tab so that lighting it moves nothing --
+   the rail's version was an absolutely positioned bar at left:-10px inside an
+   overflow-x:hidden parent, and it was clipped away entirely. */
+/* The accent is a MARK OVER THE PILL, not a rule across the tab.
+   It was border-top-color on the whole 270px tab, in --ink, which is very
+   nearly white -- and it landed immediately under the sub-tab row's own
+   border, so the two read together as a stray divider someone had left in
+   rather than as an indicator of where you are. Sized to the pill and given a
+   radius, it reads as pointing at something. The 3px transparent border above
+   stays exactly as it was: it reserves the band so that lighting a tab moves
+   nothing, which was the right instinct and is why this is drawn into that
+   band rather than added to it. */
+.tab[aria-current="page"] { color: var(--ink); }
+.tab[aria-current="page"]::before {
+  content: ""; position: absolute; top: -3px; left: 50%;
+  transform: translateX(-50%);
+  width: 34px; height: 3px; border-radius: 0 0 3px 3px;
+  background: var(--ink);
 }
-.rail-item .pip.warn { background: var(--warn); color: var(--on-warn); }
-.rail-item .pip.ai { background: var(--ai); color: var(--on-ai); }
-.rail-btn {
-  border: 1px solid var(--edge-2); background: transparent; color: var(--dim);
-  border-radius: 7px; padding: 5px 8px; font-size: .66rem; cursor: pointer;
-  letter-spacing: .06em;
+.tab[aria-current="page"] .tab-in { background: var(--raise); }
+.tab:active .tab-in { background: var(--hair); }
+
+/* Badges roll up from the sub-screens to the tab. */
+.tab .pip {
+  position: absolute; top: 5px; left: 50%; margin-left: 6px;
+  min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+  background: var(--bad); color: var(--on-bad); border: 2px solid var(--panel);
+  font-size: .8rem; font-weight: 700; line-height: 16px; text-align: center;
 }
-.rail-btn:hover { color: var(--ink); border-color: var(--faint); }
+.tab .pip.warn { background: var(--warn); color: var(--on-warn); }
+.tab .pip.ok   { background: var(--ok);   color: var(--ground); }
+.tab .pip.ai   { background: var(--ai);   color: var(--on-ai); }
+/* A badge with nothing to count is a dot, not an empty circle -- the Car tab
+   says the adapter is answering, and there is no number in that. */
+.tab .pip.bare { min-width: 11px; width: 11px; height: 11px; padding: 0; border-radius: 50%; }
+
+/* Guarded, and paired with :active above.
+   Without the guard Chromium applies :hover on tap and leaves it latched on
+   the last thing touched, so after every tap two tabs look current -- which
+   is a direct contributor to the navigation confusion this bar exists to
+   fix. */
+@media (hover: hover) {
+  .tab:hover { color: var(--dim); }
+  .tab:hover .tab-in { background: var(--hair); }
+  .chip:hover:not([disabled]) { color: var(--ink); border-color: var(--faint); }
+}
+
+/* ONE FOCUS RULE, AND NO outline:none ANYWHERE NEAR IT.
+   The keyboard detaches from this tablet and has to keep working. var(--info)
+   is the right colour precisely because every look redefines it, so the ring
+   follows the palette into Night-red instead of being the one blue thing left
+   on a red screen. */
+.tab:focus-visible, .chip:focus-visible,
+.vbar-btn:focus-visible, .sheet-row:focus-visible {
+  outline: 2px solid var(--info); outline-offset: -3px;
+}
 
 /* ------------------------------------------------------- the vehicle bar */
 .vbar {
@@ -171,6 +346,20 @@ button { font: inherit; color: inherit; }
 .vbar .spacer { margin-left: auto; }
 .vbar .stat { display: flex; align-items: center; gap: 7px; font-size: .7rem; color: var(--dim); }
 .vbar .odo { font-size: .82rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+/* The way into the settings sheet, and the only icon-only control in the top
+   bar -- so it gets min-WIDTH as well as min-height. Padding would not have
+   helped it: there is no text in it to pad. */
+.vbar-btn {
+  flex: none; min-width: var(--tap); min-height: var(--tap);
+  display: grid; place-items: center; cursor: pointer;
+  border: 1px solid var(--edge-2); border-radius: var(--r);
+  background: transparent; color: var(--dim);
+  transition: color .12s, background .12s, border-color .12s;
+}
+.vbar-btn:active { background: var(--raise); border-color: var(--faint); }
+@media (hover: hover) {
+  .vbar-btn:hover { color: var(--ink); border-color: var(--faint); }
+}
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); flex: none; }
 .dot.ok { background: var(--ok); box-shadow: 0 0 9px rgba(74,206,138,.55); }
@@ -182,10 +371,20 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .dot.live { animation: none } }
 
 /* ------------------------------------------------------------- the stage */
+/* The only scroller in the document. It used to cap itself at the viewport
+   minus the vehicle bar; now it is simply the 1fr row of a viewport-height
+   grid, so it gives way to the navigation block without either of them
+   knowing the other's size. min-height:0 is the part that is easy to forget:
+   without it a grid row refuses to shrink below its content and the bar gets
+   pushed off the bottom of the screen by a long view. */
 .stage {
-  grid-area: stage; padding: 22px 26px 60px; overflow-y: auto;
-  max-height: calc(100vh - var(--vbar)); transition: opacity .2s;
+  grid-area: stage; padding: 22px 26px 40px; overflow-y: auto; min-height: 0;
+  overscroll-behavior: contain; transition: opacity .2s;
 }
+/* No visible ring on the stage itself: go() moves focus here after a
+   navigation so the next Tab starts at the top of the new screen, and that is
+   a bookkeeping move rather than something the user did. Every control in the
+   app keeps its ring -- see the focus rule in the navigation block. */
 .stage:focus { outline: none; }
 /* Canvases have an intrinsic 300x150 and no CSS width, so a chart measured
    before this rule existed drew itself into a 300px box in the corner of a
@@ -374,7 +573,11 @@ textarea { resize: vertical; min-height: 66px; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s } }
 
 /* --------------------------------------------------------------- overlays */
-.toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 100; }
+/* Above the navigation, never over it. --nav is exported by the token block
+   precisely so anything anchored to the bottom of the screen can reserve the
+   bar's height instead of guessing at it. */
+.toasts { position: fixed; right: 18px; bottom: calc(var(--nav) + 18px);
+          display: grid; gap: 8px; z-index: 100; }
 .toast { background: var(--raise); border: 1px solid var(--edge-2); border-radius: 9px;
          padding: 10px 14px; font-size: .76rem; max-width: 380px;
          animation: rise .22s ease-out; }
@@ -404,8 +607,8 @@ textarea { resize: vertical; min-height: 66px; }
 /* Printed reports go on paper for a customer, so they invert and lose the
    furniture. A workshop that cannot hand somebody a page has not finished. */
 @media print {
-  .rail, .vbar, .toasts, .btn, .seg, .noprint { display: none !important; }
-  .app { display: block }
+  .navbar, .vbar, .toasts, .btn, .seg, .noprint { display: none !important; }
+  .app { display: block; height: auto }
   .stage { max-height: none; overflow: visible; padding: 0 }
   :root { --ground: #fff; --panel: #fff; --ink: #111; --dim: #444; --faint: #666; --edge: #ccc }
   body { background: #fff; color: #111 }
@@ -423,11 +626,13 @@ textarea { resize: vertical; min-height: 66px; }
    Customise buttons are the last children, so they were the first to vanish:
    the reported "won't let me navigate away" and "won't let me customise once
    the screen is full" were the same bug wearing two hats. */
+/* Drive mode keeps the navigation. It is the one screen where a driver has
+   the least attention to spare on finding a way out, and the bar is the way
+   out -- one tap on Car, or on the Hub chip. Hiding it here would mean adding
+   plumbing in order to remove the exit. */
 .drive-stage { padding: 0 !important; overflow: auto; }
-.app[data-drive="1"] { grid-template-columns: 0 1fr; }
-.app[data-drive="1"] .rail { display: none; }
 .drive {
-  min-height: calc(100vh - var(--vbar));
+  min-height: calc(100vh - var(--vbar) - var(--nav));
   display: grid; grid-template-rows: 1fr auto auto auto;
   gap: clamp(10px, 2vh, 28px); padding: clamp(14px, 3vh, 40px);
   /* `safe` is the whole fix: centre while the content fits, fall back to
@@ -500,8 +705,17 @@ textarea { resize: vertical; min-height: 66px; }
 
 /* An alert while driving owns the screen. Subtlety here would be a design
    decision taken on somebody's behalf at speed. */
+/* FIXED TO THE VIEWPORT, ABOVE THE NAVIGATION.
+   It was absolute inside .drive, which is inside .stage, and .stage is now
+   just the 1fr row of the grid -- so the alert that is meant to own the screen
+   was cropped to the stage and the sub-tab row and five fully live tab buttons
+   sat underneath it. During a critical alert a thumb could land on a tab
+   instead of on "Got it". The navigation is unpositioned, so anything
+   positioned wins the paint order; drive.js also sets inert on #navbar while
+   this is up, because being merely painted over is not the same as being
+   unreachable. */
 .drive-alert {
-  position: absolute; inset: 0; z-index: 10; background: var(--ground);
+  position: fixed; inset: 0; z-index: 60; background: var(--ground);
   display: grid; align-content: center; gap: clamp(10px, 2vh, 26px);
   padding: clamp(18px, 5vw, 60px); text-align: center;
 }
@@ -706,7 +920,6 @@ textarea { resize: vertical; min-height: 66px; }
 .learn-title { font-weight: 640; font-size: .96rem; color: var(--ink); margin-bottom: 4px; }
 .learn-body { margin: 0; font-size: .93rem; line-height: 1.55; color: var(--dim); }
 .learn-extra { margin-top: 7px; color: var(--faint); }
-.rail-btn.on { background: var(--info-bg); color: var(--info); border-color: rgba(79,168,232,.42); }
 /* In the car the aside has to survive sunlight like everything else. */
 .hub .learn-body, .hub .learn-title { color: var(--bright); }
 
@@ -844,42 +1057,44 @@ ul.tight li { margin-bottom: 5px; }
 .proc-notes { margin-bottom: 8px; }
 .proc-notes .lede { font-size: .9rem; margin-bottom: 6px; }
 
-/* The rail mark is a button now, so it needs to stop looking like a div. */
-.rail-mark {
-  background: none; border: 0; padding: 4px; cursor: pointer;
-  border-radius: var(--r); color: var(--faint);
-  transition: color .12s ease, background .12s ease;
-}
-.rail-mark:hover { color: var(--ink); background: var(--raise); }
-.rail-mark:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+/* ---- the settings sheet ----
+   Where the rail's three orphaned foot buttons went. Learn, the privacy pill
+   and the unit toggle were the only three controls in the app with no screen
+   of their own, and they were pinned to the bottom of a navigation strip that
+   no longer exists. This is a home for them, not the four-surface settings
+   system -- it holds what the rail was carrying and nothing more.
 
-/* ---- rail overflow menu ---- */
-.rail-more { color: var(--faint); }
-.rail-menu {
-  position: fixed; z-index: 70;
-  min-width: 250px; max-height: calc(100vh - 24px); overflow-y: auto;
-  background: var(--panel); border: 1px solid var(--edge);
-  border-radius: 12px; padding: 6px;
-  box-shadow: 0 18px 44px rgba(0,0,0,.42);
-  display: grid; gap: 2px;
+   Anchored to the bottom of the modal host rather than centred in it, because
+   the thumb that opened it is at the bottom of the screen and every row in it
+   is something you press. */
+.sheet {
+  align-self: end; justify-self: stretch;
+  width: 100%; max-width: 640px; margin: 0 auto;
+  background: var(--panel); border: 1px solid var(--edge-2); border-radius: 18px;
+  padding: 18px; display: grid; gap: 14px;
+  max-height: 82vh; overflow-y: auto; overscroll-behavior: contain;
 }
-.rail-menu-item {
-  position: relative;
-  display: grid; grid-template-columns: 22px 1fr; gap: 10px;
-  align-items: center; text-align: left;
-  padding: 9px 11px; border: 0; border-radius: 8px;
-  background: none; color: var(--ink); font: inherit; cursor: pointer;
+.sheet-head { display: flex; align-items: center; gap: 12px; }
+.sheet-head .btn { min-height: var(--tap); }
+.sheet-rows { display: grid; gap: 8px; }
+/* A whole-width row with its state on the right, because a 56px strip you can
+   hit with a thumb on a bumpy road beats a neat 30px switch you cannot. */
+.sheet-row {
+  display: flex; align-items: center; gap: 14px; text-align: left;
+  min-height: var(--tap-lg); padding: 10px 14px;
+  border: 1px solid var(--edge); border-radius: var(--r);
+  background: var(--panel-2); color: var(--ink); font: inherit; cursor: pointer;
 }
-.rail-menu-item:hover { background: var(--raise); }
-.rail-menu-item:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
-/* The title sits under the label on its own line, so the grid gets a second
-   row rather than the description colliding with the icon column. */
-.rail-menu-item > span:nth-of-type(1) { font-weight: 600; }
-.rail-menu-sub {
-  grid-column: 2; font-size: .82rem; color: var(--dim); line-height: 1.35;
+.sheet-row:active { background: var(--raise); border-color: var(--edge-2); }
+.sheet-row[disabled] { opacity: .55; cursor: default; }
+.sheet-l { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.sheet-lab { font-size: .95rem; }
+.sheet-note { font-size: .82rem; color: var(--faint); line-height: 1.4; }
+.sheet-v { flex: none; font-size: .86rem; color: var(--dim); }
+.sheet-v.on { color: var(--info); }
+@media (hover: hover) {
+  .sheet-row:hover { background: var(--raise); border-color: var(--edge-2); }
 }
-.rail-menu-item svg { grid-row: 1 / span 2; align-self: start; margin-top: 2px; color: var(--dim); }
-.rail-menu-item .pip { top: 10px; right: 10px; }
 .radio-meta { flex: 1 1 auto; min-width: 0; }
 .radio-name, .radio-status {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -888,7 +1103,7 @@ ul.tight li { margin-bottom: 5px; }
 
 /* ---- background effects ----
    Behind everything, non-interactive, and clipped to the view. The stage is
-   the positioning context, so the canvas cannot spill over the rail or bar. */
+   the positioning context, so the canvas cannot spill over the bars. */
 .fx-host {
   position: absolute; inset: 0; z-index: 0;
   pointer-events: none; overflow: hidden; border-radius: var(--r);
@@ -909,10 +1124,10 @@ ul.tight li { margin-bottom: 5px; }
    SCOPED TO :root, NOT TO #app.
    They were on #app first, and the result looked half-finished: `html` and
    `body` take --ground from :root, so the page behind the app stayed the
-   default dark while the app itself went red. The rail's overflow menu is
-   appended to document.body and missed the palette entirely for the same
-   reason. On :root everything inherits, including anything portalled to the
-   body later.
+   default dark while the app itself went red. Anything appended to
+   document.body -- a toast, a modal, the settings sheet -- missed the palette
+   entirely for the same reason. On :root everything inherits, including
+   anything portalled to the body later.
 
    NIGHT RED IS NOT A RED TINT, IT IS A RED-ONLY PALETTE.
    Dark adaptation takes ~20 minutes to build and is destroyed in seconds by
@@ -922,50 +1137,59 @@ ul.tight li { margin-bottom: 5px; }
    status colours below are LIGHTNESS variants of red rather than hues --
    severity is carried by brightness, the one channel still available. */
 
+/* !important throughout, and it is not laziness.
+   applyTheme() writes the live Omarchy palette as INLINE custom properties on
+   documentElement, and an inline declaration outranks every author rule -- so
+   without this a look could only change the handful of tokens theme.py does
+   not emit. The visible cost was that Night · red left the navigation looking
+   exactly as it did in the normal look, because the active tab's three signals
+   are --raise, --ink and the focus ring's --info, all of which theme.py emits.
+   The same trap is already worked around twice in this tree: the print block
+   in app.html and the chart palette in charts-d3.js. */
 :root[data-look="green"] {
-  --ground:  #000806;  --panel:  #02120C;  --raise: #051E14;
-  --edge:    #0B3222;  --hair:   #071E14;
-  --ink:     #7CFFB0;  --dim:    #46D189;  --faint: #2A8A58;  --ghost: #1A5237;
-  --ok:      #4AFF9A;  --warn:   #B6FF6A;  --bad:   #FF8A5A;  --info: #5AFFD0;
-  --ok-bg:   rgba(74,255,154,.12);
-  --warn-bg: rgba(182,255,106,.12);
-  --bad-bg:  rgba(255,138,90,.13);
-  --info-bg: rgba(90,255,208,.12);
-  --track:   #0E3A26;
-  --bright:   #9CFFC4;   /* no white anywhere in this look */
-  --bright-2: #46D189;
+  --ground:  #000806!important;  --panel:  #02120C!important;  --raise: #051E14!important;
+  --edge:    #0B3222!important;  --hair:   #071E14!important;
+  --ink:     #7CFFB0!important;  --dim:    #46D189!important;  --faint: #2A8A58!important;  --ghost: #1A5237!important;
+  --ok:      #4AFF9A!important;  --warn:   #B6FF6A!important;  --bad:   #FF8A5A!important;  --info: #5AFFD0!important;
+  --ok-bg:   rgba(74,255,154,.12)!important;
+  --warn-bg: rgba(182,255,106,.12)!important;
+  --bad-bg:  rgba(255,138,90,.13)!important;
+  --info-bg: rgba(90,255,208,.12)!important;
+  --track:   #0E3A26!important;
+  --bright:   #9CFFC4!important;   /* no white anywhere in this look */
+  --bright-2: #46D189!important;
 }
 
 :root[data-look="dim"] {
   /* Same hues as the default, pulled well down. For a lit cabin at night where
      full brightness is a mirror in the windscreen. */
-  --ground:  #040708;  --panel:  #070B0D;  --raise: #0C1417;
-  --edge:    #101A1E;  --hair:   #0A1215;
-  --ink:     #93A6A2;  --dim:    #6A7C78;  --faint: #4A5A57;  --ghost: #2A3639;
-  --ok:      #2F8A5C;  --warn:   #997640;  --bad:   #9A4038;  --info: #35708F;
-  --ok-bg:   rgba(47,138,92,.10);
-  --warn-bg: rgba(153,118,64,.10);
-  --bad-bg:  rgba(154,64,56,.10);
-  --info-bg: rgba(53,112,143,.10);
-  --track:   #162126;
-  --bright:   #A8B8B4;
-  --bright-2: #6A7C78;
+  --ground:  #040708!important;  --panel:  #070B0D!important;  --raise: #0C1417!important;
+  --edge:    #101A1E!important;  --hair:   #0A1215!important;
+  --ink:     #93A6A2!important;  --dim:    #6A7C78!important;  --faint: #4A5A57!important;  --ghost: #2A3639!important;
+  --ok:      #2F8A5C!important;  --warn:   #997640!important;  --bad:   #9A4038!important;  --info: #35708F!important;
+  --ok-bg:   rgba(47,138,92,.10)!important;
+  --warn-bg: rgba(153,118,64,.10)!important;
+  --bad-bg:  rgba(154,64,56,.10)!important;
+  --info-bg: rgba(53,112,143,.10)!important;
+  --track:   #162126!important;
+  --bright:   #A8B8B4!important;
+  --bright-2: #6A7C78!important;
 }
 
 :root[data-look="red"] {
-  --ground:  #070101;  --panel:  #130303;  --raise: #200707;
-  --edge:    #3A1210;  --hair:   #1C0605;
-  --ink:     #FF7F68;  --dim:    #C95644;  --faint: #8E3A2E;  --ghost: #5A241C;
+  --ground:  #070101!important;  --panel:  #130303!important;  --raise: #200707!important;
+  --edge:    #3A1210!important;  --hair:   #1C0605!important;
+  --ink:     #FF7F68!important;  --dim:    #C95644!important;  --faint: #8E3A2E!important;  --ghost: #5A241C!important;
   /* Severity by lightness, not hue -- see the note above. */
-  --ok:      #B85A48;  --warn:   #FF7A4A;  --bad:   #FF3B22;  --info: #D06452;
-  --ok-bg:   rgba(184,90,72,.12);
-  --warn-bg: rgba(255,122,74,.13);
-  --bad-bg:  rgba(255,59,34,.15);
-  --info-bg: rgba(208,100,82,.12);
-  --track:   #34100E;
-  --on-bad:  #1A0402; --on-warn: #1A0703; --on-ai: #16040A;
-  --bright:   #FF9E88;   /* red-only: nothing here may be white */
-  --bright-2: #C95644;
+  --ok:      #B85A48!important;  --warn:   #FF7A4A!important;  --bad:   #FF3B22!important;  --info: #D06452!important;
+  --ok-bg:   rgba(184,90,72,.12)!important;
+  --warn-bg: rgba(255,122,74,.13)!important;
+  --bad-bg:  rgba(255,59,34,.15)!important;
+  --info-bg: rgba(208,100,82,.12)!important;
+  --track:   #34100E!important;
+  --on-bad:  #1A0402!important; --on-warn: #1A0703!important; --on-ai: #16040A!important;
+  --bright:   #FF9E88!important;   /* red-only: nothing here may be white */
+  --bright-2: #C95644!important;
 }
 .radio-meta { flex: 1 1 auto; min-width: 0; }
 .radio-name, .radio-status {
@@ -1032,7 +1256,6 @@ ul.tight li { margin-bottom: 5px; }
 .rp-u { font-size: .72rem; color: var(--dim); }
 .btn.sm.on { border-color: var(--info); color: var(--info); }
 .privacy-pill { border: 0; font: inherit; cursor: pointer; }
-.rail-btn.on { background: var(--info-bg); color: var(--info); border-color: rgba(79,168,232,.42); }
 
 /* ---- document library ---- */
 .docs { display: grid; gap: 14px; }

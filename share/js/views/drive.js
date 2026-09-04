@@ -166,15 +166,27 @@ export default function drive(root, { arg } = {}) {
   let editing = false;
 
   root.parentElement.classList.add("drive-stage");
-  // The rail is eleven small targets, which is the wrong thing to have beside
-  // a driver's hand. Drive mode has exactly one way out and it is the width of
-  // the screen.
+  // Drive mode has exactly one way out and it is the width of the screen. The
+  // rail this replaced was eleven small targets beside a driver's hand; the tab
+  // bar that replaced the rail is five big ones, which is better but is still
+  // five decisions offered to somebody who has asked for one.
   document.getElementById("app").dataset.drive = "1";
 
   const wrap = h("div.drive");
   root.appendChild(wrap);
 
   const takeover = h("div.drive-alert", { hidden: true });
+
+  // The alert is fixed above the navigation, but painting over the tab bar is
+  // not the same as taking it out of reach: a thumb landing where a tab used
+  // to be would still press it, and during a critical alert the one thing on
+  // screen that should be pressable is "Got it". inert makes the bar
+  // unclickable and unfocusable for as long as the alert is up.
+  function showAlert(on) {
+    if (takeover.hidden !== !on) takeover.hidden = !on;
+    const bar = document.getElementById("navbar");
+    if (bar) bar.inert = !!on;
+  }
   wrap.appendChild(takeover);
 
   const heroV = h("div.drive-speed", "—");
@@ -379,7 +391,7 @@ export default function drive(root, { arg } = {}) {
       if (!top) return;
       const p = top.payload || {};
       const fresh = top.at > lastAlertAt && Date.now() / 1000 - top.at < 900;
-      if (!fresh || p.urgency === "low") { takeover.hidden = true; return; }
+      if (!fresh || p.urgency === "low") { showAlert(false); return; }
       if (!takeover.hidden) return;
       clear(takeover);
       takeover.dataset.urgency = p.urgency || "normal";
@@ -390,9 +402,9 @@ export default function drive(root, { arg } = {}) {
       takeover.appendChild(h("button.drive-exit", { onclick: () => {
         lastAlertAt = top.at;
         try { localStorage.setItem(ACK_KEY, String(top.at)); } catch { /* fine */ }
-        takeover.hidden = true;
+        showAlert(false);
       } }, "Got it"));
-      takeover.hidden = false;
+      showAlert(true);
     } catch { /* the watchdog may not be running */ }
   }
 
@@ -426,5 +438,10 @@ export default function drive(root, { arg } = {}) {
     if (lock) { try { lock.release(); } catch { /* already gone */ } }
     root.parentElement.classList.remove("drive-stage");
     delete document.getElementById("app").dataset.drive;
+    // Leaving with an alert up must not leave the navigation inert behind us,
+    // or the user is on another screen with a dead tab bar and no way to say
+    // so. Unmount is the only place that is guaranteed to run.
+    const bar = document.getElementById("navbar");
+    if (bar) bar.inert = false;
   };
 }
