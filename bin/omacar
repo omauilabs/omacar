@@ -16,6 +16,7 @@
 #   omacar candlog            log candidate PIDs against trusted channels
 #   omacar discover [status]  map identifiers automatically, safely, over time
 #   omacar plugins            what extends this install, and what each provides
+#   omacar mode [tier]        simplified | power | technician | god
 #   omacar write arm|disarm   allow writes (clear codes, tests, settings)
 #   omacar daemon start|stop|status
 #                             the polling daemon that feeds the cluster
@@ -769,6 +770,10 @@ print()
   # rather than under a bare python3. lib/ai.py is the cautionary tale: it is
   # dispatched with plain python3 and so cannot see anything the venv has, for
   # no reason other than the line having been written that way once.
+  # The tier this machine is in. Stdlib only and it opens nothing, so it runs
+  # under the system python -- and it must, because `omacar mode` has to answer
+  # on a machine where `omacar setup` has never been run.
+  mode) shift; exec python3 "$ROOT/lib/modes.py" "$@" ;;
   card) shift; exec "$OMACAR_PY" "$ROOT/lib/card.py" "$@" ;;
   state) state ;;
   server) case "${2:-status}" in stop) server_stop ;; *) server_status ;; esac ;;

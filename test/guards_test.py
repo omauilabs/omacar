@@ -335,6 +335,77 @@ for headers, want, what in (
 ):
     check(f"{what}", same_origin(headers), want)
 
+# --------------------------------------------------------------------- modes
+head("a mode is a boundary, not a preference the browser is trusted with")
+
+import tempfile  # noqa: E402
+
+_scratch = tempfile.mkdtemp()
+os.environ["XDG_STATE_HOME"] = _scratch
+for _m in ("modes", "api", "records", "garage"):
+    sys.modules.pop(_m, None)
+import modes  # noqa: E402
+
+check("an unset mode is the middle tier, not the top", modes.current(), "power")
+
+MATRIX = {
+    "clear_codes":     ("simplified", "the one write an owner does after a repair"),
+    "learn":           ("power",      "module discovery"),
+    "sweep":           ("technician", "sweeping an unknown identifier range"),
+    "actuate":         ("technician", "commanding an actuator"),
+    "routine":         ("technician", "running a published routine"),
+    "write_did":       ("god",        "writing a configuration value"),
+}
+for action, (need, what) in MATRIX.items():
+    for tier in modes.TIERS:
+        want = modes.RANK[tier] >= modes.RANK[need]
+        got = modes.decide(action, tier).ok
+        if got != want:
+            bad(f"{what}: {tier} should {'allow' if want else 'refuse'} it")
+ok("every action is reachable from its tier and no lower one")
+
+for action in ("reprogram", "guess_routine"):
+    check(f"{action} is refused even in god mode",
+          modes.decide(action, "god").ok, False)
+
+# The claim the whole design rests on: flipping the client does not decide it.
+# A page, curl or an agent posting straight at the route is refused by the
+# server, which is the only place that can refuse it.
+import types  # noqa: E402
+
+if "serial" not in sys.modules:  # pragma: no cover - already stubbed above
+    pass
+import api  # noqa: E402
+
+modes.set_mode("simplified")
+_st, _payload = api.handle_post("/api/actuate", '{"test":"fan_high","seconds":5}')
+check("a direct POST to an above-tier route is refused at the server", _st, 403)
+ok(f"and says why: {_payload.get('error', '').splitlines()[0][:60]}")
+
+modes.set_mode("technician")
+_st2, _ = api.handle_post("/api/actuate", '{"test":"fan_high","seconds":5}')
+check("the same call passes the gate at the right tier", _st2 != 403, True)
+
+# God mode opens everything except the one line it must not cross.
+modes.set_mode("god")
+_d = modes.decide("write_did", ctx={"did": "F4A0"})
+check("an emissions-range write is refused in god mode", _d.ok, False)
+ok("and the refusal carries the Clean Air Act citation"
+   if "203(a)(3)" in _d.citation else bad("no citation on the refusal"))
+ok("and says the list is named rather than complete"
+   if "not exhaustive" in _d.citation else bad("no coverage caveat"))
+check("a manufacturer identifier is still writable in god mode",
+      modes.decide("write_did", ctx={"did": "0210"}).ok, True)
+
+# The last floor never consults the mode. If elm.py ever imports modes, a bug
+# in the tier system becomes a bug in the transport's absolute refusals.
+_elm_src = open(os.path.join(ROOT, "lib", "elm.py"), encoding="utf-8").read()
+check("the transport does not consult the mode system",
+      "import modes" in _elm_src, False)
+
+import shutil  # noqa: E402
+shutil.rmtree(_scratch, ignore_errors=True)
+
 # ------------------------------------------------------------------ the advisor
 head("the advisor names the model that actually answered")
 

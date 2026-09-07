@@ -849,6 +849,27 @@ def handle_get(path, query):
     return None
 
 
+
+# ------------------------------------------------------------------- the mode
+#
+# Asked FIRST and answered on the server, so the tier is a boundary rather than
+# a preference the browser is trusted to honour. Every check that already
+# existed still runs after this one, so a bug here fails closed to the
+# behaviour the tool had before modes existed.
+def _mode_gate(action, ctx=None):
+    """None if allowed; a (status, payload) tuple to return if not."""
+    try:
+        import modes
+    except ImportError:                                       # pragma: no cover
+        return None                                           # fail open to the old gates
+    d = modes.decide(action, ctx=ctx)
+    if d.ok:
+        return None
+    payload = d.asdict()
+    payload["error"] = d.text()
+    return 403, payload
+
+
 def handle_post(path, body):
     try:
         data = json.loads(body or "{}")
@@ -926,6 +947,9 @@ def handle_post(path, body):
         except ValueError as e:
             return 400, {"error": str(e)}
     if path == "/api/learn":
+        refused = _mode_gate("learn")
+        if refused:
+            return refused
         # A learning pass takes tens of seconds and holds the port. Run it
         # inline rather than in a thread: two concurrent passes would fight
         # over the same adapter, and the lease would make the loser look like
@@ -939,6 +963,9 @@ def handle_post(path, body):
             return 500, {"error": f"{type(e).__name__}: {e}"}
         return 200, {"car": discover.summary()}
     if path == "/api/clear":
+        refused = _mode_gate("clear_codes")
+        if refused:
+            return refused
         # Clearing needs the adapter to itself, so it takes the same lease
         # every other one-off command takes. The gauge pauses for a second or
         # two and resumes; it does not look like a disconnection.
@@ -1033,6 +1060,9 @@ def handle_post(path, body):
         except Exception as e:                                # noqa: BLE001
             return 500, {"error": f"{type(e).__name__}: {e}"}
     if path == "/api/reset":
+        refused = _mode_gate("routine")
+        if refused:
+            return refused
         import connect
         import ops
         import elm as elmlib
@@ -1141,6 +1171,9 @@ def handle_post(path, body):
         os.replace(tmp, path_cfg)
         return 200, {"units": records.units_for()}
     if path == "/api/actuate":
+        refused = _mode_gate("actuate")
+        if refused:
+            return refused
         try:
             return 200, actuate(data.get("test"), data.get("duration"),
                                 bool(data.get("stop")))
