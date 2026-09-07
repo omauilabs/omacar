@@ -120,7 +120,7 @@ def probe(el, header, on_line):
         # patient=True: a supported 0x0A on a real ECU returns a multi-frame
         # ISO-TP reply of hundreds of bytes. The impatient read returns at the
         # first gap in output and would truncate it to the first frame.
-        lines = el.raw(req, patient=True, timeout=6.0)
+        lines = el.request(req, patient=True, timeout=6.0)
         kind, detail, _first = elmlib.classify(lines, SERVICE, request=req)
         # classify() decides supported-or-not from any single frame, which it
         # does correctly. The payload has to be rebuilt across frames.

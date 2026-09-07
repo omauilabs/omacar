@@ -366,6 +366,22 @@ def verify(doc):
 
 # ---- validation -------------------------------------------------------------
 
+# THE ONLY SERVICES A SHARED PROFILE MAY ASK FOR.
+#
+# A profile describes things to READ off a car, and it arrives from somebody
+# else's machine. Nothing in the format ever needed to carry a write, and until
+# this list existed nothing stopped it: `omacar profile fetch` pulls a TOML from
+# a URL and candlog sent its `request` field at an ECU. The transport refuses
+# writes unless armed -- but a technician arms the tool to do their own work,
+# and a pooled profile does not get to ride along on that.
+#
+# Deliberately narrower than the transport's read set. 0x19 is a fault
+# catalogue and 0x21/0x22 are manufacturer reads; those are what a profile is
+# for. A profile has no business sending 0x10, 0x27, or anything that changes
+# the car.
+SAFE_SERVICES = {0x01, 0x09, 0x19, 0x21, 0x22}
+
+
 def problems(doc):
     """Everything wrong with a profile, as a list of human sentences.
 
@@ -395,6 +411,21 @@ def problems(doc):
         for field in ("header", "request"):
             if not p.get(field):
                 out.append(f"{where}: {field} is missing")
+        req = (p.get("request") or "").replace(" ", "")
+        if req:
+            try:
+                service = int(req[:2], 16)
+            except ValueError:
+                out.append(f"{where}: request {req!r} does not begin with a "
+                           f"service byte")
+            else:
+                if service not in SAFE_SERVICES:
+                    allowed = ", ".join("0x%02X" % x for x in sorted(SAFE_SERVICES))
+                    out.append(
+                        f"{where}: request 0x{service:02X} is not a read. A "
+                        f"shared profile may only carry {allowed} — it describes "
+                        f"what to read off a car, and this one would send "
+                        f"something else to somebody's ECU.")
         conf = p.get("confidence")
         if conf not in CONFIDENCE:
             out.append(f"{where}: confidence {conf!r} is not one of "

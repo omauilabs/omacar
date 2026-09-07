@@ -443,6 +443,34 @@ def cache_key(kind, prompt, b):
     return h.hexdigest()[:24]
 
 
+def _answering_model(envelope, asked_for):
+    """Which model actually answered, not whichever key sorted first.
+
+    This read `list(envelope["modelUsage"].keys())[0]`, and modelUsage carries
+    every model the CLI billed for a turn -- including the little one it uses
+    in the background to title a session. So a diagnosis reasoned out by Sonnet
+    was labelled Haiku on screen, in the one place a person looks to judge how
+    much to trust the answer. Every cached advisor result on this machine says
+    haiku for a kind that routes to sonnet.
+
+    Prefer the model we asked for when the envelope confirms it ran; otherwise
+    name the one with the most output tokens, which is the one that did the
+    work. Fall back to the request rather than to a guess.
+    """
+    usage = envelope.get("modelUsage") or {}
+    if not usage:
+        return asked_for
+    for name in usage:
+        if asked_for and asked_for in name:
+            return name
+    def output(v):
+        if not isinstance(v, dict):
+            return 0
+        return (v.get("outputTokens") or v.get("output_tokens")
+                or v.get("output") or 0)
+    return max(usage, key=lambda k: output(usage[k]))
+
+
 def run_claude(prompt, model, extra_system):
     """One headless turn. No tools, one turn, JSON out."""
     cmd = [
@@ -572,7 +600,7 @@ def ask(kind="triage", question=None, code=None, model=None, refresh=False,
         "code": code,
         "at": int(time.time()),
         "took_s": round(took, 1),
-        "model": envelope.get("modelUsage") and list(envelope["modelUsage"].keys())[0]
+        "model": _answering_model(envelope, model)
                  or (model or DEFAULT_MODEL),
         "data": data,
         "dropped": dropped,

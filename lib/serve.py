@@ -163,6 +163,35 @@ class Handler(SimpleHTTPRequestHandler):
         given = (qs.get("k") or [""])[0]
         return hmac.compare_digest(given, TOKEN)
 
+    def _same_origin(self):
+        """Refuse a POST that a web page on another site sent here.
+
+        THE HOST CHECK WAS NEVER ENOUGH.
+
+        _local() checks the Host header, which stops a remote page pointing a
+        fetch at a hostname that resolves to 127.0.0.1. It does not stop a page
+        on any website simply POSTing to http://127.0.0.1:7560/api/clear -- the
+        browser sends Host: 127.0.0.1 there because that IS the host, the check
+        passes, and the car's codes are cleared along with every readiness
+        monitor, which fails an emissions test for days. No token is needed
+        because loopback has never required one.
+
+        Sec-Fetch-Site is sent by every current browser and is not forgeable by
+        page script. Origin is the fallback for anything older. A request with
+        neither -- curl, the CLI, a test -- is not a browser and is allowed:
+        the threat here is a page the user did not open on purpose, not a
+        person with a shell, who already has the CLI.
+        """
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        if site:
+            return site in ("same-origin", "same-site", "none")
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True                      # not a browser
+        from urllib.parse import urlparse
+        host = urlparse(origin).hostname or ""
+        return host in ("127.0.0.1", "localhost", "::1")
+
     def _may_write(self, path):
         if ALLOW_CONTROL:
             return True
@@ -319,6 +348,11 @@ class Handler(SimpleHTTPRequestHandler):
         if not self._authorised():
             return self._json({"error": "a token is required"}, 401)
         path = self.path.split("?", 1)[0]
+        if not self._same_origin():
+            return self._json(
+                {"error": "cross-site requests are refused. This API can clear "
+                          "fault codes and command actuators; a page you did not "
+                          "open is not allowed to do that."}, 403)
         if not path.startswith("/api/"):
             return self._json({"error": "no such endpoint"}, 404)
         if not self._may_write(path):
@@ -327,9 +361,16 @@ class Handler(SimpleHTTPRequestHandler):
                 {"error": "this display is read-only. Start the server with "
                           "--control to allow it to command the car."}, 403)
         try:
-            length = min(MAX_BODY, int(self.headers.get("Content-Length") or 0))
+            length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
+        if length > MAX_BODY:
+            # Rejected, not truncated. Truncating leaves the rest of the body in
+            # the socket, where the next request on a keep-alive connection reads
+            # it as a request line -- so an oversized POST used to corrupt the
+            # request after it rather than failing.
+            self.close_connection = True
+            return self._json({"error": f"body larger than {MAX_BODY} bytes"}, 413)
         body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         try:
             out = api.handle_post(path, body)

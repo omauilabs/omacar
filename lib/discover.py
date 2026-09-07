@@ -124,7 +124,7 @@ def learn_module(el, header, label, deep, on_step, elmlib, dtclib):
         req = "22" + did
         kind, _, _ = elmlib.classify(el.request(req), 0x22, req)
         if kind == "positive":
-            data = el.payload(el.raw(req, patient=True, timeout=4.0), request=req)
+            data = el.payload(el.request(req, patient=True, timeout=4.0), request=req)
             found["ident"][what] = decode_ascii(data[6:]) if data else ""
             if "0x22" not in found["services"]:
                 found["services"].append("0x22")
@@ -142,7 +142,7 @@ def learn_module(el, header, label, deep, on_step, elmlib, dtclib):
     if kind == "positive":
         found["services"].append("0x19")
         on_step(header, "fault catalogue")
-        lines = el.raw("190A", patient=True, timeout=8.0)
+        lines = el.request("190A", patient=True, timeout=8.0)
         k2, _, _ = elmlib.classify(lines, 0x19, "190A")
         if k2 == "positive":
             data = el.payload(lines, request="190A")

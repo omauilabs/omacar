@@ -116,15 +116,71 @@ def header_ok(dpn, header):
     Returns (ok, detail). A wrong-shaped header is the failure that looks most
     like a dead car: the adapter accepts it and nothing ever answers.
     """
+    clean = (header or "").replace(" ", "").upper()
     p = describe(dpn)
     if not p:
-        return True, ""          # unknown protocol: not our place to refuse
-    clean = (header or "").replace(" ", "")
+        # FAILS CLOSED. This returned True with the comment "not our place to
+        # refuse", which was defensible while every header in the tree was a
+        # literal written by us. It is not defensible now that an agent can
+        # propose one: ATSH with an arbitrary id makes the adapter transmit
+        # that id onto a live powertrain bus, where it collides with real
+        # periodic traffic from the module that owns it. The engineoff bench
+        # scenario answers ATDPN with A0, which describe() cannot resolve --
+        # so this path is reachable without a car at all.
+        if not _diagnostic_shape(clean):
+            return False, (f"the protocol is unknown, so the header cannot be "
+                           f"checked for shape; {header!r} is not in a "
+                           f"diagnostic address range and will not be sent")
+        return True, ""
     want = p["header_digits"]
     if len(clean) != want:
         return False, (f"{p['name']} wants a {want}-digit header; "
                        f"{header!r} has {len(clean)}")
+    if not _diagnostic_shape(clean):
+        return False, (f"{header!r} is not a diagnostic address. Diagnostics "
+                       f"live at 0x700-0x7FF on 11-bit and 18DAxxF1/18DBxxF1 "
+                       f"on 29-bit; anything else is somebody's live control "
+                       f"traffic and this tool will not transmit onto it.")
     return True, ""
+
+
+def _diagnostic_shape(clean):
+    """Is this header one a diagnostic tool is allowed to transmit?
+
+    Written as a shape test because it has to answer for protocols describe()
+    cannot resolve -- the engineoff bench scenario answers ATDPN with A0, and an
+    agent proposing a header is not obliged to know which protocol it is on.
+
+    The rule is per family, and the first draft of it was wrong in the way that
+    matters: it allowed only the CAN diagnostic ranges, which refused every
+    pre-CAN protocol and J1939 in this file's own table. A guard that refuses
+    the tool's own defaults is not a guard, it is an outage. So:
+
+      11-bit CAN     0x700-0x7FF -- 7DF functional, 7E0-7E7 request, 7E8-7EF reply
+      29-bit CAN     18DA (physical) or 18DB (functional), per ISO 15765-4
+      J1939          29-bit, tester at source address F9 or FB
+      pre-CAN        three bytes, target/source/tester, and the tester is F1
+
+    What every one of those has in common is that the tester identifies itself.
+    An id that names no tester is somebody's live control traffic, and ATSH with
+    it makes the adapter transmit onto a bus where a real module owns that id.
+    """
+    if not clean:
+        return False
+    try:
+        int(clean, 16)
+    except ValueError:
+        return False
+    n = len(clean)
+    if n == 3:                                  # 11-bit CAN
+        return 0x700 <= int(clean, 16) <= 0x7FF
+    if n == 6:                                  # J1850, ISO 9141-2, KWP2000
+        return clean.endswith("F1")             # the tester's own address
+    if n == 8:                                  # 29-bit
+        if clean.startswith(("18DA", "18DB")):  # ISO 15765-4 diagnostics
+            return True
+        return clean.endswith(("F9", "FB"))     # J1939 off-board tool
+    return False
 
 
 # ---------------------------------------------------------------- addressing

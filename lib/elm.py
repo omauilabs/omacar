@@ -53,6 +53,32 @@ class Elm:
     # -- transport ---------------------------------------------------------
 
     def raw(self, line, wait=0.0, patient=False, timeout=5.0):
+        """Send an adapter command -- AT or ST -- and return the reply lines.
+
+        THIS IS NOT A WAY TO REACH THE CAR, AND IT USED TO BE.
+
+        The service allowlist, the write arm and the absolute refusal of the
+        reprogramming trio all live in request(). raw() went straight to the
+        wire, so any caller that wrote hex here bypassed every one of them.
+        Six call sites did, and one of them -- candlog, reading candidates out
+        of a downloaded community profile -- was sending bytes this tool had
+        never seen to an ECU, on the strength of a file off the internet.
+
+        The gate is here rather than in a comment because a comment is not a
+        gate. request() gained `patient` and `timeout` at the same time, since
+        the reason those callers reached past it was that it could not do a
+        multi-frame read, which is a bad reason to have a hole.
+        """
+        head = (line or "").strip()[:2].upper()
+        if head not in ("AT", "ST"):
+            raise WriteAttempted(
+                f"raw() sends adapter commands (AT/ST), not vehicle requests. "
+                f"{line!r} carries a service byte and must go through "
+                f"request(), which is where the allowlist and the write arm "
+                f"are enforced.")
+        return self._send(line, wait=wait, patient=patient, timeout=timeout)
+
+    def _send(self, line, wait=0.0, patient=False, timeout=5.0):
         """Send one line, read to the ELM prompt, return the reply lines.
 
         `patient` waits for the ">" prompt instead of returning at the first
@@ -134,7 +160,7 @@ class Elm:
         out = []
         for _ in range(3):
             # Patient, and with room for a slow search.
-            out = self.raw("0100", patient=True, timeout=12.0)
+            out = self.request("0100", patient=True, timeout=12.0)
             joined = " ".join(out).upper()
             if out and "SEARCH" not in joined and "STOPPED" not in joined:
                 break
@@ -229,7 +255,7 @@ class Elm:
 
     # -- requests ----------------------------------------------------------
 
-    def request(self, payload_hex):
+    def request(self, payload_hex, patient=False, timeout=None):
         """Send a raw service request.
 
         Reads always pass. Writes pass only while write mode is armed, and
@@ -241,8 +267,11 @@ class Elm:
         imported and tested with nothing else present.
         """
         service = int(payload_hex[:2], 16)
+        kw = {"patient": patient}
+        if timeout is not None:
+            kw["timeout"] = timeout
         if service in READ_ONLY_SERVICES:
-            return self.raw(payload_hex)
+            return self._send(payload_hex, **kw)
 
         try:
             import write as writelib
@@ -261,7 +290,7 @@ class Elm:
                 f"service 0x{service:02X} ({described[0]}) writes to the car and "
                 f"write mode is not armed.\n"
                 f"  arm it with:  omacar write arm")
-        return self.raw(payload_hex)
+        return self._send(payload_hex, **kw)
 
     def close(self):
         try:

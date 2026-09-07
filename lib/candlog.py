@@ -98,7 +98,7 @@ def read_candidates(el, elmlib, cands):
         if not elmlib.aim(el, c["header"]):
             continue
         try:
-            lines = el.raw(c["request"], patient=True, timeout=4.0)
+            lines = el.request(c["request"], patient=True, timeout=4.0)
             data = _payload(el, elmlib, lines, int(c["request"][:2], 16), c["request"])
         except Exception:                                     # noqa: BLE001
             data = None

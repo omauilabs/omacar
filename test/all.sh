@@ -27,7 +27,9 @@ fi
 if [[ -x "$VENV/bin/python" ]]; then
   "$VENV/bin/python" "$ROOT/test/workshop_test.py" || fails=$((fails + 1))
 else
-  python3 "$ROOT/test/workshop_test.py" || fails=$((fails + 1))
+  python3 "$ROOT/test/guards_test.py" || fails=1
+
+python3 "$ROOT/test/workshop_test.py" || fails=$((fails + 1))
 fi
 
 # The suites that live in their own files. Both were written alongside a

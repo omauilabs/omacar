@@ -68,7 +68,22 @@ def preflight(el, moving_check=True):
 
     import dtc as dtclib
     v = dtclib.battery_volts(el)
-    if v is not None and v < writelib.WRITE_VOLTS:
+    # FAILS CLOSED, like the speed check above it.
+    #
+    # This read `if v is not None and v < WRITE_VOLTS`, so a voltage that could
+    # not be read at all sailed straight through and the write proceeded with no
+    # floor under it. That is exactly the condition the floor exists for -- it
+    # was added because a 25-minute key-on session tripped an ABS warning with
+    # nothing watching the battery -- and it is the condition most likely on
+    # somebody else's car and somebody else's adapter, which is the whole point
+    # of shipping this. An unreadable voltage is not a pass.
+    if v is None:
+        raise Refused("battery voltage could not be read, so I cannot confirm "
+                      "the car is above "
+                      f"{writelib.WRITE_VOLTS} V. Writes need that confirmation: "
+                      "one interrupted by a brownout leaves a module holding "
+                      "half a change.")
+    if v < writelib.WRITE_VOLTS:
         raise Refused(f"battery is at {v:.1f} V. Writing below "
                       f"{writelib.WRITE_VOLTS} V risks leaving a module holding "
                       f"half a change. Start the engine or charge it.")

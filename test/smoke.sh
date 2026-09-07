@@ -19,6 +19,16 @@ echo
 echo "  OmaCar smoke test (scratch HOME: $SCRATCH)"
 echo
 
+# The interpreter, resolved BEFORE the environment is mutated.
+#
+# `python3` on a mise-managed machine is a shim that resolves the real
+# interpreter through XDG_DATA_HOME and XDG_CACHE_HOME. This test redirects both
+# into the scratch, so the shim looked in an empty directory, failed, and every
+# assertion that shelled out to python3 reported FAIL -- for a reason that had
+# nothing to do with what was being tested. Capture the real path first and use
+# it throughout.
+PY="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || command -v python3)"
+
 # Isolate XDG too. These are absolute paths that survive a HOME override, and
 # an uninstall deletes its state directory — a test that only overrides HOME
 # will happily delete the real one.
@@ -45,7 +55,7 @@ grep -q '>>> omacar' "$SCRATCH/.config/omarchy/extensions/omarchy-menu.jsonc" &&
 grep -q '>>> omacar' "$SCRATCH/.config/hypr/bindings.lua" && ok "keybinding block added" || bad "keybinding block added"
 # The Omarchy menu is JSONC: line comments, and trailing commas before a
 # closing brace are the existing convention there, not corruption.
-python3 -c "
+"$PY" -c "
 import json, re
 raw = open('$SCRATCH/.config/omarchy/extensions/omarchy-menu.jsonc').read()
 raw = re.sub(r'^\s*//.*$', '', raw, flags=re.M)
