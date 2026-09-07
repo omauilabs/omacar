@@ -180,6 +180,14 @@ PROV_KEYS = ("found_by", "found_on", "vin_prefix", "method", "first_seen",
              "url", "retrieved_at", "source_kind", "model")
 META_KEYS = ("created", "updated", "contributors", "checksum")
 
+# An actuator entry names WHAT to move, never a request to send. lib/actuate.py
+# composes the request itself as 0x2F + did + state, so a shared profile
+# cannot smuggle any other service through this table however it is written.
+# `session`, if present, is the 0x10 request to make first, and is checked to
+# be one.
+ACTUATOR_KEYS = ("test", "name", "header", "did", "on", "off", "session",
+                 "confidence", "provenance")
+
 
 def normalize(doc):
     """The document as it will actually be written.
@@ -233,6 +241,21 @@ def normalize(doc):
         mods.append(q)
     if mods:
         out["module"] = mods
+
+    acts = []
+    for a in src.get("actuator") or []:
+        q = keep(a, ACTUATOR_KEYS)
+        for k in ("header", "did", "on", "off", "session"):
+            if q.get(k) is not None:
+                q[k] = str(q[k]).replace(" ", "").upper()
+        prov = keep(a.get("provenance"), PROV_KEYS)
+        if prov:
+            q["provenance"] = prov
+        else:
+            q.pop("provenance", None)
+        acts.append(q)
+    if acts:
+        out["actuator"] = acts
 
     poll = {}
     for tier in POLL_TIERS:
@@ -456,6 +479,53 @@ def problems(doc):
             if isinstance(v, str) and len(v.strip()) == 17 and v.strip().isalnum():
                 out.append(f"{where}: provenance.{k} looks like a full VIN. "
                            f"Store only a prefix (see vin_prefix).")
+
+    hexchars = set("0123456789ABCDEF")
+
+    def is_hex(v, length=None):
+        v = str(v or "").replace(" ", "").upper()
+        return (bool(v) and len(v) % 2 == 0 and set(v) <= hexchars
+                and (length is None or len(v) == length))
+
+    seen_tests = set()
+    for i, a in enumerate(doc.get("actuator") or []):
+        where = f"actuator {a.get('test') or i + 1}"
+        if not a.get("test"):
+            out.append(f"{where}: no test, so no button can use it")
+        elif a["test"] in seen_tests:
+            out.append(f"{where}: duplicate test")
+        else:
+            seen_tests.add(a["test"])
+        hdr = str(a.get("header") or "").replace(" ", "").upper()
+        if not (hdr and set(hdr) <= hexchars and len(hdr) in (3, 6, 8)):
+            out.append(f"{where}: header must be a 3-, 6- or 8-digit hex address")
+        if not is_hex(a.get("did"), 4):
+            out.append(f"{where}: did must be exactly two bytes (four hex digits)")
+        if not is_hex(a.get("on")):
+            out.append(f"{where}: on must be the control option and state, as hex")
+        if a.get("off") not in (None, "") and not is_hex(a.get("off")):
+            out.append(f"{where}: off must be hex (default 00, return control)")
+        sess = str(a.get("session") or "").replace(" ", "").upper()
+        if sess and not (sess.startswith("10") and is_hex(sess, 4)):
+            out.append(f"{where}: session must be a 0x10 request such as 1003; "
+                       f"nothing else may be sent before the command")
+        for k in ("request", "service", "payload"):
+            if k in a:
+                out.append(f"{where}: carries `{k}`. An actuator names an "
+                           f"identifier and a state; the request is composed "
+                           f"by the tool as 0x2F + did + state and cannot be "
+                           f"supplied.")
+        conf = a.get("confidence")
+        if conf not in CONFIDENCE:
+            out.append(f"{where}: confidence {conf!r} is not one of "
+                       f"{', '.join(CONFIDENCE)}")
+        prov = a.get("provenance") or {}
+        if not prov.get("found_on"):
+            out.append(f"{where}: provenance.found_on is missing")
+        if conf == "validated" and not prov.get("validated_against"):
+            out.append(f"{where}: claims validated but does not say against "
+                       f"what -- for an actuator that means what physically "
+                       f"moved, seen by whom.")
     return out
 
 
@@ -582,6 +652,27 @@ def dumps(doc):
             for k in ("found_by", "found_on", "vin_prefix", "method",
                       "first_seen", "samples", "validated_by", "validated_on",
                       "validated_against", "refuted_by", "refuted_on", "note"):
+                v = prov.get(k)
+                if v is None or v == "":
+                    continue
+                L.append(f"  {k} = " + (str(v) if isinstance(v, int) else _q(v)))
+
+    for a in doc.get("actuator") or []:
+        L.append("")
+        L.append("[[actuator]]")
+        L.append("# Sent as 0x2F + did + state. Only `validated` reaches a button.")
+        for k in ("test", "name", "header", "did", "on", "off", "session"):
+            if a.get(k) not in (None, ""):
+                L.append(f"{k} = {_q(a[k])}")
+        L.append(f"confidence = {_q(a.get('confidence', 'candidate'))}")
+        prov = a.get("provenance") or {}
+        if prov:
+            L.append("")
+            L.append("  [actuator.provenance]")
+            for k in ("found_by", "found_on", "vin_prefix", "method",
+                      "first_seen", "validated_by", "validated_on",
+                      "validated_against", "refuted_by", "refuted_on", "note",
+                      "url", "retrieved_at", "source_kind"):
                 v = prov.get(k)
                 if v is None or v == "":
                     continue

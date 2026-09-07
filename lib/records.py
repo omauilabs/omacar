@@ -769,6 +769,17 @@ def _signal_catalogue(vehicle):
         return []
 
 
+def _actuator_reach(vehicle):
+    """Which functional tests have a validated identifier on THIS car, for
+    the Tests screen to say per button. Never raises; see _signal_catalogue."""
+    try:
+        import actuate as actlib
+        doc = actlib.profile_doc()
+        return actlib.reach(doc) if doc else {}
+    except Exception:                                         # noqa: BLE001
+        return {}
+
+
 def snapshot(include_samples=False):
     """Everything, in one read. The API and the AI layer both start here."""
     db = connect()
@@ -803,6 +814,11 @@ def snapshot(include_samples=False):
         # no validated entries, which today is every car -- the point is that
         # the first one to arrive lands on a screen instead of in a file.
         "signals": _signal_catalogue(v),
+        # Per test: does a button on the Tests screen reach this car, and on
+        # whose word. Empty on every car nobody has mapped an actuator for,
+        # and the screen says so next to the button rather than offering one
+        # that does nothing.
+        "actuators": _actuator_reach(v),
         "name": v.get("name", ""),
         "title": v.get("title", "") or v.get("name", ""),
         "odometer": round(odo, 1) if odo else None,

@@ -465,23 +465,62 @@ LIMITS = {
 }
 
 
-def actuate(test, duration=None, stop=False):
+class Unreachable(Exception):
+    """A real car with no validated identifier for this test. Nothing sent."""
+
+
+def actuate(test, duration=None, stop=False, who="the app"):
     """Command an actuator, or stop whatever is running.
 
     Every test is capped in this process rather than trusted to the caller, and
     the command carries its own expiry so a crashed app cannot leave a fan on.
+
+    TWO CARS, TWO PATHS, ONE SCREEN. On the simulated car the command is a
+    file the simulator reads, as it always was. On a real car it is UDS 0x2F
+    through lib/actuate.py -- the port borrowed from the daemon, every gate,
+    the command, the observation and the release -- and only for a test the
+    car's profile has a VALIDATED identifier for. A real car with no such
+    entry is refused here with the reason, before anything is opened, so the
+    screen gets a sentence instead of a flat trace that looks like a result.
     """
+    import garage
     os.makedirs(records.STATE, exist_ok=True)
+    simulated = garage.current() == garage.SIM_KEY
     if stop or not test:
         try:
             os.remove(COMMAND)
         except OSError:
             pass
+        if not simulated:
+            import actuate as actlib
+            actlib.stop()
         return {"stopped": True}
     lim = LIMITS.get(test)
     if not lim:
         raise ValueError(f"unknown test {test!r}")
     secs = min(lim["max"], max(1, int(duration or lim["max"])))
+    if not simulated:
+        import actuate as actlib
+        if test == "hold_idle":
+            # Not an actuator. On a real car this is a person leaving the
+            # engine running; recording that the baseline was taken is all
+            # there is to do.
+            records.write_record("test", "baseline: idle held",
+                                 {"test": test, "seconds": secs})
+            return {"test": test, "duration": secs, "reaches": False,
+                    "note": "On a real car, holding idle is you: leave the "
+                            "engine running and the baseline is taken as is."}
+        entry = actlib.for_test(test)
+        if not entry:
+            raise Unreachable(
+                f"No validated identifier for {test!r} on this car, so nothing "
+                f"was sent. Actuator control is UDS 0x2F and the identifier is "
+                f"manufacturer-specific: it has to be found on this model and "
+                f"validated by someone who watched the part move. Until then "
+                f"the button stays honest and stays off.")
+        out = actlib.begin(test, secs, entry, who=who)
+        out.update({"duration": secs, "reaches": True})
+        return out
     cmd = {
         "id": uuid.uuid4().hex[:8],
         "test": test,
@@ -1197,11 +1236,16 @@ def handle_post(path, body):
         refused = _mode_gate("actuate")
         if refused:
             return refused
+        import ops
         try:
             return 200, actuate(data.get("test"), data.get("duration"),
                                 bool(data.get("stop")))
         except ValueError as e:
             return 400, {"error": str(e)}
+        except (Unreachable, ops.Refused) as e:
+            return 409, {"error": str(e)}
+        except Exception as e:                                # noqa: BLE001
+            return 500, {"error": f"{type(e).__name__}: {e}"}
     if path == "/api/ai":
         try:
             span = data.get("span")

@@ -56,31 +56,54 @@ export default function tests(root) {
   // simulator sentence on the day a real actuator path lands.
   root.appendChild(h("div.card.tint-warn.tests-reach", h("div.reach")));
 
+  // Per test, from the car's profile: which buttons reach THIS car, and on
+  // whose word. Empty on every car nobody has mapped an actuator for.
+  const reachOf = (id) => ((store.car && store.car.actuators) || {})[id] || null;
+  const simulated = () => !!(store.car && store.car.simulated);
+
   function paintReach() {
     const el = root.querySelector(".tests-reach .reach");
     if (!el) return;
-    const sim = !!(store.car && store.car.simulated);
+    const card = el.closest(".card");
+    const reach = (store.car && store.car.actuators) || {};
+    const n = Object.keys(reach).length;
     clear(el);
-    if (sim) {
+    if (simulated()) {
+      card.classList.add("tint-warn");
       el.appendChild(h("div.title", "This is the simulated car"));
       el.appendChild(h("p.lede",
         "The commands below reach the simulator, and it answers: the trace you "
         + "see is what the model did. That is a real exercise of this screen "
         + "and of the safety gates behind it. It is not your car."));
-    } else {
-      el.appendChild(h("div.title", "These do not reach this car yet"));
+    } else if (n) {
+      card.classList.remove("tint-warn");
+      el.appendChild(h("div.title", n + " of these reach this car"));
       el.appendChild(h("p.lede",
-        "A command from here is written for the vehicle to pick up, and on a "
-        + "real car nothing picks it up yet. Actuator control is UDS service "
-        + "0x2F, which needs a controllable identifier for this specific "
-        + "model — none has been discovered for this one — and on most modules "
-        + "it sits behind security access whose key is not public. The button "
-        + "will run and the trace will stay flat. That is the tool being "
-        + "honest, not the car being healthy."));
+        "A test with a validated identifier in this car's profile is sent as "
+        + "UDS 0x2F through every gate — technician mode, the write arm, the "
+        + "motion check, the voltage floor — and released when it ends, "
+        + "whatever happens. Each button says which it is. The rest send "
+        + "nothing and say so."));
+    } else {
+      card.classList.add("tint-warn");
+      el.appendChild(h("div.title", "None of these reach this car yet"));
+      el.appendChild(h("p.lede",
+        "Actuator control is UDS service 0x2F and the identifier for each "
+        + "part is manufacturer-specific. This car's profile has no validated "
+        + "one, so every button here is off and sends nothing — that is the "
+        + "tool being honest, not the car being healthy. Finding one is a "
+        + "job for a car session: sweep, watch the part, validate."));
     }
   }
   paintReach();
-  stopFns.push(store.on("car", paintReach));
+  stopFns.push(store.on("car", () => { paintReach(); paintButtons(); }));
+
+  // Every run button, so a profile that arrives while the screen is open
+  // switches them on without a reload.
+  const buttons = [];
+  function paintButtons() {
+    for (const b of buttons) b.paint();
+  }
 
   const body = h("div.sect");
   root.appendChild(body);
@@ -114,8 +137,38 @@ export default function tests(root) {
 
     const btn = h("button.btn", "Run for " + t.seconds + "s");
     const bar = h("div.meter.thin", { style: { marginTop: "10px", display: "none" } }, h("i"));
+    const reachLine = h("p", { style: { marginTop: "8px", fontSize: ".74rem" } });
 
     btn.addEventListener("click", () => run(t, { btn, bar, traceBox, canvas, readout }));
+
+    // WHAT PRESSING THIS BUTTON DOES, ON THIS CAR, NEXT TO THE BUTTON.
+    function paint() {
+      clear(reachLine);
+      if (simulated()) {
+        reachLine.style.color = "var(--muted)";
+        reachLine.appendChild(h("span", "Reaches the simulator."));
+        btn.disabled = running !== null;
+        return;
+      }
+      const r = reachOf(t.id);
+      if (r) {
+        const p = r.provenance || {};
+        reachLine.style.color = "var(--ok)";
+        reachLine.appendChild(h("span", "Reaches this car · identifier " + r.did + " on " + r.header
+          + (r.session ? " in an extended session" : "")
+          + (p.validated_by ? " · validated by " + p.validated_by : "")
+          + (p.validated_on ? " on " + p.validated_on : "")
+          + (p.validated_against ? " against " + p.validated_against : "") + "."));
+        btn.disabled = running !== null;
+      } else {
+        reachLine.style.color = "var(--warn)";
+        reachLine.appendChild(h("span",
+          "No validated identifier for this car. The button is off and would send nothing."));
+        btn.disabled = true;
+      }
+    }
+    buttons.push({ paint });
+    paint();
 
     return h("div.card",
       h("div.row.wrapline",
@@ -127,6 +180,7 @@ export default function tests(root) {
         h("span.muted", t.needs)),
       t.caution ? h("p", { style: { marginTop: "8px", fontSize: ".74rem", color: "var(--warn)" } },
         "⚠  " + t.caution) : null,
+      reachLine,
       h("div.row", { style: { marginTop: "12px" } }, btn),
       bar, traceBox,
       h("p.muted", { style: { marginTop: "10px" } },
@@ -184,6 +238,7 @@ export default function tests(root) {
     running = null;
     ui.btn.disabled = false;
     ui.btn.textContent = "Run for " + t.seconds + "s";
+    paintButtons();
     ui.bar.style.display = "none";
     api.actuate({ stop: true }).catch(() => { /* the command expires on its own */ });
   }
@@ -218,6 +273,30 @@ export default function tests(root) {
     const verdict = h("div", { style: { marginTop: "12px" } });
     const btn = h("button.btn.primary", "Run the sequence");
     const bar = h("div.meter.thin", { style: { marginTop: "10px", display: "none" } }, h("i"));
+    const reachLine = h("p", { style: { marginTop: "8px", fontSize: ".74rem" } });
+
+    function paint() {
+      clear(reachLine);
+      if (simulated()) {
+        reachLine.style.color = "var(--muted)";
+        reachLine.appendChild(h("span", "Reaches the simulator."));
+        btn.disabled = running !== null;
+        return;
+      }
+      const missing = (seq.steps || []).filter((id) => !reachOf(id));
+      if (!missing.length) {
+        reachLine.style.color = "var(--ok)";
+        reachLine.appendChild(h("span", "Every step has a validated identifier on this car."));
+        btn.disabled = running !== null;
+      } else {
+        reachLine.style.color = "var(--warn)";
+        reachLine.appendChild(h("span", "No validated identifier on this car for "
+          + missing.length + " of " + seq.steps.length + " steps. The sequence is off and would send nothing."));
+        btn.disabled = true;
+      }
+    }
+    buttons.push({ paint });
+    paint();
 
     btn.addEventListener("click", async () => {
       const ok = await confirmDialog({
@@ -332,6 +411,7 @@ export default function tests(root) {
       h("p.muted", { style: { marginTop: "6px" } }, seq.why),
       h("p", { style: { marginTop: "8px", fontSize: ".74rem", color: "var(--warn)" } },
         "⚠  " + seq.caution),
+      reachLine,
       h("div.row", { style: { marginTop: "12px" } }, btn),
       bar,
       h("div", { style: { marginTop: "14px", overflowX: "auto" } }, table),

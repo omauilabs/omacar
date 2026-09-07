@@ -262,10 +262,10 @@ server_status() {
 BENCH_OUT="$OMACAR_STATE/bench-out"
 BENCH_PTY="$OMACAR_STATE/bench-pty"
 
-bench_pid() { pgrep -f "$OMACAR_VENV/bin/[e]lm" | head -1; }
+bench_pid() { pgrep -f "$ROOT/lib/[b]ench.py" | head -1; }
 
 bench_start() {
-  [[ -x "$OMACAR_ELM" ]] || { echo "omacar: bench emulator not installed — run: omacar setup" >&2; exit 1; }
+  "$OMACAR_PY" -c 'import elm' 2>/dev/null || { echo "omacar: bench emulator not installed — run: omacar setup" >&2; exit 1; }
   if [[ -n "$(bench_pid)" ]]; then
     echo "bench already running on $(cat "$BENCH_PTY" 2>/dev/null)"
     return
@@ -273,7 +273,10 @@ bench_start() {
   rm -f "$BENCH_OUT" "$BENCH_PTY"
   # The emulator writes elm.log into its working directory, so run it from
   # the state dir rather than dropping a log wherever the user happened to be.
-  setsid -f sh -c "cd '$OMACAR_STATE' && exec '$OMACAR_ELM' -b '$BENCH_OUT' -s '${1:-car}'" >/dev/null 2>&1
+  # lib/bench.py runs the emulator in-process so the bench can carry scenarios
+  # the package does not ship -- `actuator`, a module that answers 0x2F -- and
+  # reports its port the same way the console script did.
+  setsid -f sh -c "cd '$OMACAR_STATE' && exec '$OMACAR_PY' '$ROOT/lib/bench.py' '$BENCH_OUT' '${1:-car}'" >/dev/null 2>&1
   local i
   for i in $(seq 1 30); do
     sleep 0.3

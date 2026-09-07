@@ -285,6 +285,7 @@ You do not need the adapter, or the car, to develop this.
 
     omacar setup          build the Python environment
     omacar bench start    start the ELM327 emulator (a simulated car on a pty)
+    omacar bench start actuator   the same car, plus a module that answers 0x2F
     omacar doctor         adapter, protocol, supported PIDs, stored faults
     omacar live RPM SPEED stream readings to the terminal
     omacar bench stop
@@ -473,11 +474,16 @@ unreadable, SVG gauges, and demo mode.
 
 Still ahead, and named rather than implied:
 
-- **Bidirectional on a real car.** The functional tests work against the
-  simulator. On a real vehicle each one needs a controllable identifier this
-  project has not discovered yet, and most modules gate service 0x2F behind
-  security access whose key algorithm is not public. The screen says which it
-  has for *your* car rather than offering a button that does nothing.
+- **Bidirectional on a real car.** The path is built: a functional test with a
+  *validated* actuator entry in the car's profile is sent as UDS 0x2F through
+  every gate (technician mode, the write arm, the motion check, the voltage
+  floor), the trace stays live through the borrowed link, and the release goes
+  out whatever happens. What is missing is the identifiers: they are
+  manufacturer-specific, none has been validated on a real car yet, and most
+  modules gate 0x2F behind security access whose key algorithm is not public.
+  So the screen says, per button, whether it reaches *your* car and on whose
+  word, and a button with no identifier is off and sends nothing. The whole
+  chain is provable on the bench: `omacar bench start actuator`.
 - **Coverage beyond one vehicle.** The whole strategy is in doc/ROADMAP.md: a
   full identifier sweep is about seventy minutes per car, but only once per
   model if the result is shared.
@@ -600,14 +606,17 @@ allowed. That is not a sandbox and this does not claim to be one.
 OmaCar reads by default and can write when you arm it. A tool that cannot clear
 a code after you have fixed the fault is a viewer, not a diagnostic.
 
-    omacar write status | arm | disarm | list
+    omacar write status | arm | disarm | list | log
     omacar learn [--deep]      discover this car's modules and what they monitor
     omacar dtclog              log DTC status through a whole drive
 
 Write mode covers clearing codes (0x04, 0x14), functional tests (0x2F), routines
 (0x31), settings (0x2E) and the session/security services those need (0x10,
 0x27). It **disarms itself after fifteen minutes**, and every operation states
-what it does to the car before anything is sent.
+what it does to the car before anything is sent. Every write that leaves the
+machine is appended to a ledger by the transport gate itself — what was sent,
+to which address, and what the module answered — and `omacar write log` reads
+it. There is no path that sends a write and does not leave a line.
 
 ### Safety, enforced rather than documented
 

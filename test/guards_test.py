@@ -496,6 +496,74 @@ check("the catalogue carries no header and no formula",
 check("payload offset for a 0x22 reply skips 62 + two DID bytes",
       signals.payload_offset("22F181"), 3)
 
+# --------------------------------------------------------------- the actuators
+head("an actuator reaches a button only when validated, and sends only 0x2F")
+
+import actuate as actlib  # noqa: E402
+
+
+def act(conf="validated", **kw):
+    e = {"test": "fan_high", "header": "7E0", "did": "F0A1", "on": "03FF",
+         "confidence": conf,
+         "provenance": {"found_on": "bench", "validated_by": "t",
+                        "validated_on": "2026-09-07",
+                        "validated_against": "the fan spun"}}
+    e.update(kw)
+    return e
+
+
+check("a validated entry reaches", [x["test"] for x in actlib.entries({"actuator": [act()]})], ["fan_high"])
+for conf in ("proposed", "candidate", "observed", "refuted"):
+    check(f"a {conf} entry does not", actlib.entries({"actuator": [act(conf)]}), [])
+check("validated without validated_against does not",
+      actlib.entries({"actuator": [act(provenance={"found_on": "bench"})]}), [])
+check("a three-byte did is refused", actlib.entries({"actuator": [act(did="F0A101")]}), [])
+check("a session that is not 0x10 is refused", actlib.entries({"actuator": [act(session="2701")]}), [])
+check("a 0x10 session is kept", actlib.entries({"actuator": [act(session="1003")]})[0]["session"], "1003")
+check("off defaults to 00 (return control)", actlib.entries({"actuator": [act()]})[0]["off"], "00")
+check("reach carries no bytes to send",
+      set(actlib.reach({"actuator": [act()]})["fan_high"].keys()),
+      {"did", "header", "session", "provenance"})
+# The request is composed by the tool; a profile cannot supply one.
+probs = _p.problems({"schema": _p.SCHEMA, "car": {"slug": "x", "make": "y", "model": "z"},
+                     "actuator": [act(request="2EF0A1FF")]})
+check("problems() names a smuggled request field",
+      any("cannot be supplied" in x for x in probs), True)
+probs = _p.problems({"schema": _p.SCHEMA, "car": {"slug": "x", "make": "y", "model": "z"},
+                     "actuator": [act(session="3101FF00")]})
+check("problems() refuses a non-0x10 session",
+      any("session must be a 0x10" in x for x in probs), True)
+rt = _p.normalize({"schema": _p.SCHEMA, "car": {"slug": "x", "make": "y", "model": "z"},
+                   "actuator": [act(on="03 ff")]})
+check("normalize keeps the actuator table and uppercases the bytes",
+      rt["actuator"][0]["on"], "03FF")
+check("the TOML writer emits it",
+      "[[actuator]]" in _p.dumps(rt) and "did = \"F0A1\"" in _p.dumps(rt), True)
+
+
+class _FakeEl:
+    """Answers mode-01 reads the way an aimed engine module does."""
+    header = "7E0"
+    answers = {"010C": "41 0C 1A F8", "0104": "41 04 5A", "0105": "41 05 7B",
+               "0106": "41 06 80", "0111": "41 11 40"}
+
+    def request(self, req, **kw):
+        return [self.answers.get(req, "NO DATA")]
+
+    def payload(self, lines, request=None):
+        return lines[0]
+
+    def raw(self, line, **kw):
+        return ["13.8V"]
+
+
+obs = actlib.observe(_FakeEl())
+check("RPM decodes from two bytes", obs["RPM"], 1726.0)
+check("load decodes from one", obs["ENGINE_LOAD"], round(90 * 100 / 255, 2))
+check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
+check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
+check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
+
 # ---------------------------------------------------------------- the identity
 head("a stored VIN survives a broken read")
 

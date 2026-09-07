@@ -487,6 +487,24 @@ def main():
             "t": time.time(),
             "note": "a command is using the adapter",
         })
+        # A FUNCTIONAL TEST KEEPS THE TRACE LIVE. lib/actuate.py reads the
+        # car through the borrowed link and leaves its readings in a
+        # sidecar; while that sidecar is fresh the snapshot carries them,
+        # says a test is running, and stays "connected" -- because it is.
+        # Stale, and the daemon's own last readings are the truth again.
+        try:
+            import actuate as actlib
+            with open(actlib.BORROWED, encoding="utf-8") as f:
+                b = json.load(f)
+            if time.time() - float(b.get("t") or 0) < actlib.BORROWED_FRESH:
+                vals = dict(out.get("values") or {})
+                vals.update({k: v for k, v in (b.get("values") or {}).items()
+                             if v is not None})
+                out.update({"values": vals, "connected": True,
+                            "status": "test", "test": b.get("test"),
+                            "note": "a functional test is using the adapter"})
+        except (OSError, ValueError, TypeError):
+            pass
         return out
 
     def hand_over():

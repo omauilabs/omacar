@@ -290,7 +290,18 @@ class Elm:
                 f"service 0x{service:02X} ({described[0]}) writes to the car and "
                 f"write mode is not armed.\n"
                 f"  arm it with:  omacar write arm")
-        return self._send(payload_hex, **kw)
+        # THE LEDGER LINE IS WRITTEN BY THE GATE. Every write leaves through
+        # this method, so every write leaves a line, and no caller can forget
+        # to. The reply is classified here for the same reason: "sent" alone
+        # would record the attempt and lose what the module said about it.
+        lines = self._send(payload_hex, **kw)
+        try:
+            kind, detail, _data = classify(lines, service, payload_hex)
+            writelib.sent(service, getattr(self, "header", ""), payload_hex,
+                          kind, detail)
+        except Exception:                                     # noqa: BLE001
+            pass
+        return lines
 
     def close(self):
         try:

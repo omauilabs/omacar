@@ -168,6 +168,57 @@ def status_text():
 # owner's act, done through the normal armed path, never from here.
 QUEUE = os.path.join(connect.STATE, "agent-writes.jsonl")
 
+# ------------------------------------------------------------------ the ledger
+#
+# Every write that leaves this machine, appended by the gate itself -- see
+# Elm.request() -- so there is no path that sends a write service and does not
+# leave a line. It records what was sent, to which address, and what answered,
+# and it is never rewritten: a declined proposal above is edited in place
+# because it is a proposal; a line here is a fact about the past.
+SENT = os.path.join(connect.STATE, "writes.jsonl")
+
+
+def sent(service, header, request, outcome, detail="", who="", why=""):
+    os.makedirs(connect.STATE, exist_ok=True)
+    row = {"at": time.time(), "service": f"0x{int(service):02X}",
+           "header": header or "", "request": request,
+           "outcome": outcome, "detail": (detail or "")[:160],
+           "who": who or "", "why": why or ""}
+    with open(SENT, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+    return row
+
+
+def ledger(limit=50):
+    """The last `limit` lines, oldest first."""
+    out = []
+    try:
+        with open(SENT, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:
+                        continue
+    except OSError:
+        pass
+    return out[-limit:]
+
+
+def _print_ledger():
+    rows = ledger()
+    if not rows:
+        print(f"  {DIM}nothing has been written to a car from this machine{RESET}\n")
+        return
+    print(f"  {BOLD}Writes that left this machine{RESET}  {DIM}append-only{RESET}\n")
+    for r in rows:
+        when = time.strftime("%d %b %H:%M:%S", time.localtime(r.get("at") or 0))
+        tone = GREEN if r.get("outcome") == "positive" else YELLOW
+        print(f"  {when}  {r.get('header', ''):9} {BOLD}{r.get('request')}{RESET}"
+              f"  {tone}{r.get('outcome')}{RESET}  {DIM}{r.get('detail', '')}{RESET}")
+    print()
+
 
 def queued():
     """Every proposal an agent has left, newest last."""
@@ -226,7 +277,8 @@ def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="omacar write", add_help=True)
     ap.add_argument("action", nargs="?", default="status",
-                    choices=["status", "arm", "disarm", "list", "queue", "decline"])
+                    choices=["status", "arm", "disarm", "list", "queue", "decline",
+                             "log"])
     ap.add_argument("which", nargs="?", help="for decline: the proposal number")
     ap.add_argument("--minutes", type=float, default=ARM_SECONDS / 60.0)
     args = ap.parse_args(argv)
@@ -249,6 +301,9 @@ def main(argv):
         _print_queue()
         return 0
 
+    if args.action == "log":
+        _print_ledger()
+        return 0
     if args.action == "queue":
         print()
         _print_queue()
