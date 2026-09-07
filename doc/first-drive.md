@@ -61,7 +61,9 @@ The daemon opens that file by VIN when the car answers, so nothing has to be
 1. Plug the OBDLink EX into the port and the tablet. Ignition on; engine
    running is better for voltage.
 2. `omacar doctor` — expect the adapter named, **ISO 15765-4 (CAN 29/500)**,
-   and the VIN. If it says the port is not readable, it prints the group
+   the VIN, and a `profile` line naming honda-crz-2015 with how many validated
+   readings and actuators it carries (today: none of either — that is the
+   honest number). If it says the port is not readable, it prints the group
    command; that is the `uucp` step above.
 3. `omacar` opens the app. If the daemon is not already running from the udev
    rule, the app has a Connect button and `omacar daemon start` does the

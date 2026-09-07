@@ -45,6 +45,33 @@ def main():
     except Exception:                                         # noqa: BLE001
         pass
     print(f"    supported  {len(supported)} commands")
+    # Which car this is, and what the tree already knows about it -- the two
+    # facts a car session needs before deciding what to try. The VIN is read
+    # the same way the daemon reads it; the profile is the one the garage
+    # would match. Nothing here opens a database.
+    if connected:
+        try:
+            import survey
+            import profile as profilelib
+            import signals
+            import actuate
+            vin = survey.read_vin(conn, obd)
+            if vin:
+                print(f"    vin        {vin[:8]}{'…' if len(vin) > 8 else ''}")
+                slug = profilelib.for_vin(vin)
+                if slug:
+                    doc, _ = profilelib.load(slug)
+                    tiles = len(signals.validated(doc or {}))
+                    buttons = list(actuate.reach(doc or {}))
+                    print(f"    profile    {slug}  {DIM}{tiles} validated reading(s), "
+                          f"{len(buttons)} actuator(s){(': ' + ', '.join(buttons)) if buttons else ''}{RESET}")
+                else:
+                    print(f"    profile    {DIM}none for this model yet — omacar learn, "
+                          f"then omacar profile{RESET}")
+            else:
+                print(f"    vin        {DIM}not answered{RESET}")
+        except Exception as why:                                # noqa: BLE001
+            print(f"    profile    {DIM}not checked ({type(why).__name__}){RESET}")
     print()
 
     if connected:
