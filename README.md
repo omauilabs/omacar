@@ -23,6 +23,11 @@ panel and the dock card all read it without knowing the difference. It never
 opens a serial port, so it cannot fight the daemon for one — but the two do
 share `live.json`, and only one of them may run at a time.
 
+That rule is now enforced rather than documented. Every published sample is
+stamped with the car it is about, and a reader discards one about a different
+car and says so. Leaving the simulator running and pointing the garage at a
+real vehicle used to put the simulated odometer on the real car's screen.
+
 It is not a lie: the vehicle record says `simulated`, and the bar panel and
 `omacar sim status` both say so out loud.
 

@@ -104,6 +104,16 @@ def open_db():
 
 
 def publish(payload):
+    # STAMP WHOSE SAMPLE THIS IS. The daemon and the simulator write this same
+    # file, and a reader has no other way to tell one car's news from another's
+    # -- see the note in records.live(). Stamped here rather than at each call
+    # site so no publisher can forget; a failure to read the garage leaves the
+    # stamp off, which is the old behaviour and is accepted downstream.
+    try:
+        import garage
+        payload = dict(payload, vehicle=garage.current())
+    except Exception:                                         # noqa: BLE001
+        pass
     tmp = LIVE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f)

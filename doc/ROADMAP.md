@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 53 | 22,110 |
+| Python — the whole diagnostic side | 53 | 22,184 |
 | JavaScript — the app | 45 | 13,737 |
 | CSS | 7 | 2,678 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,325 |
-| Tests | 8 | 3,513 |
-| Documentation | 12 | 3,234 |
-| Data — codes, resets, procedures, profiles | 6 | 1,389 |
-| **Tracked in git, all of it** | | **53,219** |
+| Tests | 8 | 3,563 |
+| Documentation | 12 | 3,253 |
+| Data — codes, resets, procedures, profiles | 7 | 1,455 |
+| **Tracked in git, all of it** | | **53,428** |
 
-**Tests** — 680 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 686 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -191,6 +191,7 @@ What is actually covered, straight out of the runner's own headings:
 | a validated identifier drives a reading, and only a validated one | 21 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
+| a live sample about another car is not this car's news | 6 |
 | a stored VIN survives a broken read | 5 |
 | an agent's write proposal is judged before it is queued | 6 |
 | every screen the navigation names exists on disk | 3 |
@@ -273,16 +274,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 90 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 94 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` first-drive: say how the record reaches a Surface that is not on the tailnet
+- `2026-09-07` doctor names the car's profile and what it enables
+- `2026-09-07` README names the bench badge and profile; the reveal thread counts five states
+- `2026-09-07` The bench is named before its numbers, and ships its own profile
 - `2026-09-07` An agent's write proposal is judged before it is queued
 - `2026-09-07` God mode's one door: write by identifier, read back first
 - `2026-09-07` The film's shot list, the calendar checked offline, and learn names the car
 - `2026-09-07` Help names the write ledger; roadmap counts regenerated
-- `2026-09-07` The voice assistant can ask the car
-- `2026-09-07` The garage screen says where the model came from
-- `2026-09-07` The model comes from the free decoder, and the first-drive runbook
-- `2026-09-07` The Tests lab reaches a real car, and says per button whether it does
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

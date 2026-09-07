@@ -1014,7 +1014,13 @@ def shakedown(now):
 
 
 def publish(payload):
+    # ALWAYS THE SIMULATED CAR, never garage.current(). What this process
+    # publishes is invented, whatever the garage happens to be pointing at, so
+    # the stamp is a statement about the sample and not about the pointer --
+    # which is exactly what makes it useful to a reader deciding whether the
+    # sample is their car's. See records.live().
     os.makedirs(STATE, exist_ok=True)
+    payload = dict(payload, vehicle=garage.SIM_KEY)
     tmp = LIVE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f)

@@ -635,6 +635,56 @@ check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
 
+# ------------------------------------------------------------- whose sample
+head("a live sample about another car is not this car's news")
+
+import importlib  # noqa: E402
+import time  # noqa: E402
+
+import records as _rec  # noqa: E402
+
+_livedir = tempfile.mkdtemp()
+_liveold, _dbold = _rec.LIVE, _rec.DB
+_rec.LIVE = os.path.join(_livedir, "live.json")
+
+
+def _put(payload):
+    with open(_rec.LIVE, "w", encoding="utf-8") as f:
+        _json.dump(payload, f)
+
+
+def _now(**kw):
+    base = {"connected": True, "t": time.time(), "values": {"RPM": 1000},
+            "odometer_km": 137847.6}
+    base.update(kw)
+    return base
+
+
+_realkey = "JHMZF1D44FS001835"
+try:
+    _rec.garage.current = lambda: _realkey            # the real car is open
+    _put(_now(vehicle=_rec.garage.SIM_KEY, simulated=True))
+    _got = _rec.live()
+    check("the simulator's sample is refused for a real car",
+          _got.get("connected"), False)
+    check("and says which car it was about",
+          _rec.garage.SIM_KEY in (_got.get("note") or ""), True)
+    check("and carries no values to be mistaken for this car's",
+          _got.get("values"), {})
+    _put(_now(vehicle=_realkey))
+    check("this car's own sample is accepted", _rec.live().get("connected"), True)
+    _put(_now())                                      # no stamp at all
+    check("an unstamped sample is accepted, as before",
+          _rec.live().get("connected"), True)
+    _rec.garage.current = lambda: _rec.garage.SIM_KEY  # the simulator is open
+    _put(_now(vehicle=_rec.garage.SIM_KEY, simulated=True))
+    check("and the simulator's sample is right when the simulator is the car",
+          _rec.live().get("connected"), True)
+finally:
+    _rec.LIVE, _rec.DB = _liveold, _dbold
+    importlib.reload(_rec)
+    shutil.rmtree(_livedir, ignore_errors=True)
+
 # ---------------------------------------------------------------- the identity
 head("a stored VIN survives a broken read")
 

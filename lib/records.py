@@ -195,6 +195,37 @@ def live():
             snap = json.load(f)
     except (OSError, ValueError):
         return {"connected": False, "status": "no daemon"}
+
+    # WHOSE SAMPLE IS THIS?
+    #
+    # The daemon and the simulator write the same file -- documented, and only
+    # one is meant to run at a time -- but nothing enforced the consequence of
+    # breaking that rule, and the consequence is the worst kind this tool has.
+    # Leave the simulator running, point the garage at a real car, and the real
+    # car's screen took the SIMULATED odometer: 137,847 km on a vehicle with
+    # 306,246 on it. Found on the launch tablet, with the real car's rescued
+    # record open.
+    #
+    # So a publisher stamps the vehicle its sample is about, and a sample about
+    # a different car is not this car's news. An unstamped sample is accepted
+    # unchanged, because an older daemon writing one is not wrong about
+    # anything -- it simply predates the question.
+    stamped = snap.get("vehicle")
+    if stamped:
+        try:
+            mine = garage.current()
+        except Exception:                                     # noqa: BLE001
+            mine = None
+        if mine and stamped != mine:
+            return {
+                "connected": False,
+                "status": "another vehicle",
+                "note": (f"the live sample is about {stamped}, and this is "
+                         f"{mine}. The daemon and the simulator share this "
+                         f"file and only one may run at a time."),
+                "values": {},
+            }
+
     age = time.time() - (snap.get("t") or 0)
     if snap.get("connected") and age > LIVE_STALE:
         return {
