@@ -801,6 +801,20 @@ def handle_get(path, query):
         # key rather than letting a hand-edited drive log become a 500.
         import ima
         return 200, ima.summary()
+    if path == "/api/mode":
+        # The tier, and what it permits, as one answer. The client needs both:
+        # the tier to stamp on the document, and the verdicts to grey the right
+        # controls without reimplementing the table in JavaScript -- which is
+        # how a screen and a server come to disagree about what is allowed.
+        import modes
+        tier = modes.current()
+        return 200, {
+            "tier": tier,
+            "tiers": list(modes.TIERS),
+            "actions": {a: modes.decide(a, tier).asdict()
+                        for a in sorted(modes.ACTIONS)},
+        }
+
     if path == "/api/adapter":
         return 200, adapter()
     if path == "/api/theme":
@@ -962,6 +976,15 @@ def handle_post(path, body):
         except Exception as e:                                    # noqa: BLE001
             return 500, {"error": f"{type(e).__name__}: {e}"}
         return 200, {"car": discover.summary()}
+    if path == "/api/mode":
+        import modes
+        want = (json.loads(body or "{}") or {}).get("tier")
+        try:
+            now = modes.set_mode(want)
+        except ValueError as why:
+            return 400, {"error": str(why)}
+        return 200, {"tier": now}
+
     if path == "/api/clear":
         refused = _mode_gate("clear_codes")
         if refused:

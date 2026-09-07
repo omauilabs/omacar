@@ -258,6 +258,8 @@ export const api = {
   saveRecording: (label, from, to) =>
     req("/api/record", { method: "POST", body: JSON.stringify({ label, from, to }) }),
   setUnits: (system) => req("/api/units", { method: "POST", body: JSON.stringify({ system }) }),
+  mode: () => req("/api/mode"),
+  setMode: (tier) => req("/api/mode", { method: "POST", body: JSON.stringify({ tier }) }),
   actuate: (body) => req("/api/actuate", { method: "POST", body: JSON.stringify(body) }),
   concerns: () => req("/api/concerns"),
   photos: (q) => req("/api/photos?" + new URLSearchParams(q || {})),

@@ -6,7 +6,7 @@
 // on screen. A diagnostic tool that hammers the daemon while you read a
 // service schedule is a tool that gets in the way of the thing it is watching.
 
-import { h, clear, icon, store, U, api, toast, dist, grouped, since } from "./core.js";
+import { h, clear, icon, store, U, api, toast, confirmDialog, dist, grouped, since } from "./core.js";
 
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
@@ -105,7 +105,7 @@ const TABS = [
       // The hybrid screen reads files already on disk and opens no serial port,
       // so it draws with the car unplugged -- which is most of the time anybody
       // wants to look at it.
-      { id: "ima",    label: "Hybrid",   title: "IMA hybrid system",    mount: imaView },
+      { id: "ima",    label: "Hybrid",   title: "IMA hybrid system",    mount: imaView, tier: "power" },
       { id: "omaplay", label: "Phone",   title: "Your phone, and the car", mount: omaplayView, fast: true },
       { id: "dash",   label: "Overview", title: "Overview",             mount: dash,       fast: true },
       { id: "garage", label: "Profile",  title: "Every car you own",    mount: garageView },
@@ -123,20 +123,20 @@ const TABS = [
     id: "data", label: "Data", icon: ICONS.data,
     views: [
       { id: "data",   label: "Live lab", title: "Data lab",                 mount: data,       fast: true },
-      { id: "replay", label: "Replay",   title: "Replay a recorded drive",  mount: replayView },
+      { id: "replay", label: "Replay",   title: "Replay a recorded drive",  mount: replayView, tier: "power" },
       // Actuator commands. Two taps from the bar, never one, and the chip
       // greys out with the reason on it while the car is moving.
-      { id: "tests",  label: "Tests",    title: "Functional tests",         mount: tests, fast: true, write: true },
+      { id: "tests",  label: "Tests",    title: "Functional tests",         mount: tests, fast: true, write: true, tier: "technician" },
     ],
   },
   {
     id: "care", label: "Care", icon: ICONS.service,
     views: [
       { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
-      { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true },
+      { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
       // fast, though it shows no gauge: its lock is a question about speed,
       // and a screen that gates on a value has to be watching that value.
-      { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView },
+      { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
       { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
       { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },
     ],
@@ -194,6 +194,35 @@ const VIEWS = [
 // write location.hash except in direct response to a tap or a keypress.
 const HOME = "hub";
 
+// THE MODE, WHICH THE SERVER DECIDES AND THIS FILE ONLY REFLECTS.
+//
+// A view carries `tier` when it is not for everybody. The registry above is
+// still the only list -- adding a mode did not add a second table to keep in
+// step, which is the whole reason the tier is a property on the view rather
+// than a set of ids somewhere else.
+//
+// Hiding a screen is a courtesy, NOT a boundary. The boundary is lib/modes.py,
+// asked by api.py before any write route runs, so posting straight at the API
+// with the app in simplified mode is refused by the server whatever the
+// browser believes. If this were the only check it would be worth nothing.
+const TIER_RANK = { simplified: 0, power: 1, technician: 2, god: 3 };
+let tier = "power";
+
+function tierAllows(v) {
+  if (!v.tier) return true;
+  return (TIER_RANK[tier] ?? 1) >= (TIER_RANK[v.tier] ?? 0);
+}
+
+async function loadMode() {
+  try {
+    const d = await api.mode();
+    if (d && d.tier) {
+      tier = d.tier;
+      document.documentElement.dataset.mode = tier;
+    }
+  } catch { /* an older server, or none: everything stays visible */ }
+}
+
 let current = null;
 let unmount = null;
 let fastTimer = null;
@@ -204,7 +233,7 @@ function route() {
 }
 
 const tabOf = (v) => (v && v.tab) || null;
-const hiddenView = (v) => !!(v.ai && !store.aiOn);
+const hiddenView = (v) => !!(v.ai && !store.aiOn) || !tierAllows(v);
 
 // The one piece of history the app keeps.
 //
@@ -584,6 +613,54 @@ function openSettings() {
   const redraw = () => {
     clear(rows);
 
+    // MODE FIRST, because it changes what the rest of this sheet is for. The
+    // note names the consequence rather than the tier: "power user" tells
+    // somebody nothing about whether the fan is going to spin.
+    const TIER_NOTE = {
+      simplified: "The four things that matter, in plain words. Clearing codes only.",
+      power: "Every reading and every screen. Clearing codes only.",
+      technician: "Commands the car: actuators, published routines, sweeps.",
+      god: "Also writes configuration. Drops back after 30 minutes.",
+    };
+    const TIER_LABEL = { simplified: "Simplified", power: "Power user",
+                         technician: "Technician", god: "God mode" };
+    rows.appendChild(row("Mode", TIER_NOTE[tier] || "", TIER_LABEL[tier] || tier,
+      async () => {
+        const order = ["simplified", "power", "technician", "god"];
+        const next = order[(order.indexOf(tier) + 1) % order.length];
+        // God mode is the one worth saying out loud before entering, because
+        // it is the only tier that writes configuration -- and the two things
+        // it still cannot do are the two worth naming.
+        if (next === "god") {
+          const yes = await confirmDialog({
+            title: "Enter god mode?",
+            body: "This unlocks writing stored configuration values into your car's "
+                + "modules. There is no undo: the previous value is gone unless you "
+                + "wrote it down, and a wrong one can disable a feature in a way the "
+                + "car's own diagnostics will not flag.\n\n"
+                + "It is your car and your right to do this. Two things stay refused "
+                + "whatever you choose: reprogramming, which needs a manufacturer-signed "
+                + "image this tool cannot produce, and writes that disable emissions "
+                + "controls, which is Clean Air Act s203(a)(3) rather than a matter of "
+                + "preference.\n\nIt drops back to Technician after thirty minutes.",
+            confirm: "Enter god mode",
+          });
+          if (!yes) return;
+        }
+        try {
+          const d = await api.setMode(next);
+          tier = d.tier;
+          document.documentElement.dataset.mode = tier;
+          redraw();
+          paintNavState();
+          go();
+          toast(`Mode: ${TIER_LABEL[tier] || tier}.`);
+        } catch (e) {
+          toast("Could not change mode: " + (e.message || e), "bad");
+        }
+      }));
+
+
     rows.appendChild(row("Units", "The server owns this, so the dock card and the terminal follow",
       U.units.dist, async (e) => {
         // Written to the server rather than to this browser, because the CLI,
@@ -757,6 +834,10 @@ async function applyTheme() {
 }
 
 async function boot() {
+  // The mode before the first paint, so a simplified tablet never flashes the
+  // technician screens on its way to hiding them.
+  await loadMode();
+
   window.addEventListener("hashchange", go);
 
   // The snapshot poller is the only clock running when no view is asking for
