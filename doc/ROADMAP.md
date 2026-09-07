@@ -159,15 +159,15 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 49 | 20,155 |
+| Python — the whole diagnostic side | 49 | 20,243 |
 | JavaScript — the app | 44 | 13,433 |
 | CSS | 7 | 2,665 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,281 |
 | Tests | 7 | 3,047 |
-| Documentation | 10 | 2,981 |
+| Documentation | 10 | 2,983 |
 | Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **48,932** |
+| **Tracked in git, all of it** | | **49,022** |
 
 **Tests** — 601 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -264,8 +264,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 76 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 77 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` The front page describes the modes and the agent surface, now they exist
 - `2026-09-07` Every agent on this machine knows what is plugged in
 - `2026-09-07` The car, as tools any agent harness can call
 - `2026-09-07` The screen reflects the mode; it does not decide it
@@ -273,7 +274,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` The tablet gets a screen it can be used on
 - `2026-09-07` The units ship with the app, and uninstalling stops deleting the car
 - `2026-09-07` Roadmap: the numbers move with the tree
-- `2026-09-07` Say what is true on the front page and on the Tests screen
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

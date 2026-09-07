@@ -182,6 +182,51 @@ TOOLS = [
             "retrying into one.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "lookup_signals",
+        "description":
+            "What other people have already published about this model: the "
+            "OBDb community signal sets, as headers and requests you can send "
+            "straight back with car_request. This is the shortcut past a "
+            "seventy-minute sweep. An empty result is a real and common answer "
+            "-- most models have not been mapped by anybody -- and it is not a "
+            "failure. Everything here is a LEAD, not a finding: model years and "
+            "markets differ, so check one against the car before believing it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "make": {"type": "string", "description": "e.g. Honda"},
+                "model": {"type": "string", "description": "e.g. CR-Z"},
+            },
+            "required": ["make", "model"],
+        },
+    },
+    {
+        "name": "decode_vin",
+        "description":
+            "Ask NHTSA what a VIN is. OBD-II reports a VIN and nothing else: "
+            "the make and year are derivable from the standard, but the MODEL "
+            "genuinely is not, which is why OmaCar leaves it blank rather than "
+            "guessing. This fills it in, free and with a citation, and gives "
+            "you the make and model that lookup_signals needs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "vin": {"type": "string",
+                        "description": "17 characters. Omit to use the current vehicle's."},
+            },
+        },
+    },
+    {
+        "name": "standard_dids",
+        "description":
+            "The ISO 14229 identification identifiers, F180 to F199, as "
+            "requests. The cheapest useful thing to ask a module nobody has "
+            "mapped: about a dozen reads, and the answers tell you what the "
+            "module calls itself -- part number, software version, serial, "
+            "manufacturing date.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -406,6 +451,46 @@ def t_request_write(args):
         "it is not a limitation to work around.")
 
 
+def t_lookup(args):
+    import knowledge
+    make = args.get("make") or ""
+    model = args.get("model") or ""
+    if not make or not model:
+        v = (records.snapshot().get("vehicle") or {})
+        make = make or v.get("make") or ""
+        model = model or v.get("model") or v.get("name") or ""
+    if not make or not model:
+        return failed("make and model are needed, and this vehicle's record "
+                      "does not carry them. decode_vin will tell you both.")
+    try:
+        entries, meta = knowledge.signals(make, model)
+    except Exception as why:                                  # noqa: BLE001
+        return failed(f"could not reach OBDb: {why}")
+    return as_json({"make": make, "model": model, "count": len(entries),
+                    "signals": entries[:200], "source": meta})
+
+
+def t_decode_vin(args):
+    import knowledge
+    vin = args.get("vin") or (records.snapshot().get("vehicle") or {}).get("vin") or ""
+    try:
+        out, meta = knowledge.decode_vin(vin)
+    except Exception as why:                                  # noqa: BLE001
+        return failed(f"could not reach NHTSA: {why}")
+    if meta.get("error"):
+        return failed(meta["error"])
+    return as_json({"vin": vin, "decoded": out, "source": meta})
+
+
+def t_standard_dids(_):
+    import knowledge
+    return as_json({
+        "dids": knowledge.ident_dids(),
+        "note": "All reads, all service 0x22. Send them with car_request "
+                "against a header car_profile lists, or against the engine.",
+    })
+
+
 HANDLERS = {
     "car_snapshot": t_snapshot,
     "car_live": t_live,
@@ -414,6 +499,9 @@ HANDLERS = {
     "car_request": t_request,
     "propose_did": t_propose,
     "request_write": t_request_write,
+    "lookup_signals": t_lookup,
+    "decode_vin": t_decode_vin,
+    "standard_dids": t_standard_dids,
 }
 
 
