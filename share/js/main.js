@@ -631,6 +631,29 @@ const GEAR = [
   "M19.1 13.9a1.5 1.5 0 0 0 .3 1.7l.1.1a1.9 1.9 0 1 1-2.7 2.7l-.1-.1a1.5 1.5 0 0 0-2.5 1.1v.2a1.9 1.9 0 0 1-3.8 0v-.1a1.5 1.5 0 0 0-2.5-1.1l-.1.1a1.9 1.9 0 1 1-2.7-2.7l.1-.1a1.5 1.5 0 0 0-1.1-2.5h-.2a1.9 1.9 0 0 1 0-3.8h.1a1.5 1.5 0 0 0 1.1-2.5l-.1-.1a1.9 1.9 0 1 1 2.7-2.7l.1.1a1.5 1.5 0 0 0 2.5-1.1v-.2a1.9 1.9 0 0 1 3.8 0v.1a1.5 1.5 0 0 0 2.5 1.1l.1-.1a1.9 1.9 0 1 1 2.7 2.7l-.1.1a1.5 1.5 0 0 0 1.1 2.5h.2a1.9 1.9 0 0 1 0 3.8h-.1a1.5 1.5 0 0 0-1.4.9z",
 ];
 
+// Root font size, in the one place the whole stylesheet scales from. Every
+// dimension in app.css that matters for a thumb is expressed in rem or in the
+// --tap tokens, so moving this moves the targets with the type rather than
+// leaving small buttons wearing big labels.
+const TEXT_SIZES = { small: 15, normal: 16, large: 18, huge: 20 };
+const TEXT_LABEL = { small: "Small", normal: "Normal", large: "Large", huge: "Huge" };
+
+function textSize() {
+  const v = localStorage.getItem("omacar.textSize");
+  return TEXT_SIZES[v] ? v : "normal";
+}
+
+function setTextSize(name) {
+  const px = TEXT_SIZES[name] || TEXT_SIZES.normal;
+  try { localStorage.setItem("omacar.textSize", name); } catch { /* private window */ }
+  document.documentElement.style.fontSize = px + "px";
+}
+
+function applyTextSize() {
+  document.documentElement.style.fontSize =
+    (TEXT_SIZES[textSize()] || TEXT_SIZES.normal) + "px";
+}
+
 function openSettings() {
   const host = document.getElementById("modal-host");
   const close = () => {
@@ -717,6 +740,19 @@ function openSettings() {
           redraw();
           toast("Could not change units: " + (err.message || err), "bad");
         }
+      }));
+
+    // TEXT SIZE IS A PROPERTY OF THE SCREEN, NOT OF THE CAR. The drive layout
+    // is stored on the server on purpose -- the arrangement made at the kitchen
+    // table is the one the tablet shows -- and this is the opposite case: a
+    // 10-inch tablet at arm's length in daylight and a 27-inch monitor at a
+    // desk want different sizes, and syncing them would make one of the two
+    // wrong every time. So it is per-device, and it says so.
+    rows.appendChild(row("Text size", "This screen only — a tablet at arm's length is not a desk",
+      TEXT_LABEL[textSize()] || "Normal", () => {
+        const order = Object.keys(TEXT_SIZES);
+        setTextSize(order[(order.indexOf(textSize()) + 1) % order.length]);
+        redraw();
       }));
 
     rows.appendChild(row("Hide the VIN and plate", "For photographs and for film",
@@ -915,6 +951,8 @@ async function boot() {
     }
   } catch { /* no plugins, or the endpoint is unavailable */ }
 
+  // Before the first paint that anybody measures a target against.
+  applyTextSize();
   paintBar();
   go();
 
