@@ -78,6 +78,10 @@ export default function garage(root) {
     if (car.vin) bits.push(h("span.mono", maskVin(car.vin)));
     if (car.plate) bits.push(h("span", maskPlate(car.plate)));
     bits.push(h("span", car.last_seen ? "seen " + since(car.last_seen) : "never connected"));
+    // Where the model came from, when the owner did not type it. The VIN
+    // carries make and year; the model is asked of the free government
+    // decoder, and a reader deserves to know which words are whose.
+    if (car.model_source) bits.push(h("span.muted", "model from " + car.model_source));
     if (car.simulated) bits.push(h("span.warn", "simulated"));
 
     return h("section.card" + (car.current ? ".tint-ok" : ""),

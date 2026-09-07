@@ -150,7 +150,7 @@ def describe(key):
         out["simulated"] = bool(v.get("simulated"))
         out["name"] = v.get("name") or " ".join(
             str(x) for x in (v.get("year"), v.get("make"), v.get("model")) if x)
-        for f in ("driver", "plate", "notes"):
+        for f in ("driver", "plate", "notes", "model_source"):
             out[f] = v.get(f)
         out["last_seen"] = v.get("surveyed_at") or v.get("seeded_at")
         out["codes"] = db.execute(
