@@ -167,6 +167,30 @@ def has(db, table):
         return False
 
 
+def table_columns(db, table):
+    """The columns a table actually has, or an empty set.
+
+    Every reader in this module has to cope with a record written by an older
+    build of the tool, and SQLite gives a missing column no gentle treatment:
+    naming one in a SELECT aborts the whole statement, so a single absent
+    column empties an entire chart rather than blanking one channel of it.
+    That is how a schema addition turns into a screen with nothing on it.
+
+    Asking the table first, and selecting only what is there, makes the answer
+    to "this record predates that column" a series of Nones -- which is the
+    true answer, because nobody was asking the car that question while those
+    rows were being written. `table` is always one of this module's own
+    constants; PRAGMA takes no bound parameters, so it could not be one
+    anyway.
+    """
+    if db is None:
+        return set()
+    try:
+        return {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.Error:
+        return set()
+
+
 def rows(db, sql, args=(), table=None):
     if db is None or (table and not has(db, table)):
         return []
@@ -463,6 +487,11 @@ def service(db, odometer):
 
 # ---- how it has been driven -------------------------------------------------
 
+# Figures a day may legitimately not have, filled in as None by days() so that
+# every row of the series has the same fields. See the note in days().
+DAY_FILL = ("soc_min", "soc_max")
+
+
 def days(db, live_window=60):
     """Daily figures — the stored rollups, plus today and any recent day the
     compactor has not reached yet, computed from the raw samples on the fly.
@@ -477,26 +506,65 @@ def days(db, live_window=60):
     fresh = live_days(db, since=time.time() - live_window * 86400)
     merged = stored + [d for d in fresh if d["day"] not in have]
     merged.sort(key=lambda d: d["day"])
+    # ONE SHAPE FOR BOTH HALVES OF THE SERIES.
+    #
+    # The two halves do not carry the same keys. The compactor (lib/prune.py)
+    # writes the stored row and keeps the driving figures and three health
+    # channels; it has no column for the pack, so a day old enough to have
+    # been rolled up has no state-of-charge figure and never will.
+    #
+    # The key is still set, to None. A caller walking the merged series then
+    # gets the same fields on every day, and "the compactor did not keep this"
+    # arrives as an explicit nothing instead of as a missing key -- which is a
+    # KeyError here and, worse, `undefined` in the browser, where it would be
+    # drawn as a gap that looks exactly like a flat battery.
+    for d in merged:
+        for k in DAY_FILL:
+            d.setdefault(k, None)
     return merged
+
+
+# What a daily rollup is computed from. `t`, `speed` and `maf` are the driving
+# figures and have been in the table since the first version; everything after
+# them is a health channel that arrived later, so a record written by an older
+# daemon may hold any subset of them and a record written by the simulator
+# holds a different subset again.
+LIVE_DAY_COLS = ("t", "speed", "maf", "ltft", "coolant", "rpm", "soc")
+LIVE_DAY_REQUIRED = frozenset(("t", "speed", "maf"))
 
 
 def live_days(db, since):
     """Roll raw samples into daily figures, with the same maths as everywhere
-    else — speed integrated, fuel from mass air flow, and never across a gap."""
-    if db is None:
+    else — speed integrated, fuel from mass air flow, and never across a gap.
+
+    ASK THE TABLE WHICH COLUMNS IT HAS, RATHER THAN GUESSING TWICE.
+
+    This used to name every column outright and catch the failure, with one
+    shorter statement to fall back on. That shape survives exactly one missing
+    column and then quietly stops working: the fallback listed six columns, so
+    the day the hybrid's state of charge joined the schema there were already
+    two vintages of record in the world and no branch that could read the
+    newer one -- a ladder of fallbacks is a ladder somebody has to remember to
+    extend, and nobody does.
+
+    Selecting the intersection of what this function wants and what this
+    database has cannot go stale that way. A column that is not there reads as
+    None below, which is the honest value for a stretch of driving nobody was
+    asking the car that question during, and is not the same as nought.
+    """
+    have = table_columns(db, "samples")
+    cols = [c for c in LIVE_DAY_COLS if c in have]
+    # Without distance and fuel there is no daily figure to compute, only an
+    # imaginary one. Nothing at all is the right answer, and it is the answer
+    # the old two-statement version gave as well, by way of an exception.
+    if not LIVE_DAY_REQUIRED.issubset(have):
         return []
     try:
         raw = db.execute(
-            "SELECT t, speed, maf, ltft, coolant, rpm, "
-            "       CONTROL_VOLTS AS volts FROM samples WHERE t >= ? ORDER BY t ASC",
-            (since,)).fetchall()
+            "SELECT " + ", ".join(cols) + " FROM samples "
+            "WHERE t >= ? ORDER BY t ASC", (since,)).fetchall()
     except sqlite3.Error:
-        try:
-            raw = db.execute(
-                "SELECT t, speed, maf, ltft, coolant, rpm FROM samples "
-                "WHERE t >= ? ORDER BY t ASC", (since,)).fetchall()
-        except sqlite3.Error:
-            return []
+        return []
     if not raw:
         return []
 
@@ -517,7 +585,11 @@ def live_days(db, since):
                                  # see over months is exactly the drift worth
                                  # seeing, and raw samples are gone by then.
                                  "ltft_sum": 0.0, "ltft_n": 0,
-                                 "coolant_max": None, "rpm_max": 0.0})
+                                 "coolant_max": None, "rpm_max": 0.0,
+                                 # The hybrid pack, low and high. See the
+                                 # note where these are emitted for why the
+                                 # day keeps a band and not a mean.
+                                 "soc_min": None, "soc_max": None})
         if gap:
             d["open"] = True
         if speed and speed > MOVING_KPH:
@@ -543,6 +615,14 @@ def live_days(db, since):
         rpm = r["rpm"] if "rpm" in r.keys() else None
         if rpm:
             d["rpm_max"] = max(d["rpm_max"], rpm)
+        # `is not None` rather than a truth test, unlike rpm above: nought is a
+        # perfectly real state of charge and on a tired pack it is the reading
+        # that matters most. Treating it as "no reading" would hide the one day
+        # the battery actually went flat.
+        soc = r["soc"] if "soc" in r.keys() else None
+        if soc is not None:
+            d["soc_min"] = soc if d["soc_min"] is None else min(d["soc_min"], soc)
+            d["soc_max"] = soc if d["soc_max"] is None else max(d["soc_max"], soc)
         prev_t = t
 
     out = []
@@ -560,6 +640,26 @@ def live_days(db, since):
             "coolant_max": (round(d["coolant_max"], 1)
                             if d["coolant_max"] is not None else None),
             "rpm_max": round(d["rpm_max"]) if d["rpm_max"] else None,
+            # THE PACK'S FLOOR AND CEILING, AND DELIBERATELY NO MEAN.
+            #
+            # A day of a hybrid is a day of the battery being emptied down
+            # hills and filled up again, and the two ends of that swing are
+            # exact statements about what the car reported: this is the
+            # lowest it went, this is the highest it came back to. On a pack
+            # with 190,000 miles on it the floor creeping up month after
+            # month IS the story -- a shrinking usable band is what a tired
+            # IMA looks like from the outside.
+            #
+            # The average is left out on purpose. The daemon re-reads PID
+            # 0x5B once every slow tick and the value it read is copied onto
+            # every one-second row until the next one, so a mean of those
+            # rows is a mean of the sampler's cadence and of how long the car
+            # idled as much as of the battery. It would be a number this tool
+            # could not justify, and the floor and the ceiling are both true.
+            "soc_min": (round(d["soc_min"], 1)
+                        if d["soc_min"] is not None else None),
+            "soc_max": (round(d["soc_max"], 1)
+                        if d["soc_max"] is not None else None),
         })
     return out
 
@@ -568,6 +668,19 @@ def window_of(series, first_day=None, n=None):
     chosen = series[-n:] if n is not None else [d for d in series if d["day"] >= first_day]
     km = sum(d["km"] or 0 for d in chosen)
     litres = sum(d["litres"] or 0 for d in chosen)
+    # THE PACK OVER THE WHOLE WINDOW, FROM THE DAILY EXTREMES.
+    #
+    # Taken from the days rather than re-derived from the samples, so a week's
+    # figure can never disagree with the seven days it is drawn beside -- and
+    # so it keeps working once the compactor has deleted the raw rows the days
+    # were made from.
+    #
+    # Days with no pack figure are dropped from the list rather than counted
+    # as nought. A day the compactor rolled up, or a day before this car was
+    # asked PID 0x5B at all, says nothing about the battery; folding it in as
+    # a zero would invent a flat pack and drag every window minimum to 0%.
+    lows = [d["soc_min"] for d in chosen if d.get("soc_min") is not None]
+    highs = [d["soc_max"] for d in chosen if d.get("soc_max") is not None]
     return {
         "km": round(km, 1),
         "litres": round(litres, 2),
@@ -580,6 +693,8 @@ def window_of(series, first_day=None, n=None):
         "engine_s": int(sum(d["engine_s"] or 0 for d in chosen)),
         "trips": int(sum(d["trips"] or 0 for d in chosen)),
         "top_kph": round(max([d["top_kph"] or 0 for d in chosen] or [0])),
+        "soc_min": round(min(lows), 1) if lows else None,
+        "soc_max": round(max(highs), 1) if highs else None,
         "days": len([d for d in chosen if (d["km"] or 0) > 0.5]),
         "span": len(chosen),
     }
@@ -619,12 +734,27 @@ def performance(series):
 
     months = {}
     for d in series:
-        m = months.setdefault(d["day"][:7], {"km": 0.0, "litres": 0.0})
+        m = months.setdefault(d["day"][:7], {"km": 0.0, "litres": 0.0,
+                                             "soc_min": None, "soc_max": None})
         m["km"] += d["km"] or 0
         m["litres"] += d["litres"] or 0
+        # A YEAR OF MONTHLY PACK EXTREMES IS THE IMA AGEING CHART.
+        #
+        # Fuel economy drifts with the weather and with who is driving; the
+        # band the battery works within drifts with the battery. Twelve months
+        # of "lowest it fell to, highest it came back to" is the one series in
+        # this file that shows a hybrid pack getting old, and it costs two
+        # comparisons a day to keep. As in window_of(), a month made only of
+        # compacted days carries None rather than a fabricated nought.
+        lo, hi = d.get("soc_min"), d.get("soc_max")
+        if lo is not None:
+            m["soc_min"] = lo if m["soc_min"] is None else min(m["soc_min"], lo)
+        if hi is not None:
+            m["soc_max"] = hi if m["soc_max"] is None else max(m["soc_max"], hi)
     out["months"] = [
         {"month": k, "km": round(v["km"], 1),
-         "lphk": round(v["litres"] / v["km"] * 100.0, 2) if v["km"] > 0.5 else None}
+         "lphk": round(v["litres"] / v["km"] * 100.0, 2) if v["km"] > 0.5 else None,
+         "soc_min": v["soc_min"], "soc_max": v["soc_max"]}
         for k, v in sorted(months.items())][-12:]
     out["odometer"] = series[-1].get("odo")
     out["since"] = series[0]["day"]
@@ -674,13 +804,44 @@ def trips(db, n=20):
 
 # ---- the sample stream ------------------------------------------------------
 
+# The channels a row of the record carries, in the order the CSV export and the
+# app's history endpoint declare them.
+#
+# `soc` is the hybrid pack, mode 01 PID 0x5B, written by the daemon on every
+# slow tick. It sat in the table unread: the daemon created the column,
+# migrated older records to gain it and filled it in once a second, and not one
+# query in this module mentioned it -- so the single most interesting series a
+# hybrid produces was being recorded and thrown away. It is a channel like any
+# other here, which is all it needs to be to reach a graph.
+#
+# Naming it here does NOT assert the car answers it. lib/telemetry.py is
+# careful about this: a PID in the support bitmap is a claim by the ECU, not a
+# promise, and a module that advertises 0x5B and then returns a constant is an
+# ordinary thing. A car that never answered stores NULLs, stats() then reports
+# no such channel, and nothing is drawn. Deciding that a reading actually
+# varies enough to be a gauge is lib/ima.py's job, not this reader's.
 SAMPLE_COLS = ["t", "rpm", "speed", "load", "throttle", "coolant", "intake",
-               "maf", "stft", "ltft", "timing", "lphk", "eff"]
+               "maf", "stft", "ltft", "timing", "lphk", "eff", "soc"]
 
 
 def samples(db, since=None, until=None, limit=4000, step=1):
-    """Raw rows over a span, thinned so a long span still fits in a graph."""
+    """Raw rows over a span, thinned so a long span still fits in a graph.
+
+    Every row comes back with every channel in SAMPLE_COLS, whether or not
+    this particular database has a column for it -- see the note at the end
+    about why a row must match the header it is sent under.
+    """
     if db is None:
+        return []
+    # A record written before a channel existed simply does not have the
+    # column, and the simulator's seeder builds the table from its own older
+    # CREATE TABLE. Naming a missing column would make SQLite reject the whole
+    # statement, rows() would swallow that as an empty list, and the graph
+    # would come up blank for every channel rather than for the one that is
+    # genuinely absent. Ask first; see table_columns().
+    have = table_columns(db, "samples")
+    cols = [c for c in SAMPLE_COLS if c in have]
+    if "t" not in cols:
         return []
     where, args = [], []
     if since is not None:
@@ -689,7 +850,7 @@ def samples(db, since=None, until=None, limit=4000, step=1):
     if until is not None:
         where.append("t <= ?")
         args.append(until)
-    sql = "SELECT " + ",".join(SAMPLE_COLS) + " FROM samples"
+    sql = "SELECT " + ",".join(cols) + " FROM samples"
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY t ASC"
@@ -701,6 +862,20 @@ def samples(db, since=None, until=None, limit=4000, step=1):
         # graph is for, and the last N rows of a drive are not the drive.
         k = math.ceil(len(out) / limit)
         out = out[::k]
+    # A ROW MUST MATCH THE HEADER IT IS SENT UNDER.
+    #
+    # Both consumers hand SAMPLE_COLS to somebody else as the description of
+    # these rows: the CSV export writes it as the header line and the app's
+    # /api/history returns it as `cols`. A row missing a key the header
+    # promises is a column that silently slides -- or, in the browser, an
+    # `undefined` charted as a gap. Filling the absent channels with None says
+    # the true thing instead: this record has no reading here. Done after the
+    # thinning so it costs one pass over what is actually returned.
+    absent = [c for c in SAMPLE_COLS if c not in have]
+    if absent:
+        for r in out:
+            for c in absent:
+                r[c] = None
     return out
 
 

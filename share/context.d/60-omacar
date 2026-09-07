@@ -37,12 +37,49 @@ command -v jq >/dev/null 2>&1 || exit 0
 
 # The rollup the bar panel already reads, so the assistant and the screen cannot
 # disagree about the car.
+#
+# ONE FIELD PER LINE, NOT ONE LINE OF FIELDS.
+#
+# This was a single `read make model year simulated faults due` over a @tsv
+# line with the tabs flattened to spaces, and flattening the separator is what
+# broke it. `read` splits on IFS, so once the tabs were gone it split on every
+# space -- including the ones inside a value. A make of "Land Rover", a model
+# of "Range Rover Evoque", or the `.name` fallback, which is always three words
+# on this car, pushed every later field one place along. The description came
+# out truncated mid-name and every fact after it was a fragment of the name:
+# the block emitted "car: Range Land Rover" and then "car faults: Evoque
+# stored" and "car service: 2015 false 2 3 item(s) due".
+#
+# That is the worst failure this integration has. The text goes straight into a
+# model's context and comes back out of a speaker as a confident sentence about
+# somebody's car, and stating a number this tool cannot justify is the one
+# thing the whole project exists not to do. It also silently lost the real
+# fault and service counts, which are the two facts an assistant is most likely
+# to be asked for.
+#
+# Restoring the tab as the separator is not enough on its own: bash treats a
+# tab in IFS as whitespace, so a run of them collapses into one and a car with
+# no make recorded -- which the guards below already anticipate -- shifts every
+# field again. A line per value has no such rule, empty values included, and jq
+# folds any whitespace inside a value into single spaces first so no value can
+# ever become two lines. Six values in, six variables out, whatever is in them.
 if [[ -f $CARD ]]; then
-  read -r make model year simulated faults due < <(
+  mapfile -t card < <(
     jq -r '[(.vehicle.make // ""), (.vehicle.model // .name // ""),
             (.vehicle.year // ""), (.simulated // false),
             ((.active_faults // []) | length), (.service.due // 0)]
-           | @tsv' "$CARD" 2>/dev/null | tr '\t' ' ')
+           | map(tostring | gsub("^\\s+|\\s+$"; "") | gsub("\\s+"; " "))
+           | .[]' "$CARD" 2>/dev/null)
+  # Defaulted rather than indexed bare: a malformed card makes jq print
+  # nothing, and under `set -u` an unset array element would end the script
+  # here and take the whole block with it. Empty is what the guards below
+  # already know how to read.
+  make=${card[0]-}
+  model=${card[1]-}
+  year=${card[2]-}
+  simulated=${card[3]-}
+  faults=${card[4]-}
+  due=${card[5]-}
 fi
 
 live=$STATE/live.json
