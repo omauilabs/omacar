@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 53 | 22,262 |
-| JavaScript — the app | 45 | 13,737 |
-| CSS | 7 | 2,678 |
+| Python — the whole diagnostic side | 54 | 24,320 |
+| JavaScript — the app | 46 | 14,541 |
+| CSS | 7 | 2,726 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,327 |
-| Tests | 8 | 3,641 |
-| Documentation | 12 | 3,254 |
+| Tests | 9 | 3,913 |
+| Documentation | 13 | 3,447 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **53,587** |
+| **Tracked in git, all of it** | | **56,999** |
 
-**Tests** — 707 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 762 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -188,16 +188,20 @@ What is actually covered, straight out of the runner's own headings:
 | a page you did not open cannot clear your codes | 6 |
 | a mode is a boundary, not a preference the browser is trusted with | 18 |
 | what an agent may do to a car | 17 |
-| a validated identifier drives a reading, and only a validated one | 21 |
+| a validated identifier drives a reading, and only a validated one | 31 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
-| listening reads frames, transmits nothing, and never invents a rate | 21 |
+| a layout has a name, a car remembers which, and the old file still works | 13 |
+| no tool hands a full VIN to a model whose answers are spoken | 9 |
+| the assistant is reachable by hand, and only from this machine | 7 |
+| listening reads frames, transmits nothing, and never invents a rate | 27 |
 | a live sample about another car is not this car's news | 6 |
 | a stored VIN survives a broken read | 5 |
 | an agent's write proposal is judged before it is queued | 6 |
 | every screen the navigation names exists on disk | 3 |
 | the advisor names the model that actually answered | 3 |
 | The launch calendar | 6 |
+| The shaders the music screen ships | 10 |
 | Units | 9 |
 | Service countdown | 9 |
 | Mode 06 verdicts | 4 |
@@ -275,16 +279,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 95 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 108 commits on `omacar-launch`. The most recent, unedited:
 
-- `2026-09-07` A live sample about another car is not this car's news
-- `2026-09-07` first-drive: say how the record reaches a Surface that is not on the tailnet
-- `2026-09-07` doctor names the car's profile and what it enables
-- `2026-09-07` README names the bench badge and profile; the reveal thread counts five states
-- `2026-09-07` The bench is named before its numbers, and ships its own profile
-- `2026-09-07` An agent's write proposal is judged before it is queued
-- `2026-09-07` God mode's one door: write by identifier, read back first
-- `2026-09-07` The film's shot list, the calendar checked offline, and learn names the car
+- `2026-09-07` The agent surface: smaller, and no VIN reaches the speaker by any route
+- `2026-09-07` Three repairs: the snapshot request, the charge nobody read, the truncated brief
+- `2026-09-07` The car's alerts reach the phone screen, which was the whole argument
+- `2026-09-07` One car's learned tiles no longer leak into another car's dashboard
+- `2026-09-07` One table for where a payload starts, and no unsafe default
+- `2026-09-07` Text size, per screen, because a tablet at arm's length is not a desk
+- `2026-09-07` A drive layout has a name, and a car remembers which one it uses
+- `2026-09-07` Every shader the music screen ships actually compiles
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
