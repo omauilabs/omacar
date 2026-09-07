@@ -292,6 +292,15 @@ You do not need the adapter, or the car, to develop this.
     omacar setup          build the Python environment
     omacar bench start    start the ELM327 emulator (a simulated car on a pty)
     omacar bench start actuator   the same car, plus a module that answers 0x2F
+
+The bench is not a car and the app says so: the vehicle bar wears a BENCH
+badge, the agent context names it before any reading, and a profile for it
+ships with the tree (`profiles/bench-porsche.toml`) with one validated
+identifier that becomes a gauge tile and one validated actuator that becomes a
+live button — both validated against the emulator's own source, and saying
+so. The `actuator` scenario therefore demonstrates every part of the tool,
+learned readings and the functional-test path included, with nothing to set
+up.
     omacar doctor         adapter, protocol, supported PIDs, stored faults
     omacar live RPM SPEED stream readings to the terminal
     omacar bench stop
