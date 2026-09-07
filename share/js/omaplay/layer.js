@@ -31,7 +31,7 @@
 // `hidden` is not the same as stopped, and the difference is the whole reason
 // this file exists.
 
-import { h, clear } from "../core.js";
+import { h, clear, api as carApi } from "../core.js";
 import { mockSource, MEDIA_DATA, MEDIA_ALBUM_COVER } from "./source.js";
 import { gaugeRail } from "./rail.js";
 
@@ -50,6 +50,7 @@ export function createOmaPlay(opts = {}) {
   let media = {};
   let cover = null;
   const overlays = new Map();
+  let alertTimer = null;
 
   const canvas = h("canvas.op-screen", { width: 800, height: 640 });
   const badge = h("div.op-badge");
@@ -212,6 +213,48 @@ export function createOmaPlay(opts = {}) {
       return api;
     },
 
+    // THE CAR ALERTS, ACTUALLY ARRIVING.
+    //
+    // Drawing the watchdog's alerts over the phone screen is named at the top
+    // of this file as the one capability a five-thousand-dollar head unit
+    // cannot match -- and until now nothing called alert(). The overlay
+    // existed, was painted, was styled, and was never given anything to show.
+    //
+    // The poll lives here rather than in a view because the layer outlives
+    // every view: the point of it is that checking your coolant temperature
+    // does not stop the music, and by the same token an alert must reach the
+    // phone screen whether or not anybody is looking at a gauge. It only runs
+    // while the layer is actually drawn, because polling on behalf of a hidden
+    // surface is spending a request on nothing.
+    watchAlerts(everyMs = 20000) {
+        const tick = async () => {
+          if (mode === "hidden") return;
+          try {
+            const { records } = await carApi.alerts(5);
+            const fresh = (records || []).filter(
+              (r) => Date.now() / 1000 - r.at < 900
+                     && (r.payload || {}).urgency !== "low");
+            const keep = new Set();
+            for (const r of fresh) {
+              const p = r.payload || {};
+              const kind = p.kind || r.label || String(r.at);
+              keep.add(kind);
+              api.alert({ kind, urgency: p.urgency || "normal",
+                          title: p.title || r.label, body: p.body || "" });
+            }
+            // A rule that stopped firing takes its overlay with it. The
+            // watchdog's rules have hysteresis and re-raise, so a stale
+            // warning left on a screen is a warning nobody trusts next time.
+            for (const kind of [...overlays.keys()]) {
+              if (!keep.has(kind)) api.clearAlert(kind);
+            }
+          } catch { /* the watchdog may not be running; that is not an error */ }
+        };
+        tick();
+        alertTimer = setInterval(tick, everyMs);
+        return api;
+      },
+
     setSource(src) {
       if (source) { try { source.stop(); } catch { /* already gone */ } }
       if (off) { off(); off = null; }
@@ -274,6 +317,7 @@ export function createOmaPlay(opts = {}) {
     get media() { return { ...media }; },
 
     destroy() {
+      if (alertTimer) { clearInterval(alertTimer); alertTimer = null; }
       api.stop();
       if (off) off();
       if (ro) ro.disconnect();

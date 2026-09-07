@@ -48,6 +48,10 @@ function omaplay() {
     // the layer.
     _omaplay.setSource(mockSource());
     _omaplay.start();
+    // The car's own alerts, over the phone screen. See the note on
+    // watchAlerts(): this is the argument for combining the two products at
+    // all, and it was dead code until it was called.
+    _omaplay.watchAlerts();
   }
   return _omaplay;
 }
