@@ -66,6 +66,7 @@ import service from "./views/service.js";
 import history from "./views/history.js";
 import advisor from "./views/advisor.js";
 import tests from "./views/tests.js";
+import writeView from "./views/write.js";
 import report from "./views/report.js";
 import drive from "./views/drive.js";
 import concernsView from "./views/concerns.js";
@@ -127,6 +128,9 @@ const TABS = [
       // Actuator commands. Two taps from the bar, never one, and the chip
       // greys out with the reason on it while the car is moving.
       { id: "tests",  label: "Tests",    title: "Functional tests",         mount: tests, fast: true, write: true, tier: "technician" },
+      // The one thing god mode adds. Two steps, read-back first, deny-list on
+      // the screen with its caveat.
+      { id: "write",  label: "Identifiers", title: "Write by identifier",     mount: writeView, write: true, tier: "god" },
     ],
   },
   {
@@ -218,7 +222,7 @@ async function loadMode() {
     const d = await api.mode();
     if (d && d.tier) {
       tier = d.tier;
-      document.documentElement.dataset.mode = tier;
+      document.documentElement.dataset.tier = tier;
     }
   } catch { /* an older server, or none: everything stays visible */ }
 }
@@ -650,7 +654,7 @@ function openSettings() {
         try {
           const d = await api.setMode(next);
           tier = d.tier;
-          document.documentElement.dataset.mode = tier;
+          document.documentElement.dataset.tier = tier;
           redraw();
           paintNavState();
           go();

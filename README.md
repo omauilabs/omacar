@@ -72,9 +72,12 @@ it off was not contributing to begin with. On the simulated car it finds
 cylinder 1 at 55% of the best cylinder's drop, which independently agrees with
 the P0301 sitting in that car's own code history. Every test says on its face
 that a real vehicle needs a manufacturer protocol — generic OBD-II has Mode 08
-in the standard and almost nobody implements it. Durations are capped in the
-server, and the command carries its own expiry so a crashed app cannot leave a
-cooling fan on.
+in the standard and almost nobody implements it. On a real car a test is sent
+as UDS 0x2F only when the car's profile carries a *validated* identifier for
+it, and each button says whether it reaches this car and on whose word; a
+button with none is off and sends nothing. Durations are capped in the server,
+the release goes out whatever happens, and on the simulator the command carries
+its own expiry so a crashed app cannot leave a cooling fan on.
 
 Two more features are worth calling out because nobody else surfaces them.
 **Readiness** says not just which monitors are incomplete but *why* — almost
@@ -569,10 +572,16 @@ fixing something themselves: clearing a code.
 definitions, sweeps of unknown identifier ranges. The density steps *down*
 here, because this is a bench rather than a dashboard.
 
-**god mode** adds writing stored configuration values. It asks first, it says
-there is no undo, and it drops back to technician after thirty minutes, because
-a tier that writes into a module is not something you should discover you left
-on a fortnight ago.
+**god mode** adds writing stored configuration values, and nothing else. It
+asks first, it says there is no undo, and it drops back to technician after
+thirty minutes, because a tier that writes into a module is not something you
+should discover you left on a fortnight ago. The write itself is two steps:
+the identifier is read back and shown with the consequence, and the write
+carries that prior value as a claim the server checks again before sending —
+then reads a third time, so the answer is before and after, not "sent". The
+Identifiers screen draws the emissions deny-list from the same strings the
+refusal uses, with the caveat that it is named, not exhaustive. The terminal
+form is `omacar write did <module> <identifier> [<value>]`.
 
 **The mode is decided on the server, and that is the whole point.** A mode
 built in the browser is falsifiable in one command:

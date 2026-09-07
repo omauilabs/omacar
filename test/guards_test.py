@@ -391,6 +391,22 @@ import api  # noqa: E402
 modes.set_mode("simplified")
 _st, _payload = api.handle_post("/api/actuate", '{"test":"fan_high","seconds":5}')
 check("a direct POST to an above-tier route is refused at the server", _st, 403)
+
+# Write-by-identifier: the one door god mode adds, judged before the port.
+_st, _p = api.handle_post("/api/write-did", '{"header":"7E0","did":"F190","value":"01"}')
+check("write-did is refused below god mode at the server", _st, 403)
+modes.set_mode("god")
+_st, _p = api.handle_post("/api/write-did", '{"header":"7E0","did":"F410","value":"00"}')
+check("an emissions-range write is refused in god mode with the citation",
+      _st == 403 and modes.CAA_CITATION.split(" — ")[0] in (_p.get("citation") or ""), True)
+check("and says nothing was sent", "Nothing was sent" in (_p.get("needs") or ""), True)
+_st, _p = api.handle_post("/api/write-did", '{"header":"7E0","did":"F19","value":"01"}')
+check("a malformed identifier is a 400 before any port is opened", _st, 400)
+_st, _p = api.handle_post("/api/write-did", '{"header":"7E0","did":"F190","value":"01","confirm":true}')
+check("a confirm without the prior value is refused", _st, 400)
+_st, _p = api.handle_post("/api/write-did", '{"header":"7E0","did":"F190","value":"01"}')
+check("unarmed, a read-back is refused before the port (409)", _st, 409)
+modes.set_mode("simplified")
 ok(f"and says why: {_payload.get('error', '').splitlines()[0][:60]}")
 
 modes.set_mode("technician")

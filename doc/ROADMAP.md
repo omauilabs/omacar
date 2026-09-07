@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 53 | 21,818 |
-| JavaScript — the app | 44 | 13,542 |
-| CSS | 7 | 2,665 |
+| Python — the whole diagnostic side | 53 | 22,058 |
+| JavaScript — the app | 44 | 13,547 |
+| CSS | 7 | 2,678 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 5 | 1,324 |
-| Tests | 7 | 3,278 |
-| Documentation | 11 | 3,146 |
+| Shell — the CLI and the installer | 5 | 1,325 |
+| Tests | 8 | 3,454 |
+| Documentation | 12 | 3,232 |
 | Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **52,374** |
+| **Tracked in git, all of it** | | **52,895** |
 
-**Tests** — 664 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 670 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -186,7 +186,7 @@ What is actually covered, straight out of the runner's own headings:
 | learn names its record after the car, never after noise | 4 |
 | a downloaded profile may only ask for reads | 8 |
 | a page you did not open cannot clear your codes | 6 |
-| a mode is a boundary, not a preference the browser is trusted with | 12 |
+| a mode is a boundary, not a preference the browser is trusted with | 18 |
 | what an agent may do to a car | 17 |
 | a validated identifier drives a reading, and only a validated one | 21 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
@@ -270,8 +270,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 87 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 88 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` The film's shot list, the calendar checked offline, and learn names the car
 - `2026-09-07` Help names the write ledger; roadmap counts regenerated
 - `2026-09-07` The voice assistant can ask the car
 - `2026-09-07` The garage screen says where the model came from
@@ -279,7 +280,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` The Tests lab reaches a real car, and says per button whether it does
 - `2026-09-07` Launch calendar: 31 days of posts as reviewable files
 - `2026-09-07` A validated identifier becomes a live reading
-- `2026-09-07` The owner can see what an agent asked to write
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

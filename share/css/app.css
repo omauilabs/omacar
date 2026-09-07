@@ -98,6 +98,19 @@
   :root { --tap: 56px; --tap-lg: 64px; --tabbar: 84px; --subtabs: 56px; }
 }
 
+/* The tier, stamped on the root by main.js from the server's answer.
+   Technician and god step DOWN to bench density -- more on screen for someone
+   with the car on a lift -- but never below what a thumb can hit on the
+   tablet, which is why the coarse-pointer step is smaller than the desktop
+   one. God mode carries a permanent red hairline under the vehicle bar: the
+   mode that can write configuration should look different from across the
+   room. */
+:root[data-tier="technician"], :root[data-tier="god"] { --tap: 44px; --tap-lg: 52px; }
+@media (pointer: coarse) {
+  :root[data-tier="technician"], :root[data-tier="god"] { --tap: 50px; --tap-lg: 58px; }
+}
+:root[data-tier="god"] .vbar { box-shadow: inset 0 -2px 0 var(--bad); }
+
 * { box-sizing: border-box; }
 /* The background goes on the root element too, so there is never a frame in
    which this page is white — which is the other half of the auto-dark trap.

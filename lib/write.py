@@ -273,13 +273,65 @@ def _print_queue():
           f"omacar write decline <n>{RESET}\n")
 
 
+def _cli_did(header=None, did=None, value=None):
+    """`omacar write did <header> <did> [<value>]` -- read back, then ask.
+
+    The same two calls the screen makes, with the same server-side checks:
+    the tier and the deny-list first, then the arm, the motion check and the
+    voltage floor, then a read, and only then -- on a typed yes -- the write.
+    """
+    if not header or not did:
+        print("  usage: omacar write did <header> <did> [<value hex>]\n"
+              "         read the identifier back; with a value, offer to write it")
+        return 2
+    import api
+    import modes
+    import ops
+    d = modes.decide("write_did", ctx={"did": did})
+    if not d.ok:
+        print("\n  " + d.text().replace("\n", "\n  ") + "\n")
+        return 1
+    try:
+        first = api.write_did(header, did, value, confirm=False, who="the terminal")
+    except (api.BadRequest, ops.Refused) as e:
+        print(f"\n  refused: {e}\n")
+        return 1
+    print(f"\n  {BOLD}{did} on {header}{RESET}  holds  {BOLD}{first['prior'] or '(empty)'}{RESET}")
+    if not value:
+        print()
+        return 0
+    print(f"\n  {YELLOW}{first['what']}{RESET}")
+    for line in first["consequence"].split("\n"):
+        print(f"    {DIM}{line}{RESET}")
+    print(f"\n  would send  {BOLD}{first['would_send']}{RESET}   "
+          f"({first['prior'] or '(empty)'} -> {value.replace(' ', '').upper()})")
+    try:
+        answer = input("\n  Write it? Type yes to proceed: ").strip().lower()
+    except EOFError:
+        answer = ""
+    if answer != "yes":
+        print("  nothing sent\n")
+        return 0
+    try:
+        done = api.write_did(header, did, value, confirm=True, prior=first["prior"],
+                             who="the terminal")
+    except (api.BadRequest, ops.Refused) as e:
+        print(f"\n  refused: {e}\n")
+        return 1
+    print(f"\n  {GREEN}written{RESET}  {did}: {done.get('prior') or '(empty)'} -> "
+          f"{done.get('after') or '(unreadable)'}   reply {done.get('reply')}\n")
+    return 0
+
+
 def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="omacar write", add_help=True)
     ap.add_argument("action", nargs="?", default="status",
                     choices=["status", "arm", "disarm", "list", "queue", "decline",
-                             "log"])
-    ap.add_argument("which", nargs="?", help="for decline: the proposal number")
+                             "log", "did"])
+    ap.add_argument("which", nargs="?", help="for decline: the proposal number; "
+                                             "for did: the module address")
+    ap.add_argument("rest", nargs="*", help="for did: <identifier> [<value hex>]")
     ap.add_argument("--minutes", type=float, default=ARM_SECONDS / 60.0)
     args = ap.parse_args(argv)
 
@@ -304,6 +356,8 @@ def main(argv):
     if args.action == "log":
         _print_ledger()
         return 0
+    if args.action == "did":
+        return _cli_did(args.which, *(args.rest or []))
     if args.action == "queue":
         print()
         _print_queue()

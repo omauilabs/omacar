@@ -536,6 +536,130 @@ def actuate(test, duration=None, stop=False, who="the app"):
     return cmd
 
 
+# ---- write by identifier ----------------------------------------------------
+#
+# THE ONE THING GOD MODE ADDS, AND HOW IT IS SHAPED.
+#
+# UDS 0x2E writes a stored configuration value. There is no undo: the previous
+# value is gone unless somebody wrote it down. So a write here is two calls,
+# and the first one cannot write. Call one reads the identifier back and
+# returns what is there now, with the consequence text beside it. Call two
+# carries that prior value as a claim -- "I saw THIS" -- and the server reads
+# again before sending; if the module no longer holds what the caller saw, the
+# write is refused, because the caller decided on stale information. After the
+# write the identifier is read a third time so the answer shows before and
+# after, not a hopeful "sent".
+#
+# Every gate the actuator path passes applies here too, in the same order: the
+# tier (god, and the emissions deny-list with its citation, before the port is
+# opened), the arm, the motion check, the voltage floor, the address shape.
+# The ledger line is written by the transport gate. Nothing here is new
+# permission; it is the one new door, built as narrow as it can be.
+
+HEXCHARS = set("0123456789ABCDEF")
+
+
+def _hex(v):
+    return str(v or "").replace(" ", "").upper()
+
+
+class BadRequest(ValueError):
+    pass
+
+
+def _check_did_args(header, did, value=None):
+    header, did = _hex(header), _hex(did)
+    if not header or not set(header) <= HEXCHARS or len(header) not in (3, 6, 8):
+        raise BadRequest("header must be a 3-, 6- or 8-digit hex address")
+    if len(did) != 4 or not set(did) <= HEXCHARS:
+        raise BadRequest("did must be exactly two bytes, as four hex digits")
+    if value is not None:
+        value = _hex(value)
+        if not value or len(value) % 2 or not set(value) <= HEXCHARS or len(value) > 64:
+            raise BadRequest("value must be whole bytes as hex, at most 32 of them")
+    return header, did, value
+
+
+def _read_did(el, header, did):
+    """(kind, detail, value_hex) for a 0x22 read on the aimed module."""
+    import elm as elmlib
+    req = "22" + did
+    lines = el.request(req)
+    kind, detail, _ = elmlib.classify(lines, 0x22, req)
+    if kind != "positive":
+        return kind, detail, None
+    body = _hex(el.payload(lines, req))
+    i = body.find("62" + did)
+    return kind, detail, (body[i + 6:] if i >= 0 else "")
+
+
+def write_did(header, did, value, confirm=False, prior=None, who="the app"):
+    """Read an identifier back, or -- with confirm and the prior value -- write it.
+
+    Returns a dict. Raises BadRequest, Unreachable-style ops.Refused, or the
+    transport's WriteAttempted, all of which the route turns into a status.
+    """
+    import connect
+    import elm as elmlib
+    import ops
+    import write as writelib
+    header, did, value = _check_did_args(header, did, value)
+    if confirm and not value:
+        raise BadRequest("a write needs a value")
+    if confirm and prior is None:
+        raise BadRequest("a write needs the prior value you were shown, so the "
+                         "server can check the module still holds it")
+    if not writelib.is_armed():
+        raise ops.Refused("write mode is not armed — run: omacar write arm")
+    port, _kind = connect.resolve()
+    if not port:
+        raise ops.Refused("no adapter")
+    if not connect.request_port(port):
+        raise ops.Refused("the daemon is holding the port")
+    name, consequence = writelib.describe(0x2E)
+    out = {"header": header, "did": did, "service": "0x2E", "what": name,
+           "consequence": consequence}
+    try:
+        el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        el.init()
+        try:
+            out["volts"] = ops.preflight(el)
+            if not elmlib.aim(el, header):
+                raise ops.Refused(f"{header} is not a valid address on this protocol")
+            kind, detail, now = _read_did(el, header, did)
+            if kind != "positive":
+                raise ops.Refused(f"the module did not answer a read of {did}: "
+                                  f"{detail or kind}. Nothing is written to an "
+                                  f"identifier that cannot be read back first.")
+            out["prior"] = now
+            if not confirm:
+                out["would_send"] = "2E" + did + (value or "")
+                out["step"] = "read"
+                return out
+            if _hex(prior) != now:
+                raise ops.Refused(f"{did} now holds {now or '(empty)'}, not "
+                                  f"{_hex(prior) or '(empty)'} as you were shown. "
+                                  f"Read it again and decide again.")
+            req = "2E" + did + value
+            lines = el.request(req)
+            kind, detail, _ = elmlib.classify(lines, 0x2E, req)
+            out.update({"sent": req, "outcome": kind, "reply": detail})
+            if kind != "positive":
+                raise ops.Refused(f"the module refused the write: {detail or kind}")
+            k2, d2, after = _read_did(el, header, did)
+            out["after"] = after if k2 == "positive" else None
+            out["step"] = "written"
+            records.write_record("write", f"wrote {did} on {header}",
+                                 {"header": header, "did": did, "before": now,
+                                  "value": value, "after": out["after"],
+                                  "reply": detail, "who": who})
+            return out
+        finally:
+            el.close()
+    finally:
+        connect.release_port()
+
+
 def save_recording(label, t0, t1):
     db = records.connect()
     series = records.samples(db, since=t0, until=t1, limit=100000) if db else []
@@ -852,6 +976,17 @@ def handle_get(path, query):
             "tiers": list(modes.TIERS),
             "actions": {a: modes.decide(a, tier).asdict()
                         for a in sorted(modes.ACTIONS)},
+            # The deny-list as the screen shows it: the same strings the
+            # refusal carries, so what is on screen and what is refused are
+            # one value.
+            "deny": {
+                "ranges": [{"from": f"{lo:04X}", "to": f"{hi:04X}", "why": why}
+                           for lo, hi, why in modes.DENY_RANGES],
+                "ids": {f"{k:04X}" if isinstance(k, int) else str(k): v
+                        for k, v in (modes.DENY_IDS or {}).items()},
+                "citation": modes.CAA_CITATION,
+                "coverage": modes.DENY_COVERAGE,
+            },
         }
 
     if path == "/api/adapter":
@@ -1232,6 +1367,25 @@ def handle_post(path, body):
             json.dump(cfg, f, indent=2)
         os.replace(tmp, path_cfg)
         return 200, {"units": records.units_for()}
+    if path == "/api/write-did":
+        # The deny-list is judged on the identifier BEFORE anything is opened:
+        # a refused emissions write never touches the port, and the citation
+        # comes back in the same shape the CLI and an agent tool see.
+        refused = _mode_gate("write_did", ctx={"did": _hex(data.get("did"))})
+        if refused:
+            return refused
+        import elm as elmlib
+        import ops
+        try:
+            return 200, write_did(data.get("header"), data.get("did"),
+                                  data.get("value"), bool(data.get("confirm")),
+                                  data.get("prior"))
+        except BadRequest as e:
+            return 400, {"error": str(e)}
+        except (ops.Refused, elmlib.WriteAttempted) as e:
+            return 409, {"error": str(e)}
+        except Exception as e:                                # noqa: BLE001
+            return 500, {"error": f"{type(e).__name__}: {e}"}
     if path == "/api/actuate":
         refused = _mode_gate("actuate")
         if refused:

@@ -272,6 +272,7 @@ export const api = {
   // addresses and legitimately takes the best part of a minute.
   learn: (deep) => req("/api/learn", { method: "POST", body: JSON.stringify({ deep: !!deep }) }),
   writeMode: (arm, minutes) => req("/api/write-mode", { method: "POST", body: JSON.stringify({ arm, minutes }) }),
+  writeDid: (body) => req("/api/write-did", { method: "POST", body: JSON.stringify(body) }),
   vehicle: (body) => req("/api/vehicle", { method: "POST", body: JSON.stringify(body) }),
   theme: () => req("/api/theme"),
   themes: () => req("/api/themes"),

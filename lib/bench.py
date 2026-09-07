@@ -56,6 +56,16 @@ def actuator_scenario(ObdMessage, helpers):
         self.omacar_fan = False
         return PA("F0 A1 00")
 
+    # The emulator echoes the identifier itself for 0x22 and 0x2E (two bytes
+    # after the service id, per its uds_sid_pos_answer table), so a positive
+    # answer here carries only what follows it.
+    def cfg_read(self, cmd, pid, uc_val):
+        return PA(getattr(self, "omacar_cfg", "5A"))
+
+    def cfg_write(self, cmd, pid, uc_val):
+        self.omacar_cfg = cmd[6:8]
+        return PA("")
+
     def load(self, cmd, pid, uc_val):
         # Fan on: the alternator works harder and the ECU reports more load.
         return PA("5A" if getattr(self, "omacar_fan", False) else "1E")
@@ -82,6 +92,28 @@ def actuator_scenario(ObdMessage, helpers):
         "OMACAR_IOCTL_OTHER": {
             "Request": "^2F" + DATA_FOOTER,
             "Descr": "I/O control: any other identifier is out of range",
+            "Priority": 9,
+            "Response": NA("31"),
+        },
+        # A writable configuration byte, for proving write-by-identifier
+        # end to end: read it, write it, read it back. F1A0 is in the
+        # manufacturer range and nowhere near the legislated OBD range the
+        # deny-list refuses.
+        "OMACAR_CFG_READ": {
+            "Request": "^22F1A0" + FOOTER,
+            "Descr": "Read bench configuration byte",
+            "Priority": 1,
+            "ResponseFooter": cfg_read,
+        },
+        "OMACAR_CFG_WRITE": {
+            "Request": "^2EF1A0[0-9A-F]{2}" + FOOTER,
+            "Descr": "Write bench configuration byte",
+            "Priority": 1,
+            "ResponseFooter": cfg_write,
+        },
+        "OMACAR_WDBI_OTHER": {
+            "Request": "^2E" + DATA_FOOTER,
+            "Descr": "Write to any other identifier is out of range",
             "Priority": 9,
             "Response": NA("31"),
         },

@@ -20,6 +20,7 @@
 #   omacar mode [tier]        simplified | power | technician | god
 #   omacar write arm|disarm   allow writes (clear codes, tests, settings)
 #   omacar write log          every write that left this machine, and what answered
+#   omacar write did H D [V]  read identifier D on module H back; with V, offer to write it (god mode)
 #   omacar daemon start|stop|status
 #                             the polling daemon that feeds the cluster
 #   omacar sim seed|start|stop|status
