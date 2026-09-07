@@ -157,11 +157,77 @@ def status_text():
             f"{DIM}{left // 60}m {left % 60}s remaining{RESET}")
 
 
+
+# ------------------------------------------------------------- the agent queue
+#
+# `omacar mcp` gives an agent request_write, which queues a proposal here and
+# sends nothing. That is only honest if a person can actually SEE the queue --
+# a write tool that says "the owner can review it" over a file nobody reads is
+# a lie with extra steps. So it is listed by the same command that lists what
+# writing means, and each entry can be declined by hand. Running one is the
+# owner's act, done through the normal armed path, never from here.
+QUEUE = os.path.join(connect.STATE, "agent-writes.jsonl")
+
+
+def queued():
+    """Every proposal an agent has left, newest last."""
+    out = []
+    try:
+        with open(QUEUE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+    return out
+
+
+def decline(index, why=""):
+    """Mark one proposal declined, by its position in `queued()`."""
+    rows = queued()
+    if not (0 <= index < len(rows)):
+        return None
+    rows[index]["status"] = "declined"
+    rows[index]["declined_at"] = time.time()
+    if why:
+        rows[index]["declined_why"] = why
+    tmp = QUEUE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    os.replace(tmp, QUEUE)
+    return rows[index]
+
+def _print_queue():
+    rows = queued()
+    if not rows:
+        return
+    print(f"  {BOLD}Writes an agent has proposed{RESET}  {DIM}none of these has been sent{RESET}\n")
+    for i, r in enumerate(rows, 1):
+        state = r.get("status", "queued")
+        mark = f"{DIM}declined{RESET}" if state == "declined" else f"{YELLOW}queued{RESET}"
+        when = time.strftime("%d %b %H:%M", time.localtime(r.get("at") or 0))
+        print(f"  {i:2}. {mark}  {when}  {BOLD}{r.get('header')}  {r.get('request')}{RESET}")
+        for line in (r.get("consequence") or "").split("\n"):
+            print(f"      {line}")
+        if r.get("reasoning"):
+            print(f"      {DIM}{r['reasoning'][:160]}{RESET}")
+        print()
+    print(f"  {DIM}To run one: arm write mode and send it yourself. To drop one: "
+          f"omacar write decline <n>{RESET}\n")
+
+
 def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="omacar write", add_help=True)
     ap.add_argument("action", nargs="?", default="status",
-                    choices=["status", "arm", "disarm", "list"])
+                    choices=["status", "arm", "disarm", "list", "queue", "decline"])
+    ap.add_argument("which", nargs="?", help="for decline: the proposal number")
     ap.add_argument("--minutes", type=float, default=ARM_SECONDS / 60.0)
     args = ap.parse_args(argv)
 
@@ -180,6 +246,25 @@ def main(argv):
                 print(f"    {DIM}{line}{RESET}")
             print()
         print(f"  {DIM}Reprogramming (0x34/0x36/0x37) is not implemented at all.{RESET}\n")
+        _print_queue()
+        return 0
+
+    if args.action == "queue":
+        print()
+        _print_queue()
+        return 0
+
+    if args.action == "decline":
+        try:
+            n = int(args.which or "") - 1
+        except ValueError:
+            print("  usage: omacar write decline <number>   (see: omacar write queue)")
+            return 1
+        row = decline(n)
+        if row is None:
+            print(f"  no proposal number {n + 1}")
+            return 1
+        print(f"\n  declined: {row.get('header')} {row.get('request')}\n")
         return 0
 
     if args.action == "disarm":
