@@ -121,7 +121,8 @@ class Elm:
         text = buf.decode("ascii", "replace").replace("\r", "\n")
         return [ln.strip() for ln in text.split("\n") if ln.strip() and ln.strip() != ">"]
 
-    def monitor(self, command="ATMA", seconds=8.0, on_line=None, limit=200000):
+    def monitor(self, command="ATMA", seconds=8.0, on_line=None, limit=200000,
+                should_stop=None):
         """Listen to the bus. Transmit nothing.
 
         THE ONLY OPERATION IN THIS TOOL THAT PUTS NOTHING ON THE WIRE.
@@ -151,6 +152,13 @@ class Elm:
         Returns the number of lines seen. Lines go to `on_line` as they arrive
         rather than being accumulated here, because a busy bus produces
         thousands a second and the caller decides what is worth keeping.
+
+        `should_stop` is checked every read. A capture driven by a person -- put
+        the switch here, name it; move it, name that -- has no duration anybody
+        can state in advance, and a deadline is the wrong shape for it: too
+        short and the procedure cannot be run at all, too long and finishing
+        means waiting out a timer. So the deadline stays as the backstop and the
+        person is the terminator.
         """
         head = (command or "").strip()[:2].upper()
         if head != "AT":
@@ -165,6 +173,8 @@ class Elm:
         seen, buf, deadline = 0, b"", time.time() + float(seconds)
         try:
             while time.time() < deadline and seen < limit:
+                if should_stop is not None and should_stop():
+                    break
                 chunk = self.ser.read(512)
                 if not chunk:
                     continue

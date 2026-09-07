@@ -73,33 +73,77 @@ DEFAULT_LIMIT = 60000
 # frequency computed from them is arithmetic rather than measurement.
 MIN_RATE_SPAN = 0.5
 
+# An identifier has to be heard this many times inside a window before that
+# window is allowed to claim the byte was steady. Without it, a window in which
+# an identifier appeared ONCE is trivially constant, and a serial link that
+# drops frames -- which is every serial link, under load -- manufactures
+# switches that were never there. Five is the smallest number that is not one
+# or two, which is the honest justification: below it the claim is arithmetic
+# rather than observation.
+MIN_FRAMES_PER_WINDOW = 5
+
+# A marks session ends when the person says so. This is only the backstop that
+# stops a forgotten terminal holding the adapter all night.
+MARKS_BACKSTOP = 1800.0
+
 
 # ------------------------------------------------------------------ the frames
-def parse(line, header_digits=3):
+# An arbitration identifier is 3 hex digits on an 11-bit bus and 8 on a 29-bit
+# one. BOTH APPEAR ON THE SAME WIRE. This is the whole reason the width is not
+# taken from the negotiated diagnostic protocol: this project's own car speaks
+# ISO 15765-4 CAN 29/500 for diagnostics, so asking the protocol gives 8 -- and
+# its periodic cluster traffic, which is the entire point of listening, is
+# 11-bit. Slicing eight characters off a three-character identifier turns every
+# broadcast frame into a reject, and the screen would then say the bus was
+# quiet. A false "nothing was heard", on the one capability whose whole purpose
+# is to prove the data is there, is the worst possible failure mode for it.
+ID_WIDTHS = (3, 8)
+
+
+def parse(line, header_digits=None):
     """(can_id, [bytes]) from one monitor line, or None if it is not a frame.
 
-    A monitored line is the arbitration identifier followed by the data, and
-    with `ATS1` the adapter puts spaces between the data bytes -- but not
-    reliably between the identifier and the first byte, and on a busy bus two
-    frames can run together in the output. So the parse is deliberately blunt:
-    strip the spaces, take the identifier off the front by its known width, and
-    require the rest to be whole hex bytes. Anything else is not a frame, and
-    the words the adapter emits in monitor mode -- STOPPED, BUFFER FULL, CAN
-    ERROR -- are exactly the anything else this rejects.
+    The adapter prints the identifier, then the data bytes, space-separated,
+    and that spacing is the reliable structure -- so the split is on whitespace
+    and the identifier is whatever the first token is, at whichever legal width
+    it happens to be. That handles an 11-bit and a 29-bit frame arriving one
+    after the other, which is the normal case on a real car and which no single
+    fixed width can read.
+
+    `header_digits` is a FALLBACK, used only for a line with no spaces in it at
+    all, which is what a buffer overrun looks like. Anything that is not whole
+    hex bytes after a legal identifier is not a frame, and the words the adapter
+    emits in monitor mode -- STOPPED, BUFFER FULL, CAN ERROR -- are exactly the
+    anything else this rejects.
     """
-    body = (line or "").replace(" ", "").upper()
-    if len(body) <= header_digits or not set(body) <= HEXCHARS:
+    text = (line or "").strip().upper()
+    if not text:
         return None
-    ident, rest = body[:header_digits], body[header_digits:]
-    if len(rest) % 2:
+    parts = text.split()
+    if len(parts) >= 2:
+        ident, rest = parts[0], "".join(parts[1:])
+        if (len(ident) in ID_WIDTHS and set(ident) <= HEXCHARS
+                and rest and len(rest) % 2 == 0 and set(rest) <= HEXCHARS):
+            return ident, [int(rest[i:i + 2], 16) for i in range(0, len(rest), 2)]
         return None
-    return ident, [int(rest[i:i + 2], 16) for i in range(0, len(rest), 2)]
+    # One run-together token. Fall back to the caller's width hint, and if it
+    # has none, try each legal width and accept the one that leaves whole bytes.
+    body = parts[0]
+    if not set(body) <= HEXCHARS:
+        return None
+    widths = [header_digits] if header_digits in ID_WIDTHS else list(ID_WIDTHS)
+    for w in widths:
+        if len(body) > w and (len(body) - w) % 2 == 0:
+            rest = body[w:]
+            return body[:w], [int(rest[i:i + 2], 16)
+                              for i in range(0, len(rest), 2)]
+    return None
 
 
 class Capture:
     """Frames, and the moments a person labelled while they were arriving."""
 
-    def __init__(self, header_digits=3, note=""):
+    def __init__(self, header_digits=None, note=""):
         self.header_digits = header_digits
         self.note = note
         self.started = time.time()
@@ -201,25 +245,30 @@ class Capture:
         wins = self.windows(settle)
         if len(wins) < 2:
             return []
-        # Per window: {ident: {byte_index: {values}}}
+        # Per window: {ident: {byte_index: {values}}}, and how many times each
+        # identifier was actually heard in that window. The count is what stops
+        # a dropped-frame window claiming a byte was steady when it was simply
+        # absent -- see MIN_FRAMES_PER_WINDOW.
         seen = []
         for label, frames in wins:
-            per = {}
+            per, heard = {}, {}
             for _t, ident, data in frames:
+                heard[ident] = heard.get(ident, 0) + 1
                 slot = per.setdefault(ident, {})
                 for i, b in enumerate(data):
                     slot.setdefault(i, set()).add(b)
-            seen.append((label, per))
+            seen.append((label, per, heard))
 
+        # An identifier only counts if EVERY window heard it enough times.
         shared = None
-        for _label, per in seen:
-            ids = set(per)
+        for _label, per, heard in seen:
+            ids = {i for i in per if heard.get(i, 0) >= MIN_FRAMES_PER_WINDOW}
             shared = ids if shared is None else (shared & ids)
         out = []
         for ident in sorted(shared or ()):
-            width = min(len(per[ident]) for _l, per in seen)
+            width = min(len(per[ident]) for _l, per, _h in seen)
             for i in range(width):
-                vals = [(label, per[ident].get(i, set())) for label, per in seen]
+                vals = [(label, per[ident].get(i, set())) for label, per, _h in seen]
                 if any(len(v) != 1 for _l, v in vals):
                     continue                      # moved inside a window
                 singles = [next(iter(v)) for _l, v in vals]
@@ -287,7 +336,7 @@ def load(name):
 
 # ----------------------------------------------------------------- the capture
 def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
-           limit=DEFAULT_LIMIT, cap=None):
+           limit=DEFAULT_LIMIT, cap=None, should_stop=None):
     """Take the port, listen for `seconds`, give it back. Returns a Capture.
 
     `can_id` narrows the adapter's own filter to one identifier, which is worth
@@ -307,7 +356,11 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
     try:
         el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
         el.init()
-        digits = 3
+        # The DIAGNOSTIC protocol's header width is recorded as a hint and
+        # nothing more. Broadcast traffic on the same wire is routinely a
+        # different width -- see the note above parse() -- so the parse decides
+        # per line and this only helps a run-together one.
+        digits = None
         try:
             p = protocols.describe(getattr(el, "protocol", None))
             if p:
@@ -315,7 +368,8 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
         except Exception:                                     # noqa: BLE001
             pass
         cap = cap or Capture(header_digits=digits, note=note)
-        cap.header_digits = digits
+        if cap.header_digits is None:
+            cap.header_digits = digits
         try:
             # Headers ON, because a frame without its identifier is an
             # anonymous eight bytes and useless. Spaces on, because the parse
@@ -324,8 +378,8 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             el.raw("ATS1")
             if can_id:
                 el.raw("ATCRA" + str(can_id).replace(" ", "").upper())
-            command = "ATMA"
-            el.monitor(command, seconds=seconds, limit=limit,
+            el.monitor("ATMA", seconds=seconds, limit=limit,
+                       should_stop=should_stop,
                        on_line=lambda ln: (cap.add_line(ln),
                                            on_frame(ln) if on_frame else None))
         finally:
@@ -349,10 +403,22 @@ GREEN, YELLOW = "\033[32m", "\033[33m"
 def _print_census(cap, top=25):
     rows = cap.census()
     print(f"\n  {BOLD}What this bus broadcasts{RESET}  "
-          f"{DIM}{len(cap.frames)} frames, {len(rows)} identifiers{RESET}\n")
+          f"{DIM}{len(cap.frames)} frames, {len(rows)} identifiers"
+          f"{f', {cap.rejected} lines not frames' if cap.rejected else ''}"
+          f"{RESET}\n")
     if not rows:
-        print(f"  {DIM}nothing was heard. On a car with the ignition off that is "
-              f"the expected answer.{RESET}\n")
+        # SILENCE AND UNREADABILITY ARE DIFFERENT ANSWERS, and saying the first
+        # when the second happened is how somebody concludes their car has
+        # nothing to say. If lines arrived and none of them parsed, that is a
+        # tool problem and it says so.
+        if cap.rejected:
+            print(f"  {YELLOW}{cap.rejected} lines arrived and none of them "
+                  f"parsed as frames.{RESET} The bus is talking and this could "
+                  f"not read it —\n  which is a fault here, not a quiet car. "
+                  f"Keep the capture (--save --raw) and send it in.\n")
+        else:
+            print(f"  {DIM}nothing was heard at all. On a car with the ignition "
+                  f"off that is the expected answer.{RESET}\n")
         return
     print(f"    {'id':<9} {'seen':>6} {'Hz':>7}  bytes  moving")
     for r in rows[:top]:
@@ -386,12 +452,16 @@ def main(argv):
     ap.add_argument("action", nargs="?", default="capture",
                     choices=["capture", "marks", "list", "show"])
     ap.add_argument("name", nargs="?", help="for show: which capture")
-    ap.add_argument("--seconds", type=float, default=DEFAULT_SECONDS)
+    ap.add_argument("--seconds", type=float, default=None,
+                    help=f"capture length (default {DEFAULT_SECONDS:.0f}s; "
+                         f"marks runs until you finish)")
     ap.add_argument("--id", dest="can_id", help="listen to one identifier only")
     ap.add_argument("--note", default="")
     ap.add_argument("--save", action="store_true", help="keep the capture")
     ap.add_argument("--raw", action="store_true", help="keep every frame too")
     args = ap.parse_args(argv)
+    if args.seconds is None:
+        args.seconds = MARKS_BACKSTOP if args.action == "marks" else DEFAULT_SECONDS
 
     if args.action == "list":
         names = captures()
@@ -434,35 +504,48 @@ def main(argv):
 def _marks_session(args):
     """Capture while a person presses things and says what they pressed.
 
-    The whole procedure, and it takes under two minutes in a parked car:
-    start it, put the switch in one position, press enter and name it, move the
-    switch, press enter and name that, finish. What comes back is the list of
-    bytes that behaved like that switch.
+    The whole procedure, and it takes under two minutes in a parked car: start
+    it, put the switch in one position, press enter and name it, move the
+    switch, press enter and name that, empty line to finish. What comes back is
+    the list of bytes that behaved like that switch.
+
+    IT ENDS WHEN THE PERSON ENDS IT. This used to run for `--seconds` and no
+    longer -- twelve by default -- which made the procedure it exists for
+    literally impossible: reaching the ECON switch, holding it, typing a label,
+    reaching for SPORT and holding that is minutes, not seconds. The deadline
+    is now a backstop measured in tens of minutes, and the empty line is the
+    terminator.
     """
     import threading
 
     print(f"\n  {BOLD}Mark what you change{RESET}")
     print(f"  {DIM}Put the control where you want it, then press enter and name "
-          f"the position.\n  Hold each one for a few seconds. Empty line to "
-          f"finish.{RESET}\n")
+          f"the position.\n  Hold each one for a few seconds — a position with "
+          f"fewer than {MIN_FRAMES_PER_WINDOW} frames\n  is not counted, "
+          f"because a byte seen twice was not observed to be steady.\n  "
+          f"Empty line to finish.{RESET}\n")
 
     cap = Capture()
-    stop = threading.Event()
+    done = threading.Event()
+    failed = {}
 
     def reader():
         try:
             listen(seconds=args.seconds, can_id=args.can_id, note=args.note,
-                   cap=cap)
+                   cap=cap, should_stop=done.is_set)
         except Exception as why:                              # noqa: BLE001
-            print(f"\n  capture failed: {why}\n")
+            failed["why"] = why
         finally:
-            stop.set()
+            done.set()
 
     t = threading.Thread(target=reader, daemon=True)
     t.start()
-    time.sleep(1.0)
+    time.sleep(1.2)
+    if failed:
+        print(f"\n  capture failed: {failed['why']}\n")
+        return 1
     try:
-        while not stop.is_set():
+        while not done.is_set():
             label = input("  position> ").strip()
             if not label:
                 break
@@ -470,14 +553,16 @@ def _marks_session(args):
             print(f"    {YELLOW}marked{RESET} {label}  "
                   f"{DIM}({len(cap.frames)} frames so far){RESET}")
     except (EOFError, KeyboardInterrupt):
-        pass
-    stop.set()
-    t.join(timeout=args.seconds + 5)
+        print()
+    done.set()
+    t.join(timeout=6)
+    if failed:
+        print(f"\n  capture failed: {failed['why']}\n")
+        return 1
     print()
     _print_census(cap, top=12)
     _print_discriminators(cap)
-    if args.save or True:
-        print(f"  saved: {cap.save(raw=args.raw)}\n")
+    print(f"  saved: {cap.save(raw=args.raw)}\n")
     return 0
 
 

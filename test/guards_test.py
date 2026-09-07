@@ -642,12 +642,28 @@ import time  # noqa: E402
 
 import listen  # noqa: E402
 
-check("a 3-digit frame parses", listen.parse("7E8 06 41 0C 1A F8", 3),
-      ("7E8", [6, 65, 12, 26, 248]))
-check("a 29-bit frame parses", listen.parse("18DAF110 06 41 0C", 8),
+# BOTH WIDTHS, NO HINT. This car speaks 29-bit for diagnostics and 11-bit for
+# the broadcast traffic that is the entire reason to listen, so a parser that
+# takes its width from the negotiated protocol rejects every frame worth having
+# and the screen reports a quiet bus. That was a real defect in this file's
+# first draft and it is what these two lines exist to stop coming back.
+check("an 11-bit frame parses with no hint", listen.parse("17C 00 12 34"),
+      ("17C", [0, 18, 52]))
+check("a 29-bit frame parses with no hint", listen.parse("18DAF110 06 41 0C"),
       ("18DAF110", [6, 65, 12]))
-for junk in ("STOPPED", "BUFFER FULL", "CAN ERROR", "?", "", "7E8 06 41 0C 1A F"):
-    check(f"{junk!r} is not a frame", listen.parse(junk, 3), None)
+_mixed = listen.Capture()
+for _ln in ("18DAF110 06 41 0C 1A F8", "17C 00 12 34", "18DA03F1 03 7F 22 31",
+            "0AA 1A 6F 1A 6F"):
+    _mixed.add_line(_ln)
+check("a capture reads both widths off the same bus",
+      sorted(r["id"] for r in _mixed.census()),
+      ["0AA", "17C", "18DA03F1", "18DAF110"])
+check("and rejects none of them", _mixed.rejected, 0)
+check("a run-together line still falls back to a width",
+      listen.parse("7E80641", 3), ("7E8", [6, 65]))
+for junk in ("STOPPED", "BUFFER FULL", "CAN ERROR", "?", "", "7E8 06 41 0C 1A F",
+             "NODATA", "7E8"):
+    check(f"{junk!r} is not a frame", listen.parse(junk), None)
 
 # The monitor primitive is behind the same AT guard raw() is, because it writes
 # to the port directly and would otherwise be the hole raw() was closed to stop.
@@ -700,7 +716,21 @@ check("a counter inside the window is not reported",
       any(r["byte"] == 0 and r["id"] == "300" for r in _rows), False)
 check("nor is road speed", any(r["id"] == "400" for r in _rows), False)
 check("one window alone yields nothing to compare",
-      listen.Capture(header_digits=3).discriminators(), [])
+      listen.Capture().discriminators(), [])
+
+# A window that barely heard the identifier must not claim it was steady: a
+# serial link under load drops frames, and "seen twice, both the same" is
+# arithmetic rather than observation.
+_thin = listen.Capture()
+_tt = time.time()
+for w, mode in enumerate((0x01, 0x02)):
+    _thin.marks.append((_tt, ["a", "b"][w]))
+    for i in range(2):                       # below MIN_FRAMES_PER_WINDOW
+        _tt += 0.02
+        _thin.frames.append((_tt, "300", [mode]))
+    _tt += 0.2
+check("a window with too few frames claims no switch",
+      _thin.discriminators(settle=0.01), [])
 
 # A rate needs a span. Frames arriving in one burst must report no frequency.
 _burst = listen.Capture(header_digits=3)
