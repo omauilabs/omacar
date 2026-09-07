@@ -41,6 +41,8 @@ import garage  # noqa: E402
 # Standard 29-bit diagnostic addresses. Sweeping every possible module address
 # would be 255 probes; these are the ones manufacturers actually use, and an
 # address that answers nothing here is almost certainly not populated.
+# Kept as the 29-bit reference and as the labels protocols.physical() names,
+# no longer used as the sweep list -- see learn() below.
 CANDIDATE_HEADERS = [
     ("18DA10F1", "engine"),
     ("18DA18F1", "transmission"),
@@ -117,7 +119,17 @@ def merge_module(prof, header, found):
 def learn_module(el, header, label, deep, on_step, elmlib, dtclib):
     """Everything cheap we can find out about one module."""
     found = {"label": label, "ident": {}, "services": []}
-    el.set_header(header)
+    # aim(), not set_header(). set_header raises on a header that is the wrong
+    # shape for the negotiated protocol, and this is a loop over ten addresses:
+    # one refusal used to end the whole sweep with a traceback rather than skip
+    # an address. On 11-bit CAN -- most cars built since 2008 -- the first
+    # address raised, so `omacar learn` died on every one of them and
+    # /api/learn returned 500.
+    #
+    # False means we did not ask, which is not the same fact as silence, so the
+    # address is skipped rather than probed with whatever header was set last.
+    if not elmlib.aim(el, header):
+        return None
 
     # 1. Is anyone home? Identification DIDs, service 0x22.
     for did, what in IDENT_DIDS:
@@ -207,7 +219,20 @@ def learn(deep=False, on_step=None, on_module=None):
         prof["passes"] = prof.get("passes", 0) + 1
         prof["volts"] = v
         try:
-            for header, label in CANDIDATE_HEADERS:
+            # The addresses this protocol actually uses. CANDIDATE_HEADERS was
+            # ten 29-bit literals -- correct for the one car this was written
+            # against and wrong for every 11-bit car, which is most of them.
+            # protocols.physical() already shapes the list per protocol and
+            # returns nothing at all for J1939, where a list of 18DAxxF1
+            # headers would be confidently wrong.
+            import protocols
+            candidates = protocols.physical(getattr(el, "protocol", None))
+            if not candidates:
+                raise RuntimeError(
+                    "this protocol addresses modules by source address rather "
+                    "than by an ISO 15765 diagnostic pair, and OmaCar does not "
+                    "know how to sweep it yet. Nothing was sent.")
+            for header, label in candidates:
                 on_step(header, "probing")
                 found = learn_module(el, header, label, deep, on_step, elmlib, dtclib)
                 if found:

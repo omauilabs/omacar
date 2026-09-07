@@ -229,6 +229,58 @@ for dpn, hdr, what in (
     passed, _ = protocols.header_ok(dpn, hdr)
     check(f"{what} is refused", passed, False)
 
+# -------------------------------------------------------------- the addresses 2
+head("discovery works on the protocol most cars actually speak")
+
+import discover  # noqa: E402
+
+
+class ElevenBit:
+    """A connection that negotiated 11-bit CAN, which is most cars since 2008
+    and every car this project had never tried."""
+
+    protocol = "6"
+
+    def __init__(self):
+        self.asked = []
+
+    def set_header(self, h):
+        ok, why = protocols.header_ok(self.protocol, h)
+        if not ok:
+            raise ValueError(why)          # exactly what the real one does
+        self.asked.append(h)
+
+    def request(self, *a, **k):
+        return []
+
+    def payload(self, *a, **k):
+        return ""
+
+
+addrs = protocols.physical("6")
+check("11-bit CAN gets 11-bit addresses",
+      all(len(h) == 3 for h, _ in addrs), True)
+check("29-bit CAN still gets 29-bit addresses",
+      all(len(h) == 8 for h, _ in protocols.physical("7")), True)
+check("J1939 returns nothing rather than a confidently wrong list",
+      protocols.physical("A"), [])
+
+# The crash: learn_module used set_header directly, so the first 29-bit literal
+# raised ValueError on an 11-bit car and learn() -- which catches RuntimeError
+# only -- let it out. `omacar learn` died on most cars built since 2008, and
+# /api/learn returned 500.
+el = ElevenBit()
+try:
+    out = discover.learn_module(el, "18DA10F1", "engine", False,
+                                lambda *a: None, elm, None)
+    ok("a wrong-shaped address is skipped, not raised through the sweep")
+    check("and nothing was asked on it", el.asked, [])
+    check("the module is reported as not found", out, None)
+except ValueError:
+    bad("learn_module still raises on a wrong-shaped address")
+except Exception as why:  # noqa: BLE001
+    bad(f"learn_module raised {why!r}")
+
 # ---------------------------------------------------------------- the profiles
 head("a downloaded profile may only ask for reads")
 
