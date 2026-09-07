@@ -41,6 +41,47 @@ export default function tests(root) {
       + "manufacturer protocol on a real vehicle — generic OBD-II cannot "
       + "actuate anything worth actuating.")));
 
+  // WHAT PRESSING THE BUTTON ACTUALLY DOES, SAID ON THE SCREEN THAT HAS THE
+  // BUTTON.
+  //
+  // The lede above is true and too soft. A command from this screen is written
+  // to a file, and today the only thing that reads that file is the simulator:
+  // on a real car the button runs, the trace stays flat, and nothing on the
+  // vehicle moves. Somebody filming this, or trusting it in a workshop, would
+  // have no way to tell that from a test that ran and found nothing wrong --
+  // which is the worst failure a diagnostic tool has, because it looks like a
+  // result.
+  //
+  // Read from the vehicle record rather than hardcoded, so it stops saying the
+  // simulator sentence on the day a real actuator path lands.
+  root.appendChild(h("div.card.tint-warn.tests-reach", h("div.reach")));
+
+  function paintReach() {
+    const el = root.querySelector(".tests-reach .reach");
+    if (!el) return;
+    const sim = !!(store.car && store.car.simulated);
+    clear(el);
+    if (sim) {
+      el.appendChild(h("div.title", "This is the simulated car"));
+      el.appendChild(h("p.lede",
+        "The commands below reach the simulator, and it answers: the trace you "
+        + "see is what the model did. That is a real exercise of this screen "
+        + "and of the safety gates behind it. It is not your car."));
+    } else {
+      el.appendChild(h("div.title", "These do not reach this car yet"));
+      el.appendChild(h("p.lede",
+        "A command from here is written for the vehicle to pick up, and on a "
+        + "real car nothing picks it up yet. Actuator control is UDS service "
+        + "0x2F, which needs a controllable identifier for this specific "
+        + "model — none has been discovered for this one — and on most modules "
+        + "it sits behind security access whose key is not public. The button "
+        + "will run and the trace will stay flat. That is the tool being "
+        + "honest, not the car being healthy."));
+    }
+  }
+  paintReach();
+  stopFns.push(store.on("car", paintReach));
+
   const body = h("div.sect");
   root.appendChild(body);
   body.appendChild(h("div.card", h("div.skel")));
