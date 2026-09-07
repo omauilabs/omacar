@@ -1,0 +1,109 @@
+#!/bin/bash
+#
+# What car is plugged in, for any agent on this machine.
+#
+# Installed to ~/.config/omarchy/context.d/ by install.sh, where Omarchy Vortex
+# collects it. Every agent the fleet launches is told `omarchy ai context`
+# exists, and the voice assistant reads the same cache in-process with every
+# question -- so this is the difference between "what is my car doing" being
+# answerable and being a question back.
+#
+# THREE RULES, AND THE THIRD IS THE ONE WITH TEETH.
+#
+# Fast or absent. Every provider gets two seconds and the whole collection six,
+# so a slow one poisons the block for everything else. This reads two JSON
+# files that are already on disk and shells out to nothing.
+#
+# Read-only. Agents call this constantly, from anywhere, including from inside
+# other agents.
+#
+# NOTHING PRIVATE. This text goes into a model's context and comes back out of a
+# speaker. The VIN, the plate and the driver's name are all in the vehicle
+# record and none of them appear here: they identify a person and a specific
+# car, they are exactly what a photograph of a screen is not supposed to show
+# (which is why the app has a privacy toggle at all), and no question anybody
+# asks an assistant needs them. Make, model and year are enough to answer
+# "what does my car need"; the odometer is rounded to the nearest thousand
+# because the difference between 189,760 and 190,000 miles changes no advice
+# and the exact figure is one more thing that identifies one car.
+
+set -uo pipefail
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omacar"
+CARD="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/liquid-glass-car.json"
+
+command -v jq >/dev/null 2>&1 || exit 0
+[[ -f $CARD ]] || { [[ -f $STATE/live.json ]] || exit 0; }
+
+# The rollup the bar panel already reads, so the assistant and the screen cannot
+# disagree about the car.
+if [[ -f $CARD ]]; then
+  read -r make model year simulated faults due < <(
+    jq -r '[(.vehicle.make // ""), (.vehicle.model // .name // ""),
+            (.vehicle.year // ""), (.simulated // false),
+            ((.active_faults // []) | length), (.service.due // 0)]
+           | @tsv' "$CARD" 2>/dev/null | tr '\t' ' ')
+fi
+
+live=$STATE/live.json
+connected=false
+proto=""
+age=""
+if [[ -f $live ]]; then
+  now=$(date +%s)
+  t=$(jq -r '.t // 0' "$live" 2>/dev/null | cut -d. -f1)
+  [[ -n ${t:-} && $t -gt 0 ]] && age=$(( now - t ))
+  # Fifteen seconds is the same staleness window records.py uses. A file on disk
+  # does not know the process writing it has died, and reporting last Tuesday's
+  # road speed as the current one is the failure this whole project is about.
+  if [[ -n ${age:-} && $age -lt 15 ]]; then
+    connected=$(jq -r '.connected // false' "$live" 2>/dev/null)
+    proto=$(jq -r '.protocol // ""' "$live" 2>/dev/null)
+  fi
+fi
+
+desc=""
+[[ -n ${year:-} && $year != "null" ]] && desc="$year "
+[[ -n ${make:-} && $make != "null" ]] && desc="$desc$make "
+[[ -n ${model:-} && $model != "null" ]] && desc="$desc$model"
+desc="${desc% }"
+[[ -n $desc ]] || desc="a vehicle"
+
+# SIMULATED FIRST, ALWAYS. An assistant that describes invented readings as
+# though they came off a car is the single worst thing this integration could
+# do, and the word has to arrive before the numbers rather than after them.
+if [[ ${simulated:-false} == "true" ]]; then
+  echo "car: SIMULATED — $desc, not a real vehicle. Every reading below is generated."
+else
+  echo "car: $desc"
+fi
+
+if [[ $connected == "true" ]]; then
+  echo "car link: connected${proto:+, $proto}"
+elif [[ -n ${age:-} ]]; then
+  echo "car link: not connected (last reading ${age}s ago)"
+else
+  echo "car link: not connected"
+fi
+
+if [[ -n ${faults:-} && $faults != "null" ]]; then
+  if [[ $faults == "0" ]]; then
+    echo "car faults: none stored"
+  else
+    echo "car faults: $faults stored"
+  fi
+fi
+
+[[ -n ${due:-} && $due != "null" && $due != "0" ]] && echo "car service: $due item(s) due"
+
+# Rounded to the nearest thousand. See the note at the top: the exact reading
+# identifies one car and changes no answer.
+if [[ -f $CARD ]]; then
+  km=$(jq -r '.odometer // empty' "$CARD" 2>/dev/null)
+  if [[ -n ${km:-} ]]; then
+    mi=$(awk -v k="$km" 'BEGIN{printf "%d", int(k*0.621371/1000+0.5)*1000}')
+    [[ $mi -gt 0 ]] && echo "car odometer: about ${mi} miles"
+  fi
+fi
+
+exit 0

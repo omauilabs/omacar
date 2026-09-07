@@ -199,6 +199,34 @@ oa_plugin_install() {
 # Nothing is enabled here. A unit that starts a fullscreen gauge or a polling
 # daemon at login is right on a tablet in a car and rude on a laptop; `omacar
 # tablet setup` is where that choice is made, deliberately and reversibly.
+# Tell every agent on this machine what is plugged in.
+#
+# Omarchy Vortex collects executables from ~/.config/omarchy/context.d/ and puts
+# their `key: value` lines in front of every agent it launches, and in front of
+# the voice assistant with every question. Dropping a file in is the whole
+# integration -- there is nothing to register and no schema to extend, which is
+# the point of that design.
+#
+# Absent Vortex, this costs nothing and does nothing: the directory simply is
+# not read. OmaCar must work with no Vortex at all, because Vortex's own
+# documentation says it is not installable by anybody else yet.
+oa_context_install() {
+  [[ -d "$OA_ROOT/share/context.d" ]] || return 0
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/context.d"
+  # Only where Omarchy is. Creating this on a machine that has no Vortex would
+  # leave a directory nothing reads and imply an integration that is not there.
+  [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy" ]] || return 0
+  mkdir -p "$dir"
+  local f n=0
+  for f in "$OA_ROOT"/share/context.d/*; do
+    [[ -f "$f" ]] || continue
+    install -m 755 "$f" "$dir/$(basename "$f")"
+    n=$((n + 1))
+  done
+  ((n)) && oa_say "" "car facts added to the agent context"
+  return 0
+}
+
 oa_unit_install() {
   [[ -d "$OA_ROOT/share/systemd" ]] || return 0
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -256,6 +284,16 @@ oa_hypr_reload() { # "success message"
 # a partial install must still uninstall cleanly.
 # Take the units back out. Stopped and disabled first: removing the file under a
 # running unit leaves systemd holding a process it can no longer describe.
+oa_context_remove() {
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/context.d"
+  [[ -d "$OA_ROOT/share/context.d" ]] || return 0
+  local f
+  for f in "$OA_ROOT"/share/context.d/*; do
+    [[ -f "$f" ]] && rm -f "$dir/$(basename "$f")"
+  done
+  return 0
+}
+
 oa_unit_remove() {
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   [[ -d "$OA_ROOT/share/systemd" ]] || return 0

@@ -38,6 +38,7 @@ done
 "$OA_CMD" server stop >/dev/null 2>&1
 
 oa_unit_remove
+oa_context_remove
 oa_remove
 
 if ((PURGE)); then
