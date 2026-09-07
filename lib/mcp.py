@@ -429,7 +429,40 @@ def t_propose(args):
         f"something real can call it validated, and that is deliberate.")
 
 
+def write_verdict(request):
+    """The same refusal the screen and the CLI give, before anything is queued.
+
+    A proposal the owner could never run is not worth their reading: a
+    reprogramming service is refused by construction, and a configuration
+    write into the emissions range is refused with the statute even in god
+    mode. Judged at the highest tier on purpose -- the question here is not
+    "may the owner do this now" but "could anybody, ever" -- so the answer
+    does not change with whatever mode the machine happens to be in.
+    Returns None when the proposal may be queued, else the refusal text.
+    """
+    import modes
+    req = (request or "").replace(" ", "").upper()
+    try:
+        service = int(req[:2], 16)
+    except ValueError:
+        return "a request begins with a service byte, as two hex digits"
+    if service in (0x34, 0x36, 0x37):
+        return modes.decide("reprogram", "god").text()
+    if service == 0x2E:
+        if len(req) < 6:
+            return "a write by identifier names a two-byte identifier after 2E"
+        d = modes.decide("write_did", "god", ctx={"did": req[2:6]})
+        if not d.ok:
+            return d.text()
+    return None
+
+
 def t_request_write(args):
+    refused = write_verdict(args.get("request"))
+    if refused:
+        return failed("Refused, and not queued. NOTHING WAS SENT.\n\n" + refused
+                      + "\n\nThis is the same refusal the owner would get at the "
+                        "keyboard, in any mode; there is nothing to wait for.")
     rec = {
         "at": time.time(),
         "header": args.get("header"),

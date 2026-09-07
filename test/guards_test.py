@@ -701,6 +701,53 @@ check("a different but well-formed VIN is accepted (prepare already switched)",
       _stored_vin(_db), "WP0ZZZ99ZTS390000")
 _db.close()
 
+# --------------------------------------------------------- the agent's writes
+head("an agent's write proposal is judged before it is queued")
+
+_qdir = tempfile.mkdtemp()
+_qold = mcp.QUEUE
+mcp.QUEUE = os.path.join(_qdir, "agent-writes.jsonl")
+try:
+    r = mcp.call("request_write", {"header": "7E0", "request": "2EF41000",
+                                   "consequence": "disable a monitor"})
+    _txt = r["content"][0]["text"]
+    check("an emissions-range write is refused, not queued", r.get("isError"), True)
+    check("with the statute", modes.CAA_CITATION.split(" — ")[0] in _txt, True)
+    check("and nothing reached the queue", os.path.exists(mcp.QUEUE), False)
+    r = mcp.call("request_write", {"header": "7E0", "request": "340044",
+                                   "consequence": "flash"})
+    check("reprogramming is refused, not queued", r.get("isError"), True)
+    r = mcp.call("request_write", {"header": "7E0", "request": "2EF1A0A5",
+                                   "consequence": "set the bench byte"})
+    check("a permissible write is queued and not sent", not r.get("isError")
+          and "NOTHING WAS SENT" in r["content"][0]["text"], True)
+    check("and is one line in the queue",
+          sum(1 for _ in open(mcp.QUEUE, encoding="utf-8")), 1)
+finally:
+    mcp.QUEUE = _qold
+    shutil.rmtree(_qdir, ignore_errors=True)
+
+# ----------------------------------------------------------------- the assets
+head("every screen the navigation names exists on disk")
+
+import re as _re  # noqa: E402
+
+_main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+_imports = _re.findall(r'from "\./(views/[a-z0-9_]+\.js)"', _main)
+_missing = [m for m in _imports if not os.path.exists(os.path.join(ROOT, "share", "js", m))]
+check(f"all {len(_imports)} view modules main.js imports exist", _missing, [])
+_mounts = set(_re.findall(r'mount:\s*([A-Za-z_]+)', _main))
+# A mount is an imported view, a function main.js defines itself, or -- for
+# a plugin screen -- the module object the loader just imported.
+_bound = (set(_re.findall(r'^import\s+([A-Za-z_]+)\s+from', _main, _re.M))
+          | set(_re.findall(r'^function\s+([A-Za-z_]+)\s*\(', _main, _re.M))
+          | {"mod"})
+check("every mount the registry names is a view main.js can reach", sorted(_mounts - _bound), [])
+_css = open(os.path.join(ROOT, "share", "css", "app.css"), encoding="utf-8").read()
+check("the tier is styled on data-tier, which the theme loader does not write",
+      ':root[data-tier="god"]' in _css and "dataset.tier = tier" in _main
+      and "dataset.mode = tier" not in _main, True)
+
 # ------------------------------------------------------------------ the advisor
 head("the advisor names the model that actually answered")
 
