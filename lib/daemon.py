@@ -262,6 +262,9 @@ def main():
     conn = db = None
     port, kind = connect.resolve()
     supported = set()
+    # (id, OBDCommand) for every VALIDATED profile entry -- see lib/signals.py.
+    # Empty for a car nobody has mapped, which changes nothing.
+    sig_cmds = []
     cmds = {"fast": [], "mid": [], "slow": []}
     sample, tick, last_row = {}, 0, 0.0
     # The last complete published sample, echoed back during a hand-off.
@@ -293,7 +296,7 @@ def main():
         either can fail on a car that is only half awake, and a VIN read that
         times out should be one more retry rather than the end of the process.
         """
-        nonlocal conn, port, kind, supported, cmds, db, sample
+        nonlocal conn, port, kind, supported, cmds, db, sample, sig_cmds
         found, found_kind = connect.resolve()
         if found:
             # Kept up to date on every attempt: an adapter that is unplugged and
@@ -342,6 +345,38 @@ def main():
             # write with "attempt to write a readonly database", which is a
             # memorable way to spend an evening.
             survey.prepare(conn, obd)
+
+            # A VALIDATED IDENTIFIER RIDES THE SAME LINK.
+            #
+            # Every step of the coverage strategy worked except this one: a
+            # profile entry a person had checked against something real was a
+            # line in a file, because nothing polled it. It is an OBDCommand on
+            # this connection now, with its own header, queried on the slow
+            # tier. Any failure here is a car with no learned readings, which is
+            # exactly what it was before -- refusing to start over a malformed
+            # profile is the one outcome worse than ignoring it.
+            sig_cmds = []
+            try:
+                import profile as profilelib
+                import signals
+                import garage
+                # garage.current() is the active vehicle KEY: the VIN once a
+                # survey has read one, or the simulator's key. A simulated car
+                # has no profile to consult and must not be matched to a real
+                # one's by accident.
+                _vin = garage.current()
+                if _vin == garage.SIM_KEY:
+                    _vin = None
+                _slug = profilelib.for_vin(_vin) if _vin else None
+                if _slug:
+                    _doc, _ = profilelib.load(_slug)
+                    sig_cmds = signals.commands(_doc or {})
+                    if sig_cmds:
+                        print(f"learned readings: {', '.join(i for i, _c in sig_cmds)}",
+                              file=sys.stderr, flush=True)
+            except Exception as e:                            # noqa: BLE001
+                print(f"no learned readings: {e}", file=sys.stderr, flush=True)
+                sig_cmds = []
             if db is not None:
                 # Reconnecting may mean a different car, so the record is
                 # reopened rather than reused — and the old handle is closed
@@ -456,7 +491,7 @@ def main():
 
     def hand_over():
         """Close the port, wait for the lease to end, then take it back."""
-        nonlocal conn, supported, cmds, db
+        nonlocal conn, supported, cmds, db, sig_cmds
         publish(yield_snapshot())
         # Guarded: hand_over can be reached before the first successful
         # connect, and closing None is not a hand-over, it is a traceback.
@@ -521,6 +556,14 @@ def main():
             try:
                 for n in names:
                     sample[n] = value_of(conn.query(getattr(obd.commands, n)))
+                if sig_cmds and tick % SLOW_EVERY == 0:
+                    for sig_id, cmd in sig_cmds:
+                        r = conn.query(cmd, force=True)
+                        # A decoder that refused -- a reply too short for its
+                        # formula -- is None, and None is published as None:
+                        # a learned reading that cannot be read shows a dash,
+                        # never a stale number.
+                        sample[sig_id] = None if r.is_null() else r.value
             except Exception as e:                            # noqa: BLE001
                 # THE LEAD CAME OUT — or the adapter browned out, or the car
                 # went to sleep between one query and the next. One serial

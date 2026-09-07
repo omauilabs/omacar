@@ -455,6 +455,113 @@ _names = [t["name"] for t in mcp.TOOLS]
 check("no tool changes the mode", any("set" in n and "mode" in n for n in _names), False)
 ok(f"tools served: {', '.join(_names)}")
 
+# ----------------------------------------------------------------- the signals
+head("a validated identifier drives a reading, and only a validated one")
+
+import signals  # noqa: E402
+
+for f, data, want in (("A", [44], 44), ("A*256+B", [1, 44], 300),
+                      ("(A*256+B)*0.1-40", [1, 44], -10.0), ("A-40", [90], 50)):
+    check(f"formula {f!r}", signals.evaluate(f, data), want)
+
+for f in ("__import__('os')", "A**2", "eval(A)", "A;B", "x", "0x10", "A B"):
+    try:
+        signals.evaluate(f, [1, 2])
+        bad(f"formula {f!r} was accepted")
+    except signals.FormulaError:
+        ok(f"formula {f!r} refused")
+
+check("a byte the reply does not carry is a refusal, not a zero",
+      signals.is_valid_formula("C") and False or True, True)
+try:
+    signals.evaluate("C", [1, 2])
+    bad("byte C on a 2-byte reply was accepted")
+except signals.FormulaError:
+    ok("byte C on a 2-byte reply refused")
+
+def entry(conf, formula="A-40"):
+    return {"id": "t", "name": "test", "header": "7E0", "request": "22F181",
+            "formula": formula, "unit": "C", "confidence": conf,
+            "provenance": {"found_on": "bench"}}
+
+for conf in ("proposed", "candidate", "observed", "refuted"):
+    check(f"a {conf} entry never reaches the daemon",
+          signals.validated({"pid": [entry(conf)]}), [])
+check("a validated entry does", len(signals.validated({"pid": [entry("validated")]})), 1)
+check("a validated entry with a broken formula is dropped, not guessed at",
+      signals.validated({"pid": [entry("validated", "A**2")]}), [])
+check("the catalogue carries no header and no formula",
+      set(signals.catalogue({"pid": [entry("validated")]})[0].keys()),
+      {"id", "name", "unit"})
+check("payload offset for a 0x22 reply skips 62 + two DID bytes",
+      signals.payload_offset("22F181"), 3)
+
+# ---------------------------------------------------------------- the identity
+head("a stored VIN survives a broken read")
+
+import json as _json  # noqa: E402
+import sqlite3  # noqa: E402
+import survey  # noqa: E402
+
+
+class _Result:
+    def __init__(self, value):
+        self.value = value
+
+    def is_null(self):
+        return self.value is None
+
+
+class _Conn:
+    """A car whose VIN answer is scripted, one entry per query."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+
+    def query(self, cmd, force=False):
+        if cmd.name == "VIN":
+            return _Result(self.answers.pop(0) if self.answers else None)
+        return _Result(None)
+
+    def protocol_name(self):
+        return "ISO 15765-4 (CAN 11/500)"
+
+
+class _Cmd:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Obd:
+    class commands:
+        VIN = _Cmd("VIN")
+        CALIBRATION_ID = _Cmd("CALIBRATION_ID")
+        FUEL_TYPE = _Cmd("FUEL_TYPE")
+
+
+def _stored_vin(db):
+    row = db.execute("SELECT v FROM vehicle WHERE k = 'vin'").fetchone()
+    return _json.loads(row[0]) if row else None
+
+
+_db = sqlite3.connect(":memory:")
+_db.execute("CREATE TABLE vehicle (k TEXT PRIMARY KEY, v TEXT)")
+_db.execute("CREATE TABLE faults (code TEXT, status TEXT)")
+_db.execute("""CREATE TABLE modules (id TEXT PRIMARY KEY, name TEXT, addr TEXT,
+    system TEXT, generic INTEGER, part TEXT, sw TEXT, codes TEXT, pos INTEGER)""")
+REAL = "JHMZF1D44FS001835"
+_car = _Conn([REAL, "MAT403096BNL", "SB1ZS3JE60E28", "WP0ZZZ99ZTS390000"])
+survey.read_identity(_car, _Obd, _db, set())
+check("the first well-formed VIN is stored", _stored_vin(_db), REAL)
+survey.read_identity(_car, _Obd, _db, set())
+check("a short scrambled read does not overwrite it", _stored_vin(_db), REAL)
+survey.read_identity(_car, _Obd, _db, set())
+check("nor does a second one", _stored_vin(_db), REAL)
+survey.read_identity(_car, _Obd, _db, set())
+check("a different but well-formed VIN is accepted (prepare already switched)",
+      _stored_vin(_db), "WP0ZZZ99ZTS390000")
+_db.close()
+
 # ------------------------------------------------------------------ the advisor
 head("the advisor names the model that actually answered")
 

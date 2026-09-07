@@ -742,6 +742,33 @@ def write_record(kind, label, payload, t0=None, t1=None, odo=None):
 
 # ---- one call for the whole car ---------------------------------------------
 
+def _signal_catalogue(vehicle):
+    """What lib/signals.py would drive, for the app to draw. Never raises: a
+    malformed profile is a missing catalogue, not a missing snapshot."""
+    try:
+        import profile as profilelib
+        import signals
+        # THE GARAGE KEY FIRST, THE VEHICLE TABLE SECOND. The daemon picks
+        # its learned readings from the profile that matches garage.current(),
+        # because that key is what chose the database it is writing into. The
+        # vehicle table's `vin` is re-read every survey and on a flaky link can
+        # differ from the key for a tick (the bench emulator, which cycles
+        # three VINs, is how this was found). Using the same source as the
+        # daemon means the tile the app draws and the number the daemon polls
+        # cannot come from two different profiles.
+        import garage
+        key = garage.current()
+        vin = "" if key in (garage.SIM_KEY, "unknown") else key
+        vin = vin or (vehicle or {}).get("vin") or ""
+        slug = profilelib.for_vin(vin) if vin else None
+        if not slug:
+            return []
+        doc, _ = profilelib.load(slug)
+        return signals.catalogue(doc or {})
+    except Exception:                                         # noqa: BLE001
+        return []
+
+
 def snapshot(include_samples=False):
     """Everything, in one read. The API and the AI layer both start here."""
     db = connect()
@@ -770,6 +797,12 @@ def snapshot(include_samples=False):
         "status": status(snap),
         "stale": (max(0, int(time.time() - snap["t"])) if snap.get("t") else None),
         "vehicle": v,
+        # The validated identifiers this car can read as live values: id, name
+        # and unit, nothing else. The browser draws numbers; it does not send
+        # requests, so it gets no header and no formula. Empty for a car with
+        # no validated entries, which today is every car -- the point is that
+        # the first one to arrive lands on a screen instead of in a file.
+        "signals": _signal_catalogue(v),
         "name": v.get("name", ""),
         "title": v.get("title", "") or v.get("name", ""),
         "odometer": round(odo, 1) if odo else None,

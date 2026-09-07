@@ -338,6 +338,20 @@ def read_identity(conn, obd, db, supported):
         if isinstance(v, (bytes, bytearray)):
             v = bytes(v).decode("ascii", "replace")
         text = str(v).strip().strip("\x00")
+        # A STORED VIN IS NOT OVERWRITTEN BY A BROKEN READ. This runs every
+        # survey, and a multi-frame read on a flaky link can come back short
+        # or scrambled. A VIN is seventeen characters on every car this tool
+        # can talk to, so a different answer that is not seventeen long is
+        # noise, not a new identity -- and writing it would put noise in the
+        # vehicle table over the real car. (Found on the bench emulator, which
+        # cycles three different answers to the same question.) A different
+        # answer that IS well-formed is accepted: prepare() already switched
+        # records for it.
+        if key == "vin":
+            row = db.execute("SELECT v FROM vehicle WHERE k = 'vin'").fetchone()
+            stored = json.loads(row[0]) if row else ""
+            if stored and text != stored and len(text) != 17:
+                continue
         if text:
             out[key] = text
     # What the VIN itself will tell us. The model is not in there and no

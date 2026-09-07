@@ -234,6 +234,31 @@ export default function drive(root, { arg } = {}) {
   let editing = false;
 
   root.parentElement.classList.add("drive-stage");
+
+  // VALIDATED IDENTIFIERS BECOME TILES.
+  //
+  // This is where the coverage strategy finally reaches a screen. A profile
+  // entry that a person has checked against something real carries an id, a
+  // name and a unit in the snapshot, and the daemon publishes its value under
+  // that id. Everything else -- the header, the request, the formula -- stays
+  // on the server, because the browser draws numbers and does not send
+  // requests. Added to the same object the picker enumerates, so a validated
+  // entry is choosable the moment it exists, with no list to keep in step.
+  //
+  // No scale: a signal the tool has only just been taught has no sensible
+  // bands yet, so it renders as a digital readout rather than a dial pointing
+  // at a range nobody chose.
+  for (const sig of (store.car && store.car.signals) || []) {
+    if (!sig || !sig.id || TILES[sig.id]) continue;
+    const key = sig.id, unit = sig.unit || "";
+    TILES[key] = {
+      label: sig.name || key,
+      get: (v) => ({ v: num(v[key], (x) => Math.round(x * 10) / 10), n: unit }),
+      read: (v) => raw(v[key]),
+      scale: null,
+      learned: true,
+    };
+  }
   // Drive mode has exactly one way out and it is the width of the screen. The
   // rail this replaced was eleven small targets beside a driver's hand; the tab
   // bar that replaced the rail is five big ones, which is better but is still
