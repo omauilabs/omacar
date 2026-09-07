@@ -698,6 +698,31 @@ finally:
     api.DRIVE_CFG = _cfgold
     shutil.rmtree(_ld, ignore_errors=True)
 
+# ------------------------------------------------------- what the agent hears
+head("no tool hands a full VIN to a model whose answers are spoken")
+
+import re as _re2  # noqa: E402
+
+_VINLIKE = _re2.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b")
+
+
+def _text_of(res):
+    return "".join(c.get("text", "") for c in (res or {}).get("content") or [])
+
+
+for _tool, _args in (("car_snapshot", {}), ("car_snapshot", {"full": True}),
+                     ("decode_vin", {}), ("car_profile", {}), ("car_live", {})):
+    _t = _text_of(mcp.call(_tool, _args))
+    check(f"{_tool}{'(full)' if _args.get('full') else ''} carries no 17-character VIN",
+          _VINLIKE.findall(_t), [])
+
+# A flag whose value is the string "false" must not mean true. A model writes
+# that, and it used to buy the whole record and the redaction budget with it.
+check("full=\"false\" is false", mcp._flag({"full": "false"}, "full"), False)
+check("full=\"true\" is true", mcp._flag({"full": "true"}, "full"), True)
+check("full=False is false", mcp._flag({"full": False}, "full"), False)
+check("a missing flag is false", mcp._flag({}, "full"), False)
+
 # ----------------------------------------------------------------- the orb
 head("the assistant is reachable by hand, and only from this machine")
 
