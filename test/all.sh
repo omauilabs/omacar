@@ -16,6 +16,10 @@ else
   echo "  (skipping prospector tests — run: omacar setup)"
 fi
 
+# The guards: every safety check that was written, looked right, and did not
+# hold. Stubs pyserial itself, so it runs with or without a venv, always.
+python3 "$ROOT/test/guards_test.py" || fails=$((fails + 1))
+
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
 #
@@ -24,13 +28,33 @@ fi
 # (dtclog is one), and under system python those skip themselves with a note.
 # They were silently skipping in every run until this line preferred the venv,
 # which is a guard that exists and never fires -- the worst kind.
-if [[ -x "$VENV/bin/python" ]]; then
-  "$VENV/bin/python" "$ROOT/test/workshop_test.py" || fails=$((fails + 1))
-else
-  python3 "$ROOT/test/guards_test.py" || fails=1
-
-python3 "$ROOT/test/workshop_test.py" || fails=$((fails + 1))
-fi
+#
+# RUN IN A SCRATCH HOME, BECAUSE IT WRITES.
+#
+# This suite exercises the real api and watchdog modules against the real path
+# constants, so it wrote into whatever vehicle record was current: 57 rows
+# saying {"test": "fan_high", "seconds": 60} had accumulated in this machine's
+# database, one per run, and a trip dated 1970-01-01 sat in the trips table from
+# a watchdog fixture that starts its clock at t=1000. On the simulator that is
+# invisible under 779 real trips. On a fresh real-car record it is the first
+# thing the drive log shows you, and it is not true.
+#
+# HOME and all four XDG roots, not just XDG_STATE_HOME: the drive layout and the
+# saved themes live under XDG_CONFIG_HOME, and the panel's rollup is written
+# under $HOME directly. Redirecting one of the three moves two of the writes.
+#
+# PY is resolved BEFORE the redirect. `python3` here may be a version-manager
+# shim that finds the real interpreter through XDG_DATA_HOME, so a redirected
+# environment breaks the shim rather than the test -- which is how a passing
+# assertion came to report FAIL for a reason that had nothing to do with it.
+PY="$(python3 -c 'import sys; print(sys.executable)' 2>/dev/null || command -v python3)"
+[[ -x "$VENV/bin/python" ]] && PY="$VENV/bin/python"
+SCRATCH_HOME="$(mktemp -d)"
+env HOME="$SCRATCH_HOME" \
+    XDG_STATE_HOME="$SCRATCH_HOME/state" XDG_CONFIG_HOME="$SCRATCH_HOME/config" \
+    XDG_DATA_HOME="$SCRATCH_HOME/data"   XDG_CACHE_HOME="$SCRATCH_HOME/cache" \
+    "$PY" "$ROOT/test/workshop_test.py" || fails=$((fails + 1))
+rm -rf "$SCRATCH_HOME"
 
 # The suites that live in their own files. Both were written alongside a
 # feature and neither was listed here, so both passed on demand and ran in no

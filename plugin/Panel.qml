@@ -921,12 +921,10 @@ Panel {
     // build the panel -- and every one of them is now either already current
     // via the watcher or covered by the timer above restarting.
     notifOpen = false
-        if (!opened) return
-        // Rebuild the rollup as well as re-reading it. Reading alone is only ever
-        // as good as whoever last wrote the file, and for the panel's whole life
-        // that was nobody. This is one process on a click, not the eight-fork
-        // storm the reads above used to be.
-        root.refreshNow()
+    // One rebuild on a click, though: reading is only ever as good as whoever
+    // last wrote the file, and for the panel's whole life that was nobody.
+    if (!opened) return
+    root.refreshNow()
   }
 
   Process { id: act }
