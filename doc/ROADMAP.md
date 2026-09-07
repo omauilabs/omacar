@@ -160,14 +160,14 @@ the one that is wrong.
 | | Files | Lines |
 |---|---:|---:|
 | Python — the whole diagnostic side | 47 | 19,247 |
-| JavaScript — the app | 44 | 13,277 |
+| JavaScript — the app | 44 | 13,318 |
 | CSS | 7 | 2,569 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,122 |
 | Tests | 7 | 2,927 |
-| Documentation | 10 | 2,857 |
+| Documentation | 10 | 2,910 |
 | Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **47,041** |
+| **Tracked in git, all of it** | | **47,135** |
 
 **Tests** — 572 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -262,16 +262,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 67 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 69 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` Say what is true on the front page and on the Tests screen
+- `2026-09-07` Regenerate the half of the roadmap that cannot lie
 - `2026-09-07` omacar learn stops crashing on most cars built since 2008
 - `2026-09-07` The test suite stops writing into whichever car is plugged in
 - `2026-09-07` Six guards that were written, correct, and not enforced
 - `2026-09-07` One broadcast(), not two
 - `2026-09-04` One home, five tabs, and a bar that is always under the thumb
 - `2026-09-04` One Connect button, and no more "run: omacar daemon start"
-- `2026-09-04` Keep the planning scratch files out of the tree
-- `2026-09-04` d3, vendored, and a report that draws with it
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
