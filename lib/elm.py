@@ -121,6 +121,84 @@ class Elm:
         text = buf.decode("ascii", "replace").replace("\r", "\n")
         return [ln.strip() for ln in text.split("\n") if ln.strip() and ln.strip() != ">"]
 
+    def monitor(self, command="ATMA", seconds=8.0, on_line=None, limit=200000):
+        """Listen to the bus. Transmit nothing.
+
+        THE ONLY OPERATION IN THIS TOOL THAT PUTS NOTHING ON THE WIRE.
+
+        Every other capability here is a question: it sends a request and reads
+        an answer, which is safe but is not nothing. An ELM327 in monitor mode
+        is silent -- it does not even acknowledge the frames it reports -- so
+        this is strictly less intrusive than a read, and it is the one thing
+        that can see data the car never answers questions about.
+
+        That matters more than it sounds. A hybrid's state of charge, the drive
+        mode a dashboard switch selects, the gear a transmission is in: these
+        feed the instrument cluster over periodic broadcast frames and are
+        frequently exposed by NO diagnostic identifier at all. Sweeping 8,192
+        of them on this project's own car found exactly nothing, and the data
+        was on the wire the whole time.
+
+        WHY THIS CANNOT USE _send(). Every other command here terminates at the
+        ELM's ">" prompt. A monitor has no prompt: it streams until something is
+        sent to stop it, so the read loop is bounded by a deadline and the stop
+        is an explicit write of a single byte. Sending that byte is not a
+        vehicle request -- it goes to the adapter, to end its own mode -- and
+        the AT guard below is the same one raw() applies, kept because this
+        method writes to the port directly and would otherwise be the hole
+        raw() was closed to prevent.
+
+        Returns the number of lines seen. Lines go to `on_line` as they arrive
+        rather than being accumulated here, because a busy bus produces
+        thousands a second and the caller decides what is worth keeping.
+        """
+        head = (command or "").strip()[:2].upper()
+        if head != "AT":
+            raise WriteAttempted(
+                f"monitor() runs an adapter monitor command (AT...), not a "
+                f"vehicle request. {command!r} carries a service byte; a "
+                f"request goes through request(), where the allowlist and the "
+                f"write arm are enforced.")
+        self.ser.reset_input_buffer()
+        self.ser.write((command.strip() + "\r").encode())
+        self.ser.flush()
+        seen, buf, deadline = 0, b"", time.time() + float(seconds)
+        try:
+            while time.time() < deadline and seen < limit:
+                chunk = self.ser.read(512)
+                if not chunk:
+                    continue
+                buf += chunk
+                # Split on either terminator: adapters differ, and a monitor is
+                # the one place the stream is long enough for it to matter.
+                buf = buf.replace(b"\r", b"\n")
+                *lines, buf = buf.split(b"\n")
+                for raw_line in lines:
+                    text = raw_line.decode("ascii", "replace").strip()
+                    if not text or text == ">":
+                        continue
+                    seen += 1
+                    if on_line is not None:
+                        on_line(text)
+        finally:
+            # STOP IT, WHATEVER HAPPENED. A monitor left running owns the
+            # adapter forever and every later command reads its frames instead
+            # of an answer. One byte ends it; then drain to the prompt so the
+            # next caller starts clean.
+            try:
+                self.ser.write(b"\r")
+                self.ser.flush()
+                end = time.time() + 2.0
+                while time.time() < end:
+                    chunk = self.ser.read(512)
+                    if not chunk:
+                        break
+                    if b">" in chunk:
+                        break
+            except Exception:                                 # noqa: BLE001
+                pass
+        return seen
+
     def at(self, cmd):
         return self.raw("AT" + cmd)
 

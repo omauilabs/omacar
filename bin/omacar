@@ -9,6 +9,7 @@
 #   omacar doctor             adapter, protocol, supported PIDs, stored faults
 #   omacar live [PID...]      stream readings to the terminal
 #   omacar prospect [opts]    hunt for manufacturer-specific PIDs (read-only)
+#   omacar listen [marks]     listen to the bus and transmit nothing; find the byte a switch moves
 #   omacar dtc [opts]         read stored fault data via UDS 0x19 (read-only)
 #   omacar dtclog [opts]      log DTC status periodically during a drive
 #   omacar learn [--deep]     discover this car's modules and what they monitor
@@ -647,6 +648,7 @@ case "${1:-open}" in
   doctor) omacar_need_env; exec "$OMACAR_PY" "$ROOT/lib/doctor.py" ;;
   live) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/live.py" "$@" ;;
   prospect) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/prospect.py" "$@" ;;
+  listen) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/listen.py" "$@" ;;
   dtc) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/dtc.py" "$@" ;;
   dtclog) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/dtclog.py" "$@" ;;
   candlog) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/candlog.py" "$@" ;;

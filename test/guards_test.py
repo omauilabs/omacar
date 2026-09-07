@@ -635,11 +635,89 @@ check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
 
+# ------------------------------------------------------------------ listening
+head("listening reads frames, transmits nothing, and never invents a rate")
+
+import time  # noqa: E402
+
+import listen  # noqa: E402
+
+check("a 3-digit frame parses", listen.parse("7E8 06 41 0C 1A F8", 3),
+      ("7E8", [6, 65, 12, 26, 248]))
+check("a 29-bit frame parses", listen.parse("18DAF110 06 41 0C", 8),
+      ("18DAF110", [6, 65, 12]))
+for junk in ("STOPPED", "BUFFER FULL", "CAN ERROR", "?", "", "7E8 06 41 0C 1A F"):
+    check(f"{junk!r} is not a frame", listen.parse(junk, 3), None)
+
+# The monitor primitive is behind the same AT guard raw() is, because it writes
+# to the port directly and would otherwise be the hole raw() was closed to stop.
+class _Port:
+    def __init__(self):
+        self.written = []
+
+    def reset_input_buffer(self):
+        pass
+
+    def write(self, b):
+        self.written.append(b)
+
+    def flush(self):
+        pass
+
+    def read(self, _n):
+        return b""
+
+
+_el = elm.Elm.__new__(elm.Elm)
+_el.ser = _Port()
+_el.header = None
+_el.protocol = None
+for bad in ("22F190", "2EF19000", "0100", "3401"):
+    try:
+        _el.monitor(bad, seconds=0.01)
+        bad_check = False
+    except elm.WriteAttempted:
+        bad_check = True
+    check(f"monitor({bad!r}) is refused — it is not an adapter command", bad_check, True)
+check("nothing was transmitted by the refused calls", _el.ser.written, [])
+
+# A switch is a byte that is steady in each window and different between them.
+_cap = listen.Capture(header_digits=3)
+_t = time.time()
+for w, mode in enumerate((0x01, 0x02, 0x03)):
+    _cap.marks.append((_t, ["econ", "normal", "sport"][w]))
+    for i in range(40):
+        _t += 0.02
+        _cap.frames.append((_t, "300", [i % 256, 0x00, mode, 0x7F]))   # b0 counter, b2 switch
+        _cap.frames.append((_t, "400", [(i * 3) % 256, 0x11]))         # road speed
+    _t += 0.2
+_rows = _cap.discriminators(settle=0.1)
+check("exactly one byte behaves like the switch", len(_rows), 1)
+check("and it is the one that is", (_rows[0]["id"], _rows[0]["byte"]), ("300", 2))
+check("with a value per position",
+      [w["value"] for w in _rows[0]["per_window"]], [1, 2, 3])
+check("a counter inside the window is not reported",
+      any(r["byte"] == 0 and r["id"] == "300" for r in _rows), False)
+check("nor is road speed", any(r["id"] == "400" for r in _rows), False)
+check("one window alone yields nothing to compare",
+      listen.Capture(header_digits=3).discriminators(), [])
+
+# A rate needs a span. Frames arriving in one burst must report no frequency.
+_burst = listen.Capture(header_digits=3)
+_b = time.time()
+for i in range(50):
+    _burst.frames.append((_b + i * 0.0001, "0AA", [i % 256]))
+check("a burst reports no invented frequency",
+      _burst.census()[0]["hz"], None)
+_slow = listen.Capture(header_digits=3)
+for i in range(50):
+    _slow.frames.append((_b + i * 0.04, "0AA", [i % 256]))
+check("a real span does report one", _slow.census()[0]["hz"] is not None, True)
+
 # ------------------------------------------------------------- whose sample
 head("a live sample about another car is not this car's news")
 
 import importlib  # noqa: E402
-import time  # noqa: E402
 
 import records as _rec  # noqa: E402
 
