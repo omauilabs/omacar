@@ -25,6 +25,11 @@ const ACK_KEY = "omacar.ackAlert";
 // Everything drive mode can show. `get` returns { v, n, tone } — the number,
 // the note under it, and whether it wants colour. Adding a readout is adding
 // one entry here; nothing else in the file knows what any of them are.
+//
+// This object is the BASE catalogue and it never changes after this file is
+// read. What a particular car has been taught is merged onto a copy of it per
+// mount, down in learnedFor(); the freeze under the closing brace is what
+// keeps that promise enforceable rather than merely intended.
 const TILES = {
   speed: {
     label: "Speed", hero: true,
@@ -201,6 +206,16 @@ const TILES = {
   },
 };
 
+// FROZEN, AND THE FREEZE IS THE POINT.
+//
+// The tile a car earns by having a signal validated used to be written INTO
+// this object at mount. It is module scope: it outlives the view, so the next
+// car inherited the last car's readouts. Freezing turns that mistake from a
+// silent leak into a TypeError the first time anyone tries it again — module
+// code is strict mode, so an assignment here throws rather than being quietly
+// dropped. Per-car entries live in the derived catalogue instead; see below.
+Object.freeze(TILES);
+
 const FOOTERS = {
   trip: (car) => car && car.perf && car.perf.day
     ? `${dist(car.perf.day.km)} today${car.odometer ? "   ·   " + dist(car.odometer) : ""}` : "",
@@ -226,6 +241,61 @@ const raw = (x) => (x === null || x === undefined || Number.isNaN(x) ? null : Nu
 const asTemp = (c) => (raw(c) === null ? null : U.imperial ? raw(c) * 9 / 5 + 32 : raw(c));
 const pct = () => ({ min: 0, max: 100, step: 25 });
 
+// -------------------------------------------------- what THIS car was taught
+//
+// VALIDATED IDENTIFIERS BECOME TILES — FOR THE CAR IN FRONT OF YOU, AND NO OTHER.
+//
+// This is where the coverage strategy finally reaches a screen. A profile
+// entry that a person has checked against something real carries an id, a name
+// and a unit in the snapshot, and the daemon publishes its value under that
+// id. Everything else — the header, the request, the formula — stays on the
+// server, because the browser draws numbers and does not send requests. The
+// result is merged into the same object the picker enumerates, so a validated
+// entry is choosable the moment it exists, with no list to keep in step.
+//
+// It is DERIVED from a car rather than accumulated into the catalogue, and the
+// difference is the whole point of the function. The first version added these
+// entries to TILES itself. TILES is module scope; it outlives the view. Switch
+// from the car that had been taught an oil-temperature signal to one that has
+// not and the second car's dashboard still carried the first car's tile,
+// reading whatever the live sample happened to hold under that id — a number
+// presented as this vehicle's when nothing on this vehicle produced it. That
+// is the same defect as the live sample belonging to another car, fixed today
+// in lib/records.py live() under "whose sample is this?", and it is exactly
+// the thing this tool exists not to do.
+//
+// No scale: a signal the tool has only just been taught has no sensible bands
+// yet, so it renders as a digital readout rather than a dial pointing at a
+// range nobody chose.
+function learnedFor(car) {
+  const out = {};
+  for (const sig of (car && car.signals) || []) {
+    if (!sig || !sig.id || TILES[sig.id]) continue;
+    const key = sig.id, unit = sig.unit || "";
+    out[key] = {
+      label: sig.name || key,
+      get: (v) => ({ v: num(v[key], (x) => Math.round(x * 10) / 10), n: unit }),
+      read: (v) => raw(v[key]),
+      scale: null,
+      learned: true,
+    };
+  }
+  return out;
+}
+
+// The identity of a car's teaching, so the view can ask "is this still the
+// same set?" without rebuilding the screen to find out. Id, name and unit all
+// count: a renamed signal is a different label on a tile, and a tile whose
+// label is stale is a tile that lies about what it is showing. Joined on
+// escaped separators — never a control character typed literally into the
+// source, which is invisible to every reader who comes after you.
+function learnedKey(car) {
+  return ((car && car.signals) || [])
+    .filter((s) => s && s.id && !TILES[s.id])
+    .map((s) => [s.id, s.name || "", s.unit || ""].join("\u001f"))
+    .join("\n");
+}
+
 // ---------------------------------------------------------------- the view
 export default function drive(root, { arg } = {}) {
   let alive = true;
@@ -235,30 +305,20 @@ export default function drive(root, { arg } = {}) {
 
   root.parentElement.classList.add("drive-stage");
 
-  // VALIDATED IDENTIFIERS BECOME TILES.
+  // The catalogue this screen draws from: the built-ins above, plus whatever
+  // the CURRENT car has been taught. Built here and rebuilt below when the car
+  // changes, never accumulated — see learnedFor().
   //
-  // This is where the coverage strategy finally reaches a screen. A profile
-  // entry that a person has checked against something real carries an id, a
-  // name and a unit in the snapshot, and the daemon publishes its value under
-  // that id. Everything else -- the header, the request, the formula -- stays
-  // on the server, because the browser draws numbers and does not send
-  // requests. Added to the same object the picker enumerates, so a validated
-  // entry is choosable the moment it exists, with no list to keep in step.
-  //
-  // No scale: a signal the tool has only just been taught has no sensible
-  // bands yet, so it renders as a digital readout rather than a dial pointing
-  // at a range nobody chose.
-  for (const sig of (store.car && store.car.signals) || []) {
-    if (!sig || !sig.id || TILES[sig.id]) continue;
-    const key = sig.id, unit = sig.unit || "";
-    TILES[key] = {
-      label: sig.name || key,
-      get: (v) => ({ v: num(v[key], (x) => Math.round(x * 10) / 10), n: unit }),
-      read: (v) => raw(v[key]),
-      scale: null,
-      learned: true,
-    };
-  }
+  // One object, read by both the renderer and the editor, so the picker cannot
+  // offer a tile the screen would refuse to draw and the screen cannot draw
+  // one the picker never offered. An id in the saved layout that this car has
+  // no tile for is SKIPPED rather than deleted from the layout: the layout is
+  // one arrangement shared by the whole install, and the other car's readout
+  // should come back when that car does, not be quietly thrown away because a
+  // different vehicle was plugged in for an afternoon.
+  let catalogue = { ...TILES, ...learnedFor(store.car) };
+  let taught = learnedKey(store.car);
+
   // Drive mode has exactly one way out and it is the width of the screen. The
   // rail this replaced was eleven small targets beside a driver's hand; the tab
   // bar that replaced the rail is five big ones, which is better but is still
@@ -321,7 +381,7 @@ export default function drive(root, { arg } = {}) {
     cells = [];
     row.style.gridTemplateColumns = `repeat(${layout.columns}, 1fr)`;
     for (const id of layout.tiles) {
-      const def = TILES[id];
+      const def = catalogue[id];
       if (!def) continue;
       const rdef = resolved(def);
       const kind = kindOf(id, rdef);
@@ -338,7 +398,7 @@ export default function drive(root, { arg } = {}) {
 
   function buildHero() {
     clear(heroSlot);
-    const def = TILES[layout.hero] || TILES.speed;
+    const def = catalogue[layout.hero] || catalogue.speed;
     const rdef = resolved(def);
     const kind = normaliseKind(layout.heroKind, rdef);
     heroSlot.dataset.kind = kind;
@@ -398,7 +458,7 @@ export default function drive(root, { arg } = {}) {
     const moving = (v.SPEED || 0) > 3;
     const running = (v.RPM || 0) > 200;
 
-    const hero = TILES[layout.hero] || TILES.speed;
+    const hero = catalogue[layout.hero] || catalogue.speed;
     const hv = hero.get(v, s, car);
     if (heroGauge) {
       heroGauge.update(hv, hero.read ? hero.read(v, s, car) : null);
@@ -448,7 +508,7 @@ export default function drive(root, { arg } = {}) {
 
     editor.appendChild(h("div.drive-editor-k", "Big number"));
     const heroRow = h("div.drive-pick");
-    for (const [id, def] of Object.entries(TILES)) {
+    for (const [id, def] of Object.entries(catalogue)) {
       if (!def.hero) continue;
       heroRow.appendChild(h("button", {
         "aria-pressed": layout.hero === id ? "true" : "false",
@@ -457,7 +517,7 @@ export default function drive(root, { arg } = {}) {
     }
     editor.appendChild(heroRow);
 
-    const heroDef = resolved(TILES[layout.hero] || TILES.speed);
+    const heroDef = resolved(catalogue[layout.hero] || catalogue.speed);
     const heroKinds = kindRow(heroDef, normaliseKind(layout.heroKind, heroDef), (k) => {
       layout.heroKind = k;
       save();
@@ -471,7 +531,7 @@ export default function drive(root, { arg } = {}) {
       `Readouts  ·  ${layout.tiles.length} of 8`));
     const chosen = h("div.drive-chosen");
     layout.tiles.forEach((id, i) => {
-      const def = TILES[id];
+      const def = catalogue[id];
       if (!def) return;
       const rdef = resolved(def);
       const chip = h("div.drive-chip",
@@ -494,7 +554,7 @@ export default function drive(root, { arg } = {}) {
 
     editor.appendChild(h("div.drive-editor-k", "Add"));
     const avail = h("div.drive-pick");
-    for (const [id, def] of Object.entries(TILES)) {
+    for (const [id, def] of Object.entries(catalogue)) {
       if (layout.tiles.includes(id)) continue;
       avail.appendChild(h("button", {
         disabled: layout.tiles.length >= 8,
@@ -604,6 +664,30 @@ export default function drive(root, { arg } = {}) {
   }
 
   const off = store.on("live", paint);
+
+  // THE CAR CAN CHANGE UNDER A SCREEN THAT NEVER MOVES.
+  //
+  // Mounting is not the only moment a different vehicle becomes the current
+  // one. The snapshot is re-polled every twenty seconds, and `omacar use` on
+  // the laptop moves the whole app to another car without this tablet
+  // navigating anywhere at all — the tablet in the car is often the surface
+  // nobody is touching. Deriving only at mount would leave it showing the
+  // other car's learned readouts until somebody happened to walk over and
+  // press something.
+  //
+  // Rebuilt only when the teaching actually changed. build() tears the row
+  // down and makes it again, and this file has already been bitten once by
+  // rebuilding things under a driver's thumb (see the note above
+  // buildControls); doing that every twenty seconds because a snapshot arrived
+  // would be reintroducing it by another route.
+  const offCar = store.on("car", () => {
+    const key = learnedKey(store.car);
+    if (key === taught) return;
+    taught = key;
+    catalogue = { ...TILES, ...learnedFor(store.car) };
+    build();
+    paintEditor();
+  });
   api.driveLayout().then((l) => {
     if (!alive) return;
     layout = l;
@@ -629,6 +713,7 @@ export default function drive(root, { arg } = {}) {
   return () => {
     alive = false;
     off();
+    offCar();
     clearInterval(t);
     if (lock) { try { lock.release(); } catch { /* already gone */ } }
     root.parentElement.classList.remove("drive-stage");

@@ -213,7 +213,7 @@ export default function ima(root) {
     const shared = new Map();
     for (const q of qs) {
       if (q.state !== "undiscovered" || !q.command) continue;
-      const k = q.command + " " + (q.note || "");
+      const k = q.command + "\0" + (q.note || "");
       if (!shared.has(k)) shared.set(k, []);
       shared.get(k).push(q);
     }
