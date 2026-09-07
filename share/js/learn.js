@@ -72,6 +72,25 @@ export const TOPICS = {
         + "often an air leak. Persistently below −10% means it is pulling fuel "
         + "out. Trims frequently reveal a developing problem before any code sets.",
   },
+  write: {
+    title: "Writing a stored value",
+    body: "UDS service 0x2E changes a configuration value inside a module, and "
+        + "there is no undo: the previous value is gone unless it was written "
+        + "down. So this screen reads the identifier back first and shows what "
+        + "it holds, and a write carries that value as a claim the server checks "
+        + "again before sending. The emissions range is refused whatever the "
+        + "mode, and the list on the screen says it is named, not exhaustive.",
+  },
+  tests: {
+    title: "Functional tests",
+    body: "Commanding a part rather than asking about it: a fan you can switch "
+        + "on is a fan you can prove. On a real car this is UDS service 0x2F "
+        + "and the identifier for each part is specific to the model, so a "
+        + "button is live only when this car's profile carries one that "
+        + "somebody validated by watching the part move. Every other button is "
+        + "off and says so. The part is released when the test ends, whatever "
+        + "happens.",
+  },
   mode06: {
     title: "Mode 06",
     body: "The raw results of the car's own self-tests, including the ones that "

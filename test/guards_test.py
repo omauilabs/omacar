@@ -690,16 +690,28 @@ _db.execute("""CREATE TABLE modules (id TEXT PRIMARY KEY, name TEXT, addr TEXT,
     system TEXT, generic INTEGER, part TEXT, sw TEXT, codes TEXT, pos INTEGER)""")
 REAL = "JHMZF1D44FS001835"
 _car = _Conn([REAL, "MAT403096BNL", "SB1ZS3JE60E28", "WP0ZZZ99ZTS390000"])
-survey.read_identity(_car, _Obd, _db, set())
+survey.read_identity(_car, _Obd, _db, set(), record_key=REAL)
 check("the first well-formed VIN is stored", _stored_vin(_db), REAL)
-survey.read_identity(_car, _Obd, _db, set())
+survey.read_identity(_car, _Obd, _db, set(), record_key=REAL)
 check("a short scrambled read does not overwrite it", _stored_vin(_db), REAL)
-survey.read_identity(_car, _Obd, _db, set())
+survey.read_identity(_car, _Obd, _db, set(), record_key=REAL)
 check("nor does a second one", _stored_vin(_db), REAL)
-survey.read_identity(_car, _Obd, _db, set())
+survey.read_identity(_car, _Obd, _db, set(), record_key=REAL)
 check("a different but well-formed VIN is accepted (prepare already switched)",
       _stored_vin(_db), "WP0ZZZ99ZTS390000")
 _db.close()
+# A fresh record whose first read is noise: the key that opened it wins.
+_db2 = sqlite3.connect(":memory:")
+_db2.execute("CREATE TABLE vehicle (k TEXT PRIMARY KEY, v TEXT)")
+_db2.execute("CREATE TABLE faults (code TEXT, status TEXT)")
+_db2.execute("""CREATE TABLE modules (id TEXT PRIMARY KEY, name TEXT, addr TEXT,
+    system TEXT, generic INTEGER, part TEXT, sw TEXT, codes TEXT, pos INTEGER)""")
+_car2 = _Conn(["MAT403096BNL"])
+_db = _db2
+survey.read_identity(_car2, _Obd, _db2, set(), record_key="WP0ZZZ99ZTS39")
+check("a fresh record takes the VIN that opened it over a scrambled first read",
+      _stored_vin(_db2), "WP0ZZZ99ZTS39")
+_db2.close()
 
 # --------------------------------------------------------- the agent's writes
 head("an agent's write proposal is judged before it is queued")

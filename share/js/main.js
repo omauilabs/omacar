@@ -571,7 +571,12 @@ function paintBar() {
                          maskVin(car.vehicle && car.vehicle.vin)].filter(Boolean).join("  ·  ");
 
   els.priv.hidden = !privacy.on;
-  els.sim.hidden = !car.simulated;
+  // Two kinds of not-a-car, both named before their numbers. The simulator
+  // says so in its own record; the bench is a real adapter path talking to an
+  // emulator on a pseudo-terminal, which the daemon reports as the port kind.
+  const bench = !car.simulated && !!(store.live && store.live.kind === "bench");
+  els.sim.textContent = bench ? "BENCH · emulator, not a car" : "DEMO · not your car";
+  els.sim.hidden = !(car.simulated || bench);
   els.odoWrap.hidden = !car.odometer;
   if (car.odometer) els.odo.textContent = dist(car.odometer);
 

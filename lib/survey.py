@@ -318,8 +318,13 @@ def pretty(name):
             .replace("B2s1", "B2S1").replace("B2s2", "B2S2"))
 
 
-def read_identity(conn, obd, db, supported):
+def read_identity(conn, obd, db, supported, record_key=None):
     """VIN and what the powertrain module can actually answer.
+
+    `key` is the garage key that chose this database -- the VIN prepare()
+    read before anything was opened. It is the record's identity by
+    definition, so the first VIN stored here is that one, whatever this
+    read happens to return; a later read that differs is judged against it.
 
     The `modules` table is what the scan report walks. A generic adapter
     reaches exactly one module, so that is exactly what goes in it — the
@@ -327,6 +332,11 @@ def read_identity(conn, obd, db, supported):
     read an airbag unit it cannot address.
     """
     out = {}
+    if record_key is None:
+        try:
+            record_key = garage.current()
+        except Exception:                                     # noqa: BLE001
+            record_key = None
     for name, key in (("VIN", "vin"), ("CALIBRATION_ID", "calibration"),
                       ("FUEL_TYPE", "fuel")):
         cmd = getattr(obd.commands, name, None)
@@ -351,7 +361,16 @@ def read_identity(conn, obd, db, supported):
         if key == "vin":
             row = db.execute("SELECT v FROM vehicle WHERE k = 'vin'").fetchone()
             stored = json.loads(row[0]) if row else ""
-            if stored and text != stored and len(text) != 17:
+            if not stored:
+                # THE RECORD'S VIN IS THE VIN THAT OPENED THE RECORD. The garage
+                # key came from prepare()'s read; if this read disagrees on a
+                # fresh record, the key wins, because the key is what every
+                # profile match and every learned reading already used.
+                opened = (record_key or "").strip().upper()
+                if opened and opened not in (garage.SIM_KEY.upper(), "UNKNOWN") \
+                        and opened != text:
+                    text = opened
+            elif text != stored and len(text) != 17:
                 continue
         if text:
             out[key] = text

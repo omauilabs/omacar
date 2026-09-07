@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 53 | 22,091 |
-| JavaScript — the app | 45 | 13,713 |
+| Python — the whole diagnostic side | 53 | 22,110 |
+| JavaScript — the app | 45 | 13,737 |
 | CSS | 7 | 2,678 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,325 |
-| Tests | 8 | 3,501 |
-| Documentation | 12 | 3,232 |
-| Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **53,141** |
+| Tests | 8 | 3,513 |
+| Documentation | 12 | 3,234 |
+| Data — codes, resets, procedures, profiles | 6 | 1,389 |
+| **Tracked in git, all of it** | | **53,219** |
 
-**Tests** — 679 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 680 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -191,7 +191,7 @@ What is actually covered, straight out of the runner's own headings:
 | a validated identifier drives a reading, and only a validated one | 21 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
-| a stored VIN survives a broken read | 4 |
+| a stored VIN survives a broken read | 5 |
 | an agent's write proposal is judged before it is queued | 6 |
 | every screen the navigation names exists on disk | 3 |
 | the advisor names the model that actually answered | 3 |
@@ -250,6 +250,7 @@ What is actually covered, straight out of the runner's own headings:
 
 | Profile | Entries | Validated | Observed | Candidate |
 |---|---:|---:|---:|---:|
+| `bench-porsche` | 1 | 2 | 0 | 0 |
 | `honda-crz-2015` | 1 | 4 | 0 | 1 |
 
 *A profile entry below `validated` may not drive a gauge. That rule
@@ -272,8 +273,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 89 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 90 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` An agent's write proposal is judged before it is queued
 - `2026-09-07` God mode's one door: write by identifier, read back first
 - `2026-09-07` The film's shot list, the calendar checked offline, and learn names the car
 - `2026-09-07` Help names the write ledger; roadmap counts regenerated
@@ -281,7 +283,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` The garage screen says where the model came from
 - `2026-09-07` The model comes from the free decoder, and the first-drive runbook
 - `2026-09-07` The Tests lab reaches a real car, and says per button whether it does
-- `2026-09-07` Launch calendar: 31 days of posts as reviewable files
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

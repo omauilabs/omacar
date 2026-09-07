@@ -24,7 +24,7 @@ const CH = {
 
 export default function tests(root) {
   // Learn mode: renders only when the reader asked for it.
-  const _ex = explain(h, "mode06");
+  const _ex = explain(h, "tests");
   if (_ex) root.appendChild(_ex);
 
   let cat = null, alive = true, running = null;

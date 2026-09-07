@@ -1,0 +1,66 @@
+# OmaCar vehicle profile.
+#
+# confidence:
+#   proposed   Somebody read this somewhere and thinks it applies.
+#              The car has not been asked.
+#              Provenance says where it came from; until an ECU answers it is a lead, not a finding.
+#   candidate  The ECU answered.
+#              Nothing more is known — it may be a constant, a part number, or padding.
+#   observed   The bytes were seen to change across samples, so it carries *something*.
+#              What it means is still a guess.
+#   validated  Checked against something real — a gauge on the dash, a second tool, or a physical change somebody made — and it matched.
+#              Safe to drive a display.
+#   refuted    Tried and found wrong.
+#              Kept deliberately, so nobody spends an hour rediscovering that it does not work.
+#
+# An entry below `validated` must not drive a gauge.
+
+schema = 1
+
+[car]
+slug = "bench-porsche"
+make = "Porsche"
+model = "Bench (ELM327-emulator)"
+description = "The car `omacar bench start` emulates. Not a real vehicle: every entry here was validated against the emulator's source, which is exactly what a validated entry means on a bench and nothing more."
+protocol = "ISO 15765-4 (CAN 11/500)"
+vin_prefix = "WP0ZZZ99"   # model/year only -- never a whole VIN
+
+[meta]
+created = "2026-09-07T11:53:51Z"
+updated = "2026-09-07T11:53:51Z"
+checksum = "sha256:d1a1da325c9c426f207c5f0e2d27800ca97f805d097a790c29c2e6b979616550"   # integrity, NOT a signature
+
+[[pid]]
+id = "7e0_220200"
+name = "Stored code count"
+header = "7E0"
+request = "220200"
+formula = "A"
+unit = "codes"
+confidence = "validated"
+
+  [pid.provenance]
+  found_by = "omacar"
+  found_on = "the bench emulator"
+  method = "read from the emulator's message table"
+  validated_by = "omacar"
+  validated_on = "2026-09-07"
+  validated_against = "the emulator source: 62 02 00 01 for 22 02 00"
+
+[[actuator]]
+# Sent as 0x2F + did + state. Only `validated` reaches a button.
+test = "fan_high"
+name = "Bench cooling fan"
+header = "7E0"
+did = "F0A1"
+on = "03FF"
+off = "00"
+session = "1003"
+confidence = "validated"
+
+  [actuator.provenance]
+  found_by = "omacar"
+  found_on = "the bench emulator"
+  validated_by = "omacar"
+  validated_on = "2026-09-07"
+  validated_against = "the emulator's reported engine load rising from 11.8% to 35.3% while commanded"

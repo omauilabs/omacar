@@ -11,7 +11,7 @@
     "saying which car you ran it on and which entries you checked against",
     "something real. See doc/SWEEPING.md."
   ],
-  "updated": "2026-09-02",
+  "updated": "2026-09-07",
   "profiles": [
     {
       "slug": "honda-crz-2015",
@@ -27,6 +27,18 @@
       "contributors": [
         "mrjamesmyers"
       ]
+    },
+    {
+      "slug": "bench-porsche",
+      "make": "Porsche",
+      "model": "Bench (ELM327-emulator)",
+      "protocol": "ISO 15765-4 (CAN 11/500)",
+      "entries": 2,
+      "validated": 2,
+      "contributors": [
+        "omacar"
+      ],
+      "note": "Not a car. The emulator `omacar bench start` runs, so the whole tool -- learned readings and the actuator path included -- can be exercised on a desk. Validated against the emulator's source."
     }
   ]
 }

@@ -49,6 +49,7 @@ live=$STATE/live.json
 connected=false
 proto=""
 age=""
+bench=false
 if [[ -f $live ]]; then
   now=$(date +%s)
   t=$(jq -r '.t // 0' "$live" 2>/dev/null | cut -d. -f1)
@@ -59,6 +60,7 @@ if [[ -f $live ]]; then
   if [[ -n ${age:-} && $age -lt 15 ]]; then
     connected=$(jq -r '.connected // false' "$live" 2>/dev/null)
     proto=$(jq -r '.protocol // ""' "$live" 2>/dev/null)
+    bench=$(jq -r 'if (.kind // "") == "bench" then "true" else "false" end' "$live" 2>/dev/null)
   fi
 fi
 
@@ -67,13 +69,19 @@ desc=""
 [[ -n ${make:-} && $make != "null" ]] && desc="$desc$make "
 [[ -n ${model:-} && $model != "null" ]] && desc="$desc$model"
 desc="${desc% }"
+named="$desc"
 [[ -n $desc ]] || desc="a vehicle"
 
 # SIMULATED FIRST, ALWAYS. An assistant that describes invented readings as
 # though they came off a car is the single worst thing this integration could
 # do, and the word has to arrive before the numbers rather than after them.
+# The bench is the other not-a-car: a real adapter path talking to an emulator
+# on a pseudo-terminal. It is a real car to every gate and a real car to
+# nobody's driveway, and it has to be named before its numbers too.
 if [[ ${simulated:-false} == "true" ]]; then
   echo "car: SIMULATED — $desc, not a real vehicle. Every reading below is generated."
+elif [[ ${bench:-false} == "true" ]]; then
+  echo "car: BENCH — an emulator on a pseudo-terminal${named:+ ($named)}, not a vehicle. The readings are its script."
 else
   echo "car: $desc"
 fi
