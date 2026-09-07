@@ -524,6 +524,77 @@ map of what the module *measures*.
 
 Try `0x19` before committing hours to `0x22`. It costs about twenty requests.
 
+## Four modes
+
+    omacar mode                    what this machine is in, and what it permits
+    omacar mode technician         change it
+
+**simplified** is the owner asking whether the car is OK. Five screens, plain
+words, no hex anywhere, and the one write an owner legitimately does after
+fixing something themselves: clearing a code.
+
+**power user** is every reading and every screen. Still clearing only.
+
+**technician** commands the car — actuators, routines from published
+definitions, sweeps of unknown identifier ranges. The density steps *down*
+here, because this is a bench rather than a dashboard.
+
+**god mode** adds writing stored configuration values. It asks first, it says
+there is no undo, and it drops back to technician after thirty minutes, because
+a tier that writes into a module is not something you should discover you left
+on a fortnight ago.
+
+**The mode is decided on the server, and that is the whole point.** A mode
+built in the browser is falsifiable in one command:
+
+    curl -X POST http://127.0.0.1:7560/api/clear
+
+with the tablet in simplified mode showing no such button. `lib/modes.py`
+decides, `lib/api.py` asks it before any write route runs, and the screen
+reflects a decision it did not make. There is a test that posts exactly that.
+
+Two things stay refused at every tier, including god mode. **Reprogramming**,
+which needs a manufacturer-signed image this tool cannot produce and whose
+interrupted transfer leaves a module unable to boot. And **guessing a routine
+identifier**, because a routine is a procedure the module *runs* — a guess
+could spin a fan, cycle an ABS pump or retract a parking brake, and there is no
+harmless miss.
+
+God mode also refuses writes into the legislated OBD identifier range, and
+shows the Clean Air Act citation when it does. **That list is named, not
+complete, and it says so where it refuses.** Identifiers are
+manufacturer-specific and mostly undocumented; claiming to recognise every
+emissions-related write would be exactly the confident invention this tool
+refuses everywhere else.
+
+## Giving an agent the car
+
+    omacar mcp
+
+Speaks MCP on stdin and stdout, so Claude Code, Codex and Cursor all launch it
+the same way. `share/mcp/` has the configuration for each and a longer note.
+
+Seven tools. Six read: the snapshot, the live sample, the profile, the mode,
+and one constrained request to a module — read services only, through the same
+gate every other caller uses, with the same motion check a person gets. An
+agent can read a published signal set, check an identifier against *your* car,
+and write down what it found.
+
+It writes that finding at confidence **`proposed`**, which is below
+`candidate`, cannot drive a gauge, and which no machine can raise. Only a
+person checking a value against something real awards `validated`. That ceiling
+is why the data is worth anything.
+
+The seventh tool queues a write for you and **sends nothing**. Not a limitation
+to work around — it is the arrangement. An agent gets somewhere to put a
+conclusion it genuinely reached, instead of either acting on it or losing it.
+
+One honest note. An agent with a shell on this machine can edit the mode file
+directly, and every harness above has a shell. What is true is narrower and
+still worth having: OmaCar's own interfaces will not let an agent raise its own
+privilege, so a call routed through this server cannot do what you have not
+allowed. That is not a sandbox and this does not claim to be one.
+
 ## Reading, writing, and what is refused
 
 OmaCar reads by default and can write when you arm it. A tool that cannot clear
