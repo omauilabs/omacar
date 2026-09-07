@@ -13,7 +13,12 @@
      the screen: every scan tool that has ever shown somebody the wrong car's
      data got there by letting it. -->
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover, without which every env(safe-area-inset-*) in app.css
+     silently resolves to its 0px fallback. The nav block reserves the bottom
+     inset for a tablet in a cradle behind a home-button bar; that reservation
+     had never once been applied, because the browser only exposes the insets
+     when the page asks to draw into them. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>OmaCar</title>
 <link rel="icon" href="icon.svg">
 <!-- app.css first: every sheet below builds on its tokens, and two of them

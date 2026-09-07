@@ -19,6 +19,11 @@ export const LOOKS = [
     note: "Green palette with the rain behind it." },
   { id: "aurora", label: "Aurora", effect: "aurora",
     note: "Default palette, a slow colour drift behind everything." },
+  // The only look that is not dark, and the only one for a condition the
+  // desktop theme cannot know about: a glossy panel in direct sun, where every
+  // other look here is a mirror.
+  { id: "day", label: "Daylight", effect: "off",
+    note: "Near-black on white, for direct sunlight on the windscreen." },
   { id: "dim", label: "Night · dim", effect: "off",
     note: "Everything pulled down. For a lit cabin after dark." },
   { id: "red", label: "Night · red", effect: "off",

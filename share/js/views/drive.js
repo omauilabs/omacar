@@ -327,18 +327,45 @@ export default function drive(root, { arg } = {}) {
     }
   }
 
-  function paintControls() {
-    clear(controls);
-    const moving = (store.values.SPEED || 0) > 3;
-    controls.appendChild(h("button.drive-exit", {
+  // BUILT ONCE. THIS RUNS FOUR TIMES A SECOND ON THE SCREEN USED AT SPEED.
+  //
+  // It cleared the row and made both buttons again on every live sample. A tap
+  // whose pointerdown and pointerup straddle a rebuild fires its click on the
+  // nearest surviving ancestor rather than on the button, so the press simply
+  // does not happen -- about a quarter of the time, at random, on the one
+  // screen somebody is using while driving. The same defect was found and
+  // fixed in the hub and in the vehicle bar; this was the third instance and
+  // the worst-placed.
+  //
+  // The Customise button is HIDDEN rather than removed while moving, for the
+  // same reason the write chips grey instead of vanishing: a control that
+  // disappears is a control somebody hunts for at sixty.
+  let exitBtn = null;
+  let editBtn = null;
+
+  function buildControls() {
+    if (exitBtn) return;
+    // Still #dash, and deliberately: the button says Workshop and #dash is the
+    // workshop overview. The app's two-homes problem was a router that moved
+    // the user on its own; a labelled button going where its label says is not
+    // that, and repointing it at the hub would have made the word a lie.
+    exitBtn = h("button.drive-exit", {
       onclick: () => { location.hash = "#dash"; },
-    }, "Workshop"));
+    }, "Workshop");
+    editBtn = h("button.drive-exit", {
+      onclick: () => { editing = !editing; paintEditor(); },
+    }, "Customise");
+    controls.appendChild(exitBtn);
+    controls.appendChild(editBtn);
+  }
+
+  function paintControls() {
+    buildControls();
+    const moving = (store.values.SPEED || 0) > 3;
     // Only when stopped. This is the one rule the editor does not bend.
-    if (!moving) {
-      controls.appendChild(h("button.drive-exit", {
-        onclick: () => { editing = !editing; paintEditor(); },
-      }, editing ? "Done" : "Customise"));
-    }
+    editBtn.hidden = moving;
+    const want = editing ? "Done" : "Customise";
+    if (editBtn.textContent !== want) editBtn.textContent = want;
   }
 
   function paint() {

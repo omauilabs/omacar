@@ -212,6 +212,7 @@ button { font: inherit; color: inherit; }
   /* A short label must not produce a short target: "Hub" is three characters
      and would otherwise be half the width of "Readiness". */
   min-width: 64px; justify-content: center;
+  touch-action: manipulation;
 }
 .chip[aria-current="page"] {
   background: var(--raise); color: var(--ink); border-color: var(--faint);
@@ -259,6 +260,7 @@ button { font: inherit; color: inherit; }
 }
 .tab {
   position: relative; min-height: var(--tap-lg); padding: 0;
+  touch-action: manipulation;
   border: 0; border-top: 3px solid transparent;
   background: transparent; color: var(--faint); cursor: pointer;
   display: grid; place-items: center;
@@ -473,28 +475,47 @@ canvas { display: block; width: 100%; }
 .pill.ai   { background: var(--ai-bg);   color: var(--ai) }
 
 /* --------------------------------------------------------------- controls */
+/* THE TAP TOKENS, FINALLY CONSUMED.
+   --tap and --tap-lg were declared at the top of this file and read by the
+   navigation and nothing else, so the most-used control in the app stayed at
+   about 36px: below Apple's 44 for a phone held still, and well below the 48
+   Material asks for or the 56 this file's own comment settles on for a tablet
+   bolted to a dashboard on a road with potholes in it.
+   touch-action: manipulation removes the 300ms double-tap delay, which is the
+   cheapest perceived-speed win available and had zero occurrences in this
+   file. */
 .btn {
   border: 1px solid var(--edge-2); background: var(--panel-2); color: var(--ink);
   border-radius: 8px; padding: 8px 15px; font-size: .74rem; cursor: pointer;
+  min-height: var(--tap); touch-action: manipulation;
   letter-spacing: .04em; transition: background .13s, border-color .13s, color .13s;
   display: inline-flex; align-items: center; gap: 8px;
 }
-.btn:hover:not(:disabled) { background: var(--raise); border-color: var(--faint); }
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover:not(:disabled) { background: var(--raise); border-color: var(--faint); }
+}
 .btn:disabled { opacity: .45; cursor: default; }
 .btn:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 .btn.primary { background: var(--ink); color: var(--ground); border-color: transparent; font-weight: 600; }
-.btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--panel)); }
+@media (hover: hover) and (pointer: fine) {
+  .btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--panel)); }
+}
 .btn.ai { background: var(--ai-bg); border-color: color-mix(in srgb, var(--ai) 45%, transparent);
           color: color-mix(in srgb, var(--ai) 78%, var(--ink)); }
-.btn.ai:hover:not(:disabled) { background: color-mix(in srgb, var(--ai) 26%, var(--panel)); }
+@media (hover: hover) and (pointer: fine) {
+  .btn.ai:hover:not(:disabled) { background: color-mix(in srgb, var(--ai) 26%, var(--panel)); }
+}
 .btn.danger { border-color: color-mix(in srgb, var(--bad) 50%, transparent);
               color: color-mix(in srgb, var(--bad) 76%, var(--ink)); }
-.btn.danger:hover:not(:disabled) { background: var(--bad-bg); }
+@media (hover: hover) and (pointer: fine) {
+  .btn.danger:hover:not(:disabled) { background: var(--bad-bg); }
+}
 .btn.sm { padding: 5px 10px; font-size: .66rem; }
 
 .seg { display: inline-flex; border: 1px solid var(--edge-2); border-radius: 8px; overflow: hidden; }
 .seg button { border: 0; background: transparent; color: var(--faint); padding: 6px 12px;
-              font-size: .68rem; cursor: pointer; letter-spacing: .05em; }
+              font-size: .68rem; cursor: pointer; letter-spacing: .05em;
+              min-height: var(--tap); touch-action: manipulation; }
 .seg button + button { border-left: 1px solid var(--edge-2); }
 .seg button[aria-pressed="true"] { background: var(--raise); color: var(--ink); }
 
@@ -526,7 +547,9 @@ textarea { resize: vertical; min-height: 66px; }
   cursor: pointer; transition: border-color .13s, background .13s; width: 100%;
   text-align: left;
 }
-.rowitem:hover { border-color: var(--edge-2); background: var(--panel-2); }
+@media (hover: hover) and (pointer: fine) {
+  .rowitem:hover { border-color: var(--edge-2); background: var(--panel-2); }
+}
 .rowitem[aria-selected="true"] { border-color: var(--faint); background: var(--panel-2); }
 .rowitem .code { font-weight: 700; letter-spacing: .05em; font-size: .84rem; min-width: 5.4em; }
 .rowitem { overflow: hidden; }
@@ -552,6 +575,11 @@ textarea { resize: vertical; min-height: 66px; }
 .chanpick button {
   border: 1px solid var(--edge-2); background: transparent; color: var(--faint);
   border-radius: 20px; padding: 4px 10px; font-size: .64rem; cursor: pointer;
+  /* A channel chip is a row of small round targets and was the smallest thing
+     in the app at about 25px. It keeps its shape -- the pill is what makes a
+     row of twenty scannable -- and gains its hit area, which is what makes one
+     of them reachable with a thumb. */
+  min-height: var(--tap); touch-action: manipulation;
 }
 .chanpick button[aria-pressed="true"] { color: var(--ground); font-weight: 600; }
 
@@ -579,8 +607,14 @@ textarea { resize: vertical; min-height: 66px; }
 /* Above the navigation, never over it. --nav is exported by the token block
    precisely so anything anchored to the bottom of the screen can reserve the
    bar's height instead of guessing at it. */
+/* pointer-events: none on the LAYER, auto on the toast itself. The layer is a
+   full-height fixed column at z-index 100 down the right of the screen, so with
+   it catching pointer events every tap in that strip hit an invisible container
+   instead of the button under it -- on a touch screen, in a car, on the side a
+   right hand reaches from. */
 .toasts { position: fixed; right: 18px; bottom: calc(var(--nav) + 18px);
-          display: grid; gap: 8px; z-index: 100; }
+          display: grid; gap: 8px; z-index: 100; pointer-events: none; }
+.toast { pointer-events: auto; }
 .toast { background: var(--raise); border: 1px solid var(--edge-2); border-radius: 9px;
          padding: 10px 14px; font-size: .76rem; max-width: 380px;
          animation: rise .22s ease-out; }
@@ -888,7 +922,9 @@ textarea { resize: vertical; min-height: 66px; }
   border: 0; background: transparent; color: var(--faint); cursor: pointer;
   font-size: 1rem; line-height: 1; padding: 8px 9px; border-radius: 8px;
 }
-.drive-chip button:hover:not(:disabled) { background: var(--raise); color: var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .drive-chip button:hover:not(:disabled) { background: var(--raise); color: var(--ink); }
+}
 .drive-chip button:disabled { opacity: .3; cursor: default; }
 .drive-speed.warn { color: var(--warn); }
 .drive-speed.bad { color: var(--bad); }
@@ -912,7 +948,9 @@ textarea { resize: vertical; min-height: 66px; }
   border: 0; background: transparent; color: var(--faint); cursor: pointer;
   font-size: .95rem; line-height: 1; padding: 2px 4px; border-radius: 5px;
 }
-.photo figcaption button:hover { background: var(--bad-bg); color: var(--bad); }
+@media (hover: hover) and (pointer: fine) {
+  .photo figcaption button:hover { background: var(--bad-bg); color: var(--bad); }
+}
 
 /* ============================================================ car hub
    The in-car layout.
@@ -947,7 +985,9 @@ textarea { resize: vertical; min-height: 66px; }
   background: var(--raise); color: var(--bright);
   font: inherit; font-size: 1rem; cursor: pointer;
 }
-.hub-exit:hover { border-color: color-mix(in srgb, var(--bright) 26%, var(--edge)); }
+@media (hover: hover) and (pointer: fine) {
+  .hub-exit:hover { border-color: color-mix(in srgb, var(--bright) 26%, var(--edge)); }
+}
 
 /* ---- vitals strip ---- */
 .hub-vitals {
@@ -982,7 +1022,9 @@ textarea { resize: vertical; min-height: 66px; }
   font: inherit; text-align: left; cursor: pointer;
   transition: border-color .12s ease, transform .06s ease, background .12s ease;
 }
-.hub-tile:hover { background: var(--raise); border-color: color-mix(in srgb, var(--bright) 24%, var(--edge)); }
+@media (hover: hover) and (pointer: fine) {
+  .hub-tile:hover { background: var(--raise); border-color: color-mix(in srgb, var(--bright) 24%, var(--edge)); }
+}
 /* Pressed state matters more here than hover: on a touchscreen there is no
    hover, and a tap with no feedback gets tapped again. */
 .hub-tile:active { transform: scale(.985); }
@@ -1009,7 +1051,9 @@ textarea { resize: vertical; min-height: 66px; }
   background: var(--panel); color: var(--bright);
   font: inherit; font-size: 1.02rem; cursor: pointer;
 }
-.hub-chip:hover { background: var(--raise); border-color: color-mix(in srgb, var(--bright) 24%, var(--edge)); }
+@media (hover: hover) and (pointer: fine) {
+  .hub-chip:hover { background: var(--raise); border-color: color-mix(in srgb, var(--bright) 24%, var(--edge)); }
+}
 .hub-chip:active { transform: scale(.985); }
 
 /* Narrow / portrait dash tablet: two vitals per row rather than four squeezed. */
@@ -1089,7 +1133,9 @@ textarea { resize: vertical; min-height: 66px; }
   font-size: 1.25rem; line-height: 1; cursor: pointer;
   display: grid; place-items: center;
 }
-.radio-play:hover { border-color: color-mix(in srgb, var(--bright) 26%, var(--edge)); }
+@media (hover: hover) and (pointer: fine) {
+  .radio-play:hover { border-color: color-mix(in srgb, var(--bright) 26%, var(--edge)); }
+}
 .radio-play:active { transform: scale(.96); }
 .radio-meta { min-width: 0; flex: none; }
 .radio-name { font-size: 1.06rem; font-weight: 620; color: var(--bright); }
@@ -1274,10 +1320,14 @@ ul.tight li { margin-bottom: 5px; }
   border-radius: 8px; padding: 7px 11px; font-size: .74rem; cursor: pointer;
   font-family: var(--mono); letter-spacing: .04em;
 }
-.th-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--faint); }
+@media (hover: hover) and (pointer: fine) {
+  .th-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--faint); }
+}
 .th-btn:disabled { opacity: .45; cursor: default; }
 .th-btn.primary { background: var(--raise); color: var(--ink); }
-.th-btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+@media (hover: hover) and (pointer: fine) {
+  .th-btn.danger:hover { color: var(--bad); border-color: var(--bad); }
+}
 
 .th-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 @media (max-width: 900px) { .th-split { grid-template-columns: 1fr; } }
@@ -1383,6 +1433,48 @@ ul.tight li { margin-bottom: 5px; }
   --on-info: #001410!important;  --on-ai: #001410!important;
 }
 
+:root[data-look="day"] {
+  /* SUNLIGHT. The one condition this app is used in that it had no look for.
+     Five looks shipped and every one of them was dark, on a glossy 12.3in
+     panel that spends its working life on a dashboard behind a windscreen.
+     A dark interface in direct sun is a mirror: you read your own face.
+
+     The rule that makes this legible is not the palette, it is the contrast
+     direction. Everything here is near-black ink on near-white ground, the
+     semantic colours are the PRINT values app.html already declares for paper
+     -- chosen against white and already checked -- and --bright, which the hub
+     uses to punch through glare on a dark ground, inverts to the darkest ink
+     in the set rather than staying white, because on this ground white is the
+     glare.
+
+     Deliberately not derived from the Omarchy theme. Every other look here
+     follows the desktop; this one is a physical override for a condition the
+     desktop knows nothing about, and a light theme's own palette is chosen for
+     a room rather than for a windscreen at noon. */
+  --ground: #F2F4F3!important;  --panel: #FFFFFF!important;  --raise: #E8EDEB!important;
+  --edge: #CFD8D5!important;    --hair: #DFE6E4!important;
+  --ink: #0B1214!important;     --dim: #3C4B4E!important;
+  --faint: #61706F!important;   --ghost: #9AA8A6!important;
+  --ok: #1B7A4B!important;      --warn: #8A5A05!important;
+  --bad: #A32A1B!important;     --info: #17558F!important;
+  --ok-bg: rgba(27,122,75,.11)!important;
+  --warn-bg: rgba(138,90,5,.12)!important;
+  --bad-bg: rgba(163,42,27,.11)!important;
+  --info-bg: rgba(23,85,143,.11)!important;
+  --track: #D3DCD9!important;
+  /* Inverted on purpose: --bright is "punch through the glare", and on a white
+     ground the thing that punches through is black. */
+  --bright: #000000!important;
+  --bright-2: #2A3A3C!important;
+  --panel-2: #F7F9F8!important;  --edge-2: #BCC8C5!important;
+  --accent: #17558F!important;
+  --ai: #4B3FA8!important;  --ai-bg: rgba(75,63,168,.11)!important;
+  /* Ink ON a solid semantic fill. White here, because these five are dark
+     enough to carry it -- the opposite of every other look in this file. */
+  --on-ok: #FFFFFF!important;  --on-warn: #FFFFFF!important; --on-bad: #FFFFFF!important;
+  --on-info: #FFFFFF!important;  --on-ai: #FFFFFF!important;
+}
+
 :root[data-look="dim"] {
   /* Same hues as the default, pulled well down. For a lit cabin at night where
      full brightness is a mirror in the windscreen. */
@@ -1455,7 +1547,9 @@ ul.tight li { margin-bottom: 5px; }
   border: 1px solid var(--edge); background: var(--panel);
   color: var(--ink); font: inherit; cursor: pointer;
 }
-.rp-span:hover { background: var(--raise); }
+@media (hover: hover) and (pointer: fine) {
+  .rp-span:hover { background: var(--raise); }
+}
 .rp-span.on { border-color: var(--info); background: var(--info-bg); }
 .rp-span-l { font-weight: 620; }
 .rp-span-d { font-size: .84rem; color: var(--dim); margin-top: 2px; }
@@ -1486,7 +1580,9 @@ ul.tight li { margin-bottom: 5px; }
   color: var(--ink); font: inherit; cursor: pointer;
 }
 .rp-cell.on { border-color: var(--info); }
-.rp-cell:hover { background: var(--raise); }
+@media (hover: hover) and (pointer: fine) {
+  .rp-cell:hover { background: var(--raise); }
+}
 .rp-k { font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
 .rp-v { font-family: var(--mono); font-size: 1.3rem; color: var(--ink); font-variant-numeric: tabular-nums; }
 .rp-u { font-size: .72rem; color: var(--dim); }
