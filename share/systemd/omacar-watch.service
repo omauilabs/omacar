@@ -1,0 +1,17 @@
+[Unit]
+Description=OmaCar watchdog — notifies when the car needs you to know something
+Documentation=file:__ROOT__/README.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The watchdog only reads live.json, so the system python is enough -- it does
+# not import obd and does not need the venv the daemon uses.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/watch.py'
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=default.target

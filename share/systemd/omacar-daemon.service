@@ -1,0 +1,44 @@
+[Unit]
+Description=OmaCar polling daemon — reads the car and publishes live.json
+Documentation=file:__ROOT__/README.md
+# Started by the udev rule at /etc/udev/rules.d/99-omacar.rules, which sets
+# SYSTEMD_USER_WANTS=omacar-daemon.service when a known OBD adapter appears.
+# That rule shipped with OmaCar but this unit did not, so the auto-start half
+# had nothing to start -- on this machine or on the box it was copied from.
+After=graphical-session.target
+PartOf=graphical-session.target
+# StartLimit* live in [Unit], not [Service] -- systemd ignores them silently in
+# the wrong section, which it did on the first attempt.
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+# THE VENV PYTHON, NOT __PY__.
+#
+# python-obd is not in the Arch repos, so `omacar setup` builds a venv at
+# ~/.local/share/omacar/venv and every OmaCar entry point runs through it.
+# omacar-watch.service can get away with the system python because the
+# watchdog only reads live.json; the daemon imports obd and cannot.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/daemon.py'
+
+# Restart=no, and this was corrected by testing rather than by reasoning.
+#
+# "No adapter" is not a clean exit: daemon.py exits status=1 for it, which is
+# indistinguishable from a real failure. With Restart=on-failure that meant an
+# unplugged cable spun a fresh Python interpreter every five seconds forever --
+# observed here as `activating (auto-restart)` with no adapter attached, which
+# is precisely the background-CPU behaviour that crashed the compositor last
+# night.
+#
+# udev starts this when an adapter appears. That is the only trigger it needs.
+Restart=no
+
+# The car is not urgent work. Last night a background poll saturating this
+# 2-core CPU starved the compositor badly enough to crash it; nothing that
+# polls in the background here should be able to do that again.
+Nice=10
+
+# No [Install] section on purpose: this must NOT start at login. It is pulled
+# in by the udev rule when an adapter is actually present, and starting it
+# otherwise just logs "no adapter" and exits.

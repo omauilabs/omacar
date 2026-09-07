@@ -1,0 +1,27 @@
+[Unit]
+Description=OmaCar automatic discovery — maps unknown identifiers, safely, over time
+Documentation=file:__ROOT__/lib/autodisc.py
+After=graphical-session.target
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/autodisc.py run'
+
+# Restart=on-failure, like dtclog and unlike the daemon.
+#
+# This never exits on "no adapter" -- it logs the skip and waits -- so an exit
+# here is a real fault. Coming back matters because the whole design is that
+# discovery accumulates unattended over weeks.
+Restart=on-failure
+RestartSec=60
+
+# Lowest priority of anything OmaCar runs. This is speculative work with no
+# deadline, competing with a gauge that has one, on a 2-core machine that has
+# already had its compositor starved once.
+Nice=15
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,32 @@
+[Unit]
+Description=OmaCar DTC status log — watches monitors complete during a drive
+Documentation=file:__ROOT__/lib/dtclog.py
+After=graphical-session.target
+# NOT PartOf=graphical-session.target, unlike omacar-daemon.
+#
+# The gauge exists to be looked at, so it belongs to the desktop session. This
+# does not: its whole job is to keep sampling across a long drive on a laptop
+# whose lid may be shut. Tying it to the session would stop it exactly when the
+# clamshell config was written to keep things running.
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/dtclog.py --interval 300'
+
+# Restart=on-failure, which is the opposite of omacar-daemon.service and for a
+# good reason. The daemon exits status=1 on "no adapter", so restarting it
+# spins an interpreter every five seconds against an unplugged cable. dtclog
+# never exits on a missing adapter -- it logs the skip and waits -- so an exit
+# here is a genuine fault, and on a two-hour drive with nobody watching, coming
+# back is worth more than staying down.
+Restart=on-failure
+RestartSec=30
+
+# Same reasoning as the daemon: this must never be able to starve the
+# compositor on a 2-core machine.
+Nice=10
+
+[Install]
+WantedBy=default.target

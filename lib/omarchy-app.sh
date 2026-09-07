@@ -178,6 +178,43 @@ oa_plugin_install() {
   oa_say "" "bar plugin registered"
 }
 
+# Install the user units this app ships, with the paths of THIS checkout.
+#
+# WHY THEY ARE TEMPLATED RATHER THAN COPIED.
+#
+# Units carrying `%h/Projects/omacar` work for exactly one person: whoever put
+# the checkout where the author did. On this machine the five units lived only
+# in ~/.config/systemd/user, hand-placed, and the udev rule that ships in the
+# repo names omacar-daemon.service -- a unit that existed nowhere in it. The
+# auto-start half had nothing to start on any machine but one.
+#
+# __ROOT__ becomes this checkout, so a unit is correct wherever the repo was
+# cloned. The interpreter is NOT substituted here: it is resolved when the unit
+# starts, by sourcing lib/env.sh, because `omacar setup` builds the venv AFTER
+# install.sh runs -- baking the path in at install time would freeze every unit
+# on the system python that cannot import obd. It also avoids capturing a
+# version-manager shim, which resolves through XDG_DATA_HOME and breaks the
+# moment anything redirects it.
+#
+# Nothing is enabled here. A unit that starts a fullscreen gauge or a polling
+# daemon at login is right on a tablet in a car and rude on a laptop; `omacar
+# tablet setup` is where that choice is made, deliberately and reversibly.
+oa_unit_install() {
+  [[ -d "$OA_ROOT/share/systemd" ]] || return 0
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$dir"
+  local n=0 f name
+  for f in "$OA_ROOT"/share/systemd/*.service; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    sed -e "s|__ROOT__|$OA_ROOT|g" "$f" >"$dir/$name"
+    n=$((n + 1))
+  done
+  ((n)) || return 0
+  ((OA_LIVE)) && systemctl --user daemon-reload >/dev/null 2>&1 || true
+  oa_say "" "$n user units installed (none enabled — see: $OA_APP tablet)"
+}
+
 oa_bar_place() { # [--before other.widget]
   [[ -f "$OA_ROOT/plugin/manifest.json" ]] || return 0
   ((OA_LIVE)) || return 0
@@ -217,6 +254,25 @@ oa_hypr_reload() { # "success message"
 
 # Reverses every hook the install placed. Deliberately not `set -e` sensitive:
 # a partial install must still uninstall cleanly.
+# Take the units back out. Stopped and disabled first: removing the file under a
+# running unit leaves systemd holding a process it can no longer describe.
+oa_unit_remove() {
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  [[ -d "$OA_ROOT/share/systemd" ]] || return 0
+  local f name n=0
+  for f in "$OA_ROOT"/share/systemd/*.service; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    [[ -f "$dir/$name" ]] || continue
+    ((OA_LIVE)) && systemctl --user disable --now "$name" >/dev/null 2>&1 || true
+    rm -f "$dir/$name"
+    n=$((n + 1))
+  done
+  ((n)) && { ((OA_LIVE)) && systemctl --user daemon-reload >/dev/null 2>&1 || true; \
+             oa_say "" "$n user units removed"; }
+  return 0
+}
+
 oa_remove() {
   local tool
   if [[ -f "$OA_SHELL_JSON" ]] && command -v jq >/dev/null; then
