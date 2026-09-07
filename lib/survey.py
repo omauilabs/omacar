@@ -23,6 +23,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -355,9 +356,12 @@ def read_identity(conn, obd, db, supported):
         if text:
             out[key] = text
     # What the VIN itself will tell us. The model is not in there and no
-    # amount of wanting puts it there, so it is left for the owner to name.
+    # amount of wanting puts it there -- but the free government decoder has
+    # it, so it is asked once, in the background, and the answer is filed with
+    # its source. See enrich_model_async.
     if out.get("vin"):
         out.update(decode_vin(out["vin"]))
+        enrich_model_async(out["vin"])
     for k, v in out.items():
         db.execute("INSERT OR REPLACE INTO vehicle VALUES (?,?)",
                    (k, json.dumps(v)))
@@ -376,6 +380,90 @@ def read_identity(conn, obd, db, supported):
          out.get("calibration", ""), conn.protocol_name(),
          json.dumps(codes), 0))
     return out
+
+
+# ---- the model, from the one free source that has it -----------------------
+#
+# The make and the year are in the VIN by standard; the MODEL is not, and for
+# years this file said so and left it blank for the owner to type. NHTSA's vPIC
+# decoder is free, keyless and public domain, and lib/knowledge.py already
+# asks it for the agent tools. So the survey asks it too: once per VIN per
+# process, in a thread, because it is a network call with a twelve-second
+# timeout and the survey runs inside the daemon's loop.
+#
+# THE OWNER'S NAME WINS. A model the owner typed on the garage screen is never
+# overwritten. Only a blank, or a value this lookup wrote earlier, is filled --
+# and the source is stored beside it so the screen can say where it came from.
+# Offline, nothing happens and nothing is claimed.
+
+_ENRICHED = set()
+_ENRICH_LOCK = threading.Lock()
+MODEL_SOURCE = "NHTSA vPIC"
+
+# vPIC field -> vehicle-table key. Small on purpose: what the screens and the
+# advisor can use, not the whole record.
+VPIC_FIELDS = (("Trim", "trim"), ("Series", "series"), ("BodyClass", "body"),
+               ("EngineCylinders", "cylinders"), ("DisplacementL", "displacement_l"),
+               ("FuelTypePrimary", "fuel_type"),
+               ("ElectrificationLevel", "electrification"),
+               ("DriveType", "drive"), ("TransmissionStyle", "transmission"))
+
+
+def enrich_model(vin, db_path=None, lookup=None):
+    """Fill in the model from vPIC. Returns what was written, or {}.
+
+    Synchronous; enrich_model_async wraps it. `lookup` is injectable so the
+    tests never touch the network.
+    """
+    vin = (vin or "").strip().upper()
+    if len(vin) != 17:
+        return {}
+    if lookup is None:
+        import knowledge
+        lookup = knowledge.decode_vin
+    try:
+        got, meta = lookup(vin)
+    except Exception:                                         # noqa: BLE001
+        return {}
+    if not got or not got.get("Model"):
+        return {}
+    path = db_path or garage.db_path()
+    db = sqlite3.connect(path, timeout=5.0)
+    try:
+        db.execute("CREATE TABLE IF NOT EXISTS vehicle (k TEXT PRIMARY KEY, v TEXT)")
+        cur = {r[0]: r[1] for r in db.execute("SELECT k, v FROM vehicle")}
+
+        def have(k):
+            try:
+                return json.loads(cur[k]) if k in cur else ""
+            except ValueError:
+                return cur.get(k) or ""
+
+        if have("model") and have("model_source") != MODEL_SOURCE:
+            return {}                     # the owner named it; leave it alone
+        written = {"model": got["Model"], "model_source": MODEL_SOURCE}
+        for src, dst in VPIC_FIELDS:
+            if got.get(src) and not (have(dst) and have("model_source") != MODEL_SOURCE):
+                written[dst] = got[src]
+        for k, v in written.items():
+            db.execute("INSERT OR REPLACE INTO vehicle VALUES (?,?)",
+                       (k, json.dumps(v)))
+        db.commit()
+        return written
+    finally:
+        db.close()
+
+
+def enrich_model_async(vin):
+    with _ENRICH_LOCK:
+        if vin in _ENRICHED:
+            return None
+        _ENRICHED.add(vin)
+    path = garage.db_path()
+    t = threading.Thread(target=enrich_model, args=(vin, path), daemon=True,
+                         name="survey:model")
+    t.start()
+    return t
 
 
 # ---- reading the VIN --------------------------------------------------------

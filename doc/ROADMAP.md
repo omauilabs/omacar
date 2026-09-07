@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 51 | 21,149 |
+| Python — the whole diagnostic side | 53 | 21,770 |
 | JavaScript — the app | 44 | 13,538 |
 | CSS | 7 | 2,665 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,284 |
-| Tests | 7 | 3,222 |
-| Documentation | 10 | 2,983 |
+| Tests | 7 | 3,266 |
+| Documentation | 10 | 3,002 |
 | Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **51,387** |
+| **Tracked in git, all of it** | | **52,071** |
 
-**Tests** — 646 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 654 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -188,6 +188,7 @@ What is actually covered, straight out of the runner's own headings:
 | a mode is a boundary, not a preference the browser is trusted with | 12 |
 | what an agent may do to a car | 17 |
 | a validated identifier drives a reading, and only a validated one | 21 |
+| the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
 | a stored VIN survives a broken read | 4 |
 | the advisor names the model that actually answered | 3 |
@@ -267,8 +268,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 82 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 83 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` The Tests lab reaches a real car, and says per button whether it does
 - `2026-09-07` Launch calendar: 31 days of posts as reviewable files
 - `2026-09-07` A validated identifier becomes a live reading
 - `2026-09-07` The owner can see what an agent asked to write
@@ -276,7 +278,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` An agent can look up what somebody else already worked out
 - `2026-09-07` The front page describes the modes and the agent surface, now they exist
 - `2026-09-07` Every agent on this machine knows what is plugged in
-- `2026-09-07` The car, as tools any agent harness can call
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

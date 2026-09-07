@@ -108,8 +108,11 @@ so a tool that shows a make and a year either asked a paid database or worked
 it out: `lib/survey.py` reads the manufacturer from the VIN's first three
 characters and the year from its tenth, both of which are in the standard and
 free, and validates the North American check digit rather than trusting a
-misread. The model is genuinely not derivable without a licensed database, so
-it is left for you to fill in rather than guessed at.
+misread. The model is genuinely not derivable from the VIN alone, so the survey
+asks the one free source that has it — NHTSA's vPIC decoder, keyless and public
+domain — once per car, in the background, and files the answer with its source.
+Offline it stays blank, and a model you type on the garage screen is never
+overwritten by the lookup.
 
 Two things are not on the car and cannot be:
 
@@ -419,6 +422,10 @@ from 12 V without browning out at every crank, and the honest list of what
 Omarchy does not yet give you on a tablet.
 
     omacar tablet setup
+
+**[doc/first-drive.md](doc/first-drive.md)** is the runbook for the first day
+with a real car: clone to live gauge on a fresh tablet, what to expect from
+each screen, and what to write down.
 
 One command, and it says what it is about to do before it does it: watchdog at
 login, fullscreen drive mode at login, daemon started when the adapter is

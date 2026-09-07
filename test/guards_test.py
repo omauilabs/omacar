@@ -496,6 +496,50 @@ check("the catalogue carries no header and no formula",
 check("payload offset for a 0x22 reply skips 62 + two DID bytes",
       signals.payload_offset("22F181"), 3)
 
+# ------------------------------------------------------------------ the model
+head("the model comes from the free decoder, and the owner's name wins")
+
+import json as _json  # noqa: E402
+import sqlite3 as _sq  # noqa: E402
+import survey as _sv  # noqa: E402
+
+_tmpd = tempfile.mkdtemp()
+_dbp = os.path.join(_tmpd, "car.db")
+
+
+def _vpic(vin):
+    return ({"Make": "HONDA", "Model": "Fit", "ModelYear": "2012",
+             "Trim": "Sport", "BodyClass": "Hatchback/Liftback/Notchback"},
+            {"source": "https://vpic.nhtsa.dot.gov/"})
+
+
+def _vt():
+    db = _sq.connect(_dbp)
+    try:
+        return {r[0]: _json.loads(r[1]) for r in db.execute("SELECT k, v FROM vehicle")}
+    finally:
+        db.close()
+
+
+w = _sv.enrich_model("JHMGE8H53CC000001", db_path=_dbp, lookup=_vpic)
+check("a blank record gets the model", _vt().get("model"), "Fit")
+check("with its source beside it", _vt().get("model_source"), _sv.MODEL_SOURCE)
+check("and the trim", _vt().get("trim"), "Sport")
+_db = _sq.connect(_dbp)
+_db.execute("INSERT OR REPLACE INTO vehicle VALUES ('model', ?)", (_json.dumps("CR-Z"),))
+_db.execute("INSERT OR REPLACE INTO vehicle VALUES ('model_source', ?)", (_json.dumps("owner"),))
+_db.commit(); _db.close()
+w = _sv.enrich_model("JHMGE8H53CC000001", db_path=_dbp, lookup=_vpic)
+check("a model the owner named is never overwritten", _vt().get("model"), "CR-Z")
+check("and the lookup reports it wrote nothing", w, {})
+check("a short VIN is not looked up", _sv.enrich_model("WP0ZZZ99ZTS39", db_path=_dbp, lookup=_vpic), {})
+check("a decoder with no model writes nothing",
+      _sv.enrich_model("JHMGE8H53CC000002", db_path=_dbp, lookup=lambda v: ({}, {})), {})
+check("a decoder that raises writes nothing",
+      _sv.enrich_model("JHMGE8H53CC000003", db_path=_dbp,
+                       lookup=lambda v: (_ for _ in ()).throw(OSError("offline"))), {})
+shutil.rmtree(_tmpd, ignore_errors=True)
+
 # --------------------------------------------------------------- the actuators
 head("an actuator reaches a button only when validated, and sends only 0x2F")
 
