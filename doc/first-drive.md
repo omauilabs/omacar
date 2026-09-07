@@ -43,7 +43,9 @@ Prove the whole stack without a car:
     omacar bench stop
 
 If the CR-Z's history should be on the tablet today, carry its record over
-from the desktop. The record is one file per VIN, and the profile beside it:
+from the desktop — over the house Wi-Fi with the Surface's ssh alias, or on a
+USB stick, since it is not on the tailnet yet. The record is one file per VIN,
+and the profile beside it:
 
     # on the desktop
     scp ~/.local/state/omacar/vehicles/JHMZF1D44FS001835.db \
