@@ -376,6 +376,16 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             # is cheap either way and a human reading a capture wants them.
             el.raw("ATH1")
             el.raw("ATS1")
+            # CLEAR ANY FILTER FIRST. init() negotiates a diagnostic protocol
+            # and the adapter may still be holding a receive-address filter
+            # from whatever ran before -- a DTC sweep aims at one module and
+            # leaves it aimed. Monitoring through a stale filter shows a
+            # handful of frames or none at all, which reads exactly like a
+            # quiet bus and is the second way this capability can lie about
+            # the car. Reset it, then set our own only if one was asked for.
+            el.raw("ATCRA")
+            el.raw("ATCF000")
+            el.raw("ATCM000")
             if can_id:
                 el.raw("ATCRA" + str(can_id).replace(" ", "").upper())
             el.monitor("ATMA", seconds=seconds, limit=limit,
