@@ -110,20 +110,6 @@ def uses_iso_tp(dpn):
     return bool(p and p["iso_tp"])
 
 
-def broadcast(dpn, fallback="7DF"):
-    """The functional 'ask every module' header for this protocol.
-
-    Every protocol entry already carries one; nothing was reading it. Callers
-    hardcoded "07DF", which is the 11-bit CAN broadcast and the wrong SHAPE on
-    a 29-bit car -- so header_ok() correctly refused it and `omacar dtc` died
-    with a traceback on the one car this project was built for. The right
-    answer was in the table the whole time.
-    """
-    p = describe(dpn)
-    h = (p or {}).get("default_header") or fallback
-    return h.replace(" ", "")
-
-
 def header_ok(dpn, header):
     """Is this header the right shape for this protocol?
 
@@ -143,7 +129,7 @@ def header_ok(dpn, header):
 
 # ---------------------------------------------------------------- addressing
 
-def broadcast(dpn):
+def broadcast(dpn, fallback="7DF"):
     """The address every module on this bus listens to.
 
     Callers used to write the functional broadcast inline -- `"7DF"` in
@@ -164,7 +150,7 @@ def broadcast(dpn):
     """
     p = describe(dpn)
     if not p:
-        return "7DF"
+        return fallback
     return p["default_header"].replace(" ", "")
 
 
