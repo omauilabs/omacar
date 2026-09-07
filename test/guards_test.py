@@ -645,6 +645,45 @@ check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
 
+# ------------------------------------------------------------- drive layouts
+head("a layout has a name, a car remembers which, and the old file still works")
+
+_ld = tempfile.mkdtemp()
+_cfgold = api.DRIVE_CFG
+api.DRIVE_CFG = os.path.join(_ld, "drive.json")
+try:
+    # The old flat form migrates on read, without being rewritten.
+    with open(api.DRIVE_CFG, "w", encoding="utf-8") as f:
+        _json.dump({"tiles": ["speed", "rpm"], "columns": 2, "hero": "rpm",
+                    "_comment": "written before layouts had names"}, f)
+    _l = api.drive_layout()
+    check("an old flat layout file still loads", _l["tiles"], ["speed", "rpm"])
+    check("and lands in the layout called default", _l["_name"], "default")
+    check("and keeps everything it had", (_l["columns"], _l["hero"]), (2, "rpm"))
+
+    api.drive_action({"action": "save-as", "name": "track"})
+    check("a layout can be named", sorted(api.drive_layout()["_names"]),
+          ["default", "track"])
+    check("and becomes the one in use", api.drive_layout()["_name"], "track")
+    api.drive_action({"action": "use", "name": "default"})
+    check("and switched back", api.drive_layout()["_name"], "default")
+
+    for bad, why in (({"action": "use", "name": "nope"}, "no such layout"),
+                     ({"action": "forget", "name": "nope"}, "no such layout"),
+                     ({"action": "sudo"}, "unknown action"),
+                     ({"action": "save-as", "name": "../../etc"}, "a path is not a name"),
+                     ({"action": "save-as", "name": ""}, "empty")):
+        check(f"refused: {why}", _raises(lambda b=bad: api.drive_action(b), ValueError), True)
+
+    api.drive_action({"action": "forget", "name": "track"})
+    check("a layout can be forgotten", api.drive_layout()["_names"], ["default"])
+    check("but never the last one",
+          _raises(lambda: api.drive_action({"action": "forget", "name": "default"}),
+                  ValueError), True)
+finally:
+    api.DRIVE_CFG = _cfgold
+    shutil.rmtree(_ld, ignore_errors=True)
+
 # ----------------------------------------------------------------- the orb
 head("the assistant is reachable by hand, and only from this machine")
 

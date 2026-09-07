@@ -378,12 +378,80 @@ def _clean_kinds(value):
             if isinstance(k, str) and v in GAUGE_KINDS and v != "digital"}
 
 
-def drive_layout():
+# ---- named layouts, per vehicle ---------------------------------------------
+#
+# ONE LAYOUT FOR EVERY CAR WAS WRONG ON A TOOL BUILT AROUND A GARAGE.
+#
+# The drive screen's arrangement lived in one file with one layout in it, on a
+# tool whose whole storage design is one database per VIN. Arrange the tiles
+# for the hybrid -- charge, assist, economy -- then plug into a car with no
+# hybrid at all and you get four dashes where the interesting numbers were,
+# and rearranging for that car destroys the arrangement for the first one.
+#
+# So a layout has a name, and a car remembers which name it uses. "Commute" and
+# "track" are the obvious pair; the useful pair here is one per vehicle.
+#
+# THE FILE STAYS READABLE AND THE OLD ONE STILL WORKS. A file written before
+# this change is a bare layout at the top level, and it migrates on read into
+# the layout called `default` without being rewritten until something is saved.
+# Nobody's arrangement is lost by upgrading.
+
+GLOBAL_KEY = "__global__"
+DEFAULT_LAYOUT_NAME = "default"
+LAYOUT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]{0,23}$")
+MAX_LAYOUTS = 12
+
+
+def _vehicle_key():
+    """Which car's arrangement to use. The garage key, or the global slot."""
+    try:
+        import garage
+        key = garage.current()
+        return key if key and key != "unknown" else GLOBAL_KEY
+    except Exception:                                         # noqa: BLE001
+        return GLOBAL_KEY
+
+
+def _drive_file():
+    """The whole file, migrated to the named form, never written here."""
     try:
         with open(DRIVE_CFG) as f:
-            saved = json.load(f) or {}
+            doc = json.load(f) or {}
     except (OSError, ValueError):
-        saved = {}
+        doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
+    if "layouts" not in doc:
+        # The old flat form: one anonymous layout at the top level.
+        flat = {k: v for k, v in doc.items() if not k.startswith("_")}
+        doc = {"layouts": {DEFAULT_LAYOUT_NAME: flat} if flat
+               else {DEFAULT_LAYOUT_NAME: {}}, "active": {}}
+    if not isinstance(doc.get("layouts"), dict) or not doc["layouts"]:
+        doc["layouts"] = {DEFAULT_LAYOUT_NAME: {}}
+    if not isinstance(doc.get("active"), dict):
+        doc["active"] = {}
+    return doc
+
+
+def layout_names(doc=None):
+    doc = doc or _drive_file()
+    return sorted(doc["layouts"])
+
+
+def active_layout_name(doc=None, vehicle=None):
+    doc = doc or _drive_file()
+    who = vehicle or _vehicle_key()
+    name = doc["active"].get(who) or doc["active"].get(GLOBAL_KEY)
+    if name in doc["layouts"]:
+        return name
+    return DEFAULT_LAYOUT_NAME if DEFAULT_LAYOUT_NAME in doc["layouts"] \
+        else sorted(doc["layouts"])[0]
+
+
+def drive_layout(vehicle=None, name=None):
+    doc = _drive_file()
+    name = name if name in doc["layouts"] else active_layout_name(doc, vehicle)
+    saved = doc["layouts"].get(name) or {}
     out = dict(DEFAULT_DRIVE)
     out.update({k: v for k, v in saved.items() if not k.startswith("_")})
     # Bound it here rather than trusting whatever wrote the file. A layout with
@@ -405,7 +473,63 @@ def drive_layout():
                     if k in out["tiles"]}
     if out.get("heroKind") not in GAUGE_KINDS:
         out["heroKind"] = "digital"
+    # Named, and whose. Prefixed so the flat keys the app already reads are
+    # untouched -- an older screen ignores these and works exactly as it did.
+    out["_name"] = name
+    out["_names"] = layout_names(doc)
+    out["_vehicle"] = vehicle or _vehicle_key()
     return out
+
+
+def drive_action(data):
+    """use / save-as / forget a named layout. Returns the resulting layout."""
+    doc = _drive_file()
+    act = str(data.get("action") or "").strip().lower()
+    name = str(data.get("name") or "").strip()
+    who = _vehicle_key()
+    if act in ("use", "save-as") and not LAYOUT_NAME.match(name):
+        raise ValueError("a layout name is 1-24 characters: letters, digits, "
+                         "spaces, hyphens and underscores")
+    if act == "use":
+        if name not in doc["layouts"]:
+            raise ValueError(f"there is no layout called {name!r}")
+        doc["active"][who] = name
+    elif act == "save-as":
+        if name not in doc["layouts"] and len(doc["layouts"]) >= MAX_LAYOUTS:
+            raise ValueError(f"that is {MAX_LAYOUTS} layouts, which is more than "
+                             f"anybody switches between. Remove one first.")
+        doc["layouts"][name] = {k: v for k, v in drive_layout().items()
+                                if not k.startswith("_")}
+        doc["active"][who] = name
+    elif act == "forget":
+        if name not in doc["layouts"]:
+            raise ValueError(f"there is no layout called {name!r}")
+        if len(doc["layouts"]) == 1:
+            raise ValueError("that is the only layout there is.")
+        del doc["layouts"][name]
+        # A car pointing at a layout that no longer exists falls back on read,
+        # but leaving the pointer would resurrect the name if it came back.
+        for k, v in list(doc["active"].items()):
+            if v == name:
+                del doc["active"][k]
+    else:
+        raise ValueError(f"unknown action {act!r}")
+    _write_drive(doc)
+    return drive_layout()
+
+
+def _write_drive(doc):
+    doc["_comment"] = ("Drive-mode layouts. Edit here or in the app: OmaCar → "
+                       "Drive → Customise. Each entry under `layouts` is one "
+                       "arrangement; `active` says which one each car uses, "
+                       "keyed by VIN, with " + GLOBAL_KEY + " as the fallback. "
+                       "Tile ids are listed in share/js/views/drive.js; `kinds` "
+                       "maps a tile id to one of " + ", ".join(GAUGE_KINDS) + ".")
+    os.makedirs(os.path.dirname(DRIVE_CFG), exist_ok=True)
+    tmp = DRIVE_CFG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(doc, f, indent=2)
+    os.replace(tmp, DRIVE_CFG)
 
 
 def save_drive_layout(data):
@@ -428,15 +552,12 @@ def save_drive_layout(data):
         cur["kinds"] = _clean_kinds(data.get("kinds"))
     if data.get("heroKind") in GAUGE_KINDS:
         cur["heroKind"] = data["heroKind"]
-    cur["_comment"] = ("Drive-mode layout. Edit here or in the app: OmaCar → "
-                       "Drive → Customise. Tile ids are listed in "
-                       "share/js/views/drive.js; `kinds` maps a tile id to "
-                       "one of " + ", ".join(GAUGE_KINDS) + ".")
-    os.makedirs(os.path.dirname(DRIVE_CFG), exist_ok=True)
-    tmp = DRIVE_CFG + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(cur, f, indent=2)
-    os.replace(tmp, DRIVE_CFG)
+    doc = _drive_file()
+    name = active_layout_name(doc)
+    doc["layouts"][name] = {k: v for k, v in cur.items() if not k.startswith("_")}
+    # Remember which arrangement THIS car uses, so the next car keeps its own.
+    doc["active"][_vehicle_key()] = name
+    _write_drive(doc)
     return drive_layout()
 
 
@@ -1149,6 +1270,14 @@ def handle_post(path, body):
         except (KeyError, TypeError, ValueError):
             return 400, {"error": "from and to (epoch seconds) required"}
     if path == "/api/drive":
+        # A layout action (use / save-as / forget) is a different thing from
+        # editing the current arrangement, and saying so explicitly beats
+        # inferring it from which keys happen to be present.
+        if data.get("action"):
+            try:
+                return 200, drive_action(data)
+            except ValueError as e:
+                return 400, {"error": str(e)}
         return 200, save_drive_layout(data)
     if path == "/api/themes":
         what = data.get("action")
