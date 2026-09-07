@@ -195,17 +195,47 @@ def validated(doc):
     return out
 
 
-def payload_offset(request):
-    """How many bytes of a positive reply are echo rather than data.
+# How much of a positive reply is echo rather than data, per service. Every
+# entry is the service response byte plus whatever the standard says the module
+# repeats back before the payload starts.
+#
+#   0x01  41 + the PID                              mode 01 current data
+#   0x02  42 + the PID + the frame number           freeze frame
+#   0x06  46 + the monitor id                       on-board test results
+#   0x09  49 + the info type + the message count    vehicle information
+#   0x19  59 + the subfunction                      read DTC information
+#   0x21  61 + the one-byte local identifier        read data by local id
+#   0x22  62 + the two-byte identifier              read data by identifier
+#
+# THERE IS NO SAFE DEFAULT, WHICH IS WHY THERE ISN'T ONE. This used to fall
+# back to 1 for anything unlisted -- the service byte alone -- and 1 is wrong
+# for every service in the table above. An offset that is wrong by one does not
+# fail: it silently reads the neighbouring byte, so a formula naming byte A
+# gets the identifier's low half instead of the data, and the result looks like
+# a plausible number. Somebody then validates it. A service nobody has written
+# down here raises instead, and the caller decides what to do about it.
+PAYLOAD_OFFSETS = {0x01: 2, 0x02: 3, 0x06: 2, 0x09: 3,
+                   0x19: 2, 0x21: 2, 0x22: 3}
 
-    0x22 replies 62 + the two identifier bytes; 0x21 replies 61 + one byte;
-    a mode 01 PID replies 41 + one byte.
+
+def payload_offset(request, default=None):
+    """How many bytes of a positive reply to this request are echo, not data.
+
+    Raises FormulaError for a service with no recorded layout, unless the
+    caller supplies a `default` it is prepared to defend.
     """
     try:
-        service = int(request[:2], 16)
-    except ValueError:
-        return 0
-    return {0x22: 3, 0x21: 2, 0x01: 2}.get(service, 1)
+        service = int(str(request)[:2], 16)
+    except (ValueError, TypeError):
+        raise FormulaError(f"{request!r} does not begin with a service byte")
+    if service in PAYLOAD_OFFSETS:
+        return PAYLOAD_OFFSETS[service]
+    if default is not None:
+        return default
+    raise FormulaError(
+        f"service 0x{service:02X} has no recorded reply layout, so where its "
+        f"payload starts is a guess. Add it to signals.PAYLOAD_OFFSETS with a "
+        f"reference, or pass a default you can defend.")
 
 
 def commands(doc):

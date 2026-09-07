@@ -28,6 +28,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import connect  # noqa: E402
 import elm as elmlib  # noqa: E402
 import profile as profilelib  # noqa: E402
+# signals.py owns the answer to "how much of a positive reply is echo". This
+# module used to know it too, and the two answers differed -- see the long note
+# in sweep(). Importing it costs nothing: signals pulls in os, re and sys, and
+# defers python-obd to the one function that needs it.
+import signals as signalslib  # noqa: E402
 
 # WHY THERE IS NO LONGER A LITERAL LIST HERE.
 #
@@ -73,10 +78,17 @@ def moving(el):
     import protocols
     el.set_header(protocols.broadcast(getattr(el, "protocol", None)))
     kind, _, data = elmlib.classify(el.request("010D"), 0x01, "010D")
-    if kind != "positive" or len(data) < 6:
+    # The literal `data[4:6]` that used to be here was a third copy of the fact
+    # the sweep got wrong for 0x22 -- how much of a positive reply is echo
+    # rather than data. It happened to be right, because mode 01 answers 41 +
+    # one PID byte, but "happened to be right" is what the other two copies
+    # were too, until a service with a two-byte identifier turned up. One
+    # source, everywhere, so the next service to arrive can only be wrong once.
+    echo = 2 * signalslib.payload_offset("010D")
+    if kind != "positive" or len(data) < echo + 2:
         return None                      # cannot tell — caller decides
     try:
-        return int(data[4:6], 16) > 0
+        return int(data[echo:echo + 2], 16) > 0
     except ValueError:
         return None
 
@@ -100,9 +112,37 @@ def sweep(el, headers, service, pids, delay, on_progress):
             tried += 1
             on_progress(tried, total, header, req, kind)
             if kind == "positive":
+                # HOW MUCH OF THE REPLY IS ECHO IS ASKED FOR, NOT ASSUMED.
+                #
+                # This line read `(len(data) - 4) // 2`: four hex digits, two
+                # bytes of echo, for every service there is. That is right for
+                # 0x21, which answers 61 + one PID byte, and right for mode 01,
+                # which answers 41 + one PID byte. It is wrong for 0x22, whose
+                # positive reply is 62 followed by TWO identifier bytes. Every
+                # 0x22 candidate this tool has ever recorded therefore counted
+                # the identifier's low byte as the first byte of the payload.
+                #
+                # An off-by-one in a length would be a cosmetic bug. This one
+                # is not, because the byte positions travel. payload_len and
+                # varying_bytes go into the draft profile; a person reads
+                # "byte 0 moves", writes the formula "A", and the daemon hands
+                # that formula to lib/signals.py -- which counts from ITS
+                # offset, the correct 3. So "A" named one byte on the way in
+                # and a different byte on the way out. On the fixture that
+                # reproduced this, the prospector reported the moving byte as
+                # B and B was the byte that never moved: the candidate would
+                # have been marked `validated` against a constant. A number
+                # that is wrong while looking exactly like a reading is the one
+                # thing this project promises never to show.
+                #
+                # So the knowledge lives in one place now and is asked for
+                # here. A second copy that happens to agree today is the same
+                # bug waiting for the next service to be added, which is how
+                # the first one arrived.
+                echo = 2 * signalslib.payload_offset(req)
                 found.append({"header": header, "service": service,
                               "pid": f"{pid:X}", "request": req, "sample": data,
-                              "payload_len": max(0, (len(data) - 4) // 2)})
+                              "payload_len": max(0, (len(data) - echo) // 2)})
                 dead = 0
             elif kind == "silent":
                 dead += 1
@@ -115,7 +155,16 @@ def sweep(el, headers, service, pids, delay, on_progress):
 
 
 def resample(el, found, rounds, delay, on_progress):
-    """Re-read every responder and mark which byte offsets actually move."""
+    """Re-read every responder and mark which payload bytes actually move.
+
+    The offsets recorded here are *payload* offsets -- counted from the first
+    byte after the service and identifier echo -- because that is the only
+    thing a formula can name. They are measured from the same boundary
+    signals.payload_offset() uses, for the reason spelled out in sweep(): a
+    byte index means nothing except relative to an agreed first byte, and when
+    the two modules disagreed about where that was, "byte 0 moves" and the
+    formula "A" pointed at different bytes of the same reply.
+    """
     series = {id(f): [f["sample"]] for f in found}
     for r in range(rounds):
         for f in found:
@@ -135,9 +184,10 @@ def resample(el, found, rounds, delay, on_progress):
         varying = []
         if len(samples) > 1:
             n = min(len(s) for s in samples)
-            for i in range(4, n, 2):          # skip the service+pid echo
+            echo = 2 * signalslib.payload_offset(f["request"])
+            for i in range(echo, n, 2):   # skip the service+identifier echo
                 if len({s[i:i + 2] for s in samples}) > 1:
-                    varying.append((i - 4) // 2)
+                    varying.append((i - echo) // 2)
         f["varying"] = varying
         f["samples"] = samples[:8]
     return found

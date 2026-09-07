@@ -532,6 +532,20 @@ check("the catalogue carries no header and no formula",
       {"id", "name", "unit"})
 check("payload offset for a 0x22 reply skips 62 + two DID bytes",
       signals.payload_offset("22F181"), 3)
+# ONE TABLE, AND IT COVERS EVERY SERVICE ANY SWEEP MAY ASK. A second copy of
+# this knowledge in lib/prospect.py disagreed with this one about 0x22, so a
+# candidate's recorded byte positions and the formula later evaluated against
+# them counted from different places. The copy is gone; these hold the table
+# to every service the prospector permits.
+for _req, _want in (("0100", 2), ("0202", 3), ("0600", 2), ("0902", 3),
+                    ("190A", 2), ("21F1", 2), ("22F181", 3)):
+    check(f"offset for {_req[:2]} is {_want}", signals.payload_offset(_req), _want)
+check("a service with no recorded layout refuses rather than guessing",
+      _raises(lambda: signals.payload_offset("2E0000"), signals.FormulaError), True)
+check("unless the caller supplies a default it can defend",
+      signals.payload_offset("2E0000", default=3), 3)
+check("and a request with no service byte refuses",
+      _raises(lambda: signals.payload_offset("zz"), signals.FormulaError), True)
 
 # ------------------------------------------------------------------ the model
 head("the model comes from the free decoder, and the owner's name wins")
