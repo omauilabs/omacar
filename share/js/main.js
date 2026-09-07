@@ -67,6 +67,7 @@ import history from "./views/history.js";
 import advisor from "./views/advisor.js";
 import tests from "./views/tests.js";
 import writeView from "./views/write.js";
+import musicView from "./views/music.js";
 import report from "./views/report.js";
 import drive from "./views/drive.js";
 import concernsView from "./views/concerns.js";
@@ -108,6 +109,9 @@ const TABS = [
       // wants to look at it.
       { id: "ima",    label: "Hybrid",   title: "IMA hybrid system",    mount: imaView, tier: "power" },
       { id: "omaplay", label: "Phone",   title: "Your phone, and the car", mount: omaplayView, fast: true },
+      // Fullscreen audio-reactive shaders off the microphone, with the car
+      // still readable underneath. `fast` because the dock shows live numbers.
+      { id: "music",  label: "Music",    title: "Music",                mount: musicView,  fast: true },
       { id: "dash",   label: "Overview", title: "Overview",             mount: dash,       fast: true },
       { id: "garage", label: "Profile",  title: "Every car you own",    mount: garageView },
     ],
@@ -550,6 +554,30 @@ function buildBar() {
 
   els.proto = h("span.muted");
   bar.appendChild(h("div.stat", els.proto));
+
+  // THE ASSISTANT, REACHABLE BY HAND. Vortex is summoned by holding SUPER+M,
+  // which on a tablet bolted to a dashboard means never. Every other piece of
+  // the integration already worked -- the orb layers correctly over a
+  // fullscreen kiosk, the context provider tells it what car is plugged in,
+  // and the car's own tools are lent to the voice loop -- and the whole thing
+  // was unreachable for want of something to touch.
+  //
+  // Hidden until asked: a button for software you have not installed is a
+  // worse greeting than no button, and `present` summons nothing to find out.
+  els.orb = h("button.vbar-btn", {
+    type: "button", id: "btn-assistant", hidden: true,
+    "aria-label": "Ask the assistant", title: "Ask the assistant",
+    onclick: async () => {
+      try {
+        const r = await api.assistant("toggle");
+        if (!r.present) { els.orb.hidden = true; toast(r.error, "bad"); }
+      } catch (e) { toast(String((e && e.message) || e), "bad"); }
+    },
+  }, icon(ICONS.advisor, 20));
+  bar.appendChild(els.orb);
+  api.assistant("present").then((r) => {
+    if (r && r.present) els.orb.hidden = false;
+  }).catch(() => { /* an older server, or none: no button */ });
 
   bar.appendChild(h("button.vbar-btn", {
     type: "button", id: "btn-settings",

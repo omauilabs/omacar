@@ -273,6 +273,7 @@ export const api = {
   learn: (deep) => req("/api/learn", { method: "POST", body: JSON.stringify({ deep: !!deep }) }),
   writeMode: (arm, minutes) => req("/api/write-mode", { method: "POST", body: JSON.stringify({ arm, minutes }) }),
   writeDid: (body) => req("/api/write-did", { method: "POST", body: JSON.stringify(body) }),
+  assistant: (action, text) => req("/api/assistant", { method: "POST", body: JSON.stringify({ action, text }) }),
   vehicle: (body) => req("/api/vehicle", { method: "POST", body: JSON.stringify(body) }),
   theme: () => req("/api/theme"),
   themes: () => req("/api/themes"),

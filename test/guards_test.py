@@ -61,6 +61,16 @@ def bad(msg):
     print(f"  FAIL  {msg}")
 
 
+def _raises(fn, kind):
+    try:
+        fn()
+        return False
+    except kind:
+        return True
+    except Exception:                                         # noqa: BLE001
+        return False
+
+
 def check(msg, got, want):
     if got == want:
         ok(msg)
@@ -634,6 +644,38 @@ check("load decodes from one", obs["ENGINE_LOAD"], round(90 * 100 / 255, 2))
 check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
+
+# ----------------------------------------------------------------- the orb
+head("the assistant is reachable by hand, and only from this machine")
+
+check("an unknown action is refused",
+      _raises(lambda: api.assistant("rm -rf"), ValueError), True)
+check("an empty question is refused",
+      _raises(lambda: api.assistant("ask", "   "), ValueError), True)
+check("an overlong question is refused",
+      _raises(lambda: api.assistant("ask", "x" * (api.ASK_MAX + 1)), ValueError), True)
+check("asking whether one exists summons nothing",
+      api.assistant("present").get("action"), "present")
+check("only three verbs can move the orb",
+      sorted(api.ASSISTANT_ACTIONS), ["dismiss", "summon", "toggle"])
+# The argv is fixed and the question is one element of a list, so there is no
+# shell for anything to be injected into.
+check("every mapped action is a fixed argument vector",
+      all(isinstance(v, list) and all(isinstance(x, str) for x in v)
+          for v in api.ASSISTANT_ACTIONS.values()), True)
+
+
+class _Networked:
+    LOOPBACK_ONLY = False
+
+
+_savedmod = sys.modules.get("__main__")
+sys.modules["serve"] = _Networked
+try:
+    check("a cockpit on the network cannot summon it",
+          _raises(lambda: api.assistant("toggle"), PermissionError), True)
+finally:
+    sys.modules.pop("serve", None)
 
 # ------------------------------------------------------------------ listening
 head("listening reads frames, transmits nothing, and never invents a rate")

@@ -709,6 +709,81 @@ def _last_line(text):
     return lines[-1] if lines else ""
 
 
+# ---- the assistant, reachable by hand ---------------------------------------
+#
+# THE ORB CANNOT BE SUMMONED ON A TABLET, WHICH IS THE ONE PLACE IT IS FOR.
+#
+# Omarchy Vortex is summoned by holding SUPER+M. On the machine you write code
+# on that is exactly right; on a Surface bolted to a dashboard with no keyboard
+# attached it means the assistant can never appear at all. Every other piece of
+# the integration is already in place -- the orb layers correctly over a
+# fullscreen kiosk, the context provider tells any agent what car is plugged in,
+# and the car's own ten tools are lent to the voice loop -- and the whole thing
+# was unreachable for want of something to touch.
+#
+# So: a fixed argument vector to Omarchy's own command, the same shape and the
+# same discipline as _omacar() above. Nothing from the request reaches a shell,
+# because there is no shell -- subprocess is given a list. The one caller-
+# supplied value, the text of a question, is a single argv element and is
+# length-bounded, and it is only accepted from loopback.
+
+ASSISTANT_ACTIONS = {
+    # what the browser may ask for -> the argv that does it
+    "summon": ["summon", "--show"],
+    "dismiss": ["summon", "--hide"],
+    "toggle": ["summon", "--toggle"],
+}
+ASK_MAX = 400
+
+
+def _omarchy(*args, timeout=20):
+    """Run Omarchy's own CLI with a fixed argument vector, or report its absence."""
+    import shutil
+    import subprocess
+    exe = shutil.which("omarchy")
+    if not exe:
+        return None
+    return subprocess.run([exe, "fleet", "voice", *args],
+                          timeout=timeout, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, check=False)
+
+
+def assistant(action, text=""):
+    """Summon, dismiss, or ask the voice assistant. Loopback only."""
+    if _networked():
+        raise PermissionError(
+            "a cockpit is a screen for a car, not a microphone for the machine "
+            "in the workshop. The assistant is reachable from the machine "
+            "running OmaCar.")
+    action = str(action or "toggle").strip().lower()
+    if action == "present":
+        # Is there an assistant on this machine at all? Asks for nothing and
+        # summons nothing, so a screen can decide whether to offer a button
+        # without the act of asking putting an orb on somebody's dashboard.
+        import shutil
+        return {"ok": True, "present": bool(shutil.which("omarchy")),
+                "action": "present"}
+    if action == "ask":
+        q = str(text or "").strip()
+        if not q:
+            raise ValueError("nothing to ask")
+        if len(q) > ASK_MAX:
+            raise ValueError(f"a spoken question is at most {ASK_MAX} characters")
+        argv = ["ask", q]
+    elif action in ASSISTANT_ACTIONS:
+        argv = ASSISTANT_ACTIONS[action]
+    else:
+        raise ValueError(f"unknown action {action!r}")
+    r = _omarchy(*argv)
+    if r is None:
+        return {"ok": False, "present": False,
+                "error": "Omarchy Vortex is not installed on this machine. "
+                         "OmaCar runs completely without it."}
+    out = (r.stdout or "").strip() or (r.stderr or "").strip()
+    return {"ok": r.returncode == 0, "present": True, "action": action,
+            "detail": out[:400]}
+
+
 def _networked():
     """True when this API is answering something other than loopback.
 
@@ -1367,6 +1442,15 @@ def handle_post(path, body):
             json.dump(cfg, f, indent=2)
         os.replace(tmp, path_cfg)
         return 200, {"units": records.units_for()}
+    if path == "/api/assistant":
+        try:
+            return 200, assistant(data.get("action"), data.get("text"))
+        except PermissionError as e:
+            return 403, {"error": str(e)}
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        except Exception as e:                                # noqa: BLE001
+            return 500, {"error": f"{type(e).__name__}: {e}"}
     if path == "/api/write-did":
         # The deny-list is judged on the identifier BEFORE anything is opened:
         # a refused emissions write never touches the port, and the citation
