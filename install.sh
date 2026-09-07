@@ -20,6 +20,7 @@ oa_menu_splice
 oa_plugin_install
 oa_unit_install
 oa_context_install
+oa_vortex_install
 oa_bar_place
 
 # Opt-in keybinding: this desktop is shared, so we never grab a chord uninvited.

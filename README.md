@@ -456,6 +456,23 @@ is **not** a password — it stops the other devices on a car's hotspot from
 stumbling in, and anyone who can read your Wi-Fi traffic can read this, because
 it is plain HTTP on a LAN. Loopback keeps every power it has always had.
 
+## With Omarchy Vortex, and without it
+
+OmaCar runs completely without Vortex, and says nothing about an assistant it
+cannot see. Where Vortex is present, `install.sh` does two things and
+`uninstall.sh` undoes both:
+
+- **Every agent on the machine knows what car is plugged in.** A context
+  provider under `~/.config/omarchy/context.d/` answers in about twenty
+  milliseconds with the car, the link, the fault count and what is due — never
+  the VIN, the plate or the driver's name, and with SIMULATED as the first word
+  when the car is not real.
+- **The voice assistant can ask the car.** The same ten tools `omacar mcp`
+  serves to any harness are lent to Vortex's voice agent, registered under
+  `mcp` in `~/.config/omarchy/vortex.json`. It can read the car, look things up
+  and propose; it cannot change the mode, arm a write, or send one — those stay
+  at the keyboard.
+
 ## Wearing Omarchy's clothes
 
 The palette comes from `~/.local/state/omarchy/current/theme/colors.toml`, not

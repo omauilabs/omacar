@@ -227,6 +227,28 @@ oa_context_install() {
   return 0
 }
 
+oa_vortex_install() {
+  # Lend the voice assistant the car's tools. Vortex reads `mcp` in
+  # vortex.json and admits exactly the servers named there (see converse.py
+  # in the Vortex tree). Only where Vortex is, only with jq, and idempotent:
+  # the entry is keyed by app name and rewritten in place.
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/vortex.json"
+  [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  [[ -f "$cfg" ]] || echo '{}' >"$cfg"
+  local tmp; tmp="$(mktemp "${cfg}.XXXXXX")"
+  if jq --arg app "$OA_APP" --arg cmd "$OA_CMD" \
+       '.mcp = ((.mcp // {}) + {($app): {"command": $cmd, "args": ["mcp"]}})' \
+       "$cfg" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$cfg"
+    oa_say "" "car tools lent to the voice assistant (vortex.json → mcp.$OA_APP)"
+  else
+    rm -f "$tmp"
+    oa_warn "could not update $cfg; the voice assistant will not see the car"
+  fi
+  return 0
+}
+
 oa_unit_install() {
   [[ -d "$OA_ROOT/share/systemd" ]] || return 0
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -291,6 +313,21 @@ oa_context_remove() {
   for f in "$OA_ROOT"/share/context.d/*; do
     [[ -f "$f" ]] && rm -f "$dir/$(basename "$f")"
   done
+  return 0
+}
+
+oa_vortex_remove() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/vortex.json"
+  [[ -f "$cfg" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  local tmp; tmp="$(mktemp "${cfg}.XXXXXX")"
+  if jq --arg app "$OA_APP" 'if .mcp then .mcp |= del(.[$app]) else . end
+                             | if .mcp == {} then del(.mcp) else . end' \
+       "$cfg" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$cfg"
+  else
+    rm -f "$tmp"
+  fi
   return 0
 }
 

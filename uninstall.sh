@@ -39,6 +39,7 @@ done
 
 oa_unit_remove
 oa_context_remove
+oa_vortex_remove
 oa_remove
 
 if ((PURGE)); then
