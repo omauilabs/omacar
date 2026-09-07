@@ -69,6 +69,53 @@ IDENT_DIDS = [
 ]
 
 
+def vin_from_payload(hexs):
+    """The VIN in a mode-09 PID 02 reply, or None.
+
+    A positive reply is 49 02 <count> then seventeen ASCII bytes. Anything
+    that does not decode to seventeen alphanumerics is not a VIN, and a
+    learn run must not name a record after noise.
+    """
+    body = (hexs or "").replace(" ", "").upper()
+    i = body.find("4902")
+    if i < 0:
+        return None
+    raw = body[i + 6:i + 6 + 34]
+    try:
+        text = bytes.fromhex(raw).decode("ascii", "replace")
+    except ValueError:
+        return None
+    text = text.strip("\x00").strip().upper()
+    return text if len(text) == 17 and text.isalnum() else None
+
+
+def identify(el, on_step=None):
+    """Point the garage at the car on the other end of THIS link.
+
+    Learning names its output after the garage's current key. When nothing has
+    run before it -- a stranger's first command on a fresh install, an
+    adapter plugged in with no daemon -- that key is the simulator's, and a
+    real car's modules would be filed under `simulated`. So read the VIN
+    first, the way the daemon does, and switch. A bench is left alone: it is
+    the simulated car, on purpose.
+    """
+    on_step = on_step or (lambda *a: None)
+    if garage.current() != garage.SIM_KEY:
+        return None
+    if connect.bench_port():
+        return None
+    try:
+        lines = el.request("0902")
+        vin = vin_from_payload(el.payload(lines, "0902"))
+    except Exception:                                         # noqa: BLE001
+        return None
+    if not vin:
+        return None
+    key, new = garage.switch_to(vin)
+    on_step("vin", f"{vin[:8]}… -> {'new record' if new else 'known car'}")
+    return key
+
+
 def profile_path(key=None):
     key = key or garage.current()
     d = os.path.join(connect.STATE, "profiles")
@@ -214,6 +261,7 @@ def learn(deep=False, on_step=None, on_module=None):
         v = dtclib.battery_volts(el)
         if v is not None and v < dtclib.LOW_VOLTS:
             raise RuntimeError("battery at %.1fV is too low to probe" % v)
+        identify(el, on_step)
 
         prof = load_profile()
         prof["passes"] = prof.get("passes", 0) + 1

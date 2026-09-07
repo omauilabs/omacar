@@ -281,6 +281,17 @@ except ValueError:
 except Exception as why:  # noqa: BLE001
     bad(f"learn_module raised {why!r}")
 
+# ------------------------------------------------------------------ the learn
+head("learn names its record after the car, never after noise")
+
+check("a mode-09 VIN reply decodes",
+      discover.vin_from_payload("49 02 01 4A 48 4D 5A 46 31 44 34 34 46 53 30 30 31 38 33 35"),
+      "JHMZF1D44FS001835")
+check("a short reply is not a VIN",
+      discover.vin_from_payload("49 02 01 57 50 30 5A 5A 5A 39 39 5A 54 53 33 39"), None)
+check("a negative reply is not a VIN", discover.vin_from_payload("7F 09 12"), None)
+check("garbage is not a VIN", discover.vin_from_payload("4902013F3F3F3F3F3F3F3F3F3F3F3F3F3F3F3F3F"), None)
+
 # ---------------------------------------------------------------- the profiles
 head("a downloaded profile may only ask for reads")
 

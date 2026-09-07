@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 53 | 21,770 |
+| Python — the whole diagnostic side | 53 | 21,818 |
 | JavaScript — the app | 44 | 13,542 |
 | CSS | 7 | 2,665 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,324 |
-| Tests | 7 | 3,266 |
+| Tests | 7 | 3,278 |
 | Documentation | 11 | 3,146 |
 | Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **52,259** |
+| **Tracked in git, all of it** | | **52,374** |
 
-**Tests** — 654 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 664 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -183,6 +183,7 @@ What is actually covered, straight out of the runner's own headings:
 | the voltage floor fails closed | 2 |
 | a header must name a tester, or it is somebody's live traffic | 15 |
 | discovery works on the protocol most cars actually speak | 6 |
+| learn names its record after the car, never after noise | 4 |
 | a downloaded profile may only ask for reads | 8 |
 | a page you did not open cannot clear your codes | 6 |
 | a mode is a boundary, not a preference the browser is trusted with | 12 |
@@ -192,6 +193,7 @@ What is actually covered, straight out of the runner's own headings:
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
 | a stored VIN survives a broken read | 4 |
 | the advisor names the model that actually answered | 3 |
+| The launch calendar | 6 |
 | Units | 9 |
 | Service countdown | 9 |
 | Mode 06 verdicts | 4 |
@@ -268,8 +270,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 86 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 87 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` Help names the write ledger; roadmap counts regenerated
 - `2026-09-07` The voice assistant can ask the car
 - `2026-09-07` The garage screen says where the model came from
 - `2026-09-07` The model comes from the free decoder, and the first-drive runbook
@@ -277,7 +280,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` Launch calendar: 31 days of posts as reviewable files
 - `2026-09-07` A validated identifier becomes a live reading
 - `2026-09-07` The owner can see what an agent asked to write
-- `2026-09-07` Roadmap: regenerated after the agent surface landed
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

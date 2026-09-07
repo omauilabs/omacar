@@ -19,6 +19,7 @@ fi
 # The guards: every safety check that was written, looked right, and did not
 # hold. Stubs pyserial itself, so it runs with or without a venv, always.
 python3 "$ROOT/test/guards_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
