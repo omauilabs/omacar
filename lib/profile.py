@@ -55,9 +55,18 @@ PROFILE_DIRS = [
 
 # Ordered weakest to strongest. `refuted` sits outside that order on purpose:
 # it is not "less confident than a candidate", it is a different claim.
-CONFIDENCE = ("candidate", "observed", "validated", "refuted")
+# proposed is FIRST because it is lowest. It is the only state that does not
+# require the car to have been asked: somebody -- usually an agent -- read a
+# published signal set or a standard and wrote down what an identifier ought to
+# be. That is genuinely useful, and it is not evidence about THIS car. Keeping
+# it below candidate is what stops "I found it on the internet" from being
+# recorded at the same weight as "an ECU answered".
+CONFIDENCE = ("proposed", "candidate", "observed", "validated", "refuted")
 
 CONFIDENCE_MEANS = {
+    "proposed":  "Somebody read this somewhere and thinks it applies. The car "
+                 "has not been asked. Provenance says where it came from; "
+                 "until an ECU answers it is a lead, not a finding.",
     "candidate": "The ECU answered. Nothing more is known — it may be a "
                  "constant, a part number, or padding.",
     "observed":  "The bytes were seen to change across samples, so it carries "
@@ -162,9 +171,13 @@ POLL_TIERS = ("fast", "mid", "slow")
 SCREENS = ("ima",)
 PID_KEYS = ("id", "name", "header", "request", "service", "payload_len",
             "varying_bytes", "formula", "unit", "confidence", "provenance")
+# url / retrieved_at / source_kind carry a claim that came from outside this
+# machine. Without them a proposal is indistinguishable from a measurement, and
+# the whole point of the ladder is that those are different things.
 PROV_KEYS = ("found_by", "found_on", "vin_prefix", "method", "first_seen",
              "samples", "validated_by", "validated_on", "validated_against",
-             "refuted_by", "refuted_on", "note")
+             "refuted_by", "refuted_on", "note",
+             "url", "retrieved_at", "source_kind", "model")
 META_KEYS = ("created", "updated", "contributors", "checksum")
 
 
@@ -448,7 +461,7 @@ def problems(doc):
 
 # ---- merging ----------------------------------------------------------------
 
-RANK = {"refuted": 3, "validated": 2, "observed": 1, "candidate": 0}
+RANK = {"refuted": 4, "validated": 3, "observed": 2, "candidate": 1, "proposed": 0}
 
 
 def merge(base, incoming):

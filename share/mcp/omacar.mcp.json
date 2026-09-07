@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "omacar": {
+      "command": "omacar",
+      "args": ["mcp"]
+    }
+  }
+}

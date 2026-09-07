@@ -16,6 +16,7 @@
 #   omacar candlog            log candidate PIDs against trusted channels
 #   omacar discover [status]  map identifiers automatically, safely, over time
 #   omacar plugins            what extends this install, and what each provides
+#   omacar mcp                serve the car to an agent harness over MCP
 #   omacar mode [tier]        simplified | power | technician | god
 #   omacar write arm|disarm   allow writes (clear codes, tests, settings)
 #   omacar daemon start|stop|status
@@ -773,6 +774,11 @@ print()
   # The tier this machine is in. Stdlib only and it opens nothing, so it runs
   # under the system python -- and it must, because `omacar mode` has to answer
   # on a machine where `omacar setup` has never been run.
+  # Under the venv, because car_request opens a serial port. Everything else it
+  # serves is stdlib, so it starts and answers even where `omacar setup` has not
+  # run -- an agent asking car_snapshot on a machine with no venv gets the
+  # snapshot rather than a stack trace.
+  mcp) shift; exec "${OMACAR_PY:-python3}" "$ROOT/lib/mcp.py" "$@" ;;
   mode) shift; exec python3 "$ROOT/lib/modes.py" "$@" ;;
   card) shift; exec "$OMACAR_PY" "$ROOT/lib/card.py" "$@" ;;
   state) state ;;

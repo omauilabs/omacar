@@ -406,6 +406,55 @@ check("the transport does not consult the mode system",
 import shutil  # noqa: E402
 shutil.rmtree(_scratch, ignore_errors=True)
 
+# ------------------------------------------------------------------ the agent
+head("what an agent may do to a car")
+
+sys.modules.pop("mcp", None)
+import mcp  # noqa: E402
+
+check("the read services an agent may send", sorted(mcp.AGENT_SERVICES),
+      [0x19, 0x21, 0x22])
+
+def _call(name, **args):
+    r = mcp.call(name, args)
+    return (r.get("content") or [{}])[0].get("text", ""), bool(r.get("isError"))
+
+for req, what in (("2EF190", "write by identifier"), ("3101FF00", "a routine"),
+                  ("2701", "security access"), ("1002", "a session change"),
+                  ("340044", "reprogramming"), ("04", "clearing codes")):
+    _t, err = _call("car_request", header="7E0", request=req)
+    if err and "not one an agent may send" in _t:
+        ok(f"{what} ({req}) is refused before the port is opened")
+    else:
+        bad(f"{what} ({req}) was not refused: {_t[:60]}")
+
+# Refused for the SHAPE, before anything is sent -- an agent proposing a header
+# that lands in live control traffic is the failure this exists for.
+_t, err = _call("car_request", header="0C9", request="22F190")
+check("a header outside the diagnostic ranges is refused", err, True)
+
+# The ladder an agent writes into.
+sys.modules.pop("profile", None)
+import profile as _p  # noqa: E402
+check("proposed exists and is the lowest rank",
+      _p.RANK["proposed"] < _p.RANK["candidate"], True)
+check("a machine still cannot reach validated",
+      _p.RANK["proposed"] < _p.RANK["observed"] < _p.RANK["validated"], True)
+for key in ("url", "retrieved_at", "source_kind"):
+    check(f"provenance carries {key}, so a claim from outside says so",
+          key in _p.PROV_KEYS, True)
+
+# request_write is the only write tool, and it does not write to the car.
+_t, err = _call("request_write", header="7E0", request="2EF190AA",
+                consequence="test")
+check("request_write succeeds", err, False)
+check("and says plainly that nothing was sent",
+      "NOTHING WAS SENT" in _t, True)
+
+_names = [t["name"] for t in mcp.TOOLS]
+check("no tool changes the mode", any("set" in n and "mode" in n for n in _names), False)
+ok(f"tools served: {', '.join(_names)}")
+
 # ------------------------------------------------------------------ the advisor
 head("the advisor names the model that actually answered")
 
