@@ -160,14 +160,14 @@ the one that is wrong.
 | | Files | Lines |
 |---|---:|---:|
 | Python — the whole diagnostic side | 53 | 21,770 |
-| JavaScript — the app | 44 | 13,538 |
+| JavaScript — the app | 44 | 13,542 |
 | CSS | 7 | 2,665 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 5 | 1,284 |
+| Shell — the CLI and the installer | 5 | 1,324 |
 | Tests | 7 | 3,266 |
-| Documentation | 10 | 3,002 |
+| Documentation | 11 | 3,146 |
 | Data — codes, resets, procedures, profiles | 6 | 1,376 |
-| **Tracked in git, all of it** | | **52,071** |
+| **Tracked in git, all of it** | | **52,259** |
 
 **Tests** — 654 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -268,16 +268,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 83 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 86 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` The voice assistant can ask the car
+- `2026-09-07` The garage screen says where the model came from
+- `2026-09-07` The model comes from the free decoder, and the first-drive runbook
 - `2026-09-07` The Tests lab reaches a real car, and says per button whether it does
 - `2026-09-07` Launch calendar: 31 days of posts as reviewable files
 - `2026-09-07` A validated identifier becomes a live reading
 - `2026-09-07` The owner can see what an agent asked to write
 - `2026-09-07` Roadmap: regenerated after the agent surface landed
-- `2026-09-07` An agent can look up what somebody else already worked out
-- `2026-09-07` The front page describes the modes and the agent surface, now they exist
-- `2026-09-07` Every agent on this machine knows what is plugged in
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

@@ -19,6 +19,7 @@
 #   omacar mcp                serve the car to an agent harness over MCP
 #   omacar mode [tier]        simplified | power | technician | god
 #   omacar write arm|disarm   allow writes (clear codes, tests, settings)
+#   omacar write log          every write that left this machine, and what answered
 #   omacar daemon start|stop|status
 #                             the polling daemon that feeds the cluster
 #   omacar sim seed|start|stop|status
