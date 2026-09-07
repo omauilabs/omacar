@@ -1637,3 +1637,51 @@ ul.tight li { margin-bottom: 5px; }
 .svc-when { color: var(--dim); font-family: var(--mono); font-size: .84rem; }
 .svc-km { color: var(--dim); }
 @media (max-width: 560px) { .svc-entry { grid-template-columns: 1fr; gap: 2px; } }
+
+/* ---------------------------------------------------------------- the music
+   screen. Fullscreen shader with a minified dock, so the car stays readable
+   while the windscreen misbehaves. The stage is sized by the layout rather
+   than by the viewport: an app that assumes it owns the whole window breaks
+   the moment it is embedded, and drive mode already learned that. */
+.music-root { display: flex; flex-direction: column; gap: 0; min-height: 0; height: 100%; }
+.music-stage {
+  position: relative; flex: 1 1 auto; min-height: 220px;
+  border-radius: 14px; overflow: hidden; background: var(--bg);
+  border: 1px solid var(--hair);
+}
+.music-canvas { display: block; width: 100%; height: 100%; }
+
+.music-notice {
+  position: absolute; inset: auto 16px 16px 16px; max-width: 46ch;
+  padding: 16px 18px; border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--hair); backdrop-filter: blur(8px);
+}
+.music-title { font-weight: 600; font-size: 1.02rem; margin-bottom: 6px; }
+
+.music-dock {
+  display: flex; align-items: center; gap: 14px; flex-wrap: nowrap;
+  padding: 10px 14px calc(10px + var(--safe-b)) 14px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.music-dock::-webkit-scrollbar { display: none; }
+.music-spacer { flex: 1 1 auto; }
+.music-cell { flex: none; text-align: left; min-width: 68px; }
+.music-v {
+  font-size: 1.5rem; font-weight: 650; line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.music-k {
+  font-size: .66rem; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--muted); margin-top: 2px;
+}
+.music-btn { flex: none; min-height: var(--tap); }
+.music-src { flex: none; }
+.music-src.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.music-btn.music-on { border-color: color-mix(in srgb, var(--ok) 50%, transparent); color: var(--ok); }
+
+/* Someone who has asked the system for less motion is not asking for an
+   exception on this screen. The shader still draws; it stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .music-canvas { filter: saturate(.7); }
+}
