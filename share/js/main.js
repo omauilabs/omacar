@@ -54,6 +54,11 @@ async function pickSource({ onlyReal } = {}) {
     const r = await fetch(withToken("/api/phone"), { cache: "no-store" });
     if (!r.ok) return mockSource();
     const it = await r.json();
+    // Somebody already started something -- `omacar phone replay` from a
+    // terminal, or another tab. Deliberate beats every rule below it.
+    if (it.streaming) {
+      return dongleSource({ mode: it.mode === "replay" ? "replay" : "dongle" });
+    }
     if (it.dongles && it.dongles.length) return dongleSource({ mode: "dongle" });
     // A RECORDING IS NOT STARTED UNTIL SOMEBODY LOOKS AT IT. An adapter is
     // worth connecting the moment the app boots, because a phone screen that
