@@ -970,6 +970,13 @@ def _stored_vin(db):
     return _json.loads(row[0]) if row else None
 
 
+# NO TEST REACHES THE NETWORK. read_identity fires the NHTSA model lookup on
+# every VIN it stores, and this section stores five. A suite that quietly makes
+# five internet requests is not the offline suite this project claims to have,
+# and the background thread doing it raced interpreter shutdown badly enough to
+# dump core on CI after every check had passed.
+survey.ENRICH = False
+
 _db = sqlite3.connect(":memory:")
 _db.execute("CREATE TABLE vehicle (k TEXT PRIMARY KEY, v TEXT)")
 _db.execute("CREATE TABLE faults (code TEXT, status TEXT)")

@@ -159,15 +159,15 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 54 | 24,320 |
+| Python — the whole diagnostic side | 54 | 24,352 |
 | JavaScript — the app | 46 | 14,541 |
 | CSS | 7 | 2,726 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,373 |
-| Tests | 9 | 3,936 |
+| Tests | 9 | 3,943 |
 | Documentation | 12 | 3,376 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **55,962** |
+| **Tracked in git, all of it** | | **56,008** |
 
 **Tests** — 762 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -279,8 +279,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 113 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 114 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` The guards suite printed "every guard holds" and then dumped core
 - `2026-09-07` CI on hosted runners: a public repo must not run strangers' code on our metal
 - `2026-09-07` CI on the org's own runners
 - `2026-09-07` Keep the launch campaign and the film plan out of the tree
@@ -288,7 +289,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` Placing the bar widget: check whether it happened, then do it
 - `2026-09-07` Roadmap: counts regenerated
 - `2026-09-07` The agent surface: smaller, and no VIN reaches the speaker by any route
-- `2026-09-07` Three repairs: the snapshot request, the charge nobody read, the truncated brief
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

@@ -19,6 +19,7 @@ all of it costs bus time the gauge would rather have. The daemon calls
 `survey(connection)`; `omacar survey` does one pass from the terminal.
 """
 
+import atexit
 import json
 import os
 import sqlite3
@@ -473,7 +474,37 @@ def enrich_model(vin, db_path=None, lookup=None):
         db.close()
 
 
+# A background lookup is a network call, and a network call must be something a
+# caller can decline. The daemon wants it; a test suite must never make one, and
+# a machine the owner keeps off the network has nothing to gain from trying.
+ENRICH = True
+
+# THE THREAD IS TRACKED, AND WAITED FOR AT EXIT.
+#
+# It was a bare daemon thread, which means the interpreter tears down whatever
+# it is in the middle of -- and if that is a socket inside a C extension, the
+# process does not exit, it SEGFAULTS. That is not theoretical: the guard suite
+# began dumping core on GitHub's runners after every check had passed, which is
+# the worst possible way for it to fail, because a crash after a green run reads
+# as infrastructure rather than as us.
+#
+# Daemon stays true so it can never hold up a shutdown on its own. What changes
+# is that we know about it and give it a moment to finish first.
+_THREADS = []
+
+
+def _join_enrichers(timeout=2.0):
+    for t in list(_THREADS):
+        if t.is_alive():
+            t.join(timeout)
+
+
+atexit.register(_join_enrichers)
+
+
 def enrich_model_async(vin):
+    if not ENRICH:
+        return None
     with _ENRICH_LOCK:
         if vin in _ENRICHED:
             return None
@@ -481,6 +512,7 @@ def enrich_model_async(vin):
     path = garage.db_path()
     t = threading.Thread(target=enrich_model, args=(vin, path), daemon=True,
                          name="survey:model")
+    _THREADS.append(t)
     t.start()
     return t
 
