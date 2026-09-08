@@ -49,13 +49,18 @@ let _omaplay = null;
 // party that can see a USB device or a file on disk, and a screen that guessed
 // would be wrong in exactly the case that matters. If the ask fails at all,
 // the mock is the safe answer: it is the one that cannot pretend.
-async function pickSource() {
+async function pickSource({ onlyReal } = {}) {
   try {
     const r = await fetch(withToken("/api/phone"), { cache: "no-store" });
     if (!r.ok) return mockSource();
     const it = await r.json();
     if (it.dongles && it.dongles.length) return dongleSource({ mode: "dongle" });
-    if (it.replay) return dongleSource({ mode: "replay" });
+    // A RECORDING IS NOT STARTED UNTIL SOMEBODY LOOKS AT IT. An adapter is
+    // worth connecting the moment the app boots, because a phone screen that
+    // is not being watched is still playing music. A canned clip is not: it
+    // would decode a test pattern on a loop, in the background, for the whole
+    // of a drive, on a tablet with no fan.
+    if (it.replay && !onlyReal) return dongleSource({ mode: "replay" });
   } catch { /* no server, no adapter, no recording */ }
   return mockSource();
 }
@@ -65,11 +70,11 @@ async function pickSource() {
 // interrupt a phone that is already connected.
 let _upgrading = false;
 
-function upgrade() {
+function upgrade(opts) {
   if (_upgrading || !_omaplay) return;
   if (_omaplay.source && _omaplay.source.kind !== "mock") return;
   _upgrading = true;
-  pickSource().then((src) => {
+  pickSource(opts).then((src) => {
     if (!_omaplay || !src || src.kind === "mock") return;
     _omaplay.setSource(src);
     _omaplay.start();
@@ -87,7 +92,7 @@ function omaplay() {
     // long as a USB enumeration takes.
     _omaplay.setSource(mockSource());
     _omaplay.start();
-    upgrade();
+    upgrade({ onlyReal: true });
     // The car's own alerts, over the phone screen. See the note on
     // watchAlerts(): this is the argument for combining the two products at
     // all, and it was dead code until it was called.
