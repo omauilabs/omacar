@@ -445,6 +445,40 @@ def running():
     return doc
 
 
+# WHY THE LAST DETACHED CAPTURE DID NOT RUN.
+#
+# A capture that fails after it has detached fails where nobody is looking: the
+# terminal that started it has already been told, cheerfully, that it is
+# listening. On a long drive that is four hundred miles of believing the car is
+# being recorded. This is where the reason goes, so the terminal can read it
+# back and `listen status` can say it out loud.
+FAILFILE = os.path.join(records.STATE, "listen-failed.json")
+
+
+def note_failure(why):
+    try:
+        os.makedirs(records.STATE, exist_ok=True)
+        with open(FAILFILE, "w", encoding="utf-8") as f:
+            json.dump({"at": time.time(), "why": str(why)}, f)
+    except OSError:
+        pass
+
+
+def last_failure():
+    try:
+        with open(FAILFILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def clear_failure():
+    try:
+        os.remove(FAILFILE)
+    except OSError:
+        pass
+
+
 def ask_stop():
     with open(STOPFILE, "w", encoding="utf-8") as f:
         f.write(str(time.time()))
@@ -456,7 +490,7 @@ def _stop_asked():
 
 def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
            limit=DEFAULT_LIMIT, cap=None, should_stop=None, probe=2.0,
-           flush_as=None):
+           flush_as=None, on_ready=None):
     """Take the port, listen for `seconds`, give it back. Returns a Capture.
 
     `can_id` narrows the adapter's own filter to one identifier, which is worth
@@ -528,6 +562,13 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
                 el.raw("ATCRA" + str(can_id).replace(" ", "").upper())
             chosen = _pick_monitor_protocol(el, probe)
             cap.protocol = chosen
+            # THE MOMENT IT IS TRUE TO SAY THIS IS LISTENING, and not before.
+            # The port is open, the protocol is chosen and the next call is the
+            # monitor itself. Announcing earlier -- which is what the detached
+            # capture used to do -- means "it is listening" can be true while
+            # the adapter is not even plugged in.
+            if on_ready:
+                on_ready(cap)
             state = {"last": time.time()}
 
             def take(ln):
@@ -641,12 +682,35 @@ def main(argv):
     if args.action == "status":
         r = running()
         if not r:
+            # NOT LISTENING IS TWO DIFFERENT ANSWERS, and they want different
+            # things done about them. Nothing was started, or something was
+            # started and could not run. The second one is the one worth
+            # driving back for, and it used to be indistinguishable.
+            failed = last_failure()
+            if failed:
+                ago = (time.time() - (failed.get("at") or 0)) / 60.0
+                print(f"\n  {YELLOW}nothing is listening{RESET} — the last one "
+                      f"did not start")
+                print(f"    {failed.get('why') or 'no reason recorded'}"
+                      f"   {DIM}{ago:.0f} min ago{RESET}\n")
+                return 1
             print("\n  nothing is listening.\n")
             return 1
         mins = (time.time() - r["started"]) / 60.0
+        frames = r.get("frames") or 0
         print(f"\n  {BOLD}listening{RESET}  {r['name']}   {r.get('note','')}")
-        print(f"    {mins:.1f} min so far · {r['frames']} frames · "
+        print(f"    {mins:.1f} min so far · {frames} frames · "
               f"{r['identifiers']} identifiers · protocol {r.get('protocol')}")
+        # A CAPTURE HEARING NOTHING LOOKS EXACTLY LIKE A CAPTURE GOING WELL
+        # from a status line, and the difference is the whole drive. After a
+        # couple of minutes with no frames, the bus is not talking to us and
+        # somebody should know before they drive another hour.
+        if mins > 2 and frames == 0:
+            print(f"    {YELLOW}nothing has been heard yet{RESET} — the "
+                  f"adapter is open and the bus is silent to it.")
+            print(f"    {DIM}On this car the broadcast traffic is 11-bit; if "
+                  f"the probe picked wrong,{RESET}")
+            print(f"    {DIM}stopping and starting again re-probes it.{RESET}")
         print(f"\n  {DIM}omacar listen stop   to end it and keep what it has{RESET}\n")
         return 0
 
@@ -948,19 +1012,34 @@ def _drive_session(args):
             subprocess.Popen(argv, stdout=f, stderr=f,
                              stdin=subprocess.DEVNULL, start_new_session=True,
                              env=env)
+        # WAIT FOR IT TO BE LISTENING, OR FOR IT TO HAVE FAILED.
+        #
+        # This used to wait a while and then say "listening in the background"
+        # whatever had happened, with a mild parenthesis if it had not reported
+        # yet -- and exit zero. A missing adapter therefore read as success, and
+        # the whole point of a detached capture is that nobody looks at it
+        # again until the drive is over.
         for _ in range(40):
             time.sleep(0.5)
-            if running():
+            if running() or last_failure():
                 break
         r = running()
+        if not r:
+            why = (last_failure() or {}).get("why") or _log_tail(log)
+            print(f"\n  {YELLOW}it did not start{RESET}"
+                  + (f"   {why}" if why else ""))
+            print(f"  {DIM}Nothing is being recorded. The full log is at{RESET}")
+            print(f"  {DIM}{log}{RESET}\n")
+            return 1
+
+        minutes = ("%g" % round(args.minutes, 2))
         print(f"\n  {BOLD}listening in the background{RESET}   "
-              f"up to {args.minutes:.0f} min")
+              f"up to {minutes} min"
+              + (f", on protocol {r.get('protocol')}" if r.get("protocol") else ""))
         print(f"  {DIM}It survives this terminal closing, ssh dropping and the car\n"
               f"  driving out of range. Nothing is transmitted to the vehicle.{RESET}\n")
         print(f"    omacar listen status     how it is going")
         print(f"    omacar listen stop       end it and keep what it has\n")
-        if not r:
-            print(f"  {YELLOW}(it has not reported yet — check status in a moment){RESET}\n")
         return 0
 
     # The child.
@@ -970,23 +1049,63 @@ def _drive_session(args):
         pass
     name = time.strftime("%Y%m%d-%H%M%S") + "-drive"
     cap = Capture(note=args.note or "drive")
-    _publish_progress(name, cap, args.minutes * 60)
+    clear_failure()
+    # PUBLISHED WHEN THE PORT IS OPEN, NOT WHEN THE PROCESS STARTS. Announcing
+    # it here used to make `running()` true a fraction of a second before the
+    # adapter turned out to be missing.
+    ready = {"yes": False}
+
+    def began(c):
+        ready["yes"] = True
+        _publish_progress(name, c, args.minutes * 60)
+
     try:
         listen(seconds=args.minutes * 60, can_id=args.can_id,
                note=args.note or "drive", cap=cap, flush_as=name,
-               should_stop=_stop_asked)
+               should_stop=_stop_asked, on_ready=began)
+    except Exception as why:                                  # noqa: BLE001
+        # A SENTENCE, NOT A TRACEBACK. Nobody reads this file at a desk; it is
+        # read on a phone at a fuel stop, or over a slow link from another
+        # country, by somebody who wants to know whether to bother turning
+        # round. The traceback still goes to the log underneath.
+        plain = {
+            "no adapter": "no OBD adapter is plugged in",
+            "the daemon is holding the port":
+                "the daemon has the port — stop it, or use `omacar stop`",
+        }.get(str(why), f"{type(why).__name__}: {why}")
+        note_failure(plain)
+        print(f"listen drive stopped before it began: {plain}", flush=True)
+        raise
     finally:
         try:
-            cap.flush(name)
-            _publish_progress(name, cap, args.minutes * 60)
+            # A CAPTURE IS ONLY WRITTEN IF THERE WAS A CAPTURE. A session that
+            # never opened the port used to leave a file recording zero frames
+            # from `unknown-car`, which is a false record of a drive that never
+            # happened -- and it would sit in the list looking like evidence.
+            if ready["yes"]:
+                cap.flush(name)
+                _publish_progress(name, cap, args.minutes * 60)
         except OSError:
             pass
         try:
             os.remove(RUNNING)
+        except OSError:
+            pass
+        try:
             os.remove(STOPFILE)
         except OSError:
             pass
     return 0
+
+
+def _log_tail(path, lines=1):
+    """The last thing a detached child said, for a parent that has to explain."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            got = [ln.strip() for ln in f.readlines() if ln.strip()]
+        return " / ".join(got[-lines:])[:200] if got else ""
+    except OSError:
+        return ""
 
 
 def _marks_session(args):
