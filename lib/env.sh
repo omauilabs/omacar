@@ -29,6 +29,12 @@ omacar_setup_env() {
   # pkg_resources went away in setuptools 81; the emulator's setup.py needs it.
   "$OMACAR_VENV/bin/pip" install -q "setuptools<81" wheel
   "$OMACAR_VENV/bin/pip" install -q obd
+  # pyusb, for the CarPlay dongle. It is a thin ctypes wrapper over the system
+  # libusb, so it needs `libusb` present -- which Arch has by default. Failing
+  # to install it must not stop the rest: the car half of this tool has no use
+  # for USB, and somebody with no dongle should not be blocked by it.
+  "$OMACAR_VENV/bin/pip" install -q pyusb ||
+    echo "  ! pyusb did not install; the phone screen will not find a dongle" >&2
   "$OMACAR_VENV/bin/pip" install -q --no-build-isolation ELM327-emulator ||
     echo "  ! the bench emulator failed to install; the rest still works" >&2
   echo "  ready: $("$OMACAR_PY" -c 'import obd; print("python-obd", obd.__version__)')"

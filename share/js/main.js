@@ -21,7 +21,7 @@ import resetsView from "./views/resets.js";
 import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
 import { createOmaPlay } from "./omaplay/layer.js";
-import { mockSource } from "./omaplay/source.js";
+import { mockSource, dongleSource } from "./omaplay/source.js";
 
 // OmaPlay is a LAYER, not a view.
 //
@@ -38,16 +38,43 @@ import { mockSource } from "./omaplay/source.js";
 // timers or the gauge rail's subscription to the live store.
 let _omaplay = null;
 
+// WHICH OF THE THREE THINGS THE PHONE SCREEN SHOWS.
+//
+// An adapter if one is plugged in; a recording if one has been made; the mock
+// otherwise. The mock is last because it is the only one of the three that
+// cannot ever become a phone, and it is the one every earlier version showed
+// unconditionally.
+//
+// This asks the server rather than deciding, because the server is the only
+// party that can see a USB device or a file on disk, and a screen that guessed
+// would be wrong in exactly the case that matters. If the ask fails at all,
+// the mock is the safe answer: it is the one that cannot pretend.
+async function pickSource() {
+  try {
+    const r = await fetch("/api/phone", { cache: "no-store" });
+    if (!r.ok) return mockSource();
+    const it = await r.json();
+    if (it.dongles && it.dongles.length) return dongleSource({ mode: "dongle" });
+    if (it.replay) return dongleSource({ mode: "replay" });
+  } catch { /* no server, no adapter, no recording */ }
+  return mockSource();
+}
+
 function omaplay() {
   if (!_omaplay) {
     _omaplay = createOmaPlay();
     _omaplay.mount(document.getElementById("app"));
-    // The mock until the dongle and the driver land, and it says so on screen
-    // in amber. usbSource() throws rather than quietly drawing nothing, so
-    // wiring it in early would fail loudly instead of looking like a bug in
-    // the layer.
+    // The mock starts immediately so the layout is never empty, and is
+    // replaced the moment the server says there is something better. Waiting
+    // on the ask would put a blank rectangle in front of the driver for as
+    // long as a USB enumeration takes.
     _omaplay.setSource(mockSource());
     _omaplay.start();
+    pickSource().then((src) => {
+      if (!_omaplay || !src || src.kind === "mock") return;
+      _omaplay.setSource(src);
+      _omaplay.start();
+    }).catch(() => { /* the mock is already up */ });
     // The car's own alerts, over the phone screen. See the note on
     // watchAlerts(): this is the argument for combining the two products at
     // all, and it was dead code until it was called.

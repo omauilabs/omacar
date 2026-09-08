@@ -43,6 +43,8 @@
 // Those exact key names, capitals and all, are the wire format. They are ugly
 // and they are not ours to tidy.
 
+import { videoSink } from "./decode.js";
+
 export const MEDIA_DATA = 1;
 export const MEDIA_ALBUM_COVER = 3;
 
@@ -207,14 +209,189 @@ export function usbSource() {
     on() { return () => {}; },
     start() {
       throw new Error(
-        "OmaPlay's USB source is not wired up yet. It needs the node-carplay "
-        + "driver vendored, a Carlinkit dongle, and a udev rule for vendor "
-        + "0x1314. Use the mock source until then.");
+        "OmaPlay's WebUSB source was never built. The dongle is driven from "
+        + "the server instead — use dongleSource().");
     },
     stop() {},
     send() { return false; },
   };
 }
+
+// ---------------------------------------------------------------- the dongle
+//
+// WHY THE SERVER HOLDS THE USB DEVICE AND NOT THE BROWSER.
+//
+// The original plan was WebUSB: the page opens the dongle itself. It would
+// work, and it costs two things this project is not willing to pay. WebUSB
+// needs a user gesture and a device-picker dialog EVERY time the origin has
+// not been granted the device, which on a tablet that boots into a kiosk means
+// somebody taps through a permissions dialog before the phone appears. And it
+// puts the driver in the browser, where this project has no bundler and would
+// have to vendor a compiled dependency to get one.
+//
+// The server already owns the serial port for the same reason. It owns this
+// too: Python reads the USB device, and the page receives a stream.
+//
+// WHAT COMES DOWN THE WIRE. One HTTP response, read as a stream, carrying
+// self-delimiting records:
+//
+//     1 byte   kind    1 = H.264 access unit, 2 = a JSON event
+//     4 bytes  length  big-endian
+//     n bytes  payload
+//
+// Length-prefixed rather than newline-delimited because H.264 is binary and
+// contains every byte value, and self-delimiting because a chunked HTTP body
+// splits wherever it likes and a reader that assumed a record per chunk would
+// work on a desk and tear frames in a car.
+//
+// THE DECODE IS THE BROWSER'S JOB, and it is good at it. WebCodecs hands H.264
+// straight to the same hardware decoder the browser uses for video, which on a
+// Surface is the difference between a warm tablet and a hot one. No library,
+// no WASM, no build step.
+
+const REC_VIDEO = 1;
+const REC_EVENT = 2;
+
+export function dongleSource(opts = {}) {
+  const b = bus();
+  let abort = null, canvas = null, sink = null;
+  let running = false;
+  // Counted because "the picture is black" has several causes and only one of
+  // them is the adapter. These say which.
+  const stats = { records: 0, video: 0, events: 0, pictures: 0, route: "" };
+
+  function fail(why) {
+    b.emit({ type: "failure", error: String(why && why.message || why) });
+  }
+
+  function makeSink() {
+    return videoSink({
+      canvas,
+      fps: opts.fps || 20,
+      onPicture: (w, h) => {
+        stats.pictures += 1;
+        b.emit({ type: "picture", width: w, height: h, route: stats.route });
+      },
+      onRoute: (name, why) => {
+        stats.route = name;
+        // A ROUTE CHANGE IS WORTH SAYING. The picture is identical either way,
+        // but somebody looking at a working screen and wondering why it is
+        // warm, or why a touch feels late, is owed the reason.
+        b.emit({ type: "route", route: name, why: why || "" });
+      },
+      onUndecodable: (note) => b.emit({ type: "undecodable", note }),
+    });
+  }
+
+  async function pump(res) {
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0);
+    const need = (n) => buf.length >= n;
+    const take = (n) => { const out = buf.subarray(0, n); buf = buf.subarray(n); return out; };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value && value.length) {
+        const merged = new Uint8Array(buf.length + value.length);
+        merged.set(buf, 0); merged.set(value, buf.length);
+        buf = merged;
+      }
+      // Drain every whole record the buffer now holds. A chunk boundary lands
+      // wherever the kernel puts it, which is why the records carry their own
+      // lengths and why this loop exists at all.
+      for (;;) {
+        if (!need(5)) break;
+        const kind = buf[0];
+        const len = (buf[1] << 24 | buf[2] << 16 | buf[3] << 8 | buf[4]) >>> 0;
+        if (!need(5 + len)) break;
+        take(5);
+        const payload = take(len).slice();
+        stats.records += 1;
+        if (kind === REC_EVENT) {
+          stats.events += 1;
+          let msg = null;
+          try { msg = JSON.parse(new TextDecoder().decode(payload)); } catch { msg = null; }
+          if (msg) b.emit(msg);
+        } else if (kind === REC_VIDEO) {
+          stats.video += 1;
+          if (!sink) sink = makeSink();
+          sink.push(payload);
+        }
+      }
+    }
+  }
+
+  return {
+    kind: "dongle",
+    get running() { return running; },
+    get stats() { return { ...stats, ...(sink ? sink.stats : {}) }; },
+    on(fn) { return b.on(fn); },
+
+    async start(target) {
+      canvas = target;
+      running = true;
+      sink = null;
+      stats.records = stats.video = stats.events = stats.pictures = 0;
+      stats.route = "";
+      abort = new AbortController();
+      try {
+        const started = await fetch("/api/phone/start", {
+          method: "POST", signal: abort.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: opts.mode || "",
+                                 path: opts.path || undefined,
+                                 loop: opts.loop !== false,
+                                 fps: opts.fps || undefined,
+                                 width: canvas ? canvas.width : 800,
+                                 height: canvas ? canvas.height : 640 }),
+        }).then((r) => r.json());
+        if (!started || started.error) {
+          fail(started && started.error ? started.error : "the adapter would not open");
+          running = false;
+          return;
+        }
+        // WHAT THE SERVER SAID ABOUT ITSELF, PASSED ON UNEDITED. The screen
+        // decides how loudly to hedge, and it can only do that if it is told
+        // whether this is a recording and whether the driver has ever been
+        // proven. Inventing either here would put the claim in the wrong file.
+        b.emit({ type: "opening", note: started.note || "",
+                 replay: !!started.replay, unproven: !!started.unproven });
+
+        const res = await fetch("/api/phone/video", { signal: abort.signal });
+        if (!res.ok || !res.body) { fail(`the video stream returned ${res.status}`); running = false; return; }
+        await pump(res);
+      } catch (e) {
+        if (!abort || !abort.signal.aborted) fail(e);
+      } finally {
+        running = false;
+        if (sink) sink.ended();
+        b.emit({ type: "unplugged" });
+      }
+    },
+
+    stop() {
+      running = false;
+      try { if (abort) abort.abort(); } catch { /* already gone */ }
+      if (sink) { try { sink.stop(); } catch { /* fine */ } sink = null; }
+      fetch("/api/phone/stop", { method: "POST" }).catch(() => {});
+    },
+
+    send(msg) {
+      if (!msg || !running) return false;
+      fetch("/api/phone/input", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(msg),
+      }).catch(() => {});
+      return true;
+    },
+  };
+}
+
+// The key-frame reader lives in decode.js now, beside the two decoders that
+// use it. Re-exported here because that is where callers already look for it,
+// and because a second copy of a fact is how the two come to disagree.
+export { NAL_IDR, NAL_SPS, nalTypes, looksLikeKeyFrame } from "./decode.js";
 
 export async function usbAvailable() {
   if (!navigator.usb) return false;

@@ -1094,6 +1094,30 @@ def handle_get(path, query):
         return 200, {"records": ai.history() if ai else []}
     if path == "/api/ai/available":
         return 200, {"available": bool(ai and ai.available())}
+    if path == "/api/phone":
+        import carlink
+        s = carlink.current()
+        found = carlink.dongles_present()
+        return 200, {
+            "streaming": bool(s),
+            "mode": getattr(s, "note", None) if s else None,
+            "dongles": [{"name": d["name"], "openable": d["openable"]}
+                        for d in found],
+            "frames": getattr(s, "frames", 0) if s else 0,
+            "units": getattr(s, "units", 0) if s else 0,
+            "phone": getattr(s, "phone", None) if s else None,
+            "geometry": getattr(s, "geometry", None) if s else None,
+            "error": getattr(s, "error", None) if s else None,
+            # Written, and never once run against an adapter. That is a
+            # different thing from working and a different thing from absent,
+            # and the screen is entitled to know which.
+            "driver": "unproven",
+            "replay": os.path.exists(
+                os.path.join(records.STATE, "phone-replay.h264")),
+            "note": "The Carlinkit driver is written from a reading of the "
+                    "protocol and has never met hardware. mode=replay proves "
+                    "the framing, the stream and the decoder without one.",
+        }
     if path == "/api/drive":
         return 200, drive_layout()
     if path == "/api/concerns":
@@ -1571,6 +1595,72 @@ def handle_post(path, body):
             json.dump(cfg, f, indent=2)
         os.replace(tmp, path_cfg)
         return 200, {"units": records.units_for()}
+    if path.startswith("/api/phone/"):
+        # THE PHONE SCREEN'S CONTROL PLANE. The video itself is streamed by
+        # serve.py, which owns the socket; everything that is a normal
+        # request-and-answer lives here.
+        import carlink
+        what = path[len("/api/phone/"):]
+        try:
+            if what == "start":
+                mode = str(data.get("mode") or "").strip().lower()
+                if not mode:
+                    # Prefer the real thing when it is plugged in, and say
+                    # which was chosen rather than leaving it to be guessed.
+                    mode = "dongle" if carlink.dongles_present() else "replay"
+                if mode == "replay":
+                    s = carlink.start_replay(
+                        path=data.get("path"),
+                        fps=float(data.get("fps") or 20),
+                        # A recording that stops is what lets a test assert
+                        # that the stream ENDED rather than that it had not
+                        # failed yet.
+                        loop=data.get("loop", True) is not False)
+                    return 200, {"ok": True, "mode": "replay", "replay": True,
+                                 "note": "A recording, not a phone. The screen "
+                                         "says so."}
+                if mode == "dongle":
+                    found = carlink.dongles_present()
+                    if not found:
+                        return 409, {"error": "no CarPlay adapter is plugged "
+                                              "in. `omacar phone` says what it "
+                                              "can see."}
+                    if not found[0].get("openable"):
+                        return 403, {"error": f"{found[0]['node']} is not ours "
+                                              f"to open. Run `omacar hotplug "
+                                              f"install`, then unplug and "
+                                              f"replug the adapter."}
+                    s = carlink.start_dongle(
+                        width=int(data.get("width") or 800),
+                        height=int(data.get("height") or 640))
+                    return 200, {
+                        "ok": True, "mode": "dongle",
+                        "dongle": found[0].get("name"),
+                        # THE CLAIM THIS ROUTE IS ALLOWED TO MAKE. The driver
+                        # was written from a reading of the protocol and has
+                        # never met an adapter, so the screen says the picture
+                        # is unproven until one produces a frame. It stops
+                        # saying it the moment frames arrive, and not before.
+                        "unproven": True,
+                        "note": "The adapter driver has never met hardware. "
+                                "If this stays black, that is the reason, and "
+                                "mode=replay proves everything around it.",
+                    }
+                return 400, {"error": f"unknown mode {mode!r}"}
+            if what == "stop":
+                carlink.stop()
+                return 200, {"ok": True}
+            if what == "input":
+                s = carlink.current()
+                if s is None:
+                    return 409, {"error": "nothing is streaming"}
+                return 200, {"ok": bool(s.send(data))}
+        except FileNotFoundError as e:
+            return 409, {"error": str(e)}
+        except Exception as e:                                # noqa: BLE001
+            return 500, {"error": f"{type(e).__name__}: {e}"}
+        return 404, {"error": f"no such phone route: {what}"}
+
     if path == "/api/assistant":
         try:
             return 200, assistant(data.get("action"), data.get("text"))

@@ -132,14 +132,19 @@ body > #host > .omaplay { position: absolute; inset: 0; }
 }
 .op-badge[hidden] { display: none; }
 
-/* ---- the mock, marked as loudly as demo mode ---- */
+/* ---- anything that is not a phone, marked as loudly as demo mode ----
 
-.omaplay[data-mock="1"] .op-stage {
+   THE LABEL IS DATA, NOT A STRING IN HERE. There are three of these now -- a
+   mock, a replayed recording, and a real adapter whose driver has never met
+   hardware -- and a rule per stand-in is how one of them ends up unlabelled.
+   The stage carries the words it should wear and this draws them. */
+
+.omaplay[data-standin] .op-stage {
   border-color: var(--warn);
   box-shadow: inset 0 0 0 1px var(--warn);
 }
-.omaplay[data-mock="1"] .op-stage::after {
-  content: "MOCK — not a phone";
+.omaplay[data-standin] .op-stage::after {
+  content: attr(data-standin);
   position: absolute;
   right: 10px; top: 10px;
   padding: 4px 10px;

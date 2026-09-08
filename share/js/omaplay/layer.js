@@ -84,6 +84,10 @@ export function createOmaPlay(opts = {}) {
 
   // ------------------------------------------------------------- painting
 
+  // What the source has told us about itself, as opposed to what we assumed.
+  let note = {};
+  let decoded = false;
+
   function paintMedia() {
     const m = media || {};
     npTitle.textContent = m.MediaSongName || "Nothing playing";
@@ -113,19 +117,54 @@ export function createOmaPlay(opts = {}) {
     }
   }
 
+  // WHAT THE SCREEN IS ALLOWED TO CLAIM.
+  //
+  // Three different things can be on this canvas that are not a phone: the
+  // mock, a replayed recording, and a real adapter whose driver has never once
+  // met hardware. All three get the same amber frame, because the one
+  // unforgivable outcome is somebody believing a stand-in is real.
+  //
+  // The adapter's label is the interesting one. It is earned away rather than
+  // set: the driver stays "unproven" until a picture actually arrives from it,
+  // and then it stops saying so, because at that point it has been proven and
+  // continuing to hedge would be its own kind of lie.
+  function standIn() {
+    if (!source) return "";
+    if (source.kind === "mock") return "MOCK — not a phone";
+    if (note.replay) return "REPLAY — a recording, not a phone";
+    if (note.undecodable) return "THIS BROWSER CANNOT DECODE H.264";
+    if (note.unproven && !decoded) return "UNPROVEN — no picture yet";
+    return "";
+  }
+
   function paintState() {
     root.dataset.state = state;
-    statusLine.textContent = {
+    const label = standIn();
+    if (label) root.dataset.standin = label;
+    else delete root.dataset.standin;
+
+    let line = {
       idle: "Not connected",
       connecting: "Connecting to your phone…",
-      playing: source && source.kind === "mock"
-        ? "Mock source — no phone connected"
-        : "Connected",
+      playing: "Connected",
       failed: "The adapter did not answer",
     }[state] || "";
-    // The mock is marked as loudly as demo mode is, and for the same reason:
-    // the one unforgivable outcome is somebody believing a stand-in is real.
-    root.dataset.mock = source && source.kind === "mock" ? "1" : "0";
+    if (note.undecodable) line = note.undecodable;
+    else if (state === "failed" && note.error) line = note.error;
+    else if (state === "playing" && source && source.kind === "mock") {
+      line = "Mock source — no phone connected";
+    } else if (state === "playing" && note.replay) {
+      line = "Replaying a recording";
+    } else if (state === "playing" && note.phone) {
+      line = note.phone + " connected";
+      if (note.route === "mediasource") {
+        line += " · decoding through the video element, because WebCodecs "
+              + "would not";
+      }
+    } else if (state === "connecting" && note.opening) {
+      line = note.opening;
+    }
+    statusLine.textContent = line;
   }
 
   function paintOverlays() {
@@ -145,18 +184,54 @@ export function createOmaPlay(opts = {}) {
   function onMessage(msg) {
     if (!msg || !msg.type) return;
     switch (msg.type) {
+      case "opening":
+        state = "connecting";
+        note = { ...note, opening: msg.note || "", replay: !!msg.replay,
+                 unproven: !!msg.unproven };
+        paintState();
+        break;
       case "plugged":
         state = "playing";
+        note = { ...note, replay: !!msg.replay, phone: msg.phone || "",
+                 opening: "" };
+        if (msg.note) note.opening = msg.note;
+        paintState();
+        break;
+      case "picture":
+        // A FRAME THAT ACTUALLY DECODED AND DREW. This is the moment the
+        // driver stops being unproven, and the badge comes off by itself.
+        // Bytes arriving would not have been enough: the adapter can be
+        // talking and the picture still be nothing.
+        decoded = true;
+        paintState();
+        break;
+      case "geometry":
+        note = { ...note, size: [msg.width, msg.height] };
+        break;
+      case "route":
+        // Which of the two decoders is carrying the picture. It looks the same
+        // either way, so this is not a warning -- but somebody wondering why
+        // the tablet is warm or why a touch feels a beat late is owed it.
+        note = { ...note, route: msg.route || "", routeWhy: msg.why || "" };
+        paintState();
+        break;
+      case "undecodable":
+        // Not a failure -- the stream is fine and the words say so. Putting it
+        // in the status line is the difference between a driver replacing an
+        // adapter that works and a driver opening the right browser.
+        note = { ...note, undecodable: msg.note || "" };
         paintState();
         break;
       case "unplugged":
         state = "idle";
         media = {};
         cover = null;
+        note = { ...note, phone: "" };
         paintMedia(); paintCover(); paintState();
         break;
       case "failure":
         state = "failed";
+        note = { ...note, error: msg.error || "" };
         paintState();
         break;
       case "media": {
@@ -258,6 +333,8 @@ export function createOmaPlay(opts = {}) {
     setSource(src) {
       if (source) { try { source.stop(); } catch { /* already gone */ } }
       if (off) { off(); off = null; }
+      note = {};
+      decoded = false;
       source = src || mockSource();
       off = source.on(onMessage);
       paintState();

@@ -284,6 +284,58 @@ class Handler(SimpleHTTPRequestHandler):
             if db:
                 db.close()
             return
+        if path == "/api/phone/video":
+            # THE PHONE SCREEN'S VIDEO, AS A STREAM.
+            #
+            # Same shape as the CSV export above and for the same reason: no
+            # Content-Length is possible, so `Connection: close` is the
+            # terminator rather than tidiness. The records are self-delimiting
+            # (see lib/carlink.py), so it does not matter where the chunking
+            # falls -- which is the whole point, because it falls wherever the
+            # kernel likes and a reader that assumed otherwise would tear
+            # frames only under load.
+            import carlink
+            session = carlink.current()
+            if session is None:
+                self._json({"error": "nothing is streaming — "
+                                     "POST /api/phone/start first"}, 409)
+                return
+            q = session.subscribe()
+            self.close_connection = True
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            import queue as _q
+            # Two different clocks. The wait is short so a session that ends is
+            # noticed at once rather than holding a browser open for another
+            # five seconds; the keep-alive is slow because it means nothing and
+            # exists only so a stalled adapter looks like a stalled adapter
+            # rather than a dead network.
+            quiet = 0
+            try:
+                while True:
+                    try:
+                        rec = q.get(timeout=0.5)
+                        quiet = 0
+                    except _q.Empty:
+                        if not session.running():
+                            break
+                        quiet += 1
+                        if quiet < 10:
+                            continue
+                        quiet = 0
+                        rec = carlink.event({"type": "idle"})
+                    self.wfile.write(rec)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass                      # the tab went away; entirely normal
+            finally:
+                session.unsubscribe(q)
+            return
+
         if path.startswith("/plugin/"):
             # A plugin's own view module. Resolved through plugins.view_path,
             # which refuses anything outside that plugin's directory and

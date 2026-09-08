@@ -23,6 +23,11 @@ python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/shaders_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/app_test.py" || fails=$((fails + 1))
 
+# The phone screen's picture: framing, stream and decoder, end to end in a real
+# browser against a recording. Listed here on the day it was written, which is
+# the rule two suites above this one were added for.
+python3 "$ROOT/test/phone_test.py" || fails=$((fails + 1))
+
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
 #

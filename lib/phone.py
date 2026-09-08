@@ -11,13 +11,14 @@ rectangle. This says which of the three is missing.
   permission       the browser may open it -- a raw USB device is root-only on
                    Arch by default, so without the udev rule the device picker
                    lists the dongle, the owner picks it, and the open fails
-  the driver       the code that speaks the protocol. NOT WRITTEN YET.
+  the driver       the code that speaks the protocol. WRITTEN, AND NEVER RUN
+                   AGAINST AN ADAPTER.
 
-The third is the honest one. This tool does not yet implement the Carlinkit
-protocol: the phone screen runs a mock that says so on its face in amber. What
-is here is the plumbing around it, and the point of checking the first two now
-is that they are the parts that can be got wrong silently, weeks before anybody
-looks at the third.
+The third is the honest one. lib/carlink.py speaks this protocol from a reading
+of it -- every offset sourced, none of it confirmed by a device -- so the phone
+screen says the picture is unproven until frames actually arrive, and stops
+saying it when they do. What surrounds the driver is proven without hardware:
+`omacar phone replay` plays a recording down the identical path.
 
 WHY NOT JUST TRY IT AND SEE. Because a failure in the browser surfaces as a
 permission error with no indication of which of the three caused it, and
@@ -123,18 +124,130 @@ def report():
         lines.append(f"    {DIM}permission   {'rule installed' if rule_installed() else 'rule NOT installed — omacar hotplug install'}{RESET}")
 
     # THE PART THAT IS NOT BUILT, SAID PLAINLY AND FIRST-PERSON.
-    lines.append(f"    {YELLOW}driver{RESET}       not written")
-    lines.append(f"                 {DIM}OmaCar does not speak the Carlinkit "
-                 f"protocol yet. The phone{RESET}")
-    lines.append(f"                 {DIM}screen runs a mock and says so in "
-                 f"amber on its own face.{RESET}")
-    lines.append(f"                 {DIM}Plugging a dongle in will not make a "
-                 f"phone appear.{RESET}")
+    lines.append(f"    {YELLOW}driver{RESET}       written, never run against "
+                 f"an adapter")
+    lines.append(f"                 {DIM}Every offset in it is sourced and none "
+                 f"of it is confirmed.{RESET}")
+    lines.append(f"                 {DIM}The screen says the picture is "
+                 f"unproven until a frame{RESET}")
+    lines.append(f"                 {DIM}arrives, and stops saying it when one "
+                 f"does.{RESET}")
+    lines.append("")
+    lines.append(f"                 {DIM}Everything around the driver is proven "
+                 f"without hardware:{RESET}")
+    lines.append(f"                 {DIM}omacar phone replay{RESET}")
     lines.append("")
     return "\n".join(lines), bool(found)
 
 
+# ------------------------------------------------------------------ the replay
+#
+# WHY A CANNED CLIP IS WORTH A COMMAND OF ITS OWN.
+#
+# The picture has to travel five separate things -- a USB driver, a framing, an
+# HTTP stream, a hardware decoder and a canvas -- and only the first of them
+# needs an adapter. Playing a recording through the other four proves them on a
+# desk, so the morning a dongle is finally plugged in, exactly one thing is
+# untested. It says REPLAY on its own face throughout.
+
+PORTS = (7560, 7561, 7562, 7563, 7564, 7570, 7580)
+CLIP = "phone-replay.h264"
+
+
+def clip_path():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import records
+    return os.path.join(records.STATE, CLIP)
+
+
+def make_clip(path, seconds=5, width=800, height=640, fps=20):
+    """A test pattern, encoded the way the adapter encodes.
+
+    Baseline profile and yuv420p because that is what a car adapter emits and
+    what every hardware decoder takes; a clip made with defaults can decode
+    here and fail on the tablet, which would be a test proving the wrong thing.
+    """
+    import shutil
+    import subprocess
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        return None
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    r = subprocess.run(
+        [ff, "-y", "-f", "lavfi", "-i",
+         f"testsrc=size={width}x{height}:rate={fps}:duration={seconds}",
+         "-c:v", "libx264", "-profile:v", "baseline", "-pix_fmt", "yuv420p",
+         "-g", str(fps), "-f", "h264", path],
+        capture_output=True, text=True)
+    return path if r.returncode == 0 and os.path.exists(path) else None
+
+
+def _daemon():
+    """The running app, if one is up. Loopback only, which is the point."""
+    import urllib.error
+    import urllib.request
+    for port in PORTS:
+        url = f"http://127.0.0.1:{port}/api/phone"
+        try:
+            with urllib.request.urlopen(url, timeout=1.0) as r:
+                if r.status == 200:
+                    return port
+        except (urllib.error.URLError, OSError):
+            continue
+    return None
+
+
+def replay(argv):
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    path = argv[0] if argv else clip_path()
+    if not os.path.exists(path):
+        print(f"\n  no clip at {path}")
+        made = make_clip(path)
+        if not made:
+            print("  and no ffmpeg here to make one. Either install ffmpeg, or\n"
+                  "  put any Annex-B H.264 file at that path.\n")
+            return 1
+        print(f"  made one: {os.path.getsize(path)} bytes\n")
+
+    port = _daemon()
+    if port is None:
+        print("\n  the app is not running. Start it with `omacar start`, then\n"
+              "  run this again.\n")
+        return 1
+
+    body = _json.dumps({"mode": "replay", "path": path}).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/api/phone/start", data=body,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5.0) as r:
+            answer = _json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        print(f"\n  the app refused it: {e.read().decode()[:200]}\n")
+        return 1
+
+    if answer.get("error"):
+        print(f"\n  {answer['error']}\n")
+        return 1
+    print(f"\n  {GREEN}replaying{RESET}    {os.path.basename(path)}")
+    print(f"                 {DIM}A recording, not a phone. The screen says "
+          f"so.{RESET}")
+    print(f"\n  Open the Phone screen:  "
+          f"http://127.0.0.1:{port}/app.html#omaplay\n")
+    return 0
+
+
 def main(argv):
+    if argv and argv[0] == "replay":
+        return replay(argv[1:])
+    if argv and argv[0] in ("-h", "--help", "help"):
+        print("\n  omacar phone           what is plugged in, and can it be "
+              "opened\n"
+              "  omacar phone replay    play a recording down the real path\n")
+        return 0
     text, found = report()
     print(text)
     return 0 if found else 1

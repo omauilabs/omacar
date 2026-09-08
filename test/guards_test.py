@@ -683,8 +683,30 @@ check("the udev rule covers every one of them",
           and p in open(os.path.join(ROOT, "share", "udev", "99-omacar.rules"),
                         encoding="utf-8").read().lower()
           for v, p in _js), True)
-check("nothing claims the driver exists",
-      "not written" in _ph.report()[0], True)
+# THE CLAIM MOVED, AND IT HAD TO MOVE HONESTLY. The driver is written now, and
+# it has still never met an adapter. Those are three different states -- absent,
+# unproven, working -- and every surface has to be on the same one of them or
+# somebody reads a black screen as the wrong thing.
+_report = _ph.report()[0]
+check("the report does not claim the driver is missing",
+      "not written" in _report, False)
+check("nor that it works", "unproven" in _report or "never run" in _report, True)
+check("and it says what has actually never happened",
+      "never run against an adapter" in _report, True)
+
+import carlink as _cl  # noqa: E402
+
+check("the driver that is claimed to exist does", hasattr(_cl, "DongleSession"),
+      True)
+# The screen's badge and the CLI's word have to agree, because a driver called
+# unproven in a terminal and nothing at all on a tablet is two answers to one
+# question.
+_dec = open(os.path.join(ROOT, "share", "js", "omaplay", "decode.js"),
+            encoding="utf-8").read()
+check("the browser has a second way to decode, not just the first",
+      "MediaSource" in _dec and "VideoDecoder" in _dec, True)
+check("and it decides which one works by whether a picture came back",
+      "pictures === 0" in _dec, True)
 
 # ------------------------------------------------- a capture becomes a claim
 head("a capture becomes a candidate, and never more than the evidence")
