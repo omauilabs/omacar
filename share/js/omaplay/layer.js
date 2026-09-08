@@ -330,6 +330,11 @@ export function createOmaPlay(opts = {}) {
         return api;
       },
 
+    // Exposed so a caller can ask what is on screen before replacing it. The
+    // app re-checks for an adapter each time the phone screen is opened, and
+    // it must not interrupt a phone that is already connected to do it.
+    get source() { return source; },
+
     setSource(src) {
       if (source) { try { source.stop(); } catch { /* already gone */ } }
       if (off) { off(); off = null; }

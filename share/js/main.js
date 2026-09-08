@@ -60,6 +60,23 @@ async function pickSource() {
   return mockSource();
 }
 
+// Swap the mock for something real, if there is something real. Safe to call
+// again: it does nothing unless what is on screen is the mock, so it cannot
+// interrupt a phone that is already connected.
+let _upgrading = false;
+
+function upgrade() {
+  if (_upgrading || !_omaplay) return;
+  if (_omaplay.source && _omaplay.source.kind !== "mock") return;
+  _upgrading = true;
+  pickSource().then((src) => {
+    if (!_omaplay || !src || src.kind === "mock") return;
+    _omaplay.setSource(src);
+    _omaplay.start();
+  }).catch(() => { /* the mock is already up */ })
+    .finally(() => { _upgrading = false; });
+}
+
 function omaplay() {
   if (!_omaplay) {
     _omaplay = createOmaPlay();
@@ -70,11 +87,7 @@ function omaplay() {
     // long as a USB enumeration takes.
     _omaplay.setSource(mockSource());
     _omaplay.start();
-    pickSource().then((src) => {
-      if (!_omaplay || !src || src.kind === "mock") return;
-      _omaplay.setSource(src);
-      _omaplay.start();
-    }).catch(() => { /* the mock is already up */ });
+    upgrade();
     // The car's own alerts, over the phone screen. See the note on
     // watchAlerts(): this is the argument for combining the two products at
     // all, and it was dead code until it was called.
@@ -85,6 +98,11 @@ function omaplay() {
 
 function omaplayView(root, { arg } = {}) {
   omaplay().setMode(["full", "split", "pip"].includes(arg) ? arg : "split");
+  // ASKED AGAIN EVERY TIME THE SCREEN IS OPENED. The first ask happens when the
+  // app boots, which on a tablet is before anybody has plugged anything in --
+  // so an adapter connected afterwards would have shown a mock with MOCK
+  // written across it and a perfectly good phone attached.
+  upgrade();
   return () => { if (_omaplay) _omaplay.setMode("hidden"); };
 }
 import garageView from "./views/garage.js";
