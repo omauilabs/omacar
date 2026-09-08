@@ -1,0 +1,98 @@
+# OmaCar CI.
+#
+# Runs on the omauilabs self-hosted runners. The label set is deliberately the
+# full four rather than a bare `self-hosted`: a bare label would also match the
+# frogbark pool and land the job on the wrong machine.
+#
+# Nothing here needs a car or an adapter. That is a property of the test suite,
+# not a compromise in it — the ELM327 emulator stands in for a vehicle and the
+# guard suite stubs pyserial, so a machine with no venv still checks every
+# safety gate.
+
+name: CI
+
+on:
+  push:
+    branches: [main, omacar-launch]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Tests — needs no car
+    runs-on: [self-hosted, Linux, X64, omauilabs]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: What we are running on
+        run: |
+          echo "python3: $(python3 --version 2>&1)"
+          echo "bash:    ${BASH_VERSION}"
+          echo "sqlite3: $(sqlite3 --version 2>/dev/null || echo 'absent')"
+
+      # The suite installs into a scratch HOME and asserts the real state
+      # directory was never touched, so it is safe to run on a machine that has
+      # OmaCar on it. It says so out loud at the end.
+      - name: test/all.sh
+        run: ./test/all.sh
+
+      # Separately, and loudly, because it is the one that protects the car: the
+      # guards are the checks that were written, looked right, and did not hold.
+      - name: The guards, on their own
+        run: python3 test/guards_test.py
+
+  syntax:
+    name: Everything parses
+    runs-on: [self-hosted, Linux, X64, omauilabs]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python
+        run: |
+          fail=0
+          for f in lib/*.py test/*.py; do
+            python3 -c "import ast,sys; ast.parse(open('$f').read())" || { echo "  $f"; fail=1; }
+          done
+          exit $fail
+
+      - name: Shell
+        run: |
+          fail=0
+          for f in bin/omacar install.sh uninstall.sh test/*.sh; do
+            bash -n "$f" || { echo "  $f"; fail=1; }
+          done
+          exit $fail
+
+      # Four stylesheets were once written, correct, and never linked. Nothing
+      # errored, nothing looked wrong in review, and the app rendered unstyled.
+      # This is the cheap check that would have caught it.
+      - name: Every asset the app references exists
+        run: |
+          fail=0
+          for f in $(grep -oP 'href="css/\K[^"]+' share/app.html); do
+            [ -f "share/css/$f" ] || { echo "  missing stylesheet: $f"; fail=1; }
+          done
+          for m in $(grep -ohP 'from "\./\K[^"]+' share/js/*.js share/js/views/*.js); do
+            [ -f "share/js/$m" ] || [ -f "share/js/views/$m" ] || true
+          done
+          for m in $(grep -oP 'from "\./\K[^"]+' share/js/main.js); do
+            [ -f "share/js/$m" ] || { echo "  main.js imports a missing module: $m"; fail=1; }
+          done
+          exit $fail
+
+  roadmap:
+    name: Roadmap drift (reports, does not block)
+    runs-on: [self-hosted, Linux, X64, omauilabs]
+    timeout-minutes: 15
+    # Every commit moves a line count, so the generated half of the roadmap is
+    # stale the moment anything lands. Gating a merge on that would mean every
+    # change carried a roadmap regeneration, which is friction for no safety.
+    # Reporting it is the useful half: the numbers are visible and nobody has to
+    # remember to look.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: omacar roadmap --check
+        run: ./bin/omacar roadmap --check
