@@ -176,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 56 | 26,552 |
-| JavaScript — the app | 48 | 15,865 |
+| Python — the whole diagnostic side | 56 | 26,633 |
+| JavaScript — the app | 48 | 15,893 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 5 | 1,381 |
-| Tests | 11 | 4,744 |
+| Shell — the CLI and the installer | 5 | 1,388 |
+| Tests | 11 | 4,759 |
 | Documentation | 13 | 3,513 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **60,505** |
+| **Tracked in git, all of it** | | **60,636** |
 
-**Tests** — 823 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 824 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -225,7 +225,7 @@ What is actually covered, straight out of the runner's own headings:
 | The app starts in a browser | 7 |
 | A picture reaches the canvas | 1 |
 | The muxer, read back by ffmpeg | 6 |
-| Through the app, in a real browser | 10 |
+| Through the app, in a real browser | 11 |
 | Units | 9 |
 | Service countdown | 9 |
 | Mode 06 verdicts | 4 |
@@ -303,8 +303,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 130 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 131 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` Two adversarial reads of the picture path, and every defect they found
 - `2026-09-08` A session somebody started by hand wins over what the app would have chosen
 - `2026-09-08` A recording is not started until somebody looks at it
 - `2026-09-08` ffmpeg reads back what the muxer wrote, pixel for pixel
@@ -312,7 +313,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` Roadmap numbers, settled after the prose moved them
 - `2026-09-08` The roadmap says the phone screen is built and unproven, which is neither of the two things it would be easier to say
 - `2026-09-08` The phone screen's requests were unsigned, which in the car reads as no adapter
-- `2026-09-08` A runbook for the CarPlay session, in the order that isolates the one new thing
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

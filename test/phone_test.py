@@ -433,6 +433,18 @@ def main():
         # adapter plugged in, which is why the app now says which of the two it
         # is -- and why this test asserts it said so rather than pretending the
         # picture was verified.
+        # WHICH DECODER CARRIED IT, SAID OUT LOUD. Both routes produce a
+        # picture and only one of them says anything about the machine: a run
+        # that needed the fallback has just discovered that this browser's
+        # WebCodecs decodes nothing, which is the single most useful fact this
+        # test can report about a machine it has never run on before.
+        route = got.get("route") or "?"
+        if decodes:
+            if route == "mediasource":
+                ok("the picture came through the fallback — WebCodecs "
+                   "decoded nothing on this machine")
+            else:
+                ok(f"the picture came through {route}, the direct path")
         if decodes:
             check("the decoder handed back a frame", "picture" in events)
             # THE HONESTY CHECK IN THE OTHER DIRECTION. Saying the picture

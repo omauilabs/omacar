@@ -1,0 +1,137 @@
+#!/bin/bash
+#
+# Get this machine ready to try a CarPlay adapter. Idempotent, and quiet enough
+# to run down a mobile connection.
+#
+# WHAT IT DOES AND WHY IT IS ONE SCRIPT. Six things have to be true before an
+# adapter is worth plugging in, and every one of them fails silently: the code
+# has to be current, the virtual environment has to have pyusb, the udev rule
+# has to be installed AND the adapter plugged in after it, there has to be a
+# recording to prove the screen with, and the browser on this machine has to
+# be able to decode H.264 -- which it will claim it can whether or not it can.
+#
+# Doing them by hand over a car's mobile link, in the dark, is how one gets
+# missed. This does them in order and says which of them is not true.
+
+set -uo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+VENV="${XDG_DATA_HOME:-$HOME/.local/share}/omacar/venv"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/omacar"
+CLIP="$STATE/phone-replay.h264"
+# A REAL INTERPRETER, RESOLVED ONCE AND UP FRONT.
+#
+# `python3` on an Omarchy box is a version-manager shim that reads its own
+# configuration out of the environment, so it fails in ways that have nothing
+# to do with this script and read exactly like a broken test. The virtual
+# environment's interpreter is preferred because it is the one with pyusb in
+# it; a real system python is the fallback; the shim is the last resort.
+PY="${XDG_DATA_HOME:-$HOME/.local/share}/omacar/venv/bin/python"
+[[ -x "$PY" ]] || PY="$(command -v /usr/bin/python3 || true)"
+[[ -x "$PY" ]] || PY="$(command -v python3 || true)"
+
+B=$'\033[1m'; D=$'\033[2m'; R=$'\033[0m'
+G=$'\033[32m'; Y=$'\033[33m'; X=$'\033[31m'
+step() { printf '\n  %s%s%s\n' "$B" "$1" "$R"; }
+good() { printf '    %sok%s    %s\n' "$G" "$R" "$1"; }
+warn() { printf '    %s??%s    %s\n' "$Y" "$R" "$1"; }
+bad()  { printf '    %sno%s    %s\n' "$X" "$R" "$1"; fails=$((fails + 1)); }
+fails=0
+
+step "The code"
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  before="$(git -C "$ROOT" rev-parse --short HEAD)"
+  # --ff-only so a machine with local edits says so rather than making a merge
+  # commit nobody asked for on a tablet.
+  if git -C "$ROOT" pull --ff-only --quiet 2>/dev/null; then
+    after="$(git -C "$ROOT" rev-parse --short HEAD)"
+    if [[ "$before" == "$after" ]]; then good "already current at $after"
+    else good "$before → $after"; fi
+  else
+    bad "git pull --ff-only refused. Local changes, or no network:"
+    git -C "$ROOT" status --short | head -5 | sed 's/^/          /'
+  fi
+else
+  warn "not a git checkout, so nothing to pull"
+fi
+
+step "pyusb, which the adapter driver needs"
+if [[ -x "$VENV/bin/python" ]]; then
+  if "$VENV/bin/python" -c "import usb.core" 2>/dev/null; then
+    good "already there"
+  else
+    "$VENV/bin/pip" install -q pyusb 2>/dev/null \
+      && good "installed" || bad "pip could not install pyusb"
+  fi
+else
+  bad "no virtual environment at $VENV — run: omacar setup"
+fi
+
+step "The udev rule, without which the adapter is root's and not yours"
+if grep -q OMACAR_CARPLAY /etc/udev/rules.d/99-omacar.rules 2>/dev/null; then
+  good "installed"
+else
+  warn "not installed. This next line needs your password:"
+  printf '          %somacar hotplug install%s\n' "$D" "$R"
+  "$ROOT/bin/omacar" hotplug install || bad "the rule did not install"
+fi
+
+step "A recording, to prove the screen before the adapter"
+if [[ -s "$CLIP" ]]; then
+  good "$(du -h "$CLIP" | cut -f1) at $CLIP"
+elif command -v ffmpeg >/dev/null 2>&1; then
+  mkdir -p "$STATE"
+  if ffmpeg -y -f lavfi -i testsrc=size=800x640:rate=20:duration=6 \
+      -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 20 \
+      -f h264 "$CLIP" -loglevel error 2>/dev/null; then
+    good "made one, $(du -h "$CLIP" | cut -f1)"
+  else
+    bad "ffmpeg would not make one"
+  fi
+else
+  bad "no recording and no ffmpeg to make one with"
+fi
+
+step "Whether this machine can decode H.264 at all"
+# THE ONE THING THAT CANNOT BE ASKED, ONLY TRIED. A browser answers yes to the
+# capability question and then decodes nothing; only a picture settles it.
+if [[ -f "$ROOT/test/phone_test.py" ]]; then
+  out="$("$PY" "$ROOT/test/phone_test.py" 2>&1)"
+  if grep -q "pixels reached the canvas" <<<"$out"; then
+    good "$(grep -o 'pixels reached the canvas.*' <<<"$out" | head -1)"
+    # WHICH ROUTE, from the test's own words rather than from a guess. An
+    # earlier version looked for the message the test prints when NOTHING
+    # decodes, which stopped appearing the moment the fallback started
+    # working -- so it reported the direct path on a machine using neither.
+    if grep -q "came through the fallback" <<<"$out"; then
+      warn "through the fallback: this browser's WebCodecs decodes nothing."
+      printf '          %sThe picture still works. It costs a little latency '\
+'and warmth.%s\n' "$D" "$R"
+    elif grep -q "came through webcodecs" <<<"$out"; then
+      good "through WebCodecs, the direct path"
+    else
+      warn "the route was not reported"
+    fi
+  elif grep -q "skipping" <<<"$out"; then
+    warn "$(grep -o 'skipping[^)]*' <<<"$out" | head -1)"
+  else
+    bad "no picture reached a canvas on this machine:"
+    # Whatever it actually said. Grepping for the failures I expected is how a
+    # check reports nothing at all when it fails in a way I did not.
+    { grep -E "FAIL|decoded none" <<<"$out" || tail -6 <<<"$out"; } \
+      | head -6 | sed 's/^/          /'
+  fi
+else
+  warn "test/phone_test.py is not here — the pull may not have landed"
+fi
+
+step "What is plugged in now"
+"$PY" "$ROOT/lib/phone.py"
+
+printf '\n'
+if (( fails )); then
+  printf '  %s%d thing(s) are not ready.%s See above.\n\n' "$X" "$fails" "$R"
+  exit 1
+fi
+printf '  %sReady.%s Plug the adapter in, then:\n' "$G" "$R"
+printf '    %somacar phone%s          — permission should go green\n' "$D" "$R"
+printf '    %somacar phone replay%s   — the screen, proven without the adapter\n\n' "$D" "$R"

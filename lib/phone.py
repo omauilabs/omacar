@@ -86,6 +86,25 @@ def dongles():
     return found
 
 
+def _browser():
+    """What the last browser to open the phone screen reported.
+
+    Asked over the loopback API rather than read from a file, because the
+    daemon holds it and the daemon is the thing that knows.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+    for port in PORTS:
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/api/phone", timeout=1.0) as r:
+                return (_json.loads(r.read().decode()) or {}).get("browser") or {}
+        except (urllib.error.URLError, OSError, ValueError):
+            continue
+    return {}
+
+
 def rule_installed():
     return "OMACAR_CARPLAY" in _read(RULES)
 
@@ -122,6 +141,34 @@ def report():
         lines.append(f"                 {DIM}{len(others)} other USB device(s) "
                      f"are visible, so this is looking{RESET}")
         lines.append(f"    {DIM}permission   {'rule installed' if rule_installed() else 'rule NOT installed — omacar hotplug install'}{RESET}")
+
+    # WHAT THE BROWSER ON THIS MACHINE ACTUALLY MANAGED.
+    #
+    # The fourth thing that has to be true, and the only one this tool cannot
+    # test for itself: whether the browser here decodes H.264. It answers yes
+    # when asked and then decodes nothing on some machines, so the only honest
+    # source is a browser that has tried. The page reports back, and this
+    # repeats it.
+    seen = _browser()
+    if seen:
+        route = seen.get("route") or "?"
+        pictures = seen.get("pictures") or 0
+        colour = GREEN if pictures else RED
+        how = {"webcodecs": "WebCodecs, the direct path",
+               "mediasource": "a video element, because WebCodecs would not"}
+        lines.append(f"    {colour}decoder{RESET}      "
+                     + (f"{how.get(route, route)}" if pictures
+                        else "nothing decoded here"))
+        lines.append(f"                 {DIM}{pictures} picture(s) from "
+                     f"{seen.get('units') or 0} frame(s), "
+                     f"{seen.get('at') or 'at some point'}{RESET}")
+        if seen.get("note"):
+            lines.append(f"                 {DIM}{seen['note'][:150]}{RESET}")
+    else:
+        lines.append(f"    {DIM}decoder      no browser has opened the phone "
+                     f"screen here yet{RESET}")
+        lines.append(f"                 {DIM}whether this machine decodes "
+                     f"H.264 is not yet known{RESET}")
 
     # THE PART THAT IS NOT BUILT, SAID PLAINLY AND FIRST-PERSON.
     lines.append(f"    {YELLOW}driver{RESET}       written, never run against "

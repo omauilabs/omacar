@@ -718,8 +718,11 @@ check("and it decides which one works by whether a picture came back",
 # phone screen is arranged to prevent.
 _bare = _rx.findall(r'fetch\(\s*"(/api/[^"]+)"', _src)
 check("no phone request is made unsigned", _bare, [])
-check("and each of them is signed",
-      len(_rx.findall(r'fetch\(withToken\("/api/phone', _src)), 4)
+# A floor rather than an exact count: the check above is the one that catches
+# an unsigned request, and pinning the number here only breaks the day a route
+# is added correctly.
+check("and there are several of them, all signed",
+      len(_rx.findall(r'fetch\(withToken\("/api/phone', _src)) >= 5, True)
 _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
 check("including the one that chooses the source",
       'fetch(withToken("/api/phone")' in _main, True)

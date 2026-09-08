@@ -1112,6 +1112,9 @@ def handle_get(path, query):
             # different thing from working and a different thing from absent,
             # and the screen is entitled to know which.
             "driver": "unproven",
+            # Filled in by whichever browser last opened the phone screen.
+            # Empty means no browser has ever got that far on this machine.
+            "browser": dict(carlink.BROWSER),
             "replay": os.path.exists(
                 os.path.join(records.STATE, "phone-replay.h264")),
             "note": "The Carlinkit driver is written from a reading of the "
@@ -1655,6 +1658,12 @@ def handle_post(path, body):
                                 "mode=replay proves everything around it.",
                     }
                 return 400, {"error": f"unknown mode {mode!r}"}
+            if what == "route":
+                # The page saying which decoder is carrying the picture. It is
+                # the only party that can know, and a tablet in a car is the
+                # last place anybody can go and look.
+                return 200, {"ok": True,
+                             "browser": carlink.note_browser(data)}
             if what == "stop":
                 carlink.stop()
                 return 200, {"ok": True}

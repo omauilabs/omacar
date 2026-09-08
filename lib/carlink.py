@@ -1114,6 +1114,31 @@ def _stop_held():
     _CURRENT["session"] = None
 
 
+# WHAT THE BROWSER FOUND OUT, KEPT WHERE A TERMINAL CAN READ IT.
+#
+# Which decoder actually carries the picture is decided in the browser, on the
+# machine in the car, and until now the only way to learn it was to look at the
+# screen. That is a bad answer for a tablet on a dashboard on the other end of
+# a mobile connection: the one fact worth knowing -- does this machine decode
+# H.264 at all -- was visible only to somebody sitting in the driver's seat.
+#
+# So the page reports it back, and `omacar phone` and the status route say it.
+# One dictionary, last writer wins, no history: it describes the browser that
+# most recently opened the phone screen, which is the only one anybody means.
+BROWSER = {}
+
+
+def note_browser(what):
+    if not isinstance(what, dict):
+        return BROWSER
+    BROWSER.clear()
+    BROWSER.update({k: what[k] for k in
+                    ("route", "why", "pictures", "units", "note", "agent")
+                    if k in what})
+    BROWSER["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    return BROWSER
+
+
 def dongles_present():
     """The known adapters plugged in, without needing pyusb."""
     import phone

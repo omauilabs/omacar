@@ -265,6 +265,29 @@ export function dongleSource(opts = {}) {
     b.emit({ type: "failure", error: String(why && why.message || why) });
   }
 
+  // TOLD TO THE SERVER, NOT ONLY TO THE SCREEN.
+  //
+  // Which decoder is carrying the picture is decided here, in the browser on
+  // the machine in the car, and a screen on a dashboard is the hardest place
+  // in the world to read a diagnostic off. Reporting it back means `omacar
+  // phone` answers the question from any terminal, including one at the other
+  // end of a mobile connection. Failure is ignored: this is a note, not a
+  // dependency, and a phone screen must never stop working because a
+  // diagnostic did.
+  function tellServer(what) {
+    try {
+      fetch(withToken("/api/phone/route"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...what,
+          units: stats.video,
+          pictures: stats.pictures,
+          agent: navigator.userAgent.slice(0, 120),
+        }),
+      }).catch(() => {});
+    } catch { /* the picture matters and this does not */ }
+  }
+
   function makeSink() {
     return videoSink({
       canvas,
@@ -272,15 +295,20 @@ export function dongleSource(opts = {}) {
       onPicture: (w, h) => {
         stats.pictures += 1;
         b.emit({ type: "picture", width: w, height: h, route: stats.route });
+        tellServer({ route: stats.route, note: `a picture, ${w}x${h}` });
       },
       onRoute: (name, why) => {
         stats.route = name;
+        tellServer({ route: name, why: why || "" });
         // A ROUTE CHANGE IS WORTH SAYING. The picture is identical either way,
         // but somebody looking at a working screen and wondering why it is
         // warm, or why a touch feels late, is owed the reason.
         b.emit({ type: "route", route: name, why: why || "" });
       },
-      onUndecodable: (note) => b.emit({ type: "undecodable", note }),
+      onUndecodable: (note) => {
+        b.emit({ type: "undecodable", note });
+        tellServer({ route: stats.route, note });
+      },
     });
   }
 

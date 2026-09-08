@@ -10,7 +10,7 @@
 #   omacar live [PID...]      stream readings to the terminal
 #   omacar prospect [opts]    hunt for manufacturer-specific PIDs (read-only)
 #   omacar listen [marks]     listen to the bus and transmit nothing; find the byte a switch moves
-#   omacar phone              is the CarPlay adapter plugged in, and can it be opened
+#   omacar phone [prep]       is the CarPlay adapter plugged in; `prep` gets ready for one
 #   omacar dtc [opts]         read stored fault data via UDS 0x19 (read-only)
 #   omacar dtclog [opts]      log DTC status periodically during a drive
 #   omacar learn [--deep]     discover this car's modules and what they monitor
@@ -650,7 +650,14 @@ case "${1:-open}" in
   live) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/live.py" "$@" ;;
   prospect) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/prospect.py" "$@" ;;
   listen) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/listen.py" "$@" ;;
-  phone) shift; exec python3 "$ROOT/lib/phone.py" "$@" ;;
+  phone)
+    shift
+    # `phone prep` gets a machine ready for an adapter; everything else is the
+    # reporter. Split here rather than inside phone.py because the preparation
+    # is shell work -- a pull, a pip, a udev rule -- and pretending otherwise
+    # would put a subprocess ladder inside a module that reads /sys.
+    if [[ "${1-}" == "prep" ]]; then shift; exec "$ROOT/bin/omacar-phone-prep" "$@"; fi
+    exec python3 "$ROOT/lib/phone.py" "$@" ;;
   dtc) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/dtc.py" "$@" ;;
   dtclog) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/dtclog.py" "$@" ;;
   candlog) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/candlog.py" "$@" ;;
