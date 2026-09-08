@@ -832,7 +832,16 @@ def main(argv):
     cap = listen(seconds=args.seconds, can_id=args.can_id, note=args.note)
     _print_census(cap)
     if args.save:
-        print(f"  saved: {cap.save(raw=args.raw)}\n")
+        path = cap.save(raw=args.raw)
+    print(f"  saved: {path}")
+    if not args.raw:
+        # SAID WHEN IT HAPPENS, not discovered later. Without the frames this
+        # capture can be read but never compared with another, and the whole
+        # point of capturing two switch positions is to compare them.
+        print(f"  {DIM}(a census only — add --raw to keep the frames, which is "
+              f"what{RESET}")
+        print(f"  {DIM} comparing two switch positions needs){RESET}")
+    print()
     return 0
 
 
@@ -932,6 +941,31 @@ def _adopt(args):
 
     # THE CAPTURES MUST ALL BE THE SAME CAR, AND IT MUST BE THIS ONE.
     here = profilelib.slug_for_current_car()
+    # THE FRAMES HAVE TO BE THERE, AND THIS USED TO FIND OUT SILENTLY.
+    #
+    # The comparison reads individual frames: which byte held which value in
+    # each position. A capture saved without them keeps a census -- which bytes
+    # moved -- and not the values they moved to, so the comparison runs, finds
+    # nothing, and reports no candidates. That is indistinguishable from a car
+    # with no answer, and it is how a drive across three drive modes, with the
+    # switches timed to the second, came home unable to answer the question it
+    # was made to answer.
+    bare = [n for n, d in docs if not (d.get("raw") or [])]
+    if bare:
+        print(f"\n  {YELLOW}those captures did not keep their frames{RESET}")
+        for n in bare[:6]:
+            print(f"    {n}")
+        if len(bare) > 6:
+            print(f"    … and {len(bare) - 6} more")
+        print(f"\n  {DIM}A comparison needs the value each byte held, and a"
+              f" capture saved without{RESET}")
+        print(f"  {DIM}--raw keeps only a census of which bytes moved. Capture"
+              f" again with:{RESET}")
+        print(f"    omacar listen capture --seconds 30 --save --raw --note econ")
+        print(f"  {DIM}or use `omacar listen marks`, which keeps what it needs "
+              f"by itself.{RESET}\n")
+        return 1
+
     cars = {d.get("vehicle") or "unknown-car" for _n, d in docs}
     if len(cars) > 1:
         print(f"\n  those captures are from different cars ({', '.join(sorted(cars))}). "
@@ -1293,7 +1327,16 @@ def _marks_session(args):
     print()
     _print_census(cap, top=12)
     _print_discriminators(cap)
-    print(f"  saved: {cap.save(raw=args.raw)}\n")
+    path = cap.save(raw=args.raw)
+    print(f"  saved: {path}")
+    if not args.raw:
+        # SAID WHEN IT HAPPENS, not discovered later. Without the frames this
+        # capture can be read but never compared with another, and the whole
+        # point of capturing two switch positions is to compare them.
+        print(f"  {DIM}(a census only — add --raw to keep the frames, which is "
+              f"what{RESET}")
+        print(f"  {DIM} comparing two switch positions needs){RESET}")
+    print()
     return 0
 
 
