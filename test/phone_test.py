@@ -209,6 +209,117 @@ def make_clip(path):
     return r.returncode == 0 and os.path.exists(path)
 
 
+# The muxer, checked by something that is not the browser it was written for.
+#
+# WHY THIS IS WORTH DOING SEPARATELY. The fallback decoder in the browser is
+# forgiving: Chromium accepted an earlier version of this muxer's output whose
+# trun named a field it never wrote, and the only symptom was a source buffer
+# that refused segments with no reason given. ffmpeg is a second opinion from a
+# demuxer that had nothing to do with any of this, and it answers the only
+# question that matters -- whether the pictures come out the other side
+# unchanged -- rather than whether some player tolerated the file.
+EMIT = """
+import fs from "node:fs";
+import { createMuxer } from "SHARE/js/omaplay/fmp4.js";
+const data = new Uint8Array(fs.readFileSync(process.argv[2]));
+function marks(d) {
+  const m = []; let i = 0;
+  while (i + 3 < d.length) {
+    if (d[i] === 0 && d[i + 1] === 0) {
+      if (d[i + 2] === 1) { m.push([i, i + 3]); i += 3; continue; }
+      if (d[i + 2] === 0 && d[i + 3] === 1) { m.push([i, i + 4]); i += 4; continue; }
+    }
+    i++;
+  }
+  return m;
+}
+function split(d) {
+  const n = marks(d), opens = [0]; let seen = false;
+  for (let k = 0; k < n.length; k++) {
+    const t = d[n[k][1]] & 0x1f;
+    if (t === 1 || t === 5) { if (seen) opens.push(k); seen = true; }
+  }
+  const cuts = opens.map((o) => n[o][0]), out = [];
+  for (let k = 0; k < cuts.length - 1; k++) out.push(d.subarray(cuts[k], cuts[k + 1]));
+  out.push(d.subarray(cuts[cuts.length - 1]));
+  return out;
+}
+function isKey(u) {
+  for (const [, at] of marks(u)) { const t = u[at] & 0x1f; if (t === 7 || t === 5) return true; }
+  return false;
+}
+const units = split(data), mux = createMuxer();
+let ready = null;
+for (const u of units) { ready = mux.learn(u); if (ready) break; }
+if (!ready) { console.log("NOPARAMS"); process.exit(1); }
+const parts = [Buffer.from(ready.init)];
+for (const u of units) parts.push(Buffer.from(mux.segment(u, isKey(u), Math.round(90000 / 20))));
+fs.writeFileSync(process.argv[3], Buffer.concat(parts));
+console.log(JSON.stringify({ codec: ready.codec, width: ready.width,
+                             height: ready.height, units: units.length }));
+"""
+
+
+def raw_pixels(path):
+    """Every frame of a file, decoded, as one checksum."""
+    import hashlib
+    r = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo",
+         "-pix_fmt", "yuv420p", "-"],
+        capture_output=True, timeout=180)
+    if r.returncode != 0 or not r.stdout:
+        return None, 0
+    return hashlib.sha256(r.stdout).hexdigest(), len(r.stdout)
+
+
+def check_muxer(tmp, clip):
+    print("\n  The muxer, read back by ffmpeg\n")
+    node = shutil.which("node")
+    if not node:
+        print("    (skipping: no node here to run the muxer outside a browser.\n"
+              "     `sudo pacman -S nodejs` to have this check mean something.)\n")
+        return
+    script = os.path.join(tmp, "emit.mjs")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(EMIT.replace("SHARE", SHARE))
+    out = os.path.join(tmp, "muxed.mp4")
+    r = subprocess.run([node, script, clip, out], capture_output=True,
+                       text=True, timeout=180)
+    if r.returncode != 0:
+        bad("the muxer would not run: "
+            + (r.stderr or r.stdout).strip().splitlines()[-1][:160])
+        return
+    got = json.loads(r.stdout.strip().splitlines()[-1])
+    ok(f"{got['units']} access units muxed as {got['codec']} "
+       f"{got['width']}x{got['height']}")
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_name,width,height,avg_frame_rate", "-of",
+         "default=nw=1", out], capture_output=True, text=True, timeout=60)
+    fields = dict(l.split("=", 1) for l in probe.stdout.strip().splitlines()
+                  if "=" in l)
+    check("ffmpeg reads it as H.264", fields.get("codec_name") == "h264")
+    check(f"at the size the stream declared "
+          f"({fields.get('width')}x{fields.get('height')})",
+          fields.get("width") == str(got["width"])
+          and fields.get("height") == str(got["height"]))
+    check(f"and the frame rate it was told ({fields.get('avg_frame_rate')})",
+          fields.get("avg_frame_rate") == "20/1")
+
+    # THE ASSERTION THAT MATTERS. Not that a player tolerated the file -- that
+    # every pixel of every frame is the same on the way out as on the way in.
+    mine, mine_n = raw_pixels(out)
+    theirs, theirs_n = raw_pixels(clip)
+    if not mine or not theirs:
+        bad("ffmpeg would not decode one of the two")
+        return
+    check(f"every frame decodes ({theirs_n // (800 * 640 * 3 // 2)} of them)",
+          mine_n == theirs_n and theirs_n > 0)
+    check("and every pixel of every frame is unchanged by the muxing",
+          mine == theirs)
+
+
 def main():
     print("\n  A picture reaches the canvas\n")
     exe = browser()
@@ -229,6 +340,9 @@ def main():
         return 1
     ok(f"a six-second recording, {os.path.getsize(clip)} bytes")
 
+    check_muxer(tmp, clip)
+
+    print("\n  Through the app, in a real browser\n")
     served = mirror_share(os.path.join(tmp, "share"))
     port = free_port()
     profile = os.path.join(tmp, "profile")

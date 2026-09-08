@@ -177,16 +177,16 @@ the one that is wrong.
 | | Files | Lines |
 |---|---:|---:|
 | Python — the whole diagnostic side | 56 | 26,392 |
-| JavaScript — the app | 48 | 15,600 |
+| JavaScript — the app | 48 | 15,623 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,381 |
-| Tests | 11 | 4,631 |
+| Tests | 11 | 4,745 |
 | Documentation | 13 | 3,511 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **59,965** |
+| **Tracked in git, all of it** | | **60,102** |
 
-**Tests** — 817 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 823 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -223,7 +223,9 @@ What is actually covered, straight out of the runner's own headings:
 | The launch calendar | 6 |
 | The shaders the music screen ships | 10 |
 | The app starts in a browser | 7 |
-| A picture reaches the canvas | 11 |
+| A picture reaches the canvas | 1 |
+| The muxer, read back by ffmpeg | 6 |
+| Through the app, in a real browser | 10 |
 | Units | 9 |
 | Service countdown | 9 |
 | Mode 06 verdicts | 4 |
@@ -301,16 +303,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 125 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 127 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The phone screen asks again each time it is opened
+- `2026-09-08` Roadmap numbers, settled after the prose moved them
 - `2026-09-08` The roadmap says the phone screen is built and unproven, which is neither of the two things it would be easier to say
 - `2026-09-08` The phone screen's requests were unsigned, which in the car reads as no adapter
 - `2026-09-08` A runbook for the CarPlay session, in the order that isolates the one new thing
 - `2026-09-08` The phone screen gets a picture, by whichever decoder the browser actually has
 - `2026-09-08` The CarPlay dongle: the two parts that can fail silently, checked
 - `2026-09-08` A capture becomes a claim: broadcast signals in the profile, and adoption
-- `2026-09-07` The app never started on a real car, and nothing here had ever started it
-- `2026-09-07` Echo off while monitoring: it costs a line for every frame
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
