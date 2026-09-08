@@ -295,6 +295,49 @@ check(f"the leg ended on silence rather than running for 40 minutes "
 check("it ended cleanly rather than failing", rc == 0)
 check("and kept what it heard", len(captures_written()) == 1)
 
+# ------------------------------------------------------- a capture that stalls
+head("A capture that recorded, then stopped recording")
+
+reset()
+listen.FLUSH_EVERY = 0.4
+FakeElm.plan = {
+    "probe": {"6": ["17C 01"] * 12},
+    # A burst and then nothing at all, which is what a real drive did: a
+    # hundred frames in the first minute and silence for the seven after, while
+    # every status report said the capture was healthy.
+    "frames": [f"17C 0{i % 8} 02" for i in range(30)],
+    "gap": 0.002, "cap_seconds": 20,
+}
+watch = {"stalled_seen": False, "counts": set()}
+
+
+def watch_stall(stop):
+    while not stop.wait(0.2):
+        r = listen.running()
+        if not r:
+            continue
+        watch["counts"].add(r.get("frames"))
+        last = r.get("last_frame")
+        if r.get("frames") and last and time.time() - last > 1.0:
+            # THE POINT: a total cannot show this and a timestamp can.
+            watch["stalled_seen"] = True
+
+
+_stop2 = threading.Event()
+_w2 = threading.Thread(target=watch_stall, args=(_stop2,), daemon=True)
+_w2.start()
+rc = run_child(minutes=40, quiet=2.5)
+_stop2.set()
+_w2.join(timeout=2)
+listen.FLUSH_EVERY = _orig
+
+check("the leg ends itself rather than sitting there", rc == 0)
+check("the frame total stopped moving, which alone looks healthy",
+      len(watch["counts"]) >= 1)
+check("but the last-frame time made the stall visible",
+      watch["stalled_seen"])
+check("and what it did hear was kept", len(captures_written()) == 1)
+
 shutil.rmtree(_TMP, ignore_errors=True)
 print()
 if fails:

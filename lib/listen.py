@@ -451,11 +451,21 @@ def _restore_protocol(el, was):
 def _publish_progress(name, cap, seconds):
     """What a detached capture is doing, for anything that asks."""
     tmp = RUNNING + ".tmp"
+    # WHEN THE LAST FRAME ARRIVED, not just how many there have been.
+    #
+    # A capture that recorded a hundred frames and then nothing for seven
+    # minutes reports the same hundred frames every time it is asked, and reads
+    # as healthy. That happened on a real drive: the count was right, the
+    # heartbeat was fresh, the protocol was correct, and the capture had been
+    # dead for most of the journey. A total cannot show a stall; a timestamp
+    # can.
+    last = cap.frames[-1][0] if cap.frames else None
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"name": name, "note": cap.note, "started": cap.started,
                    "seconds": seconds, "frames": len(cap.frames),
                    "identifiers": len({i for _t, i, _d in cap.frames}),
                    "rejected": cap.rejected, "protocol": cap.protocol,
+                   "last_frame": last,
                    "at": time.time()}, f)
     os.replace(tmp, RUNNING)
 
@@ -713,11 +723,20 @@ def main(argv):
     ap.add_argument("--as", dest="as_id", help="for adopt: the id to give it")
     ap.add_argument("--label", help="for adopt: the human name")
     ap.add_argument("--car", help="for adopt: the profile slug to write into")
+    # DEFAULTED ON, AND NOT ZERO.
+    #
+    # This was opt-in, and the drive it was written for was run without it: a
+    # capture stalled after one minute and sat there for another seven,
+    # reporting itself healthy, because nothing was watching for silence. A
+    # capture that has gone quiet should end and let something start a fresh
+    # one, whether the cause is the engine stopping or the adapter giving up.
+    # Two minutes is long enough to survive a red light and short enough that
+    # a stall costs a leg rather than a journey.
     ap.add_argument("--quiet-timeout", dest="quiet_timeout", type=float,
-                    default=0.0,
+                    default=120.0,
                     help="end a drive capture after this many seconds with no "
-                         "frames (0 = never); the engine stopping is what this "
-                         "detects")
+                         "frames (0 = never). Both the engine stopping and the "
+                         "adapter giving up look like this")
     ap.add_argument("--minutes", type=float, default=45.0,
                     help="for drive: how long to keep listening (default 45)")
     args = ap.parse_args(argv)
@@ -746,11 +765,17 @@ def main(argv):
         print(f"\n  {BOLD}listening{RESET}  {r['name']}   {r.get('note','')}")
         print(f"    {mins:.1f} min so far · {frames} frames · "
               f"{r['identifiers']} identifiers · protocol {r.get('protocol')}")
-        # A CAPTURE HEARING NOTHING LOOKS EXACTLY LIKE A CAPTURE GOING WELL
-        # from a status line, and the difference is the whole drive. After a
-        # couple of minutes with no frames, the bus is not talking to us and
-        # somebody should know before they drive another hour.
-        if mins > 2 and frames == 0:
+        # A CAPTURE THAT HAS STOPPED HEARING LOOKS EXACTLY LIKE ONE GOING WELL,
+        # and the difference is the whole drive.
+        quiet_for = (time.time() - r["last_frame"]) if r.get("last_frame") else None
+        if frames and quiet_for and quiet_for > 45:
+            print(f"    {YELLOW}stalled{RESET} — {frames} frames, then nothing "
+                  f"for {quiet_for / 60:.1f} min.")
+            print(f"    {DIM}The capture is alive and the adapter has stopped "
+                  f"delivering. Stopping and{RESET}")
+            print(f"    {DIM}starting again recovers it; `omacar doctor` "
+                  f"checks the usual causes.{RESET}")
+        elif mins > 2 and frames == 0:
             print(f"    {YELLOW}nothing has been heard yet{RESET} — the "
                   f"adapter is open and the bus is silent to it.")
             print(f"    {DIM}On this car the broadcast traffic is 11-bit; if "
