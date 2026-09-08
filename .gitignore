@@ -8,3 +8,12 @@ elm.log
 *.bak2.*
 .omacar-tonight-plan.md
 .omacar-nav-spec.md
+
+# The launch campaign and the film plan.
+#
+# A month of unpublished posts with the reasoning behind each one, and the shot
+# list. That is the owner's business rather than part of the tool, so it is
+# kept outside the repository -- and ignored here so that a stray `git add .`
+# cannot put it back. test/calendar_test.py finds it via OMACAR_CALENDAR.
+launch/
+doc/film.md
