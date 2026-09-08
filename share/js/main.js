@@ -6,7 +6,7 @@
 // on screen. A diagnostic tool that hammers the daemon while you read a
 // service schedule is a tool that gets in the way of the thing it is watching.
 
-import { h, clear, icon, store, U, api, toast, confirmDialog, dist, grouped, since } from "./core.js";
+import { h, clear, icon, store, U, api, toast, confirmDialog, dist, grouped, since, withToken } from "./core.js";
 
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
@@ -51,7 +51,7 @@ let _omaplay = null;
 // the mock is the safe answer: it is the one that cannot pretend.
 async function pickSource() {
   try {
-    const r = await fetch("/api/phone", { cache: "no-store" });
+    const r = await fetch(withToken("/api/phone"), { cache: "no-store" });
     if (!r.ok) return mockSource();
     const it = await r.json();
     if (it.dongles && it.dongles.length) return dongleSource({ mode: "dongle" });

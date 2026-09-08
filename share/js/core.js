@@ -218,7 +218,12 @@ const TOKEN = (() => {
 
 export const readOnly = TOKEN !== "";
 
-function withToken(path) {
+// EXPORTED, because not every request can go through req(). A video stream is
+// read as a stream rather than parsed as JSON, and anything that builds its own
+// fetch has to be able to sign it -- a request that quietly loses the token in
+// cockpit mode comes back 401 and reads on screen as hardware that is not
+// there. The phone screen lost its picture exactly that way.
+export function withToken(path) {
   if (!TOKEN) return path;
   return path + (path.includes("?") ? "&" : "?") + "k=" + encodeURIComponent(TOKEN);
 }

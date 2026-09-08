@@ -708,6 +708,22 @@ check("the browser has a second way to decode, not just the first",
 check("and it decides which one works by whether a picture came back",
       "pictures === 0" in _dec, True)
 
+# EVERY REQUEST THE PHONE SCREEN MAKES HAS TO CARRY THE COCKPIT TOKEN.
+#
+# In cockpit mode the page is opened with ?k=<token> and the server refuses
+# anything without it. core.js signs everything that goes through its own
+# helper -- but the video is read as a stream rather than parsed as JSON, so it
+# builds its own fetch, and an unsigned one comes back 401 and reads on screen
+# as an adapter that is not there. Which is precisely the confusion the whole
+# phone screen is arranged to prevent.
+_bare = _rx.findall(r'fetch\(\s*"(/api/[^"]+)"', _src)
+check("no phone request is made unsigned", _bare, [])
+check("and each of them is signed",
+      len(_rx.findall(r'fetch\(withToken\("/api/phone', _src)), 4)
+_main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+check("including the one that chooses the source",
+      'fetch(withToken("/api/phone")' in _main, True)
+
 # ------------------------------------------------- a capture becomes a claim
 head("a capture becomes a candidate, and never more than the evidence")
 

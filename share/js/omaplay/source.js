@@ -44,6 +44,7 @@
 // and they are not ours to tidy.
 
 import { videoSink } from "./decode.js";
+import { withToken } from "../core.js";
 
 export const MEDIA_DATA = 1;
 export const MEDIA_ALBUM_COVER = 3;
@@ -336,7 +337,7 @@ export function dongleSource(opts = {}) {
       stats.route = "";
       abort = new AbortController();
       try {
-        const started = await fetch("/api/phone/start", {
+        const started = await fetch(withToken("/api/phone/start"), {
           method: "POST", signal: abort.signal,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mode: opts.mode || "",
@@ -358,7 +359,7 @@ export function dongleSource(opts = {}) {
         b.emit({ type: "opening", note: started.note || "",
                  replay: !!started.replay, unproven: !!started.unproven });
 
-        const res = await fetch("/api/phone/video", { signal: abort.signal });
+        const res = await fetch(withToken("/api/phone/video"), { signal: abort.signal });
         if (!res.ok || !res.body) { fail(`the video stream returned ${res.status}`); running = false; return; }
         await pump(res);
       } catch (e) {
@@ -374,12 +375,12 @@ export function dongleSource(opts = {}) {
       running = false;
       try { if (abort) abort.abort(); } catch { /* already gone */ }
       if (sink) { try { sink.stop(); } catch { /* fine */ } sink = null; }
-      fetch("/api/phone/stop", { method: "POST" }).catch(() => {});
+      fetch(withToken("/api/phone/stop"), { method: "POST" }).catch(() => {});
     },
 
     send(msg) {
       if (!msg || !running) return false;
-      fetch("/api/phone/input", {
+      fetch(withToken("/api/phone/input"), {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(msg),
       }).catch(() => {});
