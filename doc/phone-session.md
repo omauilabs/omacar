@@ -18,18 +18,39 @@ where.
 
 ---
 
-## Before you leave the desk
+## Before the adapter goes in
 
-On the Surface, which needs to be on the network for this part:
+One command, on the machine that will be in the car. It needs a network for the
+first step only, and the pull is a few tens of kilobytes, so a mobile
+connection is fine.
 
 ```
-cd ~/Projects/omacar && git pull
-omacar hotplug install          # the udev rule; the adapter is unreadable without it
-omacar phone                    # should say: rule installed, driver unproven
+omacar phone prep
 ```
 
-Then plug the adapter in and run `omacar phone` again. Three lines, and you
-want the first two green:
+It does the six things that have to be true and says which of them is not:
+
+| | |
+|---|---|
+| the code | pulled, fast-forward only, so local edits stop it rather than being merged over |
+| pyusb | the adapter driver needs it; installed into the virtual environment if missing |
+| the udev rule | without it the adapter belongs to root. **This step asks for your password.** |
+| a recording | made with ffmpeg if there is not one, to prove the screen without the adapter |
+| the decoder | a picture actually reaching a canvas in a real browser on this machine |
+| what is plugged in | the same three lines `omacar phone` gives |
+
+**The decoder line is the one to read.** A browser answers "can you decode
+H.264" with yes and then decodes nothing, so this tries it rather than asking.
+Two good outcomes:
+
+- *through WebCodecs, the direct path* — the best case, lowest latency.
+- *through the fallback: this browser's WebCodecs decodes nothing* — also a
+  picture. It costs a little latency and warmth and nothing else.
+
+Anything else means the picture will not appear tomorrow for a reason that has
+nothing to do with the adapter, and it is worth knowing at the desk.
+
+Then plug the adapter in and run `omacar phone`. You want the first two green:
 
 ```
 dongle       Carlinkit (CPC200 family)
@@ -40,16 +61,16 @@ driver       written, never run against an adapter
 If permission is red, the rule went in after the adapter did. Unplug it, plug
 it back in, ask again. `uaccess` is granted at plug time and not retroactively.
 
-**Prove the screen before you prove the adapter.** `omacar phone replay` makes
-a recording if there is not one, plays it through the real path, and prints the
-URL. Open the Phone screen. You should see a test pattern behind an amber frame
-reading REPLAY — a recording, not a phone. If you see that, everything except
-the adapter works on this machine, which is the whole point of doing it in this
-order.
+**Prove the screen before you prove the adapter.** `omacar phone replay` plays
+the recording through the real path and prints the URL. Open the Phone screen.
+You should see a test pattern behind an amber frame reading REPLAY — a
+recording, not a phone. If you see that, everything except the adapter works on
+this machine, which is the whole point of doing it in this order.
 
-Note which decoder it used. The status line says so when it is the fallback:
-*decoding through the video element, because WebCodecs would not*. Either is a
-picture; the fallback costs a little latency and some warmth.
+**And it reports back.** Once a browser has opened the phone screen, `omacar
+phone` on that machine says which decoder carried the picture and from how many
+frames — so the question can be answered from any terminal, including one at
+the other end of a mobile connection, without anybody looking at the tablet.
 
 ---
 
