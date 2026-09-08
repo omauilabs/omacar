@@ -180,11 +180,11 @@ the one that is wrong.
 | JavaScript — the app | 48 | 15,893 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 6 | 1,536 |
+| Shell — the CLI and the installer | 6 | 1,631 |
 | Tests | 12 | 5,110 |
-| Documentation | 13 | 3,563 |
+| Documentation | 13 | 3,595 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **61,942** |
+| **Tracked in git, all of it** | | **62,069** |
 
 **Tests** — 849 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -309,8 +309,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 139 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 140 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` A comparison that cannot work now says so instead of finding nothing
 - `2026-09-08` A capture that stopped recording reported itself healthy for seven minutes
 - `2026-09-08` A capture on a quiet bus reported that it was not running
 - `2026-09-08` The detached capture said it was listening when it was not
@@ -318,7 +319,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` The runbook records why the hotspot is a second device
 - `2026-09-08` The decoder report is written down, because the answer outlives the process
 - `2026-09-08` The runbook is one command now, and says which line to read
-- `2026-09-08` The tablet reports which decoder it used, and one command gets it ready
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

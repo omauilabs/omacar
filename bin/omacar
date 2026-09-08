@@ -41,6 +41,7 @@
 #   omacar cockpit [--control]
 #                             serve the gauge to any tablet on the network
 #   omacar tablet [setup]     set this machine up as the in-car tablet
+#   omacar tablet awake       stop it suspending — for a tablet that lives in a car
 #   omacar status             is anything watching the car, and what does it know
 #   omacar watch [list]       the watchdog — notifies you when something changes
 #   omacar scan               full system scan, every module, as a report
@@ -487,6 +488,19 @@ tablet_status() {
     "$([[ -f /etc/udev/rules.d/99-omacar.rules ]] && echo installed || echo "not installed")"
   printf "  %-22s %s\n" "auto drive mode" \
     "$(python3 -c "import sys;sys.path.insert(0,'$ROOT/lib');import api;l=api.drive_layout();print(l['auto'])" 2>/dev/null || echo unknown)"
+  # THE ONE THAT LOOKS LIKE A DEAD TABLET WHEN IT IS WRONG. A machine that
+  # suspends in a car does not report an error; it stops answering, the screen
+  # flashes at the power button and will not come up, and whatever was
+  # recording was not recording.
+  local sm dr
+  read -r sm dr <<<"$(tablet_awake_status)"
+  if [[ "$sm" == "yes" && "$dr" == "yes" ]]; then
+    printf "  %-22s %s\n" "suspends" "no — omacar tablet sleep to undo"
+  elif [[ "$sm" == "yes" || "$dr" == "yes" ]]; then
+    printf "  %-22s %s\n" "suspends" "half set up — run: omacar tablet awake"
+  else
+    printf "  %-22s %s\n" "suspends" "YES — a car tablet should not; omacar tablet awake"
+  fi
   echo
 }
 
@@ -516,6 +530,85 @@ print('  auto drive mode: on connect')
   echo
   echo "  Done. Reboot, or: systemctl --user start omacar-kiosk"
   echo "  To undo: omacar tablet off"
+  echo
+}
+
+# ---------------------------------------------------------------- staying awake
+#
+# THE PROBLEM THIS SOLVES, WHICH IS NOT THE SCREENSAVER.
+#
+# share/js/awake.js already holds a wake lock so the dashboard does not blank
+# while the car is moving, and that is the right fix for a screensaver. It does
+# nothing about the machine SUSPENDING: the power button, the lid, and systemd's
+# idle action all still put it to sleep, and a tablet on a dash mount has no lid
+# position that means "I am finished".
+#
+# When that happens in a car it does not look like sleep. It looks like a dead
+# tablet: the screen flashes when the power button is pressed and will not come
+# up, the network has been gone for ten minutes, and nothing is recording. Which
+# is exactly what happened on the way home, with a capture that should have been
+# running.
+#
+# So this is explicit, disclosed, and reversible. It is not applied by `tablet
+# setup`, because masking sleep on a machine that might go back to being a
+# laptop is not a thing to do quietly.
+SLEEP_DROPIN=/etc/systemd/logind.conf.d/90-omacar-tablet.conf
+
+tablet_awake_status() {
+  local masked="no" dropin="no"
+  systemctl is-enabled sleep.target 2>/dev/null | grep -q masked && masked="yes"
+  [[ -f "$SLEEP_DROPIN" ]] && dropin="yes"
+  echo "$masked $dropin"
+}
+
+tablet_awake() {
+  echo
+  echo "  Keeping this machine awake, for a tablet that lives in a car."
+  echo
+  echo "  It will, from now on:"
+  echo "    · ignore the power button and the lid rather than suspending"
+  echo "    · never suspend or hibernate on its own"
+  echo
+  echo "  Both are reversible with: omacar tablet sleep"
+  echo "  Do NOT do this to a laptop you carry around — it will stay awake in"
+  echo "  a bag and flatten its battery."
+  echo
+  read -r -p "  Set it up? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
+  echo
+  echo "  This needs one sudo."
+  sudo install -d -m 755 /etc/systemd/logind.conf.d || return 1
+  sudo tee "$SLEEP_DROPIN" >/dev/null <<EOF
+# Written by \`omacar tablet awake\`. Remove with \`omacar tablet sleep\`.
+#
+# A tablet on a dash mount has no lid position that means "I am finished", and
+# the power button is the only control a driver can reach. Suspending on either
+# is how a recording drive comes home with nothing.
+[Login]
+HandlePowerKey=ignore
+HandleSuspendKey=ignore
+HandleLidSwitch=ignore
+HandleLidSwitchDocked=ignore
+HandleLidSwitchExternalPower=ignore
+IdleAction=ignore
+EOF
+  sudo systemctl mask sleep.target suspend.target hibernate.target     hybrid-sleep.target 2>&1 | sed 's/^/  /'
+  sudo systemctl restart systemd-logind 2>/dev/null
+  echo
+  echo "  done. It will not suspend, and the power button no longer sleeps it."
+  echo "  Hold the power button for ten seconds to force it off if you must."
+  echo
+}
+
+tablet_sleep() {
+  echo
+  echo "  Letting this machine suspend again."
+  read -r -p "  Undo the awake setup? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
+  sudo rm -f "$SLEEP_DROPIN"
+  sudo systemctl unmask sleep.target suspend.target hibernate.target     hybrid-sleep.target 2>&1 | sed 's/^/  /'
+  sudo systemctl restart systemd-logind 2>/dev/null
+  echo "  done. It sleeps like an ordinary laptop again."
   echo
 }
 
@@ -725,6 +818,8 @@ if '--quiet' not in sys.argv:
   tablet)
     case "${2:-status}" in
       setup) tablet_setup ;;
+      awake) tablet_awake ;;
+      sleep) tablet_sleep ;;
       off) tablet_off ;;
       *) tablet_status ;;
     esac ;;

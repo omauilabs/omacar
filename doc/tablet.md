@@ -69,6 +69,38 @@ Wire the adapter rather than using Bluetooth. A USB cable from the OBD port to
 the tablet is one fewer thing to drop out on a bad road, and the udev rule
 gives it a stable `/dev/obd` so it does not matter what else is plugged in.
 
+## Sleep, which is the one that looks like a broken tablet
+
+A tablet on a dash mount has no lid position that means "I am finished", and the
+power button is the only control a driver can reach. Both of them suspend the
+machine by default, and systemd will suspend it on idle as well.
+
+**When that happens in a car it does not look like sleep.** It looks like a dead
+tablet. The screen flashes when the power button is pressed and will not come
+up, the network has been gone for ten minutes, and whatever was recording was
+not recording. That is what it did on the way home from work on 8 September,
+during a drive that was supposed to be capturing all three drive modes.
+
+`share/js/awake.js` holds a wake lock so the dashboard does not blank while the
+car is moving. That is the right fix for a screensaver and it does nothing about
+this: a wake lock cannot stop the power button.
+
+```
+omacar tablet awake
+```
+
+It ignores the power button, the suspend key and the lid, and masks the four
+sleep targets, so nothing suspends the machine. One sudo, and reversible with
+`omacar tablet sleep`. `omacar tablet` reports which state it is in, because a
+machine that will suspend gives no warning until it does.
+
+**Do not do this to a laptop you carry around.** It will stay awake in a bag and
+flatten its battery. It is for the machine that lives in the car.
+
+**If it is already asleep and will not wake:** hold the power button for ten to
+twenty seconds until it powers off, then press it again. There is no software
+route back in — that is the point of the problem.
+
 ## What Omarchy does not give you yet on a tablet
 
 Being straight about the gaps, because they are the difference between this
