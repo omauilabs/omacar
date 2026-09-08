@@ -867,8 +867,6 @@ check("a real span does report one", _slow.census()[0]["hz"] is not None, True)
 # ------------------------------------------------------------- whose sample
 head("a live sample about another car is not this car's news")
 
-import importlib  # noqa: E402
-
 import records as _rec  # noqa: E402
 
 _livedir = tempfile.mkdtemp()
@@ -889,6 +887,7 @@ def _now(**kw):
 
 
 _realkey = "JHMZF1D44FS001835"
+_currentold = _rec.garage.current
 try:
     _rec.garage.current = lambda: _realkey            # the real car is open
     _put(_now(vehicle=_rec.garage.SIM_KEY, simulated=True))
@@ -909,8 +908,18 @@ try:
     check("and the simulator's sample is right when the simulator is the car",
           _rec.live().get("connected"), True)
 finally:
+    # PUT BACK EXACTLY WHAT WAS CHANGED, AND DO NOT RELOAD THE MODULE.
+    #
+    # This used to call importlib.reload(records) to undo the monkeypatch, which
+    # was both dangerous and wrong: wrong because the patched attribute lives on
+    # `garage`, a different module that a reload of `records` never touches, and
+    # dangerous because reloading a module holding sqlite3 state leaves two
+    # copies of it alive with C-level objects split between them. Python 3.14
+    # tolerated that; the 3.12 on GitHub's runners SEGFAULTED at interpreter
+    # shutdown, after every check in this file had passed. A suite that prints
+    # "every guard holds" and then dumps core is the worst way to learn this.
     _rec.LIVE, _rec.DB = _liveold, _dbold
-    importlib.reload(_rec)
+    _rec.garage.current = _currentold
     shutil.rmtree(_livedir, ignore_errors=True)
 
 # ---------------------------------------------------------------- the identity

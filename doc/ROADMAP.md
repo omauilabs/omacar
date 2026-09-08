@@ -163,11 +163,11 @@ the one that is wrong.
 | JavaScript — the app | 46 | 14,541 |
 | CSS | 7 | 2,726 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 5 | 1,327 |
-| Tests | 9 | 3,913 |
-| Documentation | 13 | 3,447 |
+| Shell — the CLI and the installer | 5 | 1,373 |
+| Tests | 9 | 3,936 |
+| Documentation | 12 | 3,376 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **56,999** |
+| **Tracked in git, all of it** | | **55,962** |
 
 **Tests** — 762 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -279,16 +279,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 108 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 113 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` CI on hosted runners: a public repo must not run strangers' code on our metal
+- `2026-09-07` CI on the org's own runners
+- `2026-09-07` Keep the launch campaign and the film plan out of the tree
+- `2026-09-07` The launch calendar is checked wherever it is kept
+- `2026-09-07` Placing the bar widget: check whether it happened, then do it
+- `2026-09-07` Roadmap: counts regenerated
 - `2026-09-07` The agent surface: smaller, and no VIN reaches the speaker by any route
 - `2026-09-07` Three repairs: the snapshot request, the charge nobody read, the truncated brief
-- `2026-09-07` The car's alerts reach the phone screen, which was the whole argument
-- `2026-09-07` One car's learned tiles no longer leak into another car's dashboard
-- `2026-09-07` One table for where a payload starts, and no unsafe default
-- `2026-09-07` Text size, per screen, because a tablet at arm's length is not a desk
-- `2026-09-07` A drive layout has a name, and a car remembers which one it uses
-- `2026-09-07` Every shader the music screen ships actually compiles
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
