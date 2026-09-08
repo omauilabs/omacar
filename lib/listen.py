@@ -146,6 +146,7 @@ class Capture:
     def __init__(self, header_digits=None, note=""):
         self.header_digits = header_digits
         self.note = note
+        self.protocol = None          # the ATSP setting the frames came from
         self.started = time.time()
         self.frames = []                 # (t, can_id, [bytes])
         self.marks = []                  # (t, label)
@@ -290,6 +291,7 @@ class Capture:
             "started": self.started,
             "note": self.note,
             "header_digits": self.header_digits,
+            "monitor_protocol": self.protocol,
             "frames": len(self.frames),
             "rejected": self.rejected,
             "marks": [{"at": t, "label": lab} for t, lab in self.marks],
@@ -335,8 +337,49 @@ def load(name):
 
 
 # ----------------------------------------------------------------- the capture
+# The CAN protocols an ELM327 can be put into, as ATSP numbers, in the order
+# worth trying: 11-bit 500k carries most broadcast traffic, then 29-bit 500k,
+# then the 250k pair.
+MONITOR_PROTOCOLS = ("6", "7", "8", "9")
+
+
+def _pick_monitor_protocol(el, probe=2.0):
+    """Put the adapter on a setting that actually hears frames, and say which.
+
+    Returns the ATSP number chosen, or None if nothing was heard on any of
+    them -- which is a real answer, and a different one from "we monitored on
+    the wrong setting and concluded the car was quiet".
+    """
+    best, best_n = None, 0
+    for p in MONITOR_PROTOCOLS:
+        try:
+            el.raw("ATSP" + p)
+            el.raw("ATH1")
+            el.raw("ATS1")
+        except Exception:                                     # noqa: BLE001
+            continue
+        seen = []
+        try:
+            el.monitor("ATMA", seconds=probe,
+                       on_line=lambda ln: seen.append(ln))
+        except Exception:                                     # noqa: BLE001
+            continue
+        n = sum(1 for ln in seen if parse(ln) is not None)
+        if n > best_n:
+            best, best_n = p, n
+        # Plenty is plenty: no reason to spend two more seconds each proving
+        # the others are worse.
+        if n >= 10:
+            break
+    if best:
+        el.raw("ATSP" + best)
+        el.raw("ATH1")
+        el.raw("ATS1")
+    return best
+
+
 def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
-           limit=DEFAULT_LIMIT, cap=None, should_stop=None):
+           limit=DEFAULT_LIMIT, cap=None, should_stop=None, probe=2.0):
     """Take the port, listen for `seconds`, give it back. Returns a Capture.
 
     `can_id` narrows the adapter's own filter to one identifier, which is worth
@@ -376,6 +419,23 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             # is cheap either way and a human reading a capture wants them.
             el.raw("ATH1")
             el.raw("ATS1")
+            # THE BUS YOU DIAGNOSE ON IS NOT THE BUS YOU LISTEN TO.
+            #
+            # An adapter negotiates a protocol for DIAGNOSTICS. On this
+            # project's own car that is ISO 15765-4 CAN 29/500 -- and its
+            # periodic cluster traffic, the entire reason to listen, is 11-bit
+            # at the same 500 kbit/s. Those are two configurations of one CAN
+            # controller, and it can only be in one of them: monitoring on the
+            # 29-bit setting reports NOTHING while the car is talking
+            # continuously. Measured on the car, five seconds each: protocol 7
+            # gave 0 lines, protocol 6 gave 147.
+            #
+            # So the width is probed rather than assumed. Whichever setting
+            # actually hears frames is the one the capture runs on, and the
+            # original is restored before the port goes back to the daemon,
+            # which negotiated it for a reason.
+            _restore = getattr(el, "protocol", None)
+
             # CLEAR ANY FILTER FIRST. init() negotiates a diagnostic protocol
             # and the adapter may still be holding a receive-address filter
             # from whatever ran before -- a DTC sweep aims at one module and
@@ -388,6 +448,8 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             el.raw("ATCM000")
             if can_id:
                 el.raw("ATCRA" + str(can_id).replace(" ", "").upper())
+            chosen = _pick_monitor_protocol(el, probe)
+            cap.protocol = chosen
             el.monitor("ATMA", seconds=seconds, limit=limit,
                        should_stop=should_stop,
                        on_line=lambda ln: (cap.add_line(ln),
@@ -397,6 +459,8 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
                 if can_id:
                     el.raw("ATCRA")           # clear the filter for the daemon
                 el.raw("ATH0")
+                if _restore:
+                    el.raw("ATSP" + str(_restore).lstrip("A"))
             except Exception:                                 # noqa: BLE001
                 pass
             el.close()
