@@ -164,6 +164,16 @@ class Capture:
         self.header_digits = header_digits
         self.note = note
         self.protocol = None          # the ATSP setting the frames came from
+        # WHICH CAR THIS WAS HEARD ON. Stamped when the capture is made, not
+        # worked out when it is read, because the garage can point somewhere
+        # else by then -- and a frame filed against the wrong vehicle is the
+        # fault this project keeps having to fix. Adoption refuses a capture
+        # whose car is not the one in front of you.
+        try:
+            import profile as _p
+            self.vehicle = _p.slug_for_current_car()
+        except Exception:                                     # noqa: BLE001
+            self.vehicle = "unknown-car"
         self.started = time.time()
         self.frames = []                 # (t, can_id, [bytes])
         self.marks = []                  # (t, label)
@@ -309,6 +319,7 @@ class Capture:
             "note": self.note,
             "header_digits": self.header_digits,
             "monitor_protocol": self.protocol,
+            "vehicle": self.vehicle,
             "frames": len(self.frames),
             "rejected": self.rejected,
             "marks": [{"at": t, "label": lab} for t, lab in self.marks],
@@ -607,7 +618,7 @@ def main(argv):
     ap = argparse.ArgumentParser(prog="omacar listen", add_help=True)
     ap.add_argument("action", nargs="?", default="capture",
                     choices=["capture", "marks", "list", "show", "drive",
-                             "status", "stop"])
+                             "status", "stop", "adopt"])
     ap.add_argument("name", nargs="?", help="for show: which capture")
     ap.add_argument("--seconds", type=float, default=None,
                     help=f"capture length (default {DEFAULT_SECONDS:.0f}s; "
@@ -616,6 +627,11 @@ def main(argv):
     ap.add_argument("--note", default="")
     ap.add_argument("--save", action="store_true", help="keep the capture")
     ap.add_argument("--raw", action="store_true", help="keep every frame too")
+    ap.add_argument("captures", nargs="*", help="for adopt: the captures to compare")
+    ap.add_argument("--signal", help="for adopt: which byte, as 17C.2")
+    ap.add_argument("--as", dest="as_id", help="for adopt: the id to give it")
+    ap.add_argument("--label", help="for adopt: the human name")
+    ap.add_argument("--car", help="for adopt: the profile slug to write into")
     ap.add_argument("--minutes", type=float, default=45.0,
                     help="for drive: how long to keep listening (default 45)")
     args = ap.parse_args(argv)
@@ -641,6 +657,9 @@ def main(argv):
         ask_stop()
         print("\n  asked it to stop; it saves what it has.\n")
         return 0
+
+    if args.action == "adopt":
+        return _adopt(args)
 
     if args.action == "drive":
         return _drive_session(args)
@@ -680,6 +699,218 @@ def main(argv):
     _print_census(cap)
     if args.save:
         print(f"  saved: {cap.save(raw=args.raw)}\n")
+    return 0
+
+
+# ------------------------------------------------------------- adoption
+#
+# A CAPTURE IS EVIDENCE. A PROFILE IS A CLAIM. THIS IS THE STEP BETWEEN.
+#
+# Everything upstream of here was built and then had nowhere to go: a
+# discriminator sat in a JSON file under a timestamp, and the car's profile --
+# the thing that is shared, that drives a gauge, that another owner reads --
+# knew nothing about it. So the findings of a session survived only as long as
+# somebody remembered which file they were in.
+#
+# What lands is a CANDIDATE, never more. A byte that held one value while a
+# switch was in one position and another value while it was in another is
+# evidence about the byte; it is not knowledge of what the byte means. The
+# person who watched the switch is the only thing that can say that, and they
+# say it by naming the signal and its states here. Promotion above candidate
+# stays exactly where it was: a human, checking against something real.
+
+
+def _cross_capture(docs, min_frames=MIN_FRAMES_PER_WINDOW):
+    """Bytes steady inside every capture and different between them.
+
+    The same rule Capture.discriminators() applies within one capture, applied
+    across several -- which is how a session with the engine running actually
+    goes, one capture per switch position, because nobody types at a wheel.
+    """
+    seen = []
+    for doc in docs:
+        per, heard = {}, {}
+        for f in doc.get("raw") or []:
+            try:
+                data = bytes.fromhex(f["data"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            ident = f.get("id")
+            heard[ident] = heard.get(ident, 0) + 1
+            slot = per.setdefault(ident, {})
+            for n, b in enumerate(data):
+                slot.setdefault(n, set()).add(b)
+        seen.append((doc.get("note") or "?", per, heard))
+    if len(seen) < 2:
+        return []
+    shared = None
+    for _l, per, heard in seen:
+        ids = {i for i in per if heard.get(i, 0) >= min_frames}
+        shared = ids if shared is None else (shared & ids)
+    out = []
+    for ident in sorted(shared or ()):
+        width = min(len(per[ident]) for _l, per, _h in seen)
+        for n in range(width):
+            vals = [(lab, per[ident].get(n, set())) for lab, per, _h in seen]
+            if any(len(v) != 1 for _l, v in vals):
+                continue
+            singles = [next(iter(v)) for _l, v in vals]
+            if len(set(singles)) < 2:
+                continue
+            out.append({"id": ident, "byte": n, "distinct": len(set(singles)),
+                        "per_window": [{"label": lab, "value": v}
+                                       for (lab, _s), v in zip(vals, singles)]})
+    return sorted(out, key=lambda r: (-r["distinct"], r["id"], r["byte"]))
+
+
+def _states_from(windows):
+    """{byte value: every label it was seen under}, in the order seen."""
+    order = {}
+    for w in windows:
+        key = f"{w['value']:02X}"
+        labels = order.setdefault(key, [])
+        if w["label"] not in labels:
+            labels.append(w["label"])
+    return {k: " / ".join(v) for k, v in order.items()}
+
+
+def _adopt(args):
+    """Write one discriminator into this car's profile, as a candidate."""
+    import profile as profilelib
+
+    # BOTH POSITIONALS, OR THE FIRST CAPTURE IS SILENTLY DROPPED. `name`
+    # exists for `show`, and argparse hands it the first bare word here too --
+    # so taking only `captures` compared three windows out of four and never
+    # said it had. A tool that quietly uses less evidence than it was given is
+    # the same failure as one that invents some.
+    names = ([args.name] if args.name else []) + list(args.captures or [])
+    docs = []
+    for n in names:
+        d = load(n)
+        if not d:
+            print(f"\n  no capture called {n!r} — omacar listen list\n")
+            return 1
+        docs.append((n, d))
+    if len(docs) < 2 and not (docs and docs[0][1].get("marks")):
+        print("\n  adoption compares positions: give two or more captures, or "
+              "one taken with `omacar listen marks`.\n")
+        return 1
+
+    # THE CAPTURES MUST ALL BE THE SAME CAR, AND IT MUST BE THIS ONE.
+    here = profilelib.slug_for_current_car()
+    cars = {d.get("vehicle") or "unknown-car" for _n, d in docs}
+    if len(cars) > 1:
+        print(f"\n  those captures are from different cars ({', '.join(sorted(cars))}). "
+              f"A profile is a claim about one vehicle.\n")
+        return 1
+    theirs = cars.pop()
+    target = args.car or theirs
+    if not args.car and theirs != here and theirs != "unknown-car":
+        print(f"\n  those captures were taken on {theirs} and this machine is "
+              f"pointing at {here}.\n  Pass --car {theirs} if you meant to file "
+              f"them there anyway.\n")
+        return 1
+
+    rows = (_cross_capture([d for _n, d in docs]) if len(docs) > 1
+            else [{"id": r["id"], "byte": r["byte"], "distinct": r["distinct"],
+                   "per_window": r["per_window"]}
+                  for r in (docs[0][1].get("discriminators") or [])])
+    if not rows:
+        print("\n  nothing in those captures behaved like a switch.\n")
+        return 1
+
+    if not args.signal:
+        print(f"\n  {BOLD}What could be adopted{RESET}  "
+              f"{DIM}from {len(docs)} capture(s) of {theirs}{RESET}\n")
+        for r in rows[:25]:
+            where = "  ".join(f"{w['label']}={w['value']:02X}"
+                              for w in r["per_window"])
+            print(f"    {GREEN}{r['id']}.{r['byte']}{RESET}   {where}")
+        print(f"\n  {DIM}Adopt one with:\n"
+              f"    omacar listen adopt {' '.join(names)} \\\n"
+              f"      --signal {rows[0]['id']}.{rows[0]['byte']} --as drive_mode "
+              f'--label "Drive mode"' + RESET + chr(10))
+        return 0
+
+    want = str(args.signal).replace(" ", "").upper()
+    if "." not in want:
+        print("\n  --signal looks like 17C.2 — an identifier and a byte.\n")
+        return 1
+    cid, _, bstr = want.partition(".")
+    try:
+        byte = int(bstr)
+    except ValueError:
+        print("\n  the byte after the dot must be a number.\n")
+        return 1
+    row = next((r for r in rows if r["id"] == cid and r["byte"] == byte), None)
+    if row is None:
+        print(f"\n  {cid}.{byte} is not one of the candidates. Run without "
+              f"--signal to see them.\n")
+        return 1
+
+    sid = args.as_id or f"{cid.lower()}_{byte}"
+    entry = {
+        "id": sid,
+        "name": args.label or sid.replace("_", " ").capitalize(),
+        "can_id": cid,
+        "byte": byte,
+        "kind": "enum",
+        # EVERY LABEL THAT VALUE WAS SEEN UNDER, NOT THE LAST ONE.
+        #
+        # A dict comprehension over the windows quietly kept whichever label
+        # came last, so a byte reading 02 in three of four windows was written
+        # down as meaning the fourth. That is the tool inventing a mapping the
+        # evidence does not support -- and worse, it HIDES the thing the reader
+        # most needs to see: if "econ" and "econ again" ended up on different
+        # values, the byte did not follow the switch and is not what you think.
+        # Joined, that leaps off the page.
+        "states": _states_from(row["per_window"]),
+        "confidence": "candidate",
+        "provenance": {
+            "found_by": "omacar listen",
+            "found_on": theirs,
+            "method": "held each position and diffed the frames: "
+                      + ", ".join(w["label"] for w in row["per_window"]),
+            "first_seen": time.strftime("%Y-%m-%d"),
+            "note": "captures: " + ", ".join(names),
+        },
+    }
+
+    path = os.path.join(records.STATE, "profiles", target + ".toml")
+    doc, found = profilelib.load(target)
+    doc = doc or {"schema": profilelib.SCHEMA,
+                  "car": {"slug": target, "make": "", "model": ""}}
+    casts = [b for b in (doc.get("broadcast") or []) if b.get("id") != sid]
+    casts.append(entry)
+    doc["broadcast"] = casts
+    probs = profilelib.problems(doc)
+    blocking = [x for x in probs if x.startswith("broadcast ")]
+    if blocking:
+        print("\n  refusing to write it:")
+        for x in blocking:
+            print("    " + x)
+        print()
+        return 1
+    profilelib.write(path, doc)
+    print(f"\n  {GREEN}adopted{RESET} {cid}.{byte} as {BOLD}{sid}{RESET} "
+          f"into {target}")
+    shared = [k for k, v in entry["states"].items() if " / " in v]
+    for k, v in sorted(entry["states"].items()):
+        mark = f"  {YELLOW}<- more than one position{RESET}" if " / " in v else ""
+        print(f"    {k} = {v}{mark}")
+    if shared:
+        print(f"\n  {YELLOW}Read that carefully.{RESET} A value that appears "
+              f"under more than one position\n  means this byte does not "
+              f"distinguish them — and if a position you returned to\n  did not "
+              f"come back to its earlier value, the byte was not following the\n"
+              f"  switch at all. Repeat it before you believe it.")
+    print(f"\n  {DIM}It is a CANDIDATE. It says a byte moved when you said you "
+          f"moved a switch,\n  which is evidence and not yet meaning. Hold each "
+          f"position again on another\n  drive; if it holds, that is when it "
+          f"becomes validated — by you, not by this.{RESET}\n")
+    if probs and not blocking:
+        print(f"  {DIM}(the profile has other notes: omacar profile check "
+              f"{target}){RESET}\n")
     return 0
 
 

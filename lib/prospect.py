@@ -193,31 +193,10 @@ def resample(el, found, rounds, delay, on_progress):
     return found
 
 
+# Which car a sweep is about lives in lib/profile.py, in one copy. A second
+# copy here is what filed a Porsche's measurements under a Honda.
 def _slug_for_connected_car():
-    """The profile slug for the vehicle actually on the other end of the cable.
-
-    The garage key is the VIN that chose the open database, so it is the same
-    source the daemon and the app use. A car with a matching profile drafts
-    into it; one without gets a name built from its VIN prefix, which is
-    honest and unmistakable, rather than inheriting somebody else's slug.
-    """
-    import garage
-    try:
-        key = garage.current()
-    except Exception:                                         # noqa: BLE001
-        key = None
-    if not key or key in (getattr(garage, "SIM_KEY", "simulated"), "unknown"):
-        return "unknown-car"
-    try:
-        slug = profilelib.for_vin(key)
-        if slug:
-            return slug
-        prefix = profilelib.vin_prefix(key)
-        if prefix:
-            return "unknown-" + prefix.lower()
-    except Exception:                                         # noqa: BLE001
-        pass
-    return "unknown-car"
+    return profilelib.slug_for_current_car()
 
 
 def main(argv):

@@ -659,6 +659,79 @@ check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
 
+# ------------------------------------------------- a capture becomes a claim
+head("a capture becomes a candidate, and never more than the evidence")
+
+import listen as _lst  # noqa: E402
+
+# A broadcast signal is read from a frame the car already sends. Nothing in
+# that table may describe something to transmit -- which is the whole reason
+# it is safe to share.
+_bc = {"id": "drive_mode", "can_id": "17C", "byte": 2, "kind": "enum",
+       "states": {"03": "econ", "02": "normal"}, "confidence": "candidate",
+       "provenance": {"found_on": "a 2015 CR-Z"}}
+
+
+def _prof(**over):
+    b = dict(_bc); b.update(over)
+    return {"schema": _p.SCHEMA, "car": {"slug": "x", "make": "y", "model": "z"},
+            "broadcast": [b]}
+
+
+check("a well-formed broadcast entry passes", _p.problems(_prof()), [])
+for field in ("request", "header", "service", "did", "on", "off"):
+    check(f"a broadcast entry carrying `{field}` is refused",
+          any("may describe something to transmit" in x
+              for x in _p.problems(_prof(**{field: "220200"}))), True)
+check("an 11-bit or 29-bit id is required",
+      any("arbitration identifier" in x for x in _p.problems(_prof(can_id="ZZ"))), True)
+check("the byte must be inside a frame",
+      any("byte must be 0-7" in x for x in _p.problems(_prof(byte=9))), True)
+check("a value needs a formula",
+      any("needs a formula" in x for x in _p.problems(_prof(kind="value", states=None))), True)
+check("validated needs to say against what",
+      any("against what" in x for x in _p.problems(_prof(confidence="validated"))), True)
+check("a single-digit state key is fine, because normalize pads it",
+      _p.problems(_prof(states={"3": "econ"})), [])
+check("and normalize does pad it",
+      _p.normalize(_prof(states={"3": "econ"}))["broadcast"][0]["states"], {"03": "econ"})
+check("it survives being written and read back",
+      "[[broadcast]]" in _p.dumps(_p.normalize(_prof())), True)
+
+# THE STATES MUST NAME EVERY POSITION A VALUE WAS SEEN UNDER. Keeping only the
+# last one wrote down "02 = econ again" for a byte that read 02 in three of
+# four windows -- inventing a mapping, and hiding the very thing that proves
+# the byte did not follow the switch.
+_w = [{"label": "econ", "value": 0x03}, {"label": "normal", "value": 0x02},
+      {"label": "sport", "value": 0x02}, {"label": "econ again", "value": 0x02}]
+check("every label a value appeared under is kept",
+      _lst._states_from(_w),
+      {"03": "econ", "02": "normal / sport / econ again"})
+check("a clean one-to-one mapping stays clean",
+      _lst._states_from([{"label": "a", "value": 1}, {"label": "b", "value": 2}]),
+      {"01": "a", "02": "b"})
+
+# Comparing across captures obeys the same rule as comparing across marks.
+def _cap(note, frames):
+    return {"note": note, "raw": [{"id": i, "data": d} for i, d in frames]}
+
+
+_steady = [("300", "0102037F")] * 8
+_moved = [("300", "010203" + f"{i:02X}") for i in range(8)]
+check("a byte steady in each capture and different between them is a candidate",
+      [(r["id"], r["byte"]) for r in _lst._cross_capture(
+          [_cap("a", [("300", "01020300")] * 8), _cap("b", [("300", "01020301")] * 8)])],
+      [("300", 3)])
+check("a byte that moves inside a capture is not",
+      _lst._cross_capture([_cap("a", _moved), _cap("b", _moved)]), [])
+check("a byte identical everywhere is not a switch",
+      _lst._cross_capture([_cap("a", _steady), _cap("b", _steady)]), [])
+check("one capture alone has nothing to compare",
+      _lst._cross_capture([_cap("a", _steady)]), [])
+check("an identifier heard too few times is not judged",
+      _lst._cross_capture([_cap("a", [("300", "0102030A")] * 2),
+                             _cap("b", [("300", "0102030B")] * 2)]), [])
+
 # --------------------------------------------------- whose profile is drafted
 head("a sweep drafts into the car it swept, not the one in a default")
 

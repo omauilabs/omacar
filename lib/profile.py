@@ -188,6 +188,30 @@ META_KEYS = ("created", "updated", "contributors", "checksum")
 ACTUATOR_KEYS = ("test", "name", "header", "did", "on", "off", "session",
                  "confidence", "provenance")
 
+# A SIGNAL NOBODY ASKED FOR.
+#
+# Every other entry in this format describes a REQUEST: send these bytes to
+# this module and read the answer. A broadcast signal is not that. It is a byte
+# in a frame the car emits continuously, addressed to nobody, which is how an
+# instrument cluster learns the state of charge and which way a dashboard
+# switch is set -- and frequently there is no diagnostic identifier for it at
+# all. Sweeping 8,192 of them on this project's own car found nothing while the
+# dashboard showed the number the whole time.
+#
+# So it needs its own shape: an arbitration id, a byte position, and either a
+# set of named states (a switch) or a formula over the frame's bytes (a value).
+# `can_id` is 3 or 8 hex digits because both widths ride the same wire.
+#
+# It carries no request and cannot be turned into one. Nothing in this table
+# can put a frame on the bus, which is the whole reason it is safe to share:
+# the worst a wrong entry can do is mislabel a number on a screen.
+BROADCAST_KEYS = ("id", "name", "can_id", "byte", "kind", "states", "formula",
+                  "unit", "confidence", "provenance")
+
+# A switch has named positions; a value has a formula. Anything else is not
+# something this can read.
+BROADCAST_KINDS = ("enum", "value")
+
 
 def normalize(doc):
     """The document as it will actually be written.
@@ -256,6 +280,30 @@ def normalize(doc):
         acts.append(q)
     if acts:
         out["actuator"] = acts
+
+    casts = []
+    for b in src.get("broadcast") or []:
+        q = keep(b, BROADCAST_KEYS)
+        if q.get("can_id") is not None:
+            q["can_id"] = str(q["can_id"]).replace(" ", "").upper()
+        if q.get("byte") is not None:
+            try:
+                q["byte"] = int(q["byte"])
+            except (TypeError, ValueError):
+                q.pop("byte", None)
+        if isinstance(q.get("states"), dict):
+            # Keys are byte values written as two hex digits, so a reader never
+            # has to guess whether 10 meant sixteen or ten.
+            q["states"] = {str(k).replace(" ", "").upper().rjust(2, "0"): str(v)
+                           for k, v in q["states"].items()}
+        prov = keep(b.get("provenance"), PROV_KEYS)
+        if prov:
+            q["provenance"] = prov
+        else:
+            q.pop("provenance", None)
+        casts.append(q)
+    if casts:
+        out["broadcast"] = casts
 
     poll = {}
     for tier in POLL_TIERS:
@@ -341,6 +389,33 @@ def screen(profile, name, default=False):
     doc = _doc(profile)
     v = (doc.get("screens") or {}).get(name)
     return default if v is None else bool(v)
+
+
+def slug_for_current_car():
+    """The profile slug for the vehicle the garage is pointing at.
+
+    ONE COPY OF THIS, DELIBERATELY. lib/prospect.py grew its own answer to
+    "which car is this about" -- a hardcoded default -- and filed a Porsche's
+    measurements under a Honda. The lesson from that, and from the payload
+    offsets before it, is that a second copy of a piece of knowledge is a
+    second chance to disagree. Everything that writes a per-car file asks here.
+
+    A car with a matching profile gets its slug. One without gets a name built
+    from its VIN prefix, which is honest and unmistakable rather than
+    inheriting somebody else's. Nothing gets a guess.
+    """
+    import garage
+    try:
+        key = garage.current()
+    except Exception:                                         # noqa: BLE001
+        return "unknown-car"
+    if not key or key in (getattr(garage, "SIM_KEY", "simulated"), "unknown"):
+        return "unknown-car"
+    slug = for_vin(key)
+    if slug:
+        return slug
+    prefix = vin_prefix(key)
+    return ("unknown-" + prefix.lower()) if prefix else "unknown-car"
 
 
 def for_vin(vin):
@@ -526,6 +601,64 @@ def problems(doc):
             out.append(f"{where}: claims validated but does not say against "
                        f"what -- for an actuator that means what physically "
                        f"moved, seen by whom.")
+
+    seen_bcast = set()
+    for i, b in enumerate(doc.get("broadcast") or []):
+        where = f"broadcast {b.get('id') or i + 1}"
+        if not b.get("id"):
+            out.append(f"{where}: no id, so it cannot be merged or superseded")
+        elif b["id"] in seen_bcast:
+            out.append(f"{where}: duplicate id")
+        else:
+            seen_bcast.add(b["id"])
+        cid = str(b.get("can_id") or "").replace(" ", "").upper()
+        if not (cid and set(cid) <= hexchars and len(cid) in (3, 8)):
+            out.append(f"{where}: can_id must be a 3- or 8-digit hex "
+                       f"arbitration identifier")
+        byte = b.get("byte")
+        if not isinstance(byte, int) or not 0 <= byte <= 7:
+            out.append(f"{where}: byte must be 0-7, the position in the frame")
+        kind = b.get("kind")
+        if kind not in BROADCAST_KINDS:
+            out.append(f"{where}: kind {kind!r} is not one of "
+                       f"{', '.join(BROADCAST_KINDS)}")
+        elif kind == "enum":
+            states = b.get("states")
+            if not isinstance(states, dict) or not states:
+                out.append(f"{where}: an enum needs `states`, mapping byte "
+                           f"values to what they mean")
+            else:
+                for k in states:
+                    # One byte, written as hex. normalize() pads a single
+                    # digit, so complaining about "3" would be complaining
+                    # about something this file itself fixes.
+                    kk = str(k).replace(" ", "").upper()
+                    if len(kk) not in (1, 2) or not set(kk) <= hexchars:
+                        out.append(f"{where}: state key {k!r} should be one "
+                                   f"byte, as one or two hex digits")
+        elif kind == "value" and not str(b.get("formula") or "").strip():
+            out.append(f"{where}: a value needs a formula over the frame's "
+                       f"bytes (A is byte 0)")
+        # A BROADCAST ENTRY CANNOT BE TURNED INTO A REQUEST, and the format
+        # will not carry the fields that would let somebody try. This is the
+        # reason the section is safe to share at all: the worst a wrong entry
+        # can do is mislabel a number on a screen.
+        for k in ("request", "header", "service", "did", "on", "off"):
+            if k in b:
+                out.append(f"{where}: carries `{k}`. A broadcast signal is read "
+                           f"from a frame the car already sends; nothing in "
+                           f"this table may describe something to transmit.")
+        conf = b.get("confidence")
+        if conf not in CONFIDENCE:
+            out.append(f"{where}: confidence {conf!r} is not one of "
+                       f"{', '.join(CONFIDENCE)}")
+        prov = b.get("provenance") or {}
+        if not prov.get("found_on"):
+            out.append(f"{where}: provenance.found_on is missing")
+        if conf == "validated" and not prov.get("validated_against"):
+            out.append(f"{where}: claims validated but does not say against "
+                       f"what. For a broadcast byte that means the thing you "
+                       f"watched change while it did.")
     return out
 
 
@@ -652,6 +785,41 @@ def dumps(doc):
             for k in ("found_by", "found_on", "vin_prefix", "method",
                       "first_seen", "samples", "validated_by", "validated_on",
                       "validated_against", "refuted_by", "refuted_on", "note"):
+                v = prov.get(k)
+                if v is None or v == "":
+                    continue
+                L.append(f"  {k} = " + (str(v) if isinstance(v, int) else _q(v)))
+
+    for b in doc.get("broadcast") or []:
+        L.append("")
+        L.append("[[broadcast]]")
+        L.append("# Read from a frame the car already sends. Nothing here is "
+                 "transmitted.")
+        for k in ("id", "name", "can_id"):
+            if b.get(k) not in (None, ""):
+                L.append(f"{k} = {_q(b[k])}")
+        if b.get("byte") is not None:
+            L.append(f"byte = {int(b['byte'])}")
+        if b.get("kind"):
+            L.append(f"kind = {_q(b['kind'])}")
+        for k in ("formula", "unit"):
+            if b.get(k) not in (None, ""):
+                L.append(f"{k} = {_q(b[k])}")
+        L.append(f"confidence = {_q(b.get('confidence', 'candidate'))}")
+        states = b.get("states") or {}
+        if states:
+            L.append("")
+            L.append("  [broadcast.states]")
+            for k in sorted(states):
+                L.append(f"  {_q(str(k))} = {_q(str(states[k]))}")
+        prov = b.get("provenance") or {}
+        if prov:
+            L.append("")
+            L.append("  [broadcast.provenance]")
+            for k in ("found_by", "found_on", "vin_prefix", "method",
+                      "first_seen", "validated_by", "validated_on",
+                      "validated_against", "refuted_by", "refuted_on", "note",
+                      "url", "retrieved_at", "source_kind"):
                 v = prov.get(k)
                 if v is None or v == "":
                     continue
