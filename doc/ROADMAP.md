@@ -115,6 +115,23 @@ generated below rather than typed here — for the reason given there.
 - **Demo mode** — a throwaway OmaCar with its own data, for showing somebody,
   structurally unable to reach your car
 
+**Built, and not yet proven against the thing it is for**
+- **The phone screen.** OmaCar speaks the Carlinkit adapter's protocol, and the
+  driver that does it has never been run against an adapter. Every offset in it
+  is sourced from a reading of the protocol and none is confirmed by a device,
+  so the screen says the picture is unproven until a frame actually decodes and
+  stops saying it when one does. What surrounds the driver *is* proven, without
+  hardware: a recording travels the identical path — same records, same route,
+  same decoder, same pixels — and a test asserts pixels on a canvas in a real
+  browser on every run. `omacar phone` says which of the three things is
+  missing; `omacar phone replay` shows the rest of the path working.
+- **Two decoders, because the obvious one lies.** A browser with no hardware
+  decoder answers "can you decode H.264" with yes, accepts every frame, and
+  returns none — with no error, and a canvas as black as an unplugged adapter.
+  So the app watches for pictures rather than believing the answer, falls back
+  to a fragmented-MP4 path when none arrive, and if neither works says how many
+  frames reached the machine and that the adapter is not the problem.
+
 **Honest limits**
 - One validated vehicle profile
 - The manufacturer identifier space is barely touched on that one car. The range
@@ -159,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 54 | 25,019 |
-| JavaScript — the app | 46 | 14,541 |
-| CSS | 7 | 2,726 |
+| Python — the whole diagnostic side | 56 | 26,392 |
+| JavaScript — the app | 48 | 15,600 |
+| CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 5 | 1,375 |
-| Tests | 10 | 4,228 |
-| Documentation | 12 | 3,379 |
+| Shell — the CLI and the installer | 5 | 1,381 |
+| Tests | 11 | 4,631 |
+| Documentation | 13 | 3,493 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **56,987** |
+| **Tracked in git, all of it** | | **59,947** |
 
-**Tests** — 798 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 817 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -191,7 +208,7 @@ What is actually covered, straight out of the runner's own headings:
 | a validated identifier drives a reading, and only a validated one | 31 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
-| the dongle list the CLI checks is the one the browser uses | 4 |
+| the dongle list the CLI checks is the one the browser uses | 12 |
 | a capture becomes a candidate, and never more than the evidence | 21 |
 | a sweep drafts into the car it swept, not the one in a default | 4 |
 | a layout has a name, a car remembers which, and the old file still works | 13 |
@@ -206,6 +223,7 @@ What is actually covered, straight out of the runner's own headings:
 | The launch calendar | 6 |
 | The shaders the music screen ships | 10 |
 | The app starts in a browser | 7 |
+| A picture reaches the canvas | 11 |
 | Units | 9 |
 | Service countdown | 9 |
 | Mode 06 verdicts | 4 |
@@ -283,16 +301,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 120 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 124 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The phone screen's requests were unsigned, which in the car reads as no adapter
+- `2026-09-08` A runbook for the CarPlay session, in the order that isolates the one new thing
+- `2026-09-08` The phone screen gets a picture, by whichever decoder the browser actually has
+- `2026-09-08` The CarPlay dongle: the two parts that can fail silently, checked
 - `2026-09-08` A capture becomes a claim: broadcast signals in the profile, and adoption
 - `2026-09-07` The app never started on a real car, and nothing here had ever started it
 - `2026-09-07` Echo off while monitoring: it costs a line for every frame
 - `2026-09-07` The bus you diagnose on is not the bus you listen to
-- `2026-09-07` A sweep drafts into the car it swept, not the one in a default
-- `2026-09-07` The suite was making five network calls, and one of them killed the process
-- `2026-09-07` The guards suite printed "every guard holds" and then dumped core
-- `2026-09-07` CI on hosted runners: a public repo must not run strangers' code on our metal
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
