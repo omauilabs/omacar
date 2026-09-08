@@ -159,17 +159,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 54 | 24,352 |
+| Python — the whole diagnostic side | 54 | 24,394 |
 | JavaScript — the app | 46 | 14,541 |
 | CSS | 7 | 2,726 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,373 |
-| Tests | 9 | 3,943 |
+| Tests | 9 | 3,972 |
 | Documentation | 12 | 3,376 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **56,008** |
+| **Tracked in git, all of it** | | **56,079** |
 
-**Tests** — 762 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 766 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -191,6 +191,7 @@ What is actually covered, straight out of the runner's own headings:
 | a validated identifier drives a reading, and only a validated one | 31 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
+| a sweep drafts into the car it swept, not the one in a default | 4 |
 | a layout has a name, a car remembers which, and the old file still works | 13 |
 | no tool hands a full VIN to a model whose answers are spoken | 9 |
 | the assistant is reachable by hand, and only from this machine | 7 |
@@ -279,8 +280,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 114 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 115 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-07` The suite was making five network calls, and one of them killed the process
 - `2026-09-07` The guards suite printed "every guard holds" and then dumped core
 - `2026-09-07` CI on hosted runners: a public repo must not run strangers' code on our metal
 - `2026-09-07` CI on the org's own runners
@@ -288,7 +290,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` The launch calendar is checked wherever it is kept
 - `2026-09-07` Placing the bar widget: check whether it happened, then do it
 - `2026-09-07` Roadmap: counts regenerated
-- `2026-09-07` The agent surface: smaller, and no VIN reaches the speaker by any route
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

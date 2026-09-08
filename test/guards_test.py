@@ -659,6 +659,35 @@ check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
 
+# --------------------------------------------------- whose profile is drafted
+head("a sweep drafts into the car it swept, not the one in a default")
+
+import prospect as _pro  # noqa: E402
+
+_pd = tempfile.mkdtemp()
+_gold, _fold = _pro.profilelib.for_vin, None
+try:
+    import garage as _g
+    _fold = _g.current
+    _g.current = lambda: "JHMZF1D44FS001835"
+    _pro.profilelib.for_vin = lambda vin: "honda-crz-2015" if vin.startswith("JHMZF1D4") else None
+    check("a car with a profile drafts into it",
+          _pro._slug_for_connected_car(), "honda-crz-2015")
+    _g.current = lambda: "WP0ZZZ99ZTS39"
+    check("another car does NOT inherit it",
+          _pro._slug_for_connected_car(), "unknown-wp0zzz99")
+    _g.current = lambda: _g.SIM_KEY
+    check("the simulator drafts nowhere real",
+          _pro._slug_for_connected_car(), "unknown-car")
+    _g.current = lambda: "unknown"
+    check("and an unidentified car is named as one",
+          _pro._slug_for_connected_car(), "unknown-car")
+finally:
+    _pro.profilelib.for_vin = _gold
+    if _fold is not None:
+        _g.current = _fold
+    shutil.rmtree(_pd, ignore_errors=True)
+
 # ------------------------------------------------------------- drive layouts
 head("a layout has a name, a car remembers which, and the old file still works")
 

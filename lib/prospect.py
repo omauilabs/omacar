@@ -193,6 +193,33 @@ def resample(el, found, rounds, delay, on_progress):
     return found
 
 
+def _slug_for_connected_car():
+    """The profile slug for the vehicle actually on the other end of the cable.
+
+    The garage key is the VIN that chose the open database, so it is the same
+    source the daemon and the app use. A car with a matching profile drafts
+    into it; one without gets a name built from its VIN prefix, which is
+    honest and unmistakable, rather than inheriting somebody else's slug.
+    """
+    import garage
+    try:
+        key = garage.current()
+    except Exception:                                         # noqa: BLE001
+        key = None
+    if not key or key in (getattr(garage, "SIM_KEY", "simulated"), "unknown"):
+        return "unknown-car"
+    try:
+        slug = profilelib.for_vin(key)
+        if slug:
+            return slug
+        prefix = profilelib.vin_prefix(key)
+        if prefix:
+            return "unknown-" + prefix.lower()
+    except Exception:                                         # noqa: BLE001
+        pass
+    return "unknown-car"
+
+
 def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="omacar prospect", add_help=True)
@@ -205,7 +232,21 @@ def main(argv):
                     help="PID range in hex, e.g. 00-FF or 0000-01FF")
     ap.add_argument("--delay", type=float, default=0.06)
     ap.add_argument("--rounds", type=int, default=6, help="resamples per responder")
-    ap.add_argument("--car", default="honda-crz-2015")
+    # WHICH CAR THIS IS ABOUT, ASKED RATHER THAN ASSUMED.
+    #
+    # This defaulted to the literal "honda-crz-2015" -- the one vehicle the
+    # project was written against -- so a sweep of ANY car filed its findings
+    # under that name. Prospecting the bench emulator, a Porsche VIN, wrote a
+    # draft whose first line reads slug = "honda-crz-2015": one vehicle's
+    # measurements attributed to another, in a file whose entire purpose is to
+    # say which car a claim came from. It is the same fault as the live sample
+    # and the drive tiles, in the place where it would do the most damage,
+    # because a profile is the thing people share.
+    #
+    # Now: what you asked for, else the profile that matches the car actually
+    # connected, else a name built from its VIN prefix. Never a guess.
+    ap.add_argument("--car", default=None,
+                    help="profile slug to draft into (default: the connected car)")
     ap.add_argument("--parked", action="store_true",
                     help="confirm the car is parked when road speed cannot be read")
     args = ap.parse_args(argv)
@@ -406,13 +447,14 @@ def main(argv):
         print(f"    {f['header']}  {f['request']:<6} len={f['payload_len']:<3} {tag}")
     print()
 
+    slug = args.car or _slug_for_connected_car()
     draft = profilelib.write_draft(
-        os.path.join(connect.STATE, "profiles", args.car + ".draft.toml"),
+        os.path.join(connect.STATE, "profiles", slug + ".draft.toml"),
         # The protocol recorded here was hardcoded to CAN 11/500 -- the one
         # this project happened to be written against. A profile is a claim
         # about a specific vehicle, and naming the wrong bus in it makes every
         # candidate underneath unverifiable by anyone else.
-        {"slug": args.car, "description": "drafted by omacar prospect",
+        {"slug": slug, "description": "drafted by omacar prospect",
          "protocol": (prof["name"] if prof else f"unknown ({el.protocol})"),
          "discovered": stamp},
         live or found)
