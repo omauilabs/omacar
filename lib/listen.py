@@ -86,6 +86,23 @@ MIN_FRAMES_PER_WINDOW = 5
 # stops a forgotten terminal holding the adapter all night.
 MARKS_BACKSTOP = 1800.0
 
+# A DRIVE IS LONGER THAN A CONNECTION.
+#
+# The first capture attempted while actually driving was run over ssh from
+# another machine, and the car drove out of range: the session dropped, and the
+# capture went with it. A capture that only survives while somebody is watching
+# it is not one you can take on a drive, which is the only place half of this
+# data exists.
+#
+# So a detached capture: it outlives its terminal, it writes progressively
+# rather than only at the end, and it can be asked how it is doing and told to
+# stop. Thirty seconds is often enough of a gap to lose a whole drive to a flat
+# battery or a stray ctrl-c, and rewriting the file that often costs nothing
+# next to what it protects.
+FLUSH_EVERY = 30.0
+RUNNING = os.path.join(records.STATE, "listen-running.json")
+STOPFILE = os.path.join(records.STATE, "listen-stop")
+
 
 # ------------------------------------------------------------------ the frames
 # An arbitration identifier is 3 hex digits on an 11-bit bus and 8 on a 29-bit
@@ -299,6 +316,14 @@ class Capture:
             "discriminators": self.discriminators(),
         }
 
+    def flush(self, name, raw=True):
+        """Write what we have so far, under a stable name. Cheap and repeated.
+
+        A capture that only lands on disk when it finishes is a capture that a
+        flat battery, a dropped link or an accidental ctrl-c destroys entirely.
+        """
+        return self.save(name=name, raw=raw)
+
     def save(self, name=None, raw=False):
         """Keep it. The census and the marks always; the frames only on request.
 
@@ -384,8 +409,43 @@ def _pick_monitor_protocol(el, probe=2.0):
     return best
 
 
+def _publish_progress(name, cap, seconds):
+    """What a detached capture is doing, for anything that asks."""
+    tmp = RUNNING + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"name": name, "note": cap.note, "started": cap.started,
+                   "seconds": seconds, "frames": len(cap.frames),
+                   "identifiers": len({i for _t, i, _d in cap.frames}),
+                   "rejected": cap.rejected, "protocol": cap.protocol,
+                   "at": time.time()}, f)
+    os.replace(tmp, RUNNING)
+
+
+def running():
+    """The detached capture in progress, or None."""
+    try:
+        with open(RUNNING, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    # A capture whose deadline passed long ago is finished, not running.
+    if time.time() - (doc.get("at") or 0) > FLUSH_EVERY * 3:
+        return None
+    return doc
+
+
+def ask_stop():
+    with open(STOPFILE, "w", encoding="utf-8") as f:
+        f.write(str(time.time()))
+
+
+def _stop_asked():
+    return os.path.exists(STOPFILE)
+
+
 def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
-           limit=DEFAULT_LIMIT, cap=None, should_stop=None, probe=2.0):
+           limit=DEFAULT_LIMIT, cap=None, should_stop=None, probe=2.0,
+           flush_as=None):
     """Take the port, listen for `seconds`, give it back. Returns a Capture.
 
     `can_id` narrows the adapter's own filter to one identifier, which is worth
@@ -457,10 +517,25 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
                 el.raw("ATCRA" + str(can_id).replace(" ", "").upper())
             chosen = _pick_monitor_protocol(el, probe)
             cap.protocol = chosen
+            state = {"last": time.time()}
+
+            def take(ln):
+                cap.add_line(ln)
+                if on_frame:
+                    on_frame(ln)
+                # Write through, so what has been heard survives whatever ends
+                # the capture -- and publish progress a watcher can read.
+                if flush_as and time.time() - state["last"] >= FLUSH_EVERY:
+                    state["last"] = time.time()
+                    try:
+                        cap.flush(flush_as)
+                        _publish_progress(flush_as, cap, seconds)
+                    except OSError:
+                        pass
+
             el.monitor("ATMA", seconds=seconds, limit=limit,
                        should_stop=should_stop,
-                       on_line=lambda ln: (cap.add_line(ln),
-                                           on_frame(ln) if on_frame else None))
+                       on_line=take)
         finally:
             try:
                 if can_id:
@@ -531,7 +606,8 @@ def main(argv):
     import argparse
     ap = argparse.ArgumentParser(prog="omacar listen", add_help=True)
     ap.add_argument("action", nargs="?", default="capture",
-                    choices=["capture", "marks", "list", "show"])
+                    choices=["capture", "marks", "list", "show", "drive",
+                             "status", "stop"])
     ap.add_argument("name", nargs="?", help="for show: which capture")
     ap.add_argument("--seconds", type=float, default=None,
                     help=f"capture length (default {DEFAULT_SECONDS:.0f}s; "
@@ -540,9 +616,34 @@ def main(argv):
     ap.add_argument("--note", default="")
     ap.add_argument("--save", action="store_true", help="keep the capture")
     ap.add_argument("--raw", action="store_true", help="keep every frame too")
+    ap.add_argument("--minutes", type=float, default=45.0,
+                    help="for drive: how long to keep listening (default 45)")
     args = ap.parse_args(argv)
     if args.seconds is None:
         args.seconds = MARKS_BACKSTOP if args.action == "marks" else DEFAULT_SECONDS
+
+    if args.action == "status":
+        r = running()
+        if not r:
+            print("\n  nothing is listening.\n")
+            return 1
+        mins = (time.time() - r["started"]) / 60.0
+        print(f"\n  {BOLD}listening{RESET}  {r['name']}   {r.get('note','')}")
+        print(f"    {mins:.1f} min so far · {r['frames']} frames · "
+              f"{r['identifiers']} identifiers · protocol {r.get('protocol')}")
+        print(f"\n  {DIM}omacar listen stop   to end it and keep what it has{RESET}\n")
+        return 0
+
+    if args.action == "stop":
+        if not running():
+            print("\n  nothing is listening.\n")
+            return 1
+        ask_stop()
+        print("\n  asked it to stop; it saves what it has.\n")
+        return 0
+
+    if args.action == "drive":
+        return _drive_session(args)
 
     if args.action == "list":
         names = captures()
@@ -579,6 +680,81 @@ def main(argv):
     _print_census(cap)
     if args.save:
         print(f"  saved: {cap.save(raw=args.raw)}\n")
+    return 0
+
+
+def _drive_session(args):
+    """A capture that outlives the terminal that started it.
+
+    For the case the whole feature exists for: a long drive, where the useful
+    frames are the ones recorded while the car is moving and nobody can be
+    typing. Start it before setting off, drive, and stop it when back. It
+    writes through every half minute, so a flat battery or a lost connection
+    costs the last thirty seconds rather than the whole drive.
+
+    Mode changes are not marked here on purpose. Reaching for a keyboard at
+    speed to label a window is exactly the thing this tool refuses to ask of a
+    driver; every frame carries a timestamp, so the windows can be cut
+    afterwards from a note on paper.
+    """
+    import subprocess
+
+    if running():
+        print("\n  something is already listening — omacar listen status\n")
+        return 1
+
+    if os.environ.get("OMACAR_LISTEN_CHILD") != "1":
+        # Re-launch detached, so closing the terminal, losing ssh or driving
+        # out of range does not take the capture with it.
+        env = dict(os.environ, OMACAR_LISTEN_CHILD="1")
+        argv = [sys.executable, os.path.abspath(__file__), "drive",
+                "--minutes", str(args.minutes), "--note", args.note or "drive"]
+        if args.can_id:
+            argv += ["--id", args.can_id]
+        log = os.path.join(records.STATE, "listen-drive.log")
+        os.makedirs(records.STATE, exist_ok=True)
+        with open(log, "ab") as f:
+            subprocess.Popen(argv, stdout=f, stderr=f,
+                             stdin=subprocess.DEVNULL, start_new_session=True,
+                             env=env)
+        for _ in range(40):
+            time.sleep(0.5)
+            if running():
+                break
+        r = running()
+        print(f"\n  {BOLD}listening in the background{RESET}   "
+              f"up to {args.minutes:.0f} min")
+        print(f"  {DIM}It survives this terminal closing, ssh dropping and the car\n"
+              f"  driving out of range. Nothing is transmitted to the vehicle.{RESET}\n")
+        print(f"    omacar listen status     how it is going")
+        print(f"    omacar listen stop       end it and keep what it has\n")
+        if not r:
+            print(f"  {YELLOW}(it has not reported yet — check status in a moment){RESET}\n")
+        return 0
+
+    # The child.
+    try:
+        os.remove(STOPFILE)
+    except OSError:
+        pass
+    name = time.strftime("%Y%m%d-%H%M%S") + "-drive"
+    cap = Capture(note=args.note or "drive")
+    _publish_progress(name, cap, args.minutes * 60)
+    try:
+        listen(seconds=args.minutes * 60, can_id=args.can_id,
+               note=args.note or "drive", cap=cap, flush_as=name,
+               should_stop=_stop_asked)
+    finally:
+        try:
+            cap.flush(name)
+            _publish_progress(name, cap, args.minutes * 60)
+        except OSError:
+            pass
+        try:
+            os.remove(RUNNING)
+            os.remove(STOPFILE)
+        except OSError:
+            pass
     return 0
 
 

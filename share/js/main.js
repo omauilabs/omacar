@@ -600,7 +600,7 @@ function paintBar() {
   }
   els.name.textContent = car.name || "Unknown vehicle";
   els.sub.textContent = [car.vehicle && car.vehicle.trim, car.vehicle && car.vehicle.engine,
-                         maskVin(car.vehicle && car.vehicle.vin)].filter(Boolean).join("  ·  ");
+                         maskVinShort(car.vehicle && car.vehicle.vin)].filter(Boolean).join("  ·  ");
 
   els.priv.hidden = !privacy.on;
   // Two kinds of not-a-car, both named before their numbers. The simulator

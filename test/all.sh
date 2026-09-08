@@ -21,6 +21,7 @@ fi
 python3 "$ROOT/test/guards_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/shaders_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/app_test.py" || fails=$((fails + 1))
 
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
