@@ -19,7 +19,11 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CALENDAR = os.path.join(ROOT, "launch", "calendar.json")
+# Checked where it is, not where it used to be: the environment variable lets
+# the owner keep it anywhere, and the in-tree path is the fallback for anyone
+# who does have one.
+CALENDAR = os.environ.get("OMACAR_CALENDAR") or os.path.join(ROOT, "launch",
+                                                             "calendar.json")
 
 TWEET_MAX = 280
 PER_DAY_MAX = 4
@@ -117,6 +121,16 @@ def problems(doc):
 
 def main():
     print("\n  The launch calendar\n")
+    # THE CALENDAR IS NOT IN THE PUBLIC TREE. It is a month of unpublished
+    # posts and the notes behind them, which is the owner's business and not
+    # part of the tool -- so it lives outside the repository and this checks it
+    # wherever it is found. A checkout without one is not a failure; a check
+    # that silently passes on a missing file would be.
+    if not os.path.exists(CALENDAR):
+        print(f"    (no calendar at {os.path.relpath(CALENDAR, ROOT)} — skipping.\n"
+              f"     This is expected in a public checkout: the launch calendar\n"
+              f"     is kept outside the repository.)\n")
+        return 0
     with open(CALENDAR, encoding="utf-8") as f:
         doc = json.load(f)
     probs = problems(doc)
