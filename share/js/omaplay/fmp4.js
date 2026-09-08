@@ -114,12 +114,25 @@ export function parseSPS(nal) {
   if (r.bit()) { cropL = r.ue(); cropR = r.ue(); cropT = r.ue(); cropB = r.ue(); }
 
   // Cropping is counted in chroma samples, so the multiplier depends on the
-  // sampling. 4:2:0 is 2 across and 2 down; anything else here is unusual.
-  const subW = chroma === 3 ? 1 : 2;
+  // sampling: 4:2:0 is two across and two down, 4:2:2 is two across and one
+  // down, and monochrome and 4:4:4 are one of each. Treating monochrome as
+  // 4:2:0 -- which is what "anything but 4:4:4 is 2" does -- cropped it twice
+  // as much as it should across.
+  const subW = (chroma === 1 || chroma === 2) ? 2 : 1;
   const subH = chroma === 1 ? 2 : 1;
   const width = widthMbs * 16 - (cropL + cropR) * subW;
   const height = (2 - frameMbsOnly) * heightUnits * 16
                  - (cropT + cropB) * subH * (2 - frameMbsOnly);
+
+  // A TRUNCATED SPS PARSES INTO SOMETHING PLAUSIBLE RATHER THAN FAILING.
+  // Exp-Golomb reading past the end returns zeros, so the arithmetic above
+  // completes and hands back a real-looking 16x16 -- which would then be
+  // latched into an initialisation segment for the rest of the drive, with
+  // the fallback playing the whole phone screen into a postage stamp. The
+  // bounds below are wider than any real picture and reject only nonsense.
+  if (!(width >= 64 && width <= 8192 && height >= 64 && height <= 8192)) {
+    return null;
+  }
   return { profile, compat, level, width, height };
 }
 
@@ -155,12 +168,25 @@ const FOURCC = (s) => [s.charCodeAt(0), s.charCodeAt(1), s.charCodeAt(2), s.char
 // frame rate an adapter is likely to use without accumulating rounding drift.
 const TIMESCALE = 90000;
 
+// The profiles whose configuration record carries three more fields. Baseline,
+// which is what an adapter emits, is not among them -- but a High-profile file
+// dropped in for a replay is, and a record that stops early for one of those is
+// short by four bytes.
+const AVCC_EXTENDED = [100, 110, 122, 144];
+
 function avcC(sps, pps) {
-  return box("avcC", [
+  const head = [
     1, sps[1], sps[2], sps[3],
     0xFF,                       // 6 bits reserved, then a 4-byte length prefix
     0xE1,                       // 3 bits reserved, then one SPS
-    ...u16(sps.length)], sps, [1, ...u16(pps.length)], pps);
+    ...u16(sps.length)];
+  const tail = AVCC_EXTENDED.includes(sps[1])
+    ? [0xFC | 1,                // 6 bits reserved, chroma_format 4:2:0
+       0xF8 | 0,                // 5 bits reserved, bit_depth_luma_minus8
+       0xF8 | 0,                // 5 bits reserved, bit_depth_chroma_minus8
+       0]                       // numOfSequenceParameterSetExt
+    : [];
+  return box("avcC", head, sps, [1, ...u16(pps.length)], pps, tail);
 }
 
 function avc1(sps, pps, w, h) {
@@ -261,8 +287,24 @@ export function toAvcc(unit) {
   return join(parts);
 }
 
+// A picture a container may declare a random-access point. NOT the same
+// question as "can a decoder start here": many low-latency encoders repeat the
+// parameter sets in front of every picture, so an SPS is no evidence of an IDR,
+// and declaring every P-frame a seek target invites the player to splice into
+// the middle of a group and show a smear.
+export function isSyncSample(unit) {
+  for (const nal of nalsOf(unit)) if ((nal[0] & 0x1F) === 5) return true;
+  return false;
+}
+
 export function createMuxer() {
-  let sps = null, pps = null, seq = 1, clock = 0, ready = null;
+  let sps = null, pps = null, seq = 1, clock = 0, ready = null, generation = 0;
+
+  // Whether two parameter sets are the same one. Byte equality, because a
+  // parameter set that differs anywhere describes a different stream.
+  const same = (a, b) => !!a && a.length === b.length
+    && a.every((v, i) => v === b[i]);
+
 
   return {
     get ready() { return ready; },
@@ -270,18 +312,31 @@ export function createMuxer() {
     // Parameter sets are learned from the stream rather than configured,
     // because the stream is the only place they are certainly correct.
     learn(unit) {
+      let fresh = false;
       for (const nal of nalsOf(unit)) {
         const kind = nal[0] & 0x1F;
-        if (kind === 7 && !sps) sps = nal.slice();
-        else if (kind === 8 && !pps) pps = nal.slice();
+        // COMPARED, NOT LATCHED. A phone that rotates, or a head unit told a
+        // new size, sends a different sequence parameter set mid-stream. The
+        // first version of this took the first one it ever saw and never
+        // looked again, so the container went on declaring a resolution the
+        // stream had stopped using -- and the only way out was a reload.
+        if (kind === 7 && !same(sps, nal)) { sps = nal.slice(); fresh = true; }
+        else if (kind === 8 && !same(pps, nal)) { pps = nal.slice(); fresh = true; }
       }
-      if (sps && pps && !ready) {
+      if (sps && pps && (fresh || !ready)) {
         const s = parseSPS(sps);
+        if (!s) {
+          // Unreadable. Keep what we had rather than replacing it with
+          // nonsense, and wait for the next parameter set.
+          sps = ready ? sps : null;
+          return ready;
+        }
         ready = {
           width: s.width, height: s.height,
           codec: "avc1." + [s.profile, s.compat, s.level]
             .map((v) => v.toString(16).padStart(2, "0")).join(""),
           init: initSegment({ sps, pps, width: s.width, height: s.height }),
+          generation: generation += 1,
         };
       }
       return ready;

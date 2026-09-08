@@ -1633,6 +1633,14 @@ def handle_post(path, body):
                     s = carlink.start_dongle(
                         width=int(data.get("width") or 800),
                         height=int(data.get("height") or 640))
+                    # A SESSION THAT DIED IN ITS FIRST MOMENTS SAYS SO HERE.
+                    # Those failures -- pyusb missing, the adapter gone between
+                    # the check and the open, a permission error -- happen
+                    # faster than the browser's next request, so without this
+                    # the carefully worded reason was thrown away and replaced
+                    # by "nothing is streaming".
+                    if s.error and not s.running():
+                        return 500, {"error": s.error}
                     return 200, {
                         "ok": True, "mode": "dongle",
                         "dongle": found[0].get("name"),

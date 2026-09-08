@@ -93,13 +93,16 @@ def nal_starts(data):
     """
     nals = []
     i, n = 0, len(data)
-    while i + 3 < n:
+    # i + 2 < n, not i + 3 < n: a three-byte start code sitting in the last
+    # three bytes of the buffer is a real start code, and the tighter bound
+    # could not see it.
+    while i + 2 < n:
         if data[i] == 0 and data[i + 1] == 0:
             if data[i + 2] == 1:
                 nals.append((i, i + 3))
                 i += 3
                 continue
-            if data[i + 2] == 0 and data[i + 3] == 1:
+            if data[i + 2] == 0 and i + 3 < n and data[i + 3] == 1:
                 nals.append((i, i + 4))
                 i += 4
                 continue
@@ -301,6 +304,10 @@ class Session:
     def _run_guarded(self):
         try:
             self._run()
+        except Stopped:
+            # Asked to stop. Not a fault, and not something to tell the driver
+            # their adapter did.
+            pass
         except Exception as why:                              # noqa: BLE001
             self.error = f"{type(why).__name__}: {why}"
             self._publish(event({"type": "failure", "error": self.error}))
@@ -450,6 +457,10 @@ FILE_CHARGE_MODE = "/tmp/charge_mode"
 FILE_BOX_NAME = "/etc/box_name"
 
 
+class Stopped(Exception):
+    """Not a failure. Somebody asked for this."""
+
+
 def usb_header(msg_type, length):
     """The 16 bytes in front of everything."""
     return struct.pack("<IIII", MAGIC, length, msg_type,
@@ -573,6 +584,7 @@ class DongleSession(Session):
         self.phone = None
         self.heard = False
         self.frame_interval = None
+        self._write_fails = 0
 
     # -- opening ---------------------------------------------------------------
     def _pyusb(self):
@@ -615,15 +627,42 @@ class DongleSession(Session):
         except Exception:                                     # noqa: BLE001
             pass
         self._stop.wait(3.0)
-        dev, deadline = None, time.time() + 10.0
+
+        # AND THE RETRY COVERS THE OPENING, NOT ONLY THE FINDING.
+        #
+        # The reset destroys the device node and the kernel makes a new one,
+        # root-owned, until udev processes the add event and applies our rule.
+        # Descriptors are readable from sysfs the instant the device exists, so
+        # finding it succeeds a beat before opening it is permitted -- and a
+        # loop that stops at "found" walks straight into a permission error
+        # that looks exactly like a missing udev rule. The window is short and
+        # it is real, so the whole open is what gets retried.
+        deadline, why = time.time() + 12.0, None
         while time.time() < deadline and not self._stop.is_set():
             dev = self._find(core)
-            if dev is not None:
-                break
-            self._stop.wait(0.25)
-        if dev is None:
-            raise RuntimeError("the adapter did not come back after its reset")
+            if dev is None:
+                why = "the adapter has not come back yet"
+                self._stop.wait(0.25)
+                continue
+            try:
+                self._claim(core, util, dev)
+                return dev
+            except Exception as e:                            # noqa: BLE001
+                why = f"{type(e).__name__}: {e}"
+                try:
+                    util.dispose_resources(dev)
+                except Exception:                             # noqa: BLE001
+                    pass
+                self._stop.wait(0.25)
+        if self._stop.is_set():
+            # Asked to stop, not failed. Blaming the hardware for a shutdown
+            # somebody asked for is a small lie that costs an hour of looking
+            # at the wrong thing.
+            raise Stopped("the session was stopped while the adapter was opening")
+        raise RuntimeError(f"the adapter would not open after its reset "
+                           f"({why or 'no reason given'})")
 
+    def _claim(self, core, util, dev):
         try:
             if dev.is_kernel_driver_active(0):
                 dev.detach_kernel_driver(0)
@@ -634,15 +673,19 @@ class DongleSession(Session):
         intf = dev.get_active_configuration()[(0, 0)]
 
         # DISCOVERED, NOT HARDCODED. The endpoint addresses are nowhere in any
-        # source; taking them from the descriptors is one line and removes a
-        # whole class of first-morning failure.
-        def direction(want):
+        # source; taking them from the descriptors removes a whole class of
+        # first-morning failure. The transfer type is checked as well as the
+        # direction: the first IN endpoint is not necessarily the bulk one, and
+        # reading an interrupt endpoint that never speaks is a black screen
+        # with no error at all, which is the hardest kind to chase.
+        def endpoint(want):
             return util.find_descriptor(
                 intf, custom_match=lambda e:
-                util.endpoint_direction(e.bEndpointAddress) == want)
+                util.endpoint_direction(e.bEndpointAddress) == want
+                and util.endpoint_type(e.bmAttributes) == util.ENDPOINT_TYPE_BULK)
 
-        self._in = direction(util.ENDPOINT_IN)
-        self._out = direction(util.ENDPOINT_OUT)
+        self._in = endpoint(util.ENDPOINT_IN)
+        self._out = endpoint(util.ENDPOINT_OUT)
         if self._in is None or self._out is None:
             raise RuntimeError("the adapter has no bulk endpoints in one or "
                                "both directions, which is not a dongle we know")
@@ -651,35 +694,56 @@ class DongleSession(Session):
         return dev
 
     def _close(self):
-        dev, intf = self._dev, self._intf
-        self._dev = self._in = self._out = self._intf = None
-        if dev is None:
-            return
-        try:
-            import usb.util
-            if intf is not None:
-                usb.util.release_interface(dev, intf.bInterfaceNumber)
-            usb.util.dispose_resources(dev)
-        except Exception:                                     # noqa: BLE001
-            pass
+        # UNDER THE WIRE LOCK, because the heartbeat thread can be three
+        # seconds into a write on this very handle. Freeing a device with a
+        # transfer submitted against it is not a Python exception; it is the
+        # daemon going away.
+        with self._wire:
+            dev, intf = self._dev, self._intf
+            self._dev = self._in = self._out = self._intf = None
+            if dev is None:
+                return
+            try:
+                import usb.util
+                if intf is not None:
+                    usb.util.release_interface(dev, intf.bInterfaceNumber)
+                usb.util.dispose_resources(dev)
+            except Exception:                                 # noqa: BLE001
+                pass
 
     # -- writing ---------------------------------------------------------------
+    # How many writes in a row have to fail before the session is over. ONE IS
+    # NOT ENOUGH: the adapter NAKs while it is busy negotiating with a phone,
+    # and a heartbeat that times out during that is normal. Killing the session
+    # on the first one meant a working picture ending in "The adapter did not
+    # answer", recoverable only by another full port reset.
+    WRITE_FAILURES = 4
+
     def _write(self, msg_type, payload=b""):
         out = self._out
         if out is None:
             return False
         data = usb_message(msg_type, payload)
         with self._wire:
+            if self._out is None:                 # closed while we waited
+                return False
             try:
                 out.write(data, 3000)
+                self._write_fails = 0
                 return True
             except Exception as why:                          # noqa: BLE001
+                self._write_fails += 1
+                self.error = f"{type(why).__name__}: {why}"
+                if self._write_fails < self.WRITE_FAILURES:
+                    return False
                 # SAID OUT LOUD, because this runs on the heartbeat thread as
                 # well as the read thread, and an exception raised there goes
                 # nowhere. A session that dies silently looks exactly like an
                 # adapter that is fine and simply has nothing to show.
-                self.error = f"{type(why).__name__}: {why}"
-                self._publish(event({"type": "failure", "error": self.error}))
+                self._publish(event({
+                    "type": "failure",
+                    "error": f"{self._write_fails} writes in a row failed: "
+                             f"{self.error}"}))
                 self._stop.set()
                 return False
 
@@ -744,7 +808,13 @@ class DongleSession(Session):
             if not connected and now - began >= 1.0:
                 connected = True
                 self._command("wifiConnect")
-            if not paired and not self.heard and now - began >= 15.0:
+            # HEARD MEANS A PHONE, NOT A NOISE. The box announces its
+            # software version and its Bluetooth address within milliseconds of
+            # being opened, so a flag set by any inbound message was always
+            # true by the time this line ran, and the pairing prod -- the one
+            # thing that gets an iPhone that has never met this adapter to
+            # connect -- was never sent in the life of the program.
+            if not paired and not self.phone and now - began >= 15.0:
                 paired = True
                 self._command("wifiPair")
             if self.frame_interval and now - last_frame >= self.frame_interval:
@@ -754,45 +824,67 @@ class DongleSession(Session):
 
     # -- reading ---------------------------------------------------------------
     def _run(self):
-        self._open()
-        self.hello({
-            "type": "opening",
-            "note": f"Carlinkit adapter open at {self.width}x{self.height}, "
-                    f"{self.fps} fps. Waiting for a phone.",
-        })
-        if not self._handshake():
-            raise RuntimeError(self.error or "the adapter would not take the "
-                                             "opening sequence")
-        self._ticker_thread = threading.Thread(target=self._ticker, daemon=True,
-                                               name="carlink-ticker")
-        self._ticker_thread.start()
+        # THE RELEASE COVERS THE OPENING TOO.
+        #
+        # It used to start after the handshake, so a failed opening sequence --
+        # the single most likely thing to go wrong the first time this meets an
+        # adapter -- left interface 0 claimed by a thread that had already
+        # died. Every later attempt, including after unplugging and replugging,
+        # then failed with "Resource busy", and only restarting the daemon
+        # cleared it. A five-minute protocol bug became a lost morning.
+        try:
+            self._open()
+            self.hello({
+                "type": "opening",
+                "note": f"Carlinkit adapter open at {self.width}x{self.height}, "
+                        f"{self.fps} fps. Waiting for a phone.",
+            })
+            if not self._handshake():
+                raise RuntimeError(self.error or "the adapter would not take "
+                                                 "the opening sequence")
+            self._ticker_thread = threading.Thread(
+                target=self._ticker, daemon=True, name="carlink-ticker")
+            self._ticker_thread.start()
+            self._read_loop()
+        finally:
+            # The ticker is told to stop on EVERY exit, not only on an explicit
+            # stop(). Without this an unplug leaves a heartbeat thread writing
+            # to a closed handle at five hertz, forever, and holding the whole
+            # session alive behind it -- one more per plug-and-unplug cycle.
+            self._stop.set()
+            t = self._ticker_thread
+            if t and t.is_alive() and t is not threading.current_thread():
+                t.join(timeout=2)
+            self._close()
 
+    def _read_loop(self):
         stream = UsbStream()
         # A read large enough for the biggest payload the adapter was told it
         # may send, and a multiple of the bulk packet size so a full transfer
         # never ends mid-packet.
         size = self.PACKET_MAX + (1 << 16)
-        try:
-            while not self._stop.is_set():
-                try:
-                    chunk = self._in.read(size, 1000)
-                except Exception as why:                      # noqa: BLE001
-                    name = type(why).__name__
-                    if "Timeout" in name:
-                        continue
-                    if getattr(why, "errno", None) in (19, 5):   # ENODEV, EIO
-                        self._publish(event({
-                            "type": "unplugged",
-                            "note": "the adapter left the bus"}))
-                        return
-                    raise
-                for msg_type, payload in stream.feed(chunk):
-                    self._handle(msg_type, bytes(payload))
-        finally:
-            self._close()
+        while not self._stop.is_set():
+            try:
+                chunk = self._in.read(size, 1000)
+            except Exception as why:                          # noqa: BLE001
+                # A quiet adapter is the normal case before a phone connects,
+                # and it arrives either as a named timeout class or as a plain
+                # USB error carrying ETIMEDOUT. Recognising only the class name
+                # made the first idle second fatal on some pyusb builds.
+                errno = getattr(why, "errno", None)
+                if "Timeout" in type(why).__name__ or errno == 110:
+                    continue
+                if errno in (19, 5):                          # ENODEV, EIO
+                    self._publish(event({
+                        "type": "unplugged",
+                        "note": "the adapter left the bus"}))
+                    return
+                raise
+            for msg_type, payload in stream.feed(chunk):
+                self._handle(msg_type, bytes(payload))
 
     def _handle(self, msg_type, payload):
-        self.heard = True
+        self.heard = True                    # the box is talking; not a phone
         if msg_type == MSG_VIDEO:
             self._video(payload)
             return
@@ -935,6 +1027,19 @@ def current():
     return s if (s and s.running()) else None
 
 
+def last():
+    """The most recent session, alive or not.
+
+    WHY A DEAD ONE IS STILL WORTH HAVING. A session that fails in its first
+    milliseconds -- no pyusb, no adapter, a permission error -- is already gone
+    by the time the browser makes its second request, so `current()` is None
+    and the honest, specific message the driver wrote is replaced by a generic
+    "nothing is streaming". The one thing the caller most needs is the thing
+    that was thrown away.
+    """
+    return _CURRENT["session"]
+
+
 def start_replay(path=None, fps=20.0, loop=True):
     path = path or os.path.join(records.STATE, "phone-replay.h264")
     if not os.path.exists(path):
@@ -943,22 +1048,63 @@ def start_replay(path=None, fps=20.0, loop=True):
             f"  ffmpeg -f lavfi -i testsrc=size=800x640:rate=20:duration=5 "
             f"-c:v libx264 -profile:v baseline -pix_fmt yuv420p -f h264 {path}")
     with _REG_LOCK:
-        stop()
+        _stop_held()
         s = ReplaySession(path, fps=fps, loop=loop).start()
         _CURRENT["session"] = s
         return s
 
 
+# How long a start waits before answering. Long enough for the failures that
+# happen instantly -- no pyusb, no adapter, no permission -- to be reported as
+# themselves rather than as a later, vaguer error; short enough that it is not
+# a wait. The port reset takes far longer than this and is not waited for.
+START_GRACE = 1.5
+
+
 def start_dongle(**opts):
     """Open the adapter for real. One at a time, like the replay."""
     with _REG_LOCK:
-        stop()
+        # ALREADY OPEN AND WORKING? LEAVE IT ALONE. The app posts a start every
+        # time the phone screen is opened, and tearing down a live session to
+        # build an identical one costs a port reset: the picture goes black for
+        # ten seconds and the phone re-pairs, in front of whoever just tapped
+        # the tab.
+        have = _CURRENT["session"]
+        if (isinstance(have, DongleSession) and have.running()
+                and not have.error
+                and (int(opts.get("width") or have.width),
+                     int(opts.get("height") or have.height))
+                == (have.width, have.height)):
+            return have
+        _stop_held()
         s = DongleSession(**opts).start()
         _CURRENT["session"] = s
-        return s
+
+    # Outside the lock: a session that dies immediately should say why in the
+    # answer to this call, rather than leaving the caller to guess from a 409
+    # three round trips later.
+    deadline = time.time() + START_GRACE
+    while time.time() < deadline:
+        if s.error or s._hello is not None or not s.running():
+            break
+        time.sleep(0.05)
+    return s
 
 
 def stop():
+    with _REG_LOCK:
+        _stop_held()
+
+
+def _stop_held():
+    """Stop the current session. THE CALLER HOLDS _REG_LOCK.
+
+    Both halves have to be under one lock. Without it a stop that ran beside a
+    start could read the registry as empty, let the start install its session,
+    and then clear the slot -- leaving a live session with the interface
+    claimed, invisible to `current()` and unreachable by `stop()`, so every
+    later start failed with Resource busy until the daemon was restarted.
+    """
     s = _CURRENT["session"]
     if s:
         try:

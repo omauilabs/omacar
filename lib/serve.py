@@ -297,8 +297,14 @@ class Handler(SimpleHTTPRequestHandler):
             import carlink
             session = carlink.current()
             if session is None:
-                self._json({"error": "nothing is streaming — "
-                                     "POST /api/phone/start first"}, 409)
+                # A session that died between the start and this request left
+                # its reason behind. Repeating it beats replacing it with a
+                # generic one -- the specific message is the whole point of
+                # having written it.
+                gone = carlink.last()
+                why = getattr(gone, "error", None) if gone else None
+                self._json({"error": why or "nothing is streaming — "
+                                            "POST /api/phone/start first"}, 409)
                 return
             q = session.subscribe()
             self.close_connection = True

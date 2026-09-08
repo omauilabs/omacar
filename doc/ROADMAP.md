@@ -176,15 +176,15 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 56 | 26,392 |
-| JavaScript — the app | 48 | 15,623 |
+| Python — the whole diagnostic side | 56 | 26,552 |
+| JavaScript — the app | 48 | 15,865 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,381 |
-| Tests | 11 | 4,745 |
-| Documentation | 13 | 3,511 |
+| Tests | 11 | 4,744 |
+| Documentation | 13 | 3,513 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **60,102** |
+| **Tracked in git, all of it** | | **60,505** |
 
 **Tests** — 823 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -303,16 +303,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 127 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 130 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` A session somebody started by hand wins over what the app would have chosen
+- `2026-09-08` A recording is not started until somebody looks at it
+- `2026-09-08` ffmpeg reads back what the muxer wrote, pixel for pixel
 - `2026-09-08` The phone screen asks again each time it is opened
 - `2026-09-08` Roadmap numbers, settled after the prose moved them
 - `2026-09-08` The roadmap says the phone screen is built and unproven, which is neither of the two things it would be easier to say
 - `2026-09-08` The phone screen's requests were unsigned, which in the car reads as no adapter
 - `2026-09-08` A runbook for the CarPlay session, in the order that isolates the one new thing
-- `2026-09-08` The phone screen gets a picture, by whichever decoder the browser actually has
-- `2026-09-08` The CarPlay dongle: the two parts that can fail silently, checked
-- `2026-09-08` A capture becomes a claim: broadcast signals in the profile, and adoption
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

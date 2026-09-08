@@ -220,7 +220,7 @@ def make_clip(path):
 # unchanged -- rather than whether some player tolerated the file.
 EMIT = """
 import fs from "node:fs";
-import { createMuxer } from "SHARE/js/omaplay/fmp4.js";
+import { createMuxer, isSyncSample } from "SHARE/js/omaplay/fmp4.js";
 const data = new Uint8Array(fs.readFileSync(process.argv[2]));
 function marks(d) {
   const m = []; let i = 0;
@@ -244,10 +244,9 @@ function split(d) {
   out.push(d.subarray(cuts[cuts.length - 1]));
   return out;
 }
-function isKey(u) {
-  for (const [, at] of marks(u)) { const t = u[at] & 0x1f; if (t === 7 || t === 5) return true; }
-  return false;
-}
+// The app's own rule, not a second copy of it: a random-access point is an
+// IDR, and "a decoder could start here" is a different question.
+const isKey = isSyncSample;
 const units = split(data), mux = createMuxer();
 let ready = null;
 for (const u of units) { ready = mux.learn(u); if (ready) break; }

@@ -332,6 +332,16 @@ export function dongleSource(opts = {}) {
     async start(target) {
       canvas = target;
       running = true;
+      // THE OLD SINK IS STOPPED, NOT DROPPED.
+      //
+      // A stream that ends -- the adapter re-enumerating, the server closing
+      // the body, a wifi hiccup -- leaves the sink behind, and starting again
+      // used to simply null the reference. The abandoned one keeps its own
+      // animation loop painting a frozen frame onto the same canvas sixty
+      // times a second, so the live picture and a still one alternate; and it
+      // keeps a hidden video element and its decoder open. One more of each
+      // per reconnect, for the length of a drive.
+      if (sink) { try { sink.stop(); } catch { /* already gone */ } }
       sink = null;
       stats.records = stats.video = stats.events = stats.pictures = 0;
       stats.route = "";
