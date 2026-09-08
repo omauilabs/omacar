@@ -265,20 +265,66 @@ oa_unit_install() {
   oa_say "" "$n user units installed (none enabled — see: $OA_APP tablet)"
 }
 
+# Is our widget actually on the bar? The one question that decides everything
+# in oa_bar_place, asked of the file rather than of a command's exit code.
+oa_bar_has() {
+  jq -e --arg id "$OA_APP" \
+    '.bar.layout | .. | objects | select(.id? == $id)' \
+    "$OA_SHELL_JSON" >/dev/null 2>&1
+}
+
 oa_bar_place() { # [--before other.widget]
   [[ -f "$OA_ROOT/plugin/manifest.json" ]] || return 0
   ((OA_LIVE)) || return 0
-  if jq -e --arg id "$OA_APP" '.bar.layout | .. | objects | select(.id? == $id)' \
-       "$OA_SHELL_JSON" >/dev/null 2>&1; then
+  if oa_bar_has; then
     oa_say "" "widget already in the bar"
     return 0
   fi
-  if omarchy-bar put "$OA_APP" "$@" >/dev/null 2>&1 ||
-     omarchy-bar put "$OA_APP" --section right >/dev/null 2>&1; then
+  # ASK THE SHELL FIRST, THEN CHECK WHETHER IT DID IT.
+  #
+  # `omarchy bar put` hands the request to the running shell, which owns the
+  # config it has in memory. That is the right way round and it is the path to
+  # prefer -- but it answers "ok" and prints "<id> is on the bar" in cases
+  # where nothing is written, and it exits 0 while doing so. Trusting the exit
+  # code left this reporting a widget placed that was not, which is the exact
+  # shape of lie the rest of this project spends its time refusing.
+  #
+  # It also cannot work at all from a non-graphical shell: OMARCHY_PATH comes
+  # from the session, so over ssh its helper dies on an unbound variable. That
+  # is how a perfectly good manifest came to look broken.
+  #
+  # So: ask, then VERIFY against the file, and only if the shell did not do it
+  # write the entry ourselves -- the same one-line object the other third-party
+  # widgets carry -- behind a backup and a JSON validity check.
+  omarchy-bar put "$OA_APP" "$@" >/dev/null 2>&1 ||
+    omarchy-bar put "$OA_APP" --section right >/dev/null 2>&1 || true
+  if oa_bar_has; then
     oa_say "" "widget placed in the bar"
-  else
-    oa_warn "couldn't place the bar widget — run: omarchy bar put $OA_APP"
+    return 0
   fi
+
+  local tmp backup
+  backup="$OA_SHELL_JSON.bak-$OA_APP-$(date +%Y%m%d-%H%M%S)"
+  cp -f "$OA_SHELL_JSON" "$backup" 2>/dev/null || {
+    oa_warn "couldn't back up $OA_SHELL_JSON — leaving the bar alone"
+    return 0
+  }
+  tmp="$(mktemp)"
+  if jq --arg id "$OA_APP" \
+       '.bar.layout.right |= ((. // []) + [{"id": $id}])' \
+       "$OA_SHELL_JSON" >"$tmp" 2>/dev/null && jq -e . "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$OA_SHELL_JSON"
+    if oa_bar_has; then
+      oa_say "" "widget placed in the bar"
+      rm -f "$backup"
+      return 0
+    fi
+  fi
+  rm -f "$tmp"
+  # Put back exactly what was there. A half-edited shell config is a desktop
+  # that does not come up, and that is a far worse outcome than no widget.
+  mv -f "$backup" "$OA_SHELL_JSON" 2>/dev/null || true
+  oa_warn "couldn't place the bar widget — run: omarchy bar put $OA_APP"
 }
 
 # ---------------------------------------------------------------------------
