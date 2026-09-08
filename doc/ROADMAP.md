@@ -163,13 +163,13 @@ the one that is wrong.
 | JavaScript — the app | 46 | 14,541 |
 | CSS | 7 | 2,726 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 5 | 1,373 |
-| Tests | 10 | 4,201 |
-| Documentation | 12 | 3,377 |
+| Shell — the CLI and the installer | 5 | 1,375 |
+| Tests | 10 | 4,228 |
+| Documentation | 12 | 3,379 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **56,934** |
+| **Tracked in git, all of it** | | **56,987** |
 
-**Tests** — 794 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 798 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -191,6 +191,7 @@ What is actually covered, straight out of the runner's own headings:
 | a validated identifier drives a reading, and only a validated one | 31 |
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
+| the dongle list the CLI checks is the one the browser uses | 4 |
 | a capture becomes a candidate, and never more than the evidence | 21 |
 | a sweep drafts into the car it swept, not the one in a default | 4 |
 | a layout has a name, a car remembers which, and the old file still works | 13 |
@@ -282,8 +283,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 119 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 120 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` A capture becomes a claim: broadcast signals in the profile, and adoption
 - `2026-09-07` The app never started on a real car, and nothing here had ever started it
 - `2026-09-07` Echo off while monitoring: it costs a line for every frame
 - `2026-09-07` The bus you diagnose on is not the bus you listen to
@@ -291,7 +293,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-07` The suite was making five network calls, and one of them killed the process
 - `2026-09-07` The guards suite printed "every guard holds" and then dumped core
 - `2026-09-07` CI on hosted runners: a public repo must not run strangers' code on our metal
-- `2026-09-07` CI on the org's own runners
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

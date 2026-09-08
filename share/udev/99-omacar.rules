@@ -44,3 +44,25 @@ TAG+="systemd"
 ENV{SYSTEMD_USER_WANTS}+="omacar-daemon.service"
 
 LABEL="omacar_end"
+
+# ---------------------------------------------------------------------------
+# The CarPlay dongle.
+#
+# A Carlinkit adapter presents as a plain USB device on vendor 0x1314, and the
+# phone screen reaches it through WebUSB from the browser. WebUSB can only open
+# a device the logged-in user is allowed to open, and the default for a raw USB
+# device on Arch is root-only -- so without this the browser's device picker
+# shows the dongle, the owner selects it, and the open fails with a permission
+# error that reads like the dongle being broken.
+#
+# TAG+="uaccess" is the same mechanism the adapter above uses: systemd-logind
+# puts an ACL on the device for whoever is logged in at the seat. No group to
+# join, no re-login, and nothing world-readable.
+#
+# The two product ids are the ones node-carplay recognises. A dongle outside
+# them will not be matched here and will not work in the browser either, which
+# is the honest failure: the driver would not know how to speak to it.
+SUBSYSTEM!="usb", GOTO="omacar_carplay_end"
+ATTR{idVendor}=="1314", ATTR{idProduct}=="1520", TAG+="uaccess", ENV{OMACAR_CARPLAY}="1"
+ATTR{idVendor}=="1314", ATTR{idProduct}=="1521", TAG+="uaccess", ENV{OMACAR_CARPLAY}="1"
+LABEL="omacar_carplay_end"

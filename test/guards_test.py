@@ -659,6 +659,33 @@ check("coolant offsets by 40", obs["COOLANT_TEMP"], 83.0)
 check("trim centres on 128", obs["SHORT_FUEL_TRIM_1"], 0.0)
 check("voltage rides ATRV", obs["VOLTAGE"], 13.8)
 
+# ----------------------------------------------------------- the phone dongle
+head("the dongle list the CLI checks is the one the browser uses")
+
+import re as _rx  # noqa: E402
+
+import phone as _ph  # noqa: E402
+
+_src = open(os.path.join(ROOT, "share", "js", "omaplay", "source.js"),
+            encoding="utf-8").read()
+_js = set(_rx.findall(r"vendorId:\s*0x([0-9a-fA-F]+),\s*productId:\s*0x([0-9a-fA-F]+)",
+                       _src))
+_js = {(v.lower(), p.lower()) for v, p in _js}
+check("the browser knows some dongles at all", bool(_js), True)
+# TWO COPIES OF A FACT IS HOW THEY COME TO DISAGREE. lib/phone.py reports what
+# is plugged in; source.js decides what the browser will try to open. If they
+# drift, `omacar phone` says a dongle is present that the app will not touch,
+# or the reverse -- and both read as the hardware being broken.
+check("and the CLI knows exactly the same ones", set(_ph.KNOWN), _js)
+check("the udev rule covers every one of them",
+      all(v in open(os.path.join(ROOT, "share", "udev", "99-omacar.rules"),
+                    encoding="utf-8").read().lower()
+          and p in open(os.path.join(ROOT, "share", "udev", "99-omacar.rules"),
+                        encoding="utf-8").read().lower()
+          for v, p in _js), True)
+check("nothing claims the driver exists",
+      "not written" in _ph.report()[0], True)
+
 # ------------------------------------------------- a capture becomes a claim
 head("a capture becomes a candidate, and never more than the evidence")
 
