@@ -1,13 +1,23 @@
 # OmaCar CI.
 #
-# Runs on the omauilabs self-hosted runners. The label set is deliberately the
-# full four rather than a bare `self-hosted`: a bare label would also match the
-# frogbark pool and land the job on the wrong machine.
+# GITHUB-HOSTED RUNNERS, AND ON A PUBLIC REPOSITORY THAT IS THE ONLY SAFE
+# ANSWER.
 #
-# Nothing here needs a car or an adapter. That is a property of the test suite,
-# not a compromise in it — the ELM327 emulator stands in for a vehicle and the
-# guard suite stubs pyserial, so a machine with no venv still checks every
-# safety gate.
+# This ran on the omauilabs self-hosted runners, and the jobs sat queued for
+# ever with four idle machines: the runner group carries
+# `allows_public_repositories: false`, which is GitHub's default and a
+# deliberate one. A self-hosted runner attached to a public repository will
+# execute code from any pull request a stranger opens, on your own hardware.
+# The setting is not an obstacle to route around; it is the warning.
+#
+# Public repositories get unlimited free minutes on hosted runners, and this
+# suite has no reason to want the metal: nothing here needs a car or an
+# adapter. That is a property of the test suite rather than a compromise in it
+# — the ELM327 emulator stands in for a vehicle and the guard suite stubs
+# pyserial, so a machine with no venv still checks every safety gate.
+#
+# The private repositories in this org keep their self-hosted runners, where
+# the same risk does not exist.
 
 name: CI
 
@@ -20,7 +30,7 @@ on:
 jobs:
   tests:
     name: Tests — needs no car
-    runs-on: [self-hosted, Linux, X64, omauilabs]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +40,26 @@ jobs:
           echo "python3: $(python3 --version 2>&1)"
           echo "bash:    ${BASH_VERSION}"
           echo "sqlite3: $(sqlite3 --version 2>/dev/null || echo 'absent')"
+
+      # WITHOUT A VENV, THE PROSPECTOR TESTS SKIP -- and a suite that skips
+      # quietly is the exact thing this project exists to not be. Building it
+      # costs under a minute on a hosted runner and turns a skip into a check.
+      # It is allowed to fail: the ELM327 emulator's own build is fragile
+      # (its setup.py wants pkg_resources, removed in setuptools 81), and the
+      # rest of the suite is worth running either way. The step says which
+      # happened rather than leaving it to be inferred.
+      - name: Build the Python environment
+        id: venv
+        continue-on-error: true
+        run: ./bin/omacar setup
+
+      - name: Say whether the prospector tests will run
+        run: |
+          if [ -x "$HOME/.local/share/omacar/venv/bin/python" ]; then
+            echo "venv present — every suite runs"
+          else
+            echo "::warning::no venv, so the prospector tests will skip"
+          fi
 
       # The suite installs into a scratch HOME and asserts the real state
       # directory was never touched, so it is safe to run on a machine that has
@@ -44,7 +74,7 @@ jobs:
 
   syntax:
     name: Everything parses
-    runs-on: [self-hosted, Linux, X64, omauilabs]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +114,7 @@ jobs:
 
   roadmap:
     name: Roadmap drift (reports, does not block)
-    runs-on: [self-hosted, Linux, X64, omauilabs]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # Every commit moves a line count, so the generated half of the roadmap is
     # stale the moment anything lands. Gating a merge on that would mean every
