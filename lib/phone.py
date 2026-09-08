@@ -89,8 +89,11 @@ def dongles():
 def _browser():
     """What the last browser to open the phone screen reported.
 
-    Asked over the loopback API rather than read from a file, because the
-    daemon holds it and the daemon is the thing that knows.
+    The running daemon first, because it has the freshest copy, and the file it
+    writes if nothing is running. ASKING ONLY THE DAEMON WAS WRONG: `omacar
+    phone` is most useful on a machine where nothing is up yet -- that is the
+    whole point of a preparation step -- and it answered "not known" about a
+    fact it had written down thirty seconds earlier.
     """
     import json as _json
     import urllib.error
@@ -99,10 +102,17 @@ def _browser():
         try:
             with urllib.request.urlopen(
                     f"http://127.0.0.1:{port}/api/phone", timeout=1.0) as r:
-                return (_json.loads(r.read().decode()) or {}).get("browser") or {}
+                got = (_json.loads(r.read().decode()) or {}).get("browser")
+                if got:
+                    return got
         except (urllib.error.URLError, OSError, ValueError):
             continue
-    return {}
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import carlink
+        return dict(carlink._load_browser())
+    except Exception:                                         # noqa: BLE001
+        return {}
 
 
 def rule_installed():
@@ -153,17 +163,30 @@ def report():
     if seen:
         route = seen.get("route") or "?"
         pictures = seen.get("pictures") or 0
-        colour = GREEN if pictures else RED
+        headless = "headless" in (seen.get("agent") or "")
         how = {"webcodecs": "WebCodecs, the direct path",
                "mediasource": "a video element, because WebCodecs would not"}
+        colour = GREEN if pictures else RED
         lines.append(f"    {colour}decoder{RESET}      "
-                     + (f"{how.get(route, route)}" if pictures
+                     + (how.get(route, route) if pictures
                         else "nothing decoded here"))
-        lines.append(f"                 {DIM}{pictures} picture(s) from "
-                     f"{seen.get('units') or 0} frame(s), "
-                     f"{seen.get('at') or 'at some point'}{RESET}")
-        if seen.get("note"):
-            lines.append(f"                 {DIM}{seen['note'][:150]}{RESET}")
+        if headless:
+            # SAID AS WHAT IT IS. A headless browser has no GPU, so this is an
+            # answer about one browser and not about the machine. Reporting it
+            # as the machine's answer would understate what the tablet can do,
+            # and the tablet is the thing anybody cares about.
+            lines.append(f"                 {DIM}{seen.get('note') or 'measured headless'}"
+                         f", {seen.get('at') or ''}{RESET}")
+            lines.append(f"                 {DIM}the kiosk browser has a GPU "
+                         f"and may do better — open the phone{RESET}")
+            lines.append(f"                 {DIM}screen once and this is "
+                         f"replaced by what it managed{RESET}")
+        else:
+            lines.append(f"                 {DIM}{pictures} picture(s) from "
+                         f"{seen.get('units') or 0} frame(s), "
+                         f"{seen.get('at') or 'at some point'}{RESET}")
+            if seen.get("note"):
+                lines.append(f"                 {DIM}{seen['note'][:120]}{RESET}")
     else:
         lines.append(f"    {DIM}decoder      no browser has opened the phone "
                      f"screen here yet{RESET}")
@@ -287,12 +310,45 @@ def replay(argv):
     return 0
 
 
+def note(argv):
+    """Record which decoder a browser here managed, and which browser.
+
+    WHY THE PREP CALLS THIS INSTEAD OF WRITING THE FILE ITSELF. The report is
+    the daemon's, and its shape belongs in one place. A shell script composing
+    the same JSON would be a second author of the same fact.
+
+    LABELLED, because `omacar phone prep` measures in a HEADLESS browser, which
+    has no GPU. The kiosk browser on the same machine has one and may do
+    better, so this is an answer about a browser rather than about the machine
+    -- and the moment the real one opens the phone screen it replaces this.
+    """
+    route = (argv[0] if argv else "").strip().lower()
+    if route not in ("webcodecs", "mediasource"):
+        print(f"  not a decoder route: {route!r}")
+        return 2
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import carlink
+    carlink.note_browser({
+        "route": route,
+        # A route is only ever recorded because a picture arrived, so this is
+        # the count that says "yes, something decoded" without pretending to a
+        # precision a headless run does not have.
+        "pictures": 1,
+        "note": "proven headless by `omacar phone prep`",
+        "agent": "headless chromium",
+    })
+    return 0
+
+
 def main(argv):
+    if argv and argv[0] == "note":
+        return note(argv[1:])
     if argv and argv[0] == "replay":
         return replay(argv[1:])
     if argv and argv[0] in ("-h", "--help", "help"):
         print("\n  omacar phone           what is plugged in, and can it be "
               "opened\n"
+              "  omacar phone prep      get this machine ready for an adapter\n"
               "  omacar phone replay    play a recording down the real path\n")
         return 0
     text, found = report()

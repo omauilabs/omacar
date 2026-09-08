@@ -102,6 +102,17 @@ if [[ -f "$ROOT/test/phone_test.py" ]]; then
     # earlier version looked for the message the test prints when NOTHING
     # decodes, which stopped appearing the moment the fallback started
     # working -- so it reported the direct path on a machine using neither.
+    # RECORDED WHERE THE REPORT LIVES. Without this the prep proved the
+    # decoder works and the summary two lines below said it was unknown,
+    # because the test runs against its own throwaway state directory --
+    # which is exactly what a test should do. Writing the finding down is the
+    # preparation's job, not the test's.
+    if grep -q "came through the fallback" <<<"$out"; then
+      "$PY" "$ROOT/lib/phone.py" note mediasource >/dev/null 2>&1
+    else
+      "$PY" "$ROOT/lib/phone.py" note webcodecs >/dev/null 2>&1
+    fi
+
     if grep -q "came through the fallback" <<<"$out"; then
       warn "through the fallback: this browser's WebCodecs decodes nothing."
       printf '          %sThe picture still works. It costs a little latency '\
