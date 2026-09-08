@@ -182,9 +182,9 @@ the one that is wrong.
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,525 |
 | Tests | 11 | 4,759 |
-| Documentation | 13 | 3,534 |
+| Documentation | 13 | 3,557 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **60,825** |
+| **Tracked in git, all of it** | | **60,848** |
 
 **Tests** — 824 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -303,8 +303,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 133 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 134 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The decoder report is written down, because the answer outlives the process
 - `2026-09-08` The runbook is one command now, and says which line to read
 - `2026-09-08` The tablet reports which decoder it used, and one command gets it ready
 - `2026-09-08` Two adversarial reads of the picture path, and every defect they found
@@ -312,7 +313,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` A recording is not started until somebody looks at it
 - `2026-09-08` ffmpeg reads back what the muxer wrote, pixel for pixel
 - `2026-09-08` The phone screen asks again each time it is opened
-- `2026-09-08` Roadmap numbers, settled after the prose moved them
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

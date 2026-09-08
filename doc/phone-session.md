@@ -18,6 +18,29 @@ where.
 
 ---
 
+## The link, and why it is a separate device
+
+The tablet reaches the network through **an iPad Pro's own 5G plan**, not
+through the phone.
+
+That is not a convenience, it is the arrangement that makes the session
+observable. Wireless CarPlay works by the phone joining the *adapter's* wifi
+network, and a phone can serve a hotspot or join a network but not reliably
+both. A tablet tethered to the phone that is about to do CarPlay therefore
+loses its connection at the exact moment the adapter is plugged in — so the
+session becomes unwatchable from anywhere else precisely when it starts.
+
+With a second device carrying the data, the phone's radio is free for the
+adapter and the tailnet link holds right through. Which means the whole session
+can be followed from a terminal: `omacar phone` for the three things that have
+to be true, and `/api/phone` for the frames and pictures as they arrive.
+
+Both ends are behind carrier NAT, so Tailscale will connect through a relay
+rather than directly. It is slower and entirely adequate for a shell.
+
+The tablet also writes its decoder report to disk, so none of this depends on
+the link staying up. If it drops, the answer is still there afterwards.
+
 ## Before the adapter goes in
 
 One command, on the machine that will be in the car. It needs a network for the
