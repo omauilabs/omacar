@@ -52,6 +52,7 @@ only thing that turns it into a finding.
 import json
 import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -379,6 +380,16 @@ def load(name):
 MONITOR_PROTOCOLS = ("6", "7", "8", "9")
 
 
+class Quiet(Exception):
+    """Nothing was heard on any setting.
+
+    Its own type because it is a fact about the car rather than a fault in the
+    program, and the two want different words on screen and different decisions
+    from a supervisor: a fault is worth reporting, a quiet bus is worth waiting
+    out.
+    """
+
+
 def _pick_monitor_protocol(el, probe=2.0):
     """Put the adapter on a setting that actually hears frames, and say which.
 
@@ -418,6 +429,23 @@ def _pick_monitor_protocol(el, probe=2.0):
         el.raw("ATH1")
         el.raw("ATS1")
     return best
+
+
+def _restore_protocol(el, was):
+    """Put the adapter back on the setting the daemon negotiated.
+
+    Called whether or not a monitoring protocol was found. It used to happen
+    only on the way out of a successful capture, so a probe that heard nothing
+    left the adapter parked on the last setting it tried -- and handed it back
+    to the daemon like that.
+    """
+    if not was:
+        return
+    try:
+        el.raw("ATSP" + str(was).lstrip("A"))
+        el.raw("ATH0")
+    except Exception:                                         # noqa: BLE001
+        pass
 
 
 def _publish_progress(name, cap, seconds):
@@ -490,7 +518,7 @@ def _stop_asked():
 
 def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
            limit=DEFAULT_LIMIT, cap=None, should_stop=None, probe=2.0,
-           flush_as=None, on_ready=None):
+           flush_as=None, on_ready=None, require_traffic=False):
     """Take the port, listen for `seconds`, give it back. Returns a Capture.
 
     `can_id` narrows the adapter's own filter to one identifier, which is worth
@@ -524,6 +552,10 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
         cap = cap or Capture(header_digits=digits, note=note)
         if cap.header_digits is None:
             cap.header_digits = digits
+        # Bound before the try, because the finally below reads it and the
+        # first statement inside can raise. It never has, which is the only
+        # reason this has not already been a NameError swallowing a real error.
+        _restore = getattr(el, "protocol", None)
         try:
             # Headers ON, because a frame without its identifier is an
             # anonymous eight bytes and useless. Spaces on, because the parse
@@ -546,8 +578,6 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             # actually hears frames is the one the capture runs on, and the
             # original is restored before the port goes back to the daemon,
             # which negotiated it for a reason.
-            _restore = getattr(el, "protocol", None)
-
             # CLEAR ANY FILTER FIRST. init() negotiates a diagnostic protocol
             # and the adapter may still be holding a receive-address filter
             # from whatever ran before -- a DTC sweep aims at one module and
@@ -562,6 +592,18 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
                 el.raw("ATCRA" + str(can_id).replace(" ", "").upper())
             chosen = _pick_monitor_protocol(el, probe)
             cap.protocol = chosen
+            # NOTHING HEARD ON ANY SETTING IS AN ANSWER, AND IT IS NOT THIS ONE.
+            #
+            # The probe leaves the adapter on whichever setting it tried last,
+            # so carrying on here monitors on a setting nothing was heard on
+            # and files the result as a capture of a quiet car. That is exactly
+            # the confusion the probe exists to prevent -- "we monitored on the
+            # wrong setting and concluded the car was quiet" is a sentence in
+            # its own docstring -- and it is the difference between a car that
+            # is off and a car this tool cannot hear.
+            if chosen is None and require_traffic:
+                raise Quiet("no setting heard a single frame — the car is "
+                            "probably off, or the adapter is not on the bus")
             # THE MOMENT IT IS TRUE TO SAY THIS IS LISTENING, and not before.
             # The port is open, the protocol is chosen and the next call is the
             # monitor itself. Announcing earlier -- which is what the detached
@@ -592,11 +634,9 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             try:
                 if can_id:
                     el.raw("ATCRA")           # clear the filter for the daemon
-                el.raw("ATH0")
-                if _restore:
-                    el.raw("ATSP" + str(_restore).lstrip("A"))
             except Exception:                                 # noqa: BLE001
                 pass
+            _restore_protocol(el, _restore)
             el.close()
     finally:
         connect.release_port()
@@ -673,6 +713,11 @@ def main(argv):
     ap.add_argument("--as", dest="as_id", help="for adopt: the id to give it")
     ap.add_argument("--label", help="for adopt: the human name")
     ap.add_argument("--car", help="for adopt: the profile slug to write into")
+    ap.add_argument("--quiet-timeout", dest="quiet_timeout", type=float,
+                    default=0.0,
+                    help="end a drive capture after this many seconds with no "
+                         "frames (0 = never); the engine stopping is what this "
+                         "detects")
     ap.add_argument("--minutes", type=float, default=45.0,
                     help="for drive: how long to keep listening (default 45)")
     args = ap.parse_args(argv)
@@ -1050,19 +1095,67 @@ def _drive_session(args):
     name = time.strftime("%Y%m%d-%H%M%S") + "-drive"
     cap = Capture(note=args.note or "drive")
     clear_failure()
+    quiet_for = float(getattr(args, "quiet_timeout", 0) or 0)
     # PUBLISHED WHEN THE PORT IS OPEN, NOT WHEN THE PROCESS STARTS. Announcing
     # it here used to make `running()` true a fraction of a second before the
     # adapter turned out to be missing.
     ready = {"yes": False}
 
+    # A HEARTBEAT ON A TIMER, NOT ON TRAFFIC.
+    #
+    # Progress was republished only when a frame arrived, and `running()` calls
+    # a capture dead if its file is more than ninety seconds old. So a capture
+    # that was working perfectly on a bus that happened to be quiet -- a parked
+    # car at a fuel stop, a car whose broadcast traffic we have not found the
+    # right setting for -- reported "nothing is listening" while it was
+    # listening. Which is the same lie as the one above, told the other way
+    # round, and it would have hidden every quiet-bus finding this feature
+    # exists to make.
+    beat = threading.Event()
+
+    def heartbeat():
+        while not beat.wait(FLUSH_EVERY):
+            try:
+                _publish_progress(name, cap, args.minutes * 60)
+            except OSError:
+                pass
+
     def began(c):
         ready["yes"] = True
         _publish_progress(name, c, args.minutes * 60)
+        threading.Thread(target=heartbeat, daemon=True,
+                         name="listen-heartbeat").start()
+
+    # THE ENGINE STOPPING IS WHAT ENDS A LEG. Frames stop when the car does, so
+    # a run of silence is the ignition going off -- and on a trip that is a
+    # fuel stop, not the end of the recording. Ending the leg hands the port
+    # back to the daemon and lets the next one start clean.
+    last_line = {"at": time.time()}
+    _inner_take = cap.add_line
+
+    def seen(ln):
+        last_line["at"] = time.time()
+        return _inner_take(ln)
+    cap.add_line = seen
+
+    def done_here():
+        if _stop_asked():
+            return True
+        if quiet_for and time.time() - last_line["at"] > quiet_for:
+            return True
+        return False
 
     try:
         listen(seconds=args.minutes * 60, can_id=args.can_id,
                note=args.note or "drive", cap=cap, flush_as=name,
-               should_stop=_stop_asked, on_ready=began)
+               should_stop=done_here, on_ready=began,
+               require_traffic=bool(quiet_for))
+    except Quiet as why:
+        # Not a fault. The car is off, or we cannot hear its bus, and either
+        # way there is nothing to record and nothing to fix by retrying fast.
+        note_failure(str(why))
+        print(f"listen drive heard nothing: {why}", flush=True)
+        return 2
     except Exception as why:                                  # noqa: BLE001
         # A SENTENCE, NOT A TRACEBACK. Nobody reads this file at a desk; it is
         # read on a phone at a fuel stop, or over a slow link from another
@@ -1075,7 +1168,12 @@ def _drive_session(args):
         }.get(str(why), f"{type(why).__name__}: {why}")
         note_failure(plain)
         print(f"listen drive stopped before it began: {plain}", flush=True)
-        raise
+        # The traceback still goes to the log underneath, for whoever wants it.
+        # RETURNED RATHER THAN RE-RAISED, so the exit code says what happened
+        # and so this is callable by something other than a subprocess.
+        import traceback
+        traceback.print_exc()
+        return 1
     finally:
         try:
             # A CAPTURE IS ONLY WRITTEN IF THERE WAS A CAPTURE. A session that
@@ -1087,6 +1185,7 @@ def _drive_session(args):
                 _publish_progress(name, cap, args.minutes * 60)
         except OSError:
             pass
+        beat.set()
         try:
             os.remove(RUNNING)
         except OSError:

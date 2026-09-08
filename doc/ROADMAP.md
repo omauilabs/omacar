@@ -176,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 56 | 26,839 |
+| Python — the whole diagnostic side | 56 | 26,938 |
 | JavaScript — the app | 48 | 15,893 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,536 |
-| Tests | 11 | 4,759 |
+| Tests | 11 | 4,764 |
 | Documentation | 13 | 3,557 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **61,034** |
+| **Tracked in git, all of it** | | **61,138** |
 
-**Tests** — 824 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 845 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -226,6 +226,11 @@ What is actually covered, straight out of the runner's own headings:
 | A picture reaches the canvas | 1 |
 | The muxer, read back by ffmpeg | 6 |
 | Through the app, in a real browser | 11 |
+| An adapter that is not plugged in | 5 |
+| A bus that answers on no setting at all | 5 |
+| A bus that talks | 5 |
+| A capture running perfectly on a bus that has gone quiet | 3 |
+| The engine stopping ends the leg | 3 |
 | Units | 9 |
 | Service countdown | 9 |
 | Mode 06 verdicts | 4 |
@@ -303,8 +308,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 136 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 137 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The detached capture said it was listening when it was not
 - `2026-09-08` The preparation records what it proved, and says which browser proved it
 - `2026-09-08` The runbook records why the hotspot is a second device
 - `2026-09-08` The decoder report is written down, because the answer outlives the process
@@ -312,7 +318,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` The tablet reports which decoder it used, and one command gets it ready
 - `2026-09-08` Two adversarial reads of the picture path, and every defect they found
 - `2026-09-08` A session somebody started by hand wins over what the app would have chosen
-- `2026-09-08` A recording is not started until somebody looks at it
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

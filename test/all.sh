@@ -28,6 +28,11 @@ python3 "$ROOT/test/app_test.py" || fails=$((fails + 1))
 # the rule two suites above this one were added for.
 python3 "$ROOT/test/phone_test.py" || fails=$((fails + 1))
 
+# The detached drive capture, against a fake adapter that can talk, go quiet,
+# or not be there. The bench emulator has no monitor mode, so this is the only
+# thing that ever runs the listening path without a car.
+python3 "$ROOT/test/listen_test.py" || fails=$((fails + 1))
+
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
 #
