@@ -182,9 +182,9 @@ the one that is wrong.
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 5 | 1,381 |
 | Tests | 11 | 4,631 |
-| Documentation | 13 | 3,493 |
+| Documentation | 13 | 3,511 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **59,947** |
+| **Tracked in git, all of it** | | **59,965** |
 
 **Tests** — 817 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -301,8 +301,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 124 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 125 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The roadmap says the phone screen is built and unproven, which is neither of the two things it would be easier to say
 - `2026-09-08` The phone screen's requests were unsigned, which in the car reads as no adapter
 - `2026-09-08` A runbook for the CarPlay session, in the order that isolates the one new thing
 - `2026-09-08` The phone screen gets a picture, by whichever decoder the browser actually has
@@ -310,7 +311,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` A capture becomes a claim: broadcast signals in the profile, and adoption
 - `2026-09-07` The app never started on a real car, and nothing here had ever started it
 - `2026-09-07` Echo off while monitoring: it costs a line for every frame
-- `2026-09-07` The bus you diagnose on is not the bus you listen to
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
