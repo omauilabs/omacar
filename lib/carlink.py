@@ -1126,6 +1126,28 @@ def _stop_held():
 # One dictionary, last writer wins, no history: it describes the browser that
 # most recently opened the phone screen, which is the only one anybody means.
 BROWSER = {}
+BROWSER_FILE = os.path.join(records.STATE, "phone-browser.json")
+
+
+def _load_browser():
+    """WRITTEN DOWN, BECAUSE THE ANSWER OUTLIVES THE PROCESS.
+
+    Held only in memory, this is lost to a daemon restart, a reboot, or the
+    tablet's battery -- and the one moment it is most wanted is after a car
+    session, from a terminal, when the machine has been through all three. A
+    single small file is the difference between "here is what that browser
+    managed" and "ask again in the car".
+    """
+    if BROWSER:
+        return BROWSER
+    try:
+        with open(BROWSER_FILE, encoding="utf-8") as f:
+            got = json.load(f)
+        if isinstance(got, dict):
+            BROWSER.update(got)
+    except (OSError, ValueError):
+        pass
+    return BROWSER
 
 
 def note_browser(what):
@@ -1136,6 +1158,15 @@ def note_browser(what):
                     ("route", "why", "pictures", "units", "note", "agent")
                     if k in what})
     BROWSER["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        os.makedirs(os.path.dirname(BROWSER_FILE), exist_ok=True)
+        tmp = BROWSER_FILE + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(BROWSER, f, indent=2)
+        os.replace(tmp, BROWSER_FILE)
+    except OSError:
+        # A note that could not be written is still a note that was made.
+        pass
     return BROWSER
 
 

@@ -1114,7 +1114,7 @@ def handle_get(path, query):
             "driver": "unproven",
             # Filled in by whichever browser last opened the phone screen.
             # Empty means no browser has ever got that far on this machine.
-            "browser": dict(carlink.BROWSER),
+            "browser": dict(carlink._load_browser()),
             "replay": os.path.exists(
                 os.path.join(records.STATE, "phone-replay.h264")),
             "note": "The Carlinkit driver is written from a reading of the "
