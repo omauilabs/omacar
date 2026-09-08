@@ -354,6 +354,11 @@ def _pick_monitor_protocol(el, probe=2.0):
     for p in MONITOR_PROTOCOLS:
         try:
             el.raw("ATSP" + p)
+            # Echo OFF. The adapter repeats every command back, and inside a
+            # monitor that is a wasted line for every frame, on a link that is
+            # the bottleneck. init() does not turn it off, and measured on the
+            # car it is the difference between four frames a second and fourteen.
+            el.raw("ATE0")
             el.raw("ATH1")
             el.raw("ATS1")
         except Exception:                                     # noqa: BLE001
@@ -373,6 +378,7 @@ def _pick_monitor_protocol(el, probe=2.0):
             break
     if best:
         el.raw("ATSP" + best)
+        el.raw("ATE0")
         el.raw("ATH1")
         el.raw("ATS1")
     return best
@@ -417,6 +423,7 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             # Headers ON, because a frame without its identifier is an
             # anonymous eight bytes and useless. Spaces on, because the parse
             # is cheap either way and a human reading a capture wants them.
+            el.raw("ATE0")
             el.raw("ATH1")
             el.raw("ATS1")
             # THE BUS YOU DIAGNOSE ON IS NOT THE BUS YOU LISTEN TO.
