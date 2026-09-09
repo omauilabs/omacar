@@ -176,7 +176,7 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 59 | 28,457 |
+| Python — the whole diagnostic side | 59 | 28,464 |
 | JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
@@ -184,7 +184,7 @@ the one that is wrong.
 | Tests | 12 | 5,314 |
 | Documentation | 22 | 5,144 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **65,247** |
+| **Tracked in git, all of it** | | **65,254** |
 
 **Tests** — 891 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -312,8 +312,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 160 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 161 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` Sleep and shutdown on the reference screen, and they ask first
 - `2026-09-09` The board shows the picture, because two surfaces on one layer have no order
 - `2026-09-09` The board was painting over the wallpaper with an older copy of itself
 - `2026-09-09` Masonry back, and the band of empty screen was Chromium's viewport
@@ -321,7 +322,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-09` A parity plan against Snap-on, and what of theirs you can keep
 - `2026-09-09` Give the columns a line of clearance above the footer
 - `2026-09-09` The wallpaper fills the screen, after four separate bugs said it could not
-- `2026-09-09` The reference fills its screen, and gains a header you can press
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

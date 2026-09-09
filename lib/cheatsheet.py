@@ -161,7 +161,8 @@ CSS = """
      drawn this morning that still claims "connected" this evening is a lie
      told by a reference screen. */
   .status { display: flex; align-items: center; gap: .5em;
-            font-size: calc(0.01420 * var(--H)); color: #94a7ba; }
+            justify-content: center;
+            font-size: calc(0.01260 * var(--H)); color: #94a7ba; }
   .dot { width: calc(0.00780 * var(--H)); height: calc(0.00780 * var(--H)); border-radius: 50%; background: #56697c; }
   .status[data-state="on"] .dot { background: #4ade80; }
   .status[data-state="sim"] .dot { background: #fbbf24; }
@@ -219,7 +220,12 @@ CSS = """
   .desc { font-size: calc((0.01320 * var(--H)) * var(--s)); color: #94a7ba; line-height: 1.32; }
   footer { position: absolute; left: calc(0.03600 * var(--W)); right: calc(0.03600 * var(--W)); bottom: calc(0.02400 * var(--H));
            font-size: calc(0.01200 * var(--H)); color: #56697c;
-           display: flex; justify-content: space-between; }
+           /* Three parts, and the middle one centred on the page rather than
+              on whatever is left between the other two -- the side items are
+              different widths, so space-between would put it off-centre. */
+           display: grid; grid-template-columns: 1fr auto 1fr;
+           align-items: center; }
+  footer > :last-child { text-align: right; }
 """
 
 
@@ -451,17 +457,18 @@ def page(when=None, size=None):
   <div class="title-wrap"><h1>OmaCar</h1>
     <span class="sub">every command, generated from the tool itself</span></div>
   <div class="spacer"></div>
-  <div class="status" data-state="{html.escape(st['state'])}">
-    <span class="dot"></span><span>{html.escape(st['label'])}</span>
-    <span class="when">{html.escape('at ' + seen_at if seen_at else '')}</span>
-  </div>
-  <div class="spacer"></div>
   <div class="actions">{actions}</div>
 </header>
 <div class="rule"></div>
 <main>{cols}</main>
-<footer><span>{n} commands &middot; omacar help</span>
-  <span>generated {html.escape(when)}</span></footer>
+<footer>
+  <span>{n} commands &middot; omacar help</span>
+  <span class="status" data-state="{html.escape(st['state'])}">
+    <span class="dot"></span><span>{html.escape(st['label'])}</span>
+    <span class="when">{html.escape('at ' + seen_at if seen_at else '')}</span>
+  </span>
+  <span>generated {html.escape(when)}</span>
+</footer>
 <script>{MASONRY}</script>
 </body></html>"""
 
