@@ -1,9 +1,9 @@
 // The baby, from the road.
 //
-// WHAT THIS SCREEN IS. Long night drives, and a six-month-old at home with the
-// other parent. The question is "is he asleep, and has anything changed",
-// answered on a screen that is already on the dashboard so nobody picks up a
-// phone at seventy miles an hour.
+// WHAT THIS SCREEN IS. Long night drives, and a small child asleep at home.
+// The question is "is anything happening", answered on a screen that is
+// already on the dashboard so nobody picks up a phone at seventy miles an
+// hour.
 //
 // WHERE THE NUMBERS COME FROM, AND WHY THE APP DOES NOT FETCH THEM. OmaCar
 // holds no nursery credential and never talks to that service. The home

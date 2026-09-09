@@ -1,9 +1,9 @@
 """The baby, from the road.
 
-WHAT THIS IS FOR. Long night drives, and a six-month-old at home with the
-other parent. The question is not "show me a nursery app" -- it is "is he
-asleep, and has anything changed" answered on a screen that is already on the
-dashboard, without picking up a phone.
+WHAT THIS IS FOR. Long night drives, and a small child asleep at home. The
+question is not "show me a nursery app" -- it is "is anything happening"
+answered on a screen that is already on the dashboard, without picking up a
+phone.
 
 WHAT IT DELIBERATELY IS NOT.
 
