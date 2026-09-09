@@ -44,6 +44,9 @@
 #   omacar tablet awake       stop it suspending — for a tablet that lives in a car
 #   omacar power off|sleep|screen|status|allow
 #                             end the day, or just the screen, and say why not
+#   omacar nursery [send HOST]
+#                             the baby, from the road — pushed from home, never
+#                             fetched here, and never a live feed while moving
 #   omacar status             is anything watching the car, and what does it know
 #   omacar watch [list]       the watchdog — notifies you when something changes
 #   omacar scan               full system scan, every module, as a report
@@ -910,6 +913,9 @@ print()
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # Offline and credential-free by construction: it reads a file another
+  # machine left here. `send` is the half that runs at home.
+  nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;
   board)
     # THE SAME REFERENCE, AS A SURFACE YOU CAN PRESS. A wallpaper is an image
     # and an image takes no input; what sits between the wallpaper and your

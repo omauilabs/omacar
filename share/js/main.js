@@ -20,6 +20,7 @@ import replayView from "./views/replay.js";
 import resetsView from "./views/resets.js";
 import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
+import nurseryView from "./views/nursery.js";
 import { createOmaPlay } from "./omaplay/layer.js";
 import { mockSource, dongleSource } from "./omaplay/source.js";
 
@@ -210,6 +211,14 @@ const TABS = [
       { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
       { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
       { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },
+      // NOT ABOUT THE CAR, and the only screen here that is not. It earns its
+      // place on a tool that lives in a car doing long night drives: the
+      // question "is he asleep" is asked from the road, and the alternative is
+      // picking up a phone at seventy miles an hour. `nursery: true` keeps it
+      // off every machine that has never been sent a document, the same way
+      // `ai` keeps the advisor off a machine with no key. `fast` because its
+      // camera block answers to the road speed.
+      { id: "nursery", label: "Nursery", title: "The baby, from the road", mount: nurseryView, nursery: true, fast: true },
     ],
   },
   {
@@ -304,7 +313,9 @@ function route() {
 }
 
 const tabOf = (v) => (v && v.tab) || null;
-const hiddenView = (v) => !!(v.ai && !store.aiOn) || !tierAllows(v);
+const hiddenView = (v) => !!(v.ai && !store.aiOn)
+                       || !!(v.nursery && !store.nurseryOn)
+                       || !tierAllows(v);
 
 // The one piece of history the app keeps.
 //

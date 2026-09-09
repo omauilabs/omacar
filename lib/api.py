@@ -1056,6 +1056,14 @@ def handle_get(path, query):
     """(status, payload) or None when it is not ours."""
     if path == "/api/snapshot":
         return 200, records.snapshot()
+    if path == "/api/nursery":
+        # A DOCUMENT SOMEBODY ELSE'S MACHINE PUSHED. Nothing here reaches out,
+        # holds a credential or knows a nursery service exists -- see
+        # lib/nursery.py. It is on its own route rather than folded into the
+        # snapshot every screen reads, so a child's name and sleep times cannot
+        # arrive somewhere nobody meant to put them.
+        import nursery
+        return 200, nursery.summary()
     if path == "/api/live":
         return 200, records.live()
     if path == "/api/history":

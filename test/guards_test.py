@@ -1022,12 +1022,13 @@ try:
     api.drive_action({"action": "use", "name": "default"})
     check("and switched back", api.drive_layout()["_name"], "default")
 
-    for bad, why in (({"action": "use", "name": "nope"}, "no such layout"),
-                     ({"action": "forget", "name": "nope"}, "no such layout"),
-                     ({"action": "sudo"}, "unknown action"),
-                     ({"action": "save-as", "name": "../../etc"}, "a path is not a name"),
-                     ({"action": "save-as", "name": ""}, "empty")):
-        check(f"refused: {why}", _raises(lambda b=bad: api.drive_action(b), ValueError), True)
+    for wrong, why in (({"action": "use", "name": "nope"}, "no such layout"),
+                       ({"action": "forget", "name": "nope"}, "no such layout"),
+                       ({"action": "sudo"}, "unknown action"),
+                       ({"action": "save-as", "name": "../../etc"},
+                        "a path is not a name"),
+                       ({"action": "save-as", "name": ""}, "empty")):
+        check(f"refused: {why}", _raises(lambda b=wrong: api.drive_action(b), ValueError), True)
 
     api.drive_action({"action": "forget", "name": "track"})
     check("a layout can be forgotten", api.drive_layout()["_names"], ["default"])
@@ -1148,13 +1149,14 @@ _el = elm.Elm.__new__(elm.Elm)
 _el.ser = _Port()
 _el.header = None
 _el.protocol = None
-for bad in ("22F190", "2EF19000", "0100", "3401"):
+for refused in ("22F190", "2EF19000", "0100", "3401"):
     try:
-        _el.monitor(bad, seconds=0.01)
-        bad_check = False
+        _el.monitor(refused, seconds=0.01)
+        refused_ok = False
     except elm.WriteAttempted:
-        bad_check = True
-    check(f"monitor({bad!r}) is refused — it is not an adapter command", bad_check, True)
+        refused_ok = True
+    check(f"monitor({refused!r}) is refused — it is not an adapter command",
+          refused_ok, True)
 check("nothing was transmitted by the refused calls", _el.ser.written, [])
 
 # A switch is a byte that is steady in each window and different between them.
@@ -1481,6 +1483,104 @@ _cli = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
 check("ending the day has its own verb, not an overload of tablet",
       "omacar power off|sleep|screen|status|allow" in _cli
       and 'power) shift; exec python3 "$ROOT/lib/power.py"' in _cli, True)
+
+# ------------------------------------------------------------- the nursery
+head("the baby screen holds no credential and never claims to know")
+
+import nursery  # noqa: E402
+
+# WHAT THIS GUARDS. A car tool that grew a baby monitor is one careless commit
+# away from being a car tool that holds somebody's nursery password, and one
+# careless render away from a stale "asleep" shown in the present tense.
+
+_ns = open(os.path.join(ROOT, "lib", "nursery.py"), encoding="utf-8").read()
+check("nothing here talks to a nursery service",
+      "cradlewise.com" in _ns or "requests" in _ns or "urlopen" in _ns, False)
+# Looked for as calls, not as words: the module's docstring says "password"
+# exactly in order to say it never holds one.
+check("and nothing here reads a secret",
+      any(w in _ns for w in ("secret-tool", "import keyring", "getpass",
+                             "SecretService", "gnome-keyring")), False)
+check("the document is pushed over ssh, opening no port at either end",
+      '"ssh"' in _ns and "BatchMode" in _ns, True)
+
+# A WHITELIST, NOT A COPY. omababy knows a growth curve, five months of history
+# and a lifetime tally. None of it belongs on a second machine that lives in a
+# car.
+_full = {"baby": {"name": "A", "age": "6 months old"},
+         "now": {"state": "sleeping", "in_crib": True, "for_mins": 85},
+         "today": {"naps": 1, "feeds": 2, "diapers": 3, "sleep_min": 40,
+                   "in_bed_min": 300, "rise": "7:47 am", "bedtime": "1:08 am"},
+         "last_night": {"total_min": 418},
+         "growth": {"weight": 16.05}, "week": [1] * 30, "months": [1] * 8,
+         "lifetime": {"days_recorded": 152},
+         "sources": {"cradlewise": {"ok": True, "error": ""}},
+         "stream": {"available": True},
+         "nightlight": {"light_on": True, "color": "#000000"},
+         "fetched": 1}
+_flat = nursery._flatten(_full)
+for _left in ("growth", "week", "months", "lifetime"):
+    check(f"{_left} stays at home", _left in _flat, False)
+check("what travels is what the question needs",
+      _flat["name"] == "A" and _flat["state"] == "sleeping"
+      and _flat["last_night_min"] == 418 and _flat["camera"] is True, True)
+check("a shape that moved costs one field, not the push",
+      nursery._flatten({"now": {"state": "awake"}})["state"], "awake")
+
+# THE AGE IS NOT OPTIONAL, and it is not the baby's.
+import time as _t  # noqa: E402
+import json as _j  # noqa: E402
+import tempfile as _tf  # noqa: E402
+
+_tmp = _tf.mkdtemp()
+_was = nursery.DOC
+try:
+    nursery.DOC = os.path.join(_tmp, "nursery.json")
+    check("with nothing sent, it says so rather than showing blanks",
+          nursery.summary()["configured"], False)
+    _doc = dict(_flat)
+    _doc["sent_at"] = _t.time()
+    with open(nursery.DOC, "w", encoding="utf-8") as _f:
+        _j.dump(_doc, _f)
+    _fresh = nursery.summary()
+    check("a document that just arrived is known", _fresh["known"], True)
+    check("and the baby's age is still the baby's age",
+          _fresh["age"], "6 months old")
+    check("while the freshness has a name of its own",
+          _fresh["sent_ago"] < 5, True)
+    _doc["sent_at"] = _t.time() - (nursery.STALE + 60)
+    with open(nursery.DOC, "w", encoding="utf-8") as _f:
+        _j.dump(_doc, _f)
+    check("past the threshold it stops claiming to know",
+          nursery.summary()["known"], False)
+finally:
+    nursery.DOC = _was
+    import shutil as _sh  # noqa: E402
+    _sh.rmtree(_tmp, ignore_errors=True)
+
+# THE CAMERA IS GATED ON MOTION, AND A LOST READING IS NOT A STOP.
+_view = open(os.path.join(ROOT, "share", "js", "views", "nursery.js"),
+             encoding="utf-8").read()
+check("the camera answers to the road speed",
+      "store.values" in _view and "MOVING_KPH" in _view, True)
+check("and motion latches, so a reading that went quiet is not a stop",
+      "SETTLE" in _view and "movedAt" in _view, True)
+check("the latch can also expire without a sample",
+      "setInterval(draw" in _view, True)
+
+# IT STAYS ON ITS OWN ROUTE. A child's name and sleep times have no business
+# in the snapshot every other screen reads.
+_api = open(os.path.join(ROOT, "lib", "api.py"), encoding="utf-8").read()
+check("the nursery has its own endpoint", '/api/nursery' in _api, True)
+_snap = open(os.path.join(ROOT, "lib", "records.py"), encoding="utf-8").read()
+check("and nothing about it is folded into the snapshot",
+      "nursery" in _snap, False)
+_core = open(os.path.join(ROOT, "share", "js", "core.js"), encoding="utf-8").read()
+check("the app keeps only whether anything was ever sent",
+      "this.nurseryOn = " in _core and "crib.value.configured" in _core, True)
+_main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+check("and the screen is absent on a machine that has never been sent one",
+      "v.nursery && !store.nurseryOn" in _main, True)
 
 # ----------------------------------------------------------------------- done
 print()

@@ -240,6 +240,7 @@ async function req(path, opts) {
 
 export const api = {
   snapshot: () => req("/api/snapshot"),
+  nursery: () => req("/api/nursery"),
   live: () => req("/api/live"),
   // The two routes the Connect button rests on. Everything that knows their
   // shape is in the "connecting" section below, so a change on the server side
@@ -303,21 +304,28 @@ class Store extends EventTarget {
     this.live = null;         // the current sample, refreshed fast
     this.knowledge = null;    // dtc.json
     this.aiOn = false;
+    this.nurseryOn = false;
     this.error = null;
   }
   emit(what) { this.dispatchEvent(new CustomEvent(what)); }
   on(what, fn) { this.addEventListener(what, fn); return () => this.removeEventListener(what, fn); }
 
   async boot() {
-    const [car, kb, ai] = await Promise.allSettled([
+    const [car, kb, ai, crib] = await Promise.allSettled([
       api.snapshot(),
       fetch("data/dtc.json", { cache: "no-store" }).then((r) => r.json()),
       api.aiAvailable(),
+      // ONE BOOLEAN, DELIBERATELY. The nursery document is on its own route
+      // and stays there -- a child's name and sleep times have no business in
+      // the snapshot every screen reads. All the navigation needs to know is
+      // whether anything has ever been sent, which is what this asks.
+      api.nursery(),
     ]);
     if (car.status === "fulfilled") { this.car = car.value; U.set(car.value.units); }
     else this.error = String(car.reason);
     this.knowledge = kb.status === "fulfilled" ? kb.value : {};
     this.aiOn = ai.status === "fulfilled" && ai.value.available;
+    this.nurseryOn = crib.status === "fulfilled" && !!crib.value.configured;
     this.emit("car");
   }
 
