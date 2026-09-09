@@ -605,6 +605,54 @@ BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
 GREEN, YELLOW = "\033[32m", "\033[33m"
 
 
+def _session_env():
+    """The Wayland session, for a command that has to reach the compositor.
+
+    Setting a wallpaper talks to the running shell over IPC, and an ssh shell
+    carries no display — so it reported success and changed nothing. A tablet
+    on a dashboard is exactly the machine somebody does this from over ssh.
+    """
+    env = dict(os.environ)
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    if not env.get("WAYLAND_DISPLAY"):
+        import glob as _glob
+        for sock in sorted(_glob.glob(
+                os.path.join(env["XDG_RUNTIME_DIR"], "wayland-[0-9]*"))):
+            if not sock.endswith(".lock"):
+                env["WAYLAND_DISPLAY"] = os.path.basename(sock)
+                break
+    return env
+
+
+def versioned(path):
+    """A copy under a name that changes when the picture does.
+
+    THE WALLPAPER WAS NOT UPDATING, AND THIS IS WHY. Omarchy points a symlink
+    at the file and asks the shell to load it; asked for the same path twice it
+    has no reason to read the bytes again, so a freshly drawn picture sat on
+    disk while the old one stayed on the screen. Naming the file after its own
+    contents means an unchanged picture costs nothing and a changed one is a
+    different file, which the shell cannot mistake for the one it already has.
+    """
+    import hashlib
+    with open(path, "rb") as f:
+        tag = hashlib.sha256(f.read()).hexdigest()[:10]
+    out = os.path.join(os.path.dirname(path),
+                       f"omacar-commands-{tag}.png")
+    if not os.path.exists(out):
+        shutil.copy2(path, out)
+    # Older versions are rubbish the moment a new one exists.
+    import glob as _glob
+    for old in _glob.glob(os.path.join(os.path.dirname(path),
+                                       "omacar-commands-*.png")):
+        if old != out:
+            try:
+                os.remove(old)
+            except OSError:
+                pass
+    return out
+
+
 def set_wallpaper(path):
     """Ask whatever is drawing the background to draw this instead.
 
@@ -627,7 +675,8 @@ def set_wallpaper(path):
         if cmd is None or not shutil.which(cmd[0]):
             continue
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
+                               env=_session_env())
             if r.returncode == 0:
                 return name
         except (OSError, subprocess.SubprocessError):
@@ -690,7 +739,7 @@ def main(argv):
     print(f"\n  {GREEN}drew {n} commands{RESET}   {w}×{h}, {kb} KB")
     print(f"  {DIM}{out}{RESET}")
     if do_set:
-        who = set_wallpaper(out)
+        who = set_wallpaper(versioned(out))
         if who:
             print(f"  {GREEN}set as the wallpaper{RESET}   {DIM}via {who}{RESET}")
         else:
