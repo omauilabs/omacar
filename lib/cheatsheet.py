@@ -291,6 +291,40 @@ def render(out_path, size=None):
 
 DEFAULT = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
                        "omacar-commands.png")
+# The same list the picture is drawn from, for anything that wants to do more
+# than look at it. The board reads this rather than parsing the CLI a second
+# time, because two parsers is two chances to disagree about what the commands
+# are -- and the whole point of both is that they cannot.
+DATA = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
+                    "omacar-commands.json")
+
+# COMMANDS THAT CHANGE SOMETHING, and must be asked about before they run.
+#
+# Not a safety mechanism -- every one of these has its own gates further down,
+# and the write arm is the real boundary. This is about a screen you can lean
+# on: a reference you can tap should not start a sweep or throw away a demo
+# because a sleeve brushed it.
+CONFIRM = {"write", "prune", "demo", "sim", "mode", "tablet", "hotplug",
+           "odometer", "service", "photo", "profile", "vehicle"}
+
+
+def as_json():
+    """The commands, grouped, with what each one needs to run."""
+    out = []
+    for title, about, rows in grouped():
+        items = []
+        for cmd, desc in rows:
+            parts = cmd.split()
+            verb = parts[1] if len(parts) > 1 else ""
+            # A command shown with a choice or a placeholder cannot simply be
+            # run: somebody has to say which. Those open a terminal with the
+            # line typed and waiting instead of firing.
+            needs_input = bool(re.search(r"[\[|]|\bPID\b|\bH D\b", cmd))
+            items.append({"command": cmd, "description": desc, "verb": verb,
+                          "confirm": verb in CONFIRM,
+                          "needs_input": needs_input})
+        out.append({"title": title, "about": about, "commands": items})
+    return {"generated": time.time(), "groups": out}
 
 BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
 GREEN, YELLOW = "\033[32m", "\033[33m"
@@ -331,8 +365,11 @@ def main(argv):
     size = None
     do_set = False
     rest = []
+    want_json = False
     for a in argv:
-        if a == "--set":
+        if a == "--json":
+            want_json = True
+        elif a == "--set":
             do_set = True
         elif a.startswith("--size="):
             try:
@@ -358,6 +395,16 @@ def main(argv):
     if not n:
         print("\n  could not read the command list out of bin/omacar.\n")
         return 1
+
+    # The data is written whichever way this was called, because the board
+    # reads it and the board should never be looking at a stale list.
+    import json as _json
+    os.makedirs(os.path.dirname(DATA), exist_ok=True)
+    with open(DATA, "w", encoding="utf-8") as f:
+        _json.dump(as_json(), f, indent=1)
+    if want_json:
+        print(DATA)
+        return 0
     try:
         render(out, size)
     except Exception as why:                                  # noqa: BLE001

@@ -757,6 +757,31 @@ _missing = [c for c, _d in _rows if _cs.html.escape(c.split(" ", 1)[0]) not in _
 check("the drawn page contains every command", _missing, [])
 check("the columns are packed here rather than by the browser",
       len(_cs.pack(_grouped)), 4)
+
+# THE BOARD READS WHAT THE PICTURE IS DRAWN FROM, and the two must not drift.
+_board = os.path.join(ROOT, "share", "quickshell", "board", "shell.qml")
+check("the tappable board exists", os.path.exists(_board), True)
+_qml = open(_board, encoding="utf-8").read()
+_doc = _cs.as_json()
+_keys = set()
+for _g in _doc["groups"]:
+    for _c in _g["commands"]:
+        _keys |= set(_c)
+check("every field the board reads is in the data it is given",
+      sorted(k for k in ("command", "description", "confirm", "needs_input")
+             if k not in _keys), [])
+check("the board reads the file the picture writes",
+      "omacar-commands.json" in _qml, True)
+# A COMMAND THAT CHANGES SOMETHING DOES NOT FIRE ON A TAP. This is not the
+# safety boundary -- the write arm is -- it is about a screen that lives on a
+# dashboard and gets leant on.
+_writes = [c for g in _doc["groups"] for c in g["commands"]
+           if c["command"].startswith("omacar write")]
+check("every write command is marked to be confirmed",
+      [c["command"] for c in _writes if not c["confirm"]], [])
+check("and so is anything that throws data away",
+      [c["command"] for g in _doc["groups"] for c in g["commands"]
+       if c["verb"] in ("prune", "demo") and not c["confirm"]], [])
 check("and no column is left empty",
       [c for c in _cs.pack(_grouped) if not c], [])
 

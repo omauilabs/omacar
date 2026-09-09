@@ -52,6 +52,7 @@
 #   omacar roadmap [--check]  regenerate the measured half of doc/ROADMAP.md
 #   omacar cheatsheet [--set]
 #                             every command as a picture, for the wallpaper
+#   omacar board [stop]       the same commands, behind your windows, tappable
 #   omacar state              key=value status for the bar widget
 #   omacar demo start|stop|status|trash
 #                             a throwaway OmaCar with its own data, for showing
@@ -902,6 +903,43 @@ print()
   # those numbers has actually moved, so it is safe to run in a hook.
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
   cheatsheet|wallpaper) shift; exec python3 "$ROOT/lib/cheatsheet.py" "$@" ;;
+  board)
+    # THE SAME REFERENCE, AS A SURFACE YOU CAN PRESS. A wallpaper is an image
+    # and an image takes no input; what sits between the wallpaper and your
+    # windows on Wayland is a layer-shell surface, so the board is one of
+    # those. It reads the list `cheatsheet` writes rather than parsing the CLI
+    # a second time.
+    shift
+    BOARD_QML="$ROOT/share/quickshell/board"
+    case "${1:-start}" in
+      stop)
+        pkill -f "quickshell.*$BOARD_QML" >/dev/null 2>&1           && echo "  the board is down" || echo "  it was not running" ;;
+      status)
+        if pgrep -f "quickshell.*$BOARD_QML" >/dev/null 2>&1; then
+          echo "  the board is up"
+        else
+          echo "  not running — omacar board"
+        fi ;;
+      *)
+        command -v quickshell >/dev/null || {
+          echo "omacar: quickshell is not installed, and it is what draws this" >&2
+          exit 1; }
+        python3 "$ROOT/lib/cheatsheet.py" --json >/dev/null || exit 1
+        if pgrep -f "quickshell.*$BOARD_QML" >/dev/null 2>&1; then
+          echo "  already up — omacar board stop to take it down"
+          exit 0
+        fi
+        setsid -f quickshell -p "$BOARD_QML" >/dev/null 2>&1 < /dev/null
+        sleep 1
+        if pgrep -f "quickshell.*$BOARD_QML" >/dev/null 2>&1; then
+          echo "  the board is up, behind your windows."
+          echo "  omacar board stop   to take it down"
+        else
+          echo "  it did not start. Run it in the foreground to see why:"
+          echo "    quickshell -p $BOARD_QML"
+          exit 1
+        fi ;;
+    esac ;;
   # Under the venv interpreter like every other module that imports lib/,
   # rather than under a bare python3. lib/ai.py is the cautionary tale: it is
   # dispatched with plain python3 and so cannot see anything the venv has, for
