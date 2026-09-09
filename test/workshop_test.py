@@ -676,6 +676,48 @@ km, at, driven = book.odometer()
 ok("the odometer advances by what was driven", abs(driven - 24.15) < 0.4)
 ok("...on top of the reading you gave it", abs(km - 100024.15) < 0.4)
 
+# A DRIVE THAT CROSSES MIDNIGHT IS COUNTED ONCE.
+#
+# This was counted twice, and it hid for months because it can only fail when
+# the reading and the driving after it fall either side of a midnight. The
+# suite passed all day and failed at ten past midnight, which is the only
+# reason anybody found it. So this one builds the midnight rather than waiting
+# for one: an odometer reading late one evening, and the driving after it in
+# the small hours of the next day.
+#
+# Doubling the distance is not a rounding error on a tool whose trip history is
+# checked against the odometer.
+from datetime import datetime as _dt, timedelta as _td   # noqa: E402
+
+_mid = _dt.fromtimestamp(time.time()).replace(hour=0, minute=0, second=0,
+                                              microsecond=0)
+_before = (_mid - _td(minutes=10)).timestamp()     # 23:50 the evening before
+_after = (_mid + _td(minutes=5)).timestamp()       # 00:05, after midnight
+
+bdb = sqlite3.connect(records.DB)
+bdb.execute("DELETE FROM samples")
+# Ten minutes at 96.6 km/h, entirely after midnight: 16.1 km and no more.
+bdb.executemany("INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [(_after + i, 2100, 96.6, 35, 22, 88, 28, 7.5, 0, 4, 14, None, .6)
+                 for i in range(600)])
+bdb.commit()
+bdb.close()
+book.set_odometer(200000.0, when=_before)
+_km, _at, _driven = book.odometer()
+ok("a drive after midnight is counted once, not twice",
+   abs(_driven - 16.1) < 0.5)
+ok("...so the odometer reads what was actually driven",
+   abs(_km - 200016.1) < 0.5)
+
+# Put the original drive back for the checks that follow.
+bdb = sqlite3.connect(records.DB)
+bdb.execute("DELETE FROM samples")
+bdb.executemany("INSERT INTO samples VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                [(drive_t0 + i, 2100, 96.6, 35, 22, 88, 28, 7.5, 0, 4, 14, None, .6)
+                 for i in range(900)])
+bdb.commit()
+bdb.close()
+
 # And a reading taken after the drive must not count it twice.
 book.set_odometer(100050.0, when=time.time())
 ok("a fresh reading resets what counts as since",

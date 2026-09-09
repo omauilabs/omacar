@@ -780,11 +780,26 @@ def driven_since(db, since):
 
 
 def _partial_day(db, since):
-    """The part of one day that came after an instant, from the raw samples."""
+    """The part of ONE day that came after an instant, from the raw samples.
+
+    THE WINDOW ENDS AT MIDNIGHT, NOT TWENTY-FOUR HOURS LATER.
+
+    The caller adds this partial day and then adds every LATER day in full, so
+    a window running twenty-four hours from `since` overlaps the whole of the
+    following day and counts it twice. It only shows when a reading and the
+    driving after it fall either side of a midnight -- which for an odometer
+    means any night drive, and which is why this survived: the suite passed all
+    day and failed at ten past midnight.
+
+    Doubling the distance driven is not a rounding error on a tool whose trip
+    history is checked against the odometer.
+    """
+    start = datetime.fromtimestamp(since)
+    midnight = datetime(start.year, start.month, start.day) + timedelta(days=1)
     try:
         raw = db.execute(
             "SELECT t, speed FROM samples WHERE t >= ? AND t < ? ORDER BY t",
-            (since, since + 86400)).fetchall()
+            (since, midnight.timestamp())).fetchall()
     except sqlite3.Error:
         return 0.0
     km, prev = 0.0, None

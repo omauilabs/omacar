@@ -176,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 57 | 27,498 |
+| Python — the whole diagnostic side | 58 | 27,634 |
 | JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,651 |
-| Tests | 12 | 5,183 |
-| Documentation | 18 | 4,228 |
+| Tests | 12 | 5,225 |
+| Documentation | 18 | 4,229 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **62,934** |
+| **Tracked in git, all of it** | | **63,113** |
 
-**Tests** — 864 checks, **2 failing**. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 868 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -248,7 +248,7 @@ What is actually covered, straight out of the runner's own headings:
 | Photographs | 7 |
 | Survey | 1 |
 | a car we have not seen before — VIN <VIN>, starting its own record | 12 |
-| Odometer and service book | 10 |
+| Odometer and service book | 14 |
 | Cockpit and drive layout | 23 |
 | Sharing | 7 |
 | API | 7 |
@@ -311,8 +311,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 145 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 146 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` The power-button fix moves from one machine into the repository
 - `2026-09-09` A camera plan, and the one cable between the box and the tablet
 - `2026-09-08` Three hardware questions, researched and then attacked
 - `2026-09-08` The hybrid screen becomes a battery screen, and covers all three of them
@@ -320,7 +321,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` The tablet suspends, and in a car that reads as a dead tablet
 - `2026-09-08` A comparison that cannot work now says so instead of finding nothing
 - `2026-09-08` A capture that stopped recording reported itself healthy for seven minutes
-- `2026-09-08` A capture on a quiet bus reported that it was not running
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
