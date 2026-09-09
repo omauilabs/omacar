@@ -135,6 +135,18 @@ def main():
                              ("the navigation", "<nav"),
                              ("a mounted view", "data-view")):
             check(f"{what} rendered", needle in dom)
+
+        # 3. THE BOOT SCREEN LET GO. This is the check the three above cannot
+        #    make: a splash stuck at full opacity over a perfectly healthy app
+        #    leaves every one of them passing, because the DOM is all there --
+        #    it is simply behind a sheet nobody can tap through. So the test
+        #    asks for the one thing that means it finished, which is that the
+        #    element removed itself.
+        check("the boot screen is drawn before anything can load it",
+              'id="boot"' in open(os.path.join(SHARE, "app.html"),
+                                  encoding="utf-8").read())
+        check("and it let go of the screen once the app was up",
+              'id="boot"' not in dom)
     finally:
         server.terminate()
         try:

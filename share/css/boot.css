@@ -1,0 +1,146 @@
+/* The boot screen.
+
+   WHY IT EXISTS AND WHAT IT IS NOT ALLOWED TO DO.
+
+   Opening this app in a car is not opening an app. The tablet wakes because
+   the adapter appeared on the bus, which is to say because somebody got in and
+   turned a key, and for the second or so before there is anything true to show
+   they were looking at a vehicle bar with an empty hole under it. A mark
+   belongs there.
+
+   Three rules, and they are the whole design:
+
+     1. IT PAINTS FIRST. The markup is in app.html and the look is here, so it
+        is on the screen on the first frame — before a module has loaded, let
+        alone answered. A splash that arrives after the thing it was covering
+        is a flicker, not a splash.
+
+     2. IT NEVER OUTLIVES THE APP. It is dismissed by the app becoming ready,
+        with a floor so it is not a subliminal flash and a ceiling so a server
+        that never answers cannot hold the screen hostage. Past the ceiling the
+        app shows whatever it actually has, including its own failure card.
+
+     3. IT SAYS SOMETHING TRUE. If the wait runs long the line under the mark
+        stops being decorative and starts naming what is not answering, with
+        the command that would tell you why. A brand animation that spins
+        forever while a daemon is dead is the exact lie this tool exists
+        against. */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  background: var(--ground);
+  /* No transition on the way in — it is already there. Only on the way out. */
+  transition: opacity .42s ease, visibility 0s linear .42s;
+}
+
+/* Gone means gone: `visibility` as well as opacity, or an invisible sheet
+   keeps eating every tap on the screen underneath it. */
+.boot[data-done="1"] { opacity: 0; visibility: hidden; pointer-events: none; }
+
+.boot-stack {
+  display: grid;
+  justify-items: center;
+  gap: 1.15rem;
+  /* Slightly above centre. Optically centred is a little high, and on a
+     tablet in a cradle the bottom third is behind the driver's hand. */
+  transform: translateY(-4vh);
+}
+
+/* THE MARK IS THE ICON, DRAWN LIVE. A ring and a centre dot, which is a dial
+   with a needle at rest — the same shape as icon.svg, so the thing on the tab
+   and the thing on the screen are one identity rather than two drawings. */
+/* Sized against the screen, because this is the same file on a phone-sized
+   cockpit page and on a 12-inch tablet bolted to a dashboard. */
+.boot-mark {
+  width: clamp(84px, 13vmin, 148px);
+  height: clamp(84px, 13vmin, 148px);
+  display: block;
+}
+.boot-ring {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 14;
+  stroke-linecap: round;
+  transform-origin: 128px 128px;
+}
+.boot-hub { fill: var(--ok); }
+
+/* The sweep: a gap that travels once round, the way a needle wipes a dial on
+   power-up. It runs at most twice, because a loop is a progress bar that is
+   lying — nothing here knows how far along anything is. */
+@keyframes boot-sweep {
+  from { stroke-dasharray: 40 350; stroke-dashoffset: 0;    opacity: .55; }
+  60%  { stroke-dasharray: 260 130; }
+  to   { stroke-dasharray: 390 0;   stroke-dashoffset: -390; opacity: 1; }
+}
+.boot-ring { animation: boot-sweep 1.15s cubic-bezier(.22,.9,.28,1) both; }
+
+@keyframes boot-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.boot-word {
+  font-size: clamp(1.7rem, 4.2vmin, 2.8rem);
+  font-weight: 680;
+  /* Tight enough to read as one word. The wide tracking this started with
+     spelled it out a letter at a time, which is a title card, not a mark. */
+  letter-spacing: .02em;
+  color: var(--ink);
+  animation: boot-rise .5s .35s ease both;
+}
+.boot-word b { font-weight: 650; color: var(--ok); }
+
+.boot-said {
+  font-size: .8rem;
+  margin-top: .1rem;
+  letter-spacing: .04em;
+  color: var(--faint, var(--dim));
+  min-height: 1.2em;
+  animation: boot-rise .5s .55s ease both;
+  transition: color .3s ease;
+}
+/* A wait that has gone on long enough to need explaining is not decoration. */
+.boot[data-slow="1"] .boot-said { color: var(--warn); }
+
+/* THE FILM, IF THERE IS ONE. It is not in the repository — see the
+   /boot-film route — so absent is the normal case and the mark above is what
+   almost everybody sees. When there is one it covers the mark rather than
+   replacing it, so a film that fails to decode falls back to something. */
+.boot-film {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity .4s ease;
+}
+.boot[data-film="1"] .boot-film { opacity: 1; }
+.boot[data-film="1"] .boot-stack { opacity: 0; transition: opacity .4s ease; }
+
+.boot-skip {
+  position: absolute;
+  right: max(1.2rem, env(safe-area-inset-right));
+  bottom: max(1.2rem, env(safe-area-inset-bottom));
+  font-size: .78rem;
+  letter-spacing: .06em;
+  color: var(--dim);
+  opacity: 0;
+  transition: opacity .3s ease;
+}
+.boot[data-film="1"] .boot-skip { opacity: .8; }
+
+/* MOTION IS A PREFERENCE AND A SAFETY QUESTION. Somebody who has asked their
+   system for less of it is not asking less hard because they are in a car. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-ring, .boot-word, .boot-said { animation: none; }
+  .boot-ring { stroke-dasharray: none; opacity: 1; }
+  .boot { transition: opacity .15s linear, visibility 0s linear .15s; }
+}
+
+/* It is a screen, not a document. */
+@media print { .boot { display: none !important; } }

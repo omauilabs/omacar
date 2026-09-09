@@ -355,6 +355,27 @@ class Handler(SimpleHTTPRequestHandler):
                 body = f.read()
             self._send(body, "text/javascript; charset=utf-8")
             return
+        if path == "/boot-film":
+            # THE INTRO FILM, WHICH DOES NOT LIVE IN THIS REPOSITORY.
+            #
+            # A beautiful intro video is tens of megabytes, and this is a
+            # public repository that anybody may clone to read their own car.
+            # Making every one of them carry a film is the kind of weight that
+            # turns "no build step, no lockfile" into a slogan rather than a
+            # fact. So the boot screen draws its own mark, and if the owner has
+            # put a film here it plays that instead. Absent is the normal case
+            # and is not an error.
+            import records as _r
+            for name in ("boot.webm", "boot.mp4"):
+                real = os.path.join(_r.STATE, name)
+                if os.path.exists(real):
+                    ctype = ("video/webm" if name.endswith(".webm")
+                             else "video/mp4")
+                    with open(real, "rb") as f:
+                        body = f.read()
+                    self._send(body, ctype)
+                    return
+            return self._json({"error": "no boot film"}, 404)
         if path.startswith("/doc/"):
             # Served through docs.path_of, which refuses anything climbing out
             # of the folder. Same rule as /photo/, for the same reason.

@@ -36,6 +36,10 @@
      tokens, so it has nothing to style against if it loads first. -->
 <link rel="stylesheet" href="css/ima.css">
 <link rel="stylesheet" href="css/omaplay.css">
+<!-- The boot screen, last, so it can rely on every token above it and cover
+     every layer below it. It is markup and CSS on purpose: a splash drawn by a
+     module arrives after the frame it was meant to cover. -->
+<link rel="stylesheet" href="css/boot.css">
 
 <!-- The palette on paper.
      app.css already declares a print palette on :root, and it never arrives:
@@ -68,6 +72,29 @@
      browser to start fetching it alongside the HTML rather than two module
      hops later; drop it and the app still works. -->
 <link rel="modulepreload" href="js/vendor/d3.min.js">
+
+<!-- THE BOOT SCREEN, BEFORE THE APP AND OUTSIDE IT.
+     Opening this in a car is not opening an app: the tablet woke because the
+     adapter appeared, which is to say because somebody turned a key, and for
+     the second before there is anything true to show they were looking at a
+     vehicle bar with a hole under it.
+
+     It is dismissed by js/bootscreen.js watching data-booting on #app, so
+     nothing in main.js knows or cares that it is here — including main.js's
+     own failure path, which sets the same attribute and therefore uncovers the
+     error card rather than leaving a mark spinning over a dead server. -->
+<div id="boot" class="boot" data-done="0" role="status" aria-label="OmaCar starting">
+  <video class="boot-film" muted playsinline preload="none"></video>
+  <div class="boot-stack">
+    <svg class="boot-mark" viewBox="0 0 256 256" aria-hidden="true">
+      <circle class="boot-ring" cx="128" cy="128" r="62"/>
+      <circle class="boot-hub" cx="128" cy="128" r="16"/>
+    </svg>
+    <div class="boot-word">Oma<b>Car</b></div>
+    <div class="boot-said"></div>
+  </div>
+  <div class="boot-skip">tap to skip</div>
+</div>
 
 <div id="app" class="app" data-booting="1">
   <header class="vbar" id="vbar"></header>
@@ -111,3 +138,7 @@
      it holds a screen wake lock while the car is connected or the radio is
      playing, so a drive is not punctuated by reaching over to tap a key. -->
 <script type="module" src="js/awake.js"></script>
+<!-- Also separate, and for the same reason: it is not part of any view. It
+     only decides when the boot screen goes away and what it says while it is
+     there. -->
+<script type="module" src="js/bootscreen.js"></script>
