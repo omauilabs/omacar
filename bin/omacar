@@ -42,6 +42,8 @@
 #                             serve the gauge to any tablet on the network
 #   omacar tablet [setup]     set this machine up as the in-car tablet
 #   omacar tablet awake       stop it suspending — for a tablet that lives in a car
+#   omacar power off|sleep|screen|status|allow
+#                             end the day, or just the screen, and say why not
 #   omacar status             is anything watching the car, and what does it know
 #   omacar watch [list]       the watchdog — notifies you when something changes
 #   omacar scan               full system scan, every module, as a report
@@ -903,6 +905,11 @@ print()
   # those numbers has actually moved, so it is safe to run in a hook.
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
   cheatsheet|wallpaper) shift; exec python3 "$ROOT/lib/cheatsheet.py" "$@" ;;
+  # SHUTTING DOWN IS A COMMAND, not two words buried in a button. The board
+  # ran `systemctl poweroff` itself and looked at neither the exit code nor
+  # the error, so a refusal was indistinguishable from a missed tap. Now the
+  # button runs this, which means the failure can be reproduced from a shell.
+  power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
   board)
     # THE SAME REFERENCE, AS A SURFACE YOU CAN PRESS. A wallpaper is an image
     # and an image takes no input; what sits between the wallpaper and your

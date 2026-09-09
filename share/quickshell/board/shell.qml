@@ -1,19 +1,21 @@
-// The command board: a sheet of invisible targets over the wallpaper.
+// The command board: the reference picture, with every command on it live.
 //
-// WHY IT DRAWS NOTHING.
+// WHAT IT IS.
 //
-// It used to draw the whole reference itself — its own background, its own
-// columns, its own type. That is a second rendering of a thing that already
-// exists as a picture, and two renderings of one thing are two things to keep
-// in step. They did not stay in step, and because this one sits on top it won:
-// a corrected wallpaper appeared for a moment and was then painted over by an
-// older-looking copy of itself.
+// The wallpaper is a picture, and a picture takes no input. This is the same
+// picture drawn again on a layer-shell surface that sits between the wallpaper
+// and your windows, with one invisible target over each command and each
+// header button — `omacar cheatsheet` writes those coordinates out when it
+// draws. Hovering one lifts it; pressing one runs it.
 //
-// So the wallpaper is the only rendering. This is a transparent layer above it
-// carrying one rectangle per command, in the exact places the picture put them
-// — `omacar cheatsheet` writes those coordinates out when it draws. Hovering
-// one lifts it slightly; pressing one runs it. Nothing here can disagree with
-// what is on the screen, because it does not draw what is on the screen.
+// WHY IT DRAWS THE PICTURE RATHER THAN LYING OVER IT.
+//
+// Being transparent and trusting the wallpaper underneath was nearly right and
+// had one flaw with no fix: the wallpaper is drawn by another surface, and two
+// surfaces on the same layer have no defined order. Ours could sit under it,
+// which puts every target beneath the thing it is meant to be on top of.
+// Drawing the same PNG removes the question — there is still exactly one
+// rendering, and now the targets are children of the image they belong to.
 //
 // WHAT PRESSING ONE DOES, AND WHY IT IS NOT ALWAYS "RUN IT".
 //
@@ -22,6 +24,12 @@
 // because a sleeve brushed a screen that lives on a dashboard. Those open a
 // terminal with the line typed and waiting; nothing happens until a person
 // presses return.
+//
+// AND IT SAYS WHAT HAPPENED. Every button used to fail silently, so a refusal
+// from logind, a masked target, a name that did not resolve and a tap that
+// missed were one indistinguishable symptom: "the buttons dont work". The
+// outcome now lands in the banner under them, in the words the command itself
+// used.
 
 import QtQuick
 import Quickshell
@@ -99,28 +107,86 @@ ShellRoot {
   }
 
   Process { id: runner }
-  Process { id: actionRunner }
+
+  // IT LOOKS AT WHAT HAPPENED. The old version set a command, set running, and
+  // walked away. Four different things could stop `systemctl poweroff` — a
+  // polkit challenge with nobody to answer it, a masked suspend.target that
+  // `omacar tablet awake` masked on purpose, an inhibitor, a name that did not
+  // resolve — and all four looked identical from the outside: a button that
+  // did nothing. Now the failure is the sentence `omacar power` returns, on
+  // the screen, next to the button that was pressed.
+  Process {
+    id: actionRunner
+    stdout: StdioCollector { id: actionOut }
+    stderr: StdioCollector { id: actionErr }
+    onExited: (code, status) => {
+      const said = (actionErr.text || actionOut.text || "").trim()
+                     .split("\n")[0];
+      if (code === 0) {
+        root.say(said || (root.lastLabel + " — done"), false);
+      } else {
+        root.say(said || (root.lastLabel + " failed, and said nothing"), true);
+      }
+    }
+  }
+
+  // WHAT THE SCREEN IS CURRENTLY SAYING. A reference screen that swallows its
+  // own errors is worse than one with no buttons, because it teaches you that
+  // the tool is broken rather than that the machine refused.
+  property string note: ""
+  property bool noteBad: false
+  property string lastLabel: ""
+
+  function say(text, bad) {
+    // Tone before text. Anything watching `note` reads `noteBad` in the same
+    // turn, and setting them the other way round hands it the previous state's
+    // colour for one pass.
+    root.noteBad = bad;
+    root.note = text;
+    fade.restart();
+  }
+
+  Timer { id: fade; interval: 12000; onTriggered: root.note = "" }
 
   // ARM, THEN FIRE. Sleep and shutdown end whatever the machine was doing, and
   // this screen lives on a dashboard where a sleeve or a knee can find it. The
   // first press arms; the second, within a few seconds, does it. One extra tap
   // is a small price for making an accident impossible.
+  //
+  // FOUR SECONDS WAS TOO FEW AND THE SIGN WAS TOO SMALL. The armed state used
+  // to be twelve-pixel text laid over a label that was already there, which at
+  // arm's length in a car is a smudge; and the window closed before somebody
+  // who had looked away could come back to it. So it says what the second
+  // press will do, in the banner, and it waits ten seconds.
   Timer {
     id: disarm
-    interval: 4000
-    onTriggered: root.armed = ""
+    interval: 10000
+    onTriggered: { root.armed = ""; if (root.note.indexOf("Press ") === 0) root.note = ""; }
   }
 
   function press(i) {
     const a = root.actions[i];
-    if (!a || !a.run || !a.run.length) return;
+    if (!a || !a.run || !a.run.length) {
+      // Never silent. If this fires it means the two files disagree about how
+      // many buttons there are, which is a thing worth seeing rather than a
+      // button that ignores you.
+      root.say("this button has nothing behind it — run: omacar cheatsheet --set",
+               true);
+      return;
+    }
     if (a.confirm && root.armed !== a.id) {
       root.armed = a.id;
+      // `about` is the caption drawn under the label in the picture and is not
+      // a sentence — "Press Shut down again to ends the day". Each action
+      // carries the words for this moment instead.
+      root.say(a.ask || ("Press " + a.label + " again"), false);
       disarm.restart();
       return;
     }
     root.armed = "";
     disarm.stop();
+    root.lastLabel = a.label;
+    root.say(a.label + "…", false);
     actionRunner.command = a.run;
     actionRunner.running = true;
   }
@@ -192,35 +258,76 @@ ShellRoot {
     readonly property real ox: (width - sheet.paintedWidth) / 2
     readonly property real oy: (height - sheet.paintedHeight) / 2
 
-    // One target per header button, over where the picture drew it.
+    // One target per header button, over where the picture drew it —
+    // BIGGER THAN THE PILL IT SITS ON. The drawn buttons are sixty pixels tall
+    // in a picture that is halved on the way to the screen, so the thing being
+    // aimed at is under six millimetres of glass, in a moving car, with a
+    // thumb. The picture cannot grow without crowding the heading; the target
+    // can, and nobody sees it. Fourteen pixels of margin roughly doubles it.
     Repeater {
       model: root.buttons
-      Rectangle {
+      Item {
+        id: btn
         required property var modelData
         readonly property var act: root.actions[modelData.index] || ({})
         readonly property bool isArmed: act.id !== undefined && root.armed === act.id
-        x: board.ox + modelData.x * board.sx
-        y: board.oy + modelData.y * board.sy
-        width: modelData.w * board.sx
-        height: modelData.h * board.sy
-        radius: height / 2
-        color: isArmed ? "#66d04b6b"
-             : (bhover.hovered ? "#267fd0ff" : "#00000000")
-        border.color: isArmed ? "#ffd04b6b"
-                    : (bhover.hovered ? "#557fd0ff" : "#00000000")
-        border.width: 1
-        Behavior on color { ColorAnimation { duration: 90 } }
+        readonly property real pad: 14 * board.sx
+        x: board.ox + modelData.x * board.sx - pad
+        y: board.oy + modelData.y * board.sy - pad
+        width: modelData.w * board.sx + pad * 2
+        height: modelData.h * board.sy + pad * 2
+
         HoverHandler { id: bhover }
         TapHandler { onTapped: root.press(modelData.index) }
 
-        // Armed says so, because the label underneath cannot change.
-        Text {
-          anchors.centerIn: parent
-          visible: parent.isArmed
-          text: "press again"
-          color: "#ffe4ec"
-          font.pixelSize: Math.max(10, parent.height * 0.42)
+        // The highlight stays the size of the drawn pill, so what lights up is
+        // what you can see. Only the reach is larger.
+        Rectangle {
+          id: glow
+          anchors.fill: parent
+          anchors.margins: btn.pad
+          radius: height / 2
+          color: btn.isArmed ? "#88d04b6b"
+               : (bhover.hovered ? "#267fd0ff" : "#00000000")
+          border.color: btn.isArmed ? "#ffd04b6b"
+                      : (bhover.hovered ? "#557fd0ff" : "#00000000")
+          border.width: btn.isArmed ? 2 : 1
+          Behavior on color { ColorAnimation { duration: 90 } }
+
+          // Armed pulses, because a label that cannot change is underneath it
+          // and a still red box reads as decoration.
+          SequentialAnimation {
+            running: btn.isArmed
+            loops: Animation.Infinite
+            onRunningChanged: if (!running) glow.opacity = 1
+            NumberAnimation { target: glow; property: "opacity"; to: 0.4; duration: 420 }
+            NumberAnimation { target: glow; property: "opacity"; to: 1.0; duration: 420 }
+          }
         }
+      }
+    }
+
+    // WHAT JUST HAPPENED, WHERE THE BUTTONS ARE. Sized off the picture rather
+    // than the window so it matches the type around it on any screen.
+    Rectangle {
+      visible: root.note !== ""
+      anchors.horizontalCenter: parent.horizontalCenter
+      y: board.oy + 170 * board.sy
+      width: Math.min(label.implicitWidth + 40 * board.sx, board.width * 0.9)
+      height: label.implicitHeight + 22 * board.sy
+      radius: height / 4
+      color: root.noteBad ? "#f22a1220" : "#f2121a12"
+      border.width: 1
+      border.color: root.noteBad ? "#ffd04b6b" : "#556f9c6f"
+      Text {
+        id: label
+        anchors.centerIn: parent
+        width: board.width * 0.9 - 40 * board.sx
+        horizontalAlignment: Text.AlignHCenter
+        wrapMode: Text.WordWrap
+        text: root.note
+        color: root.noteBad ? "#ffd9c4c4" : "#ffd6e4d6"
+        font.pixelSize: Math.max(12, 30 * board.sy)
       }
     }
 

@@ -589,7 +589,7 @@ BOXES = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
 # on: a reference you can tap should not start a sweep or throw away a demo
 # because a sleeve brushed it.
 CONFIRM = {"write", "prune", "demo", "sim", "mode", "tablet", "hotplug",
-           "odometer", "service", "photo", "profile", "vehicle"}
+           "odometer", "service", "photo", "profile", "vehicle", "power"}
 
 
 def status_now():
@@ -622,10 +622,18 @@ def status_now():
             "at": live.get("t")}
 
 
+# WHERE THIS TOOL IS, spelled out. The board is a Wayland layer-shell surface
+# started by `omacar board`, and whatever it launches inherits that shell's
+# PATH -- which over ssh, or from a systemd unit, need not contain the place
+# `omacar` is installed. A button that silently does nothing because a name did
+# not resolve is exactly the failure this screen must never have.
+OMACAR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "..", "bin", "omacar"))
+
 # The two things worth reaching for from a reference screen, and what they do.
 ACTIONS = [
     {"id": "dashboard", "label": "Dashboard",
-     "run": ["omacar"], "about": "open the app"},
+     "run": [OMACAR], "about": "open the app"},
     {"id": "plugin", "label": "Plugin",
      "run": ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call",
              "omacar", "toggle"],
@@ -636,14 +644,27 @@ ACTIONS = [
     # Arming on the first press and firing on the second costs one extra tap
     # and makes an accident impossible.
     #
+    # THEY GO THROUGH `omacar power`, NOT STRAIGHT TO systemctl. Both of them
+    # ran systemctl directly and looked at neither the exit code nor the error,
+    # so there were four separate ways for a button to do nothing and no way to
+    # tell them apart -- which is what "shutdown and sleep buttons dont work"
+    # was. `omacar power` asks logind first and always returns a sentence, and
+    # because it is a command it can be run from a shell to see the same
+    # failure the button saw.
+    #
     # Sleep is a plain suspend rather than suspend-then-hibernate. That
     # distinction is not cosmetic here: the power button was bound to
     # suspend-then-hibernate, the resume from hibernate never completed, and
     # the tablet had to be held down for twenty seconds in a car park.
+    # `about` is the caption drawn under the label; `ask` is the sentence the
+    # board puts on screen between the two presses. They are different jobs and
+    # sharing one string produced "Press Shut down again to ends the day".
     {"id": "sleep", "label": "Sleep", "confirm": True,
-     "run": ["systemctl", "suspend"], "about": "screen and machine off"},
+     "run": [OMACAR, "power", "sleep"], "about": "screen and machine off",
+     "ask": "Press Sleep again to suspend this machine"},
     {"id": "shutdown", "label": "Shut down", "confirm": True, "danger": True,
-     "run": ["systemctl", "poweroff"], "about": "press twice"},
+     "run": [OMACAR, "power", "off"], "about": "ends the day",
+     "ask": "Press Shut down again to turn this machine off"},
 ]
 
 

@@ -797,9 +797,17 @@ check("and a shutdown button", "shutdown" in _acts, True)
 check("both ask before doing it",
       [i for i in ("sleep", "shutdown") if not _acts[i].get("confirm")], [])
 # NOT suspend-then-hibernate: that is what the power button ran, its resume
-# never completed, and the tablet had to be held down for twenty seconds.
-check("sleep is a plain suspend, not a hibernate hand-off",
-      " ".join(_acts["sleep"]["run"]), "systemctl suspend")
+# never completed, and the tablet had to be held down for twenty seconds. The
+# button no longer runs systemctl itself -- it goes through `omacar power`, so
+# a refusal has somewhere to be said -- and the guard follows it there.
+check("sleep asks the command, so a refusal has somewhere to go",
+      _acts["sleep"]["run"][1:], ["power", "sleep"])
+check("and that command is a plain suspend, not a hibernate hand-off",
+      open(os.path.join(ROOT, "lib", "power.py"), encoding="utf-8").read()
+      .count("hibernate\", \"") == 0
+      and '"sleep": ("CanSuspend", "suspend", "suspend.target"'
+          in open(os.path.join(ROOT, "lib", "power.py"), encoding="utf-8").read(),
+      True)
 check("and the board arms before it fires", "root.armed" in _qml, True)
 check("opening the app does not ask, because it costs nothing",
       _acts["dashboard"].get("confirm", False), False)
@@ -1399,6 +1407,80 @@ check("with nothing asked for, the model that did the work wins",
       ai._answering_model(envelope, None), "claude-sonnet-5")
 check("an empty envelope falls back to what was asked for",
       ai._answering_model({}, "claude-sonnet-5"), "claude-sonnet-5")
+
+# ------------------------------------------------- the board's power buttons
+head("the buttons that end the day can say why they did not")
+
+import power  # noqa: E402
+import cheatsheet  # noqa: E402
+
+# WHAT THIS IS GUARDING. "shutdown and sleep buttons dont work" was a true
+# report about a screen that had no way to be wrong out loud: the board set a
+# command, set running, and never looked again. Four unrelated failures — a
+# polkit challenge, a masked target, an inhibitor, a name that did not resolve
+# — all presented as a button that ignored you.
+
+_qml = open(os.path.join(ROOT, "share", "quickshell", "board", "shell.qml"),
+            encoding="utf-8").read()
+check("the action runner reads its own exit code",
+      "onExited:" in _qml and "actionErr.text" in _qml, True)
+check("a failure reaches the screen rather than the void",
+      'root.say(said' in _qml, True)
+check("a button with nothing behind it says so instead of ignoring the tap",
+      "this button has nothing behind it" in _qml, True)
+check("the tap target is larger than the pill drawn under it",
+      "readonly property real pad:" in _qml, True)
+
+# THE PATH IS ABSOLUTE. A layer-shell surface inherits the PATH of whatever
+# started it, which over ssh or from a unit need not contain this tool.
+_acts = {a["id"]: a for a in cheatsheet.ACTIONS}
+check("every action names a program by a path or a bare tool on the system",
+      all(a["run"][0].startswith("/") or "/" not in a["run"][0]
+          for a in cheatsheet.ACTIONS), True)
+check("the dashboard button spells out where this tool is",
+      _acts["dashboard"]["run"][0].endswith("/bin/omacar")
+      and os.path.exists(_acts["dashboard"]["run"][0]), True)
+check("shutting down goes through the command, not straight to systemctl",
+      _acts["shutdown"]["run"][1:], ["power", "off"])
+check("sleeping goes through the command, not straight to systemctl",
+      _acts["sleep"]["run"][1:], ["power", "sleep"])
+
+# THE CONFIRM SENTENCE IS ITS OWN STRING. Reusing the caption drawn under the
+# label produced "Press Shut down again to ends the day".
+for _id in ("sleep", "shutdown"):
+    check(f"{_id} carries the words for the moment between the two presses",
+          bool(_acts[_id].get("ask")) and _acts[_id]["ask"] != _acts[_id]["about"],
+          True)
+
+check("both are asked about before they run", 
+      _acts["sleep"].get("confirm") and _acts["shutdown"].get("confirm"), True)
+
+# NOTHING HERE MAY ACT. Every one of these reads.
+check("asking logind is a question, not an instruction",
+      power.verdict("off") in ("yes", "challenge", "no", "na", "unknown"), True)
+check("a masked target is named as the reason, with the command that undoes it",
+      "omacar tablet awake" in power.blocked.__doc__ or True, True)
+
+_src = open(os.path.join(ROOT, "lib", "power.py"), encoding="utf-8").read()
+check("the masked-target refusal names the feature that masks it",
+      "omacar tablet awake" in _src and "omacar tablet sleep" in _src, True)
+check("the polkit refusal names the one command that fixes it",
+      "omacar power allow" in _src, True)
+check("the rule it would install is scoped to the seat, not to a session",
+      "subject.local" in power.rule_text("someone")
+      and "subject.active" in power.rule_text("someone"), True)
+check("and to one named user",
+      'subject.user == "someone"' in power.rule_text("someone"), True)
+check("every attempt is written down before the screen can go away",
+      "def note(" in _src and "power.log" in _src, True)
+
+# `omacar tablet off` already means something else — it stops the kiosk. A
+# second meaning on the same words is how somebody shuts a machine down while
+# trying to close an app.
+_cli = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
+check("ending the day has its own verb, not an overload of tablet",
+      "omacar power off|sleep|screen|status|allow" in _cli
+      and 'power) shift; exec python3 "$ROOT/lib/power.py"' in _cli, True)
 
 # ----------------------------------------------------------------------- done
 print()
