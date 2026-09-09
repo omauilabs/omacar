@@ -85,8 +85,10 @@ def summary():
     doc = read()
     if not doc:
         return {"configured": False,
-                "why": "nothing has been sent here yet — on the home machine, "
-                       "run: omacar nursery send " + os.uname().nodename}
+                "why": "nothing has been sent here yet. On the machine at "
+                       "home, once: omacar nursery send " + os.uname().nodename
+                       + " — then, on a timer: systemctl --user enable --now "
+                         "omacar-nursery.timer"}
     sent = doc.get("sent_at") or 0
     # NOT `age`. The document already carries an `age` -- the baby's, "6
     # months old" -- and calling this one that let the whitelist loop below
@@ -192,7 +194,11 @@ def send(host, source=None):
         return False, str(err)
     if r.returncode != 0:
         return False, (r.stderr or "ssh failed").strip().splitlines()[-1]
-    return True, f"sent to {host}"
+    return True, (f"sent to {host}\n"
+                  "  every five minutes, from here: "
+                  "systemctl --user enable --now omacar-nursery.timer\n"
+                  "  (set OMACAR_TABLET in the unit if the tablet is not "
+                  "called 'omacar')")
 
 
 def _span(seconds):

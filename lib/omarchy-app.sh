@@ -254,7 +254,11 @@ oa_unit_install() {
   local dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
   mkdir -p "$dir"
   local n=0 f name
-  for f in "$OA_ROOT"/share/systemd/*.service; do
+  # TIMERS AS WELL AS SERVICES. A .service with no .timer beside it is a unit
+  # that can only be started by hand, which for anything periodic means it is
+  # never started at all -- and the timer file was sitting in the tree being
+  # ignored by this loop.
+  for f in "$OA_ROOT"/share/systemd/*.service "$OA_ROOT"/share/systemd/*.timer; do
     [[ -f "$f" ]] || continue
     name="$(basename "$f")"
     sed -e "s|__ROOT__|$OA_ROOT|g" "$f" >"$dir/$name"

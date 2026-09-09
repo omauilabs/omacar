@@ -1,0 +1,22 @@
+[Unit]
+Description=OmaCar — push the nursery document to the car tablet
+Documentation=file:__ROOT__/lib/nursery.py
+# THIS RUNS ON THE HOME MACHINE, NOT ON THE TABLET.
+#
+# The home machine is always on and already holds the nursery credential; the
+# tablet is in a car on a tethered hotspot and holds none. So the direction is
+# outward: the tablet never reaches for anything, never authenticates to
+# anything, and a tablet that was in a tunnel simply has an older document.
+#
+# It is not enabled by installing OmaCar. Copying a child's sleep times to a
+# second machine is a thing somebody decides, not a thing an installer does
+# quietly. `systemctl --user enable --now omacar-nursery.timer` turns it on.
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/nursery.py send "${OMACAR_TABLET:-omacar}"'
+# A push that fails is a document that gets old, which the screen already says
+# out loud. It is not worth a restart storm against a car that is parked in a
+# garage with no signal.
+Nice=10

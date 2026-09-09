@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar — push the nursery document every few minutes
+Documentation=file:__ROOT__/lib/nursery.py
+
+[Timer]
+# Five minutes. The screen calls a document stale after twenty, so this leaves
+# room for three pushes to fail before anybody is told anything — and the
+# thing being watched is a sleeping baby, which does not change in seconds.
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
