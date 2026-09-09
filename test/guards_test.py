@@ -727,6 +727,39 @@ _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").rea
 check("including the one that chooses the source",
       'fetch(withToken("/api/phone")' in _main, True)
 
+# ------------------------------------------- the command reference on the wall
+head("the wallpaper reference cannot go stale or lose a command")
+
+import cheatsheet as _cs  # noqa: E402
+
+_rows = _cs.entries()
+check("it reads the commands out of the CLI itself", len(_rows) > 30, True)
+check("and every one of them has a description",
+      [c for c, d in _rows if not d], [])
+
+# NOTHING MAY BE SILENTLY DROPPED. A reference that omits a command is worse
+# than no reference, because it is consulted with confidence — so a command
+# this file has never been told about still has to appear.
+_grouped = _cs.grouped(_rows)
+_in_groups = [c for _t, _a, rows in _grouped for c, _d in rows]
+check("every command reaches a group", sorted(_in_groups), sorted(c for c, _d in _rows))
+_rows2 = _rows + [("omacar teleport", "a command nobody filed")]
+_g2 = _cs.grouped(_rows2)
+check("including one the grouping has never heard of",
+      any(c == "omacar teleport" for _t, _a, rows in _g2 for c, _d in rows), True)
+check("which lands under a heading that says so",
+      any(t == "Everything else" for t, _a, _r in _g2), True)
+
+# And the page it draws carries all of them.
+_page = _cs.page()
+_missing = [c for c, _d in _rows if _cs.html.escape(c.split(" ", 1)[0]) not in _page
+            or _cs.html.escape((c.split(" ", 1) + [""])[1].split(" ")[0]) not in _page]
+check("the drawn page contains every command", _missing, [])
+check("the columns are packed here rather than by the browser",
+      len(_cs.pack(_grouped)), 4)
+check("and no column is left empty",
+      [c for c in _cs.pack(_grouped) if not c], [])
+
 # ------------------------------------------------- the power button in a car
 head("the power button does not suspend a tablet that is driving")
 

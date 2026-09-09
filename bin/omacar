@@ -50,11 +50,14 @@
 #                             numbers and tells you what is actually wrong
 #   omacar card [--quiet]     rebuild the rollup the bar panel and dock read
 #   omacar roadmap [--check]  regenerate the measured half of doc/ROADMAP.md
+#   omacar cheatsheet [--set]
+#                             every command as a picture, for the wallpaper
 #   omacar state              key=value status for the bar widget
 #   omacar demo start|stop|status|trash
 #                             a throwaway OmaCar with its own data, for showing
 #                             somebody. Cannot touch your real car.
-#   omacar server status|stop the loopback server the app is served from
+#   omacar server status|stop
+#                             the loopback server the app is served from
 #   omacar help               this text
 #
 # omarchy:summary=Live OBD-II diagnostics for your car
@@ -898,6 +901,7 @@ print()
   # is in the profile pool. It rewrites doc/ROADMAP.md only when one of
   # those numbers has actually moved, so it is safe to run in a hook.
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
+  cheatsheet|wallpaper) shift; exec python3 "$ROOT/lib/cheatsheet.py" "$@" ;;
   # Under the venv interpreter like every other module that imports lib/,
   # rather than under a bare python3. lib/ai.py is the cautionary tale: it is
   # dispatched with plain python3 and so cannot see anything the venv has, for
