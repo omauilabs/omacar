@@ -1582,6 +1582,83 @@ _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").rea
 check("and the screen is absent on a machine that has never been sent one",
       "v.nursery && !store.nurseryOn" in _main, True)
 
+# ------------------------------------------------- asking for a screen aloud
+head("a spoken request can move the screen, and nothing else")
+
+import screen as _screen  # noqa: E402
+import tempfile as _tf2   # noqa: E402
+import shutil as _sh2     # noqa: E402
+import time as _t2        # noqa: E402
+
+_tmp2 = _tf2.mkdtemp()
+_was_ask, _was_screens = _screen.ASK, _screen.SCREENS
+try:
+    _screen.ASK = os.path.join(_tmp2, "screen.json")
+    _screen.SCREENS = os.path.join(_tmp2, "screens.json")
+
+    check("with nothing published, nothing is known", _screen.known(), [])
+    check("and a request nobody made is not fresh",
+          _screen.pending()["fresh"], False)
+
+    _screen.publish([{"id": "ima", "label": "Battery", "title": "t", "tab": "car"},
+                     {"id": "drive", "label": "Gauges"},
+                     {"nope": 1}])
+    check("the app's own registry is what is known",
+          sorted(v["id"] for v in _screen.known()), ["drive", "ima"])
+    check("a malformed entry is dropped rather than published",
+          len(_screen.known()), 2)
+
+    _rec = _screen.ask("ima", "the assistant")
+    check("a request carries who asked", _rec["who"], "the assistant")
+    check("and is fresh immediately", _screen.pending()["fresh"], True)
+
+    # A REQUEST GOES STALE. Somebody who asked for the battery screen, drove
+    # for an hour and then opened the app did not mean it to open there.
+    with open(_screen.ASK, "w", encoding="utf-8") as _f:
+        _j.dump({"view": "ima", "at": _t2.time() - (_screen.FRESH + 10),
+                 "who": "x"}, _f)
+    check("an old request is not honoured", _screen.pending()["fresh"], False)
+
+    # THE ROUTE REFUSES A SCREEN THE APP DOES NOT HAVE.
+    _bad = api.handle_post("/api/screen", _j.dumps({"view": "wobble"}))
+    check("asking for a screen that does not exist is refused", _bad[0], 400)
+    check("and the refusal lists what there is",
+          sorted(_bad[1].get("screens") or []), ["drive", "ima"])
+    check("asking for one that does exist is accepted",
+          api.handle_post("/api/screen", _j.dumps({"view": "drive"}))[0], 200)
+    check("a request with no view is refused",
+          api.handle_post("/api/screen", "{}")[0], 400)
+
+    # THE TOOL DOES NOT CLAIM IT WORKED. It writes a request; the app honours
+    # it on its own clock, and if the app is not running nothing happens.
+    import mcp as _mcp  # noqa: E402
+    _out = _mcp.call("show_screen", {"view": "ima"})["content"][0]["text"]
+    check("the tool says it asked, not that it opened",
+          "asked_for" in _out and "if it is running" in _out, True)
+    check("and refuses a name it does not have",
+          _mcp.call("show_screen", {"view": "wobble"}).get("isError"), True)
+finally:
+    _screen.ASK, _screen.SCREENS = _was_ask, _was_screens
+    _sh2.rmtree(_tmp2, ignore_errors=True)
+
+check("the tool is on the list the assistant is given",
+      "show_screen" in {t["name"] for t in _mcp.TOOLS}, True)
+
+# NOTHING ABOUT THE CAR PASSES THROUGH IT.
+_scr = open(os.path.join(ROOT, "lib", "screen.py"), encoding="utf-8").read()
+check("the channel carries a view id and a timestamp, and no request",
+      any(w in _scr for w in ("elm", "obd", "0x2", "serial", "connect")), False)
+
+# HONOURED ONCE. main.js has a standing prohibition on writing location.hash
+# except in direct response to a person, because an earlier version pushed it
+# on every live sample and threw people off what they were reading.
+check("the app remembers the last request it acted on",
+      "honoured = ask.at" in _main and "ask.at > honoured" in _main, True)
+check("a screen the mode hides is not opened by asking for it",
+      "if (!v || hiddenView(v)) return;" in _main, True)
+check("and it never moves silently",
+      'toast((ask.who' in _main, True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

@@ -887,6 +887,40 @@ let auto = { mode: "connect", back: true };
 let wasConnected = null;
 let overridden = false;
 
+// What this app has, told to the server, so nothing else keeps a second copy
+// of a registry that lives here and grows with whatever plugins are installed.
+function screens() {
+  const list = VIEWS.filter((v) => !v.off && !hiddenView(v))
+    .map((v) => ({ id: v.id, label: v.label, title: v.title, tab: v.tab }));
+  fetch(withToken("/api/screen"), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ views: list }),
+  }).catch(() => { /* no server, no assistant. Nothing here depends on it. */ });
+}
+
+let honoured = 0;
+
+async function honourAsk() {
+  let ask;
+  try {
+    const r = await fetch(withToken("/api/screen"), { cache: "no-store" });
+    if (!r.ok) return;
+    ask = (await r.json()).ask;
+  } catch { return; }
+  if (!ask || !ask.fresh || !ask.view) return;
+  if (!(ask.at > honoured)) return;          // already acted on this one
+  honoured = ask.at;
+  const v = VIEWS.find((x) => x.id === ask.view);
+  // A screen the current mode hides is not opened by asking for it. The tier
+  // is decided by the server and this is not a way around it.
+  if (!v || hiddenView(v)) return;
+  if (location.hash === "#" + v.id) return;
+  goto(v.id);
+  // NEVER SILENTLY. A screen that changed by itself with nothing to say why is
+  // indistinguishable from a bug.
+  toast((ask.who || "Something") + " opened " + (v.label || v.id));
+}
+
 function autoDrive() {
   const connected = store.connected;
 
@@ -1040,6 +1074,24 @@ async function boot() {
   setInterval(() => store.refreshCar(), 20000);
   // Cheap: one stat on the server and a no-op unless the theme actually moved.
   setInterval(applyTheme, 5000);
+
+  // ASKED FOR FROM OUTSIDE, WHICH IN A CAR MEANS SAID OUT LOUD.
+  //
+  // The tablet is used for hours a week in a moving car and the only safe
+  // interaction there is the one that needs no hands and no eyes. The voice
+  // assistant could already read this car; this is the half that lets it put a
+  // screen up. Nothing about the car passes through it — the write arm, the
+  // tier and the motion checks all sit downstream of a screen being visible
+  // and none of them care which screen it is.
+  //
+  // THE RULE AT THE TOP OF THIS FILE STILL HOLDS. Nothing here may write
+  // location.hash except in direct response to a person. A spoken request is a
+  // person, and it is honoured exactly once: the timestamp of the last one
+  // acted on is remembered, so a request that stays in the file cannot pull
+  // somebody off whatever they are reading a second time. That is the failure
+  // this app already had once, from autoDrive(), four times a second.
+  screens();
+  setInterval(honourAsk, 1500);
   // The layout — and with it the auto-drive rule — can be changed from another
   // window or another device, so it is re-read rather than assumed.
   setInterval(loadAuto, 15000);

@@ -319,6 +319,26 @@ TOOLS = [
             "manufacturing date.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "show_screen",
+        "description":
+            "Put a screen up on the tablet. The car tablet is used for hours a "
+            "week while driving, where the only safe interaction is one that "
+            "needs no hands and no eyes -- so this is how a spoken request "
+            "reaches the app. Call it with no arguments to see what screens "
+            "the running app has; call it with one to open that screen. "
+            "Nothing about the car passes through here: it moves a page, and "
+            "the write arm, the mode and the motion checks are all downstream "
+            "of which page is showing. A screen the current mode hides is not "
+            "opened by asking for it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "view": {"type": "string",
+                         "description": "The screen id. Omit to list them."},
+            },
+        },
+    },
 ]
 
 
@@ -1064,6 +1084,31 @@ def t_standard_dids(_):
     })
 
 
+def t_show_screen(args):
+    import screen
+    have = screen.known()
+    want = str(args.get("view") or "").strip()
+    if not have:
+        return failed(
+            "the app has not run on this machine, so there is no list of "
+            "screens to open. It publishes one when it starts.")
+    if not want:
+        return as_json({"screens": have,
+                        "note": "call again with one of these ids as `view`"})
+    ids = {v["id"] for v in have}
+    if want not in ids:
+        return failed(f"no screen called {want!r}. There is: "
+                      + ", ".join(sorted(ids)))
+    rec = screen.ask(want, "the assistant")
+    # DELIBERATELY NOT A CLAIM THAT IT WORKED. This writes a request; the app
+    # honours it on its own clock, and if the app is not running nothing
+    # happens at all. Saying "opened" would be a guess.
+    return as_json({"asked_for": rec["view"], "at": rec["at"],
+                    "note": "the app opens this within a couple of seconds if "
+                            "it is running, and says who asked. If it is not "
+                            "running, nothing happens."})
+
+
 HANDLERS = {
     "car_snapshot": t_snapshot,
     "car_live": t_live,
@@ -1075,6 +1120,7 @@ HANDLERS = {
     "lookup_signals": t_lookup,
     "decode_vin": t_decode_vin,
     "standard_dids": t_standard_dids,
+    "show_screen": t_show_screen,
 }
 
 

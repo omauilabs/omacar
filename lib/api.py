@@ -1056,6 +1056,11 @@ def handle_get(path, query):
     """(status, payload) or None when it is not ours."""
     if path == "/api/snapshot":
         return 200, records.snapshot()
+    if path == "/api/screen":
+        # Which screen was last asked for, and by whom. Read four times a
+        # minute by the app; it holds nothing but a view id and a timestamp.
+        import screen
+        return 200, {"ask": screen.pending(), "views": screen.known()}
     if path == "/api/nursery":
         # A DOCUMENT SOMEBODY ELSE'S MACHINE PUSHED. Nothing here reaches out,
         # holds a credential or knows a nursery service exists -- see
@@ -1296,6 +1301,30 @@ def handle_post(path, body):
         data = {}
     if path == "/api/daemon":
         return daemon_control(str(data.get("action") or "").strip().lower())
+    if path == "/api/screen":
+        # TWO THINGS ON ONE ROUTE, and neither reaches the car.
+        #
+        # `views` is the app telling this server what screens it has, so
+        # nothing else has to keep a second copy of a registry that lives in
+        # main.js and grows with whatever plugins are installed.
+        #
+        # `view` is somebody -- in practice the voice assistant, because a
+        # driver's hands are on the wheel -- asking for one of them. It writes
+        # a view id and a timestamp to a file. The app honours a request once
+        # and says who asked; the write arm, the tier and the motion checks are
+        # all downstream of a screen being visible and none of them care which
+        # screen it is.
+        import screen
+        if isinstance(data.get("views"), list):
+            return 200, screen.publish(data["views"])
+        want = str(data.get("view") or "").strip()
+        if not want:
+            return 400, {"error": "view is required"}
+        seen = {v["id"] for v in screen.known()}
+        if seen and want not in seen:
+            return 400, {"error": f"no screen called {want!r}",
+                         "screens": sorted(seen)}
+        return 200, screen.ask(want, str(data.get("who") or "somebody")[:40])
     if path == "/api/scan":
         return 200, scan()
     if path == "/api/record":
