@@ -1,30 +1,29 @@
-// The command board: the wallpaper reference, but you can press it.
+// The command board: a sheet of invisible targets over the wallpaper.
 //
-// WHY THIS IS NOT THE WALLPAPER.
+// WHY IT DRAWS NOTHING.
 //
-// A wallpaper is an image and an image cannot be pressed. What sits between a
-// wallpaper and your windows on Wayland is a layer-shell surface on the bottom
-// layer, which is a real surface that takes input -- so this is one of those,
-// drawing the same commands the picture draws and running them when tapped.
+// It used to draw the whole reference itself — its own background, its own
+// columns, its own type. That is a second rendering of a thing that already
+// exists as a picture, and two renderings of one thing are two things to keep
+// in step. They did not stay in step, and because this one sits on top it won:
+// a corrected wallpaper appeared for a moment and was then painted over by an
+// older-looking copy of itself.
 //
-// It reads the list from the file `omacar cheatsheet` writes. Not by parsing
-// the CLI a second time: two parsers is two chances to disagree about what the
-// commands are, and the whole point of both surfaces is that they cannot.
+// So the wallpaper is the only rendering. This is a transparent layer above it
+// carrying one rectangle per command, in the exact places the picture put them
+// — `omacar cheatsheet` writes those coordinates out when it draws. Hovering
+// one lifts it slightly; pressing one runs it. Nothing here can disagree with
+// what is on the screen, because it does not draw what is on the screen.
 //
-// WHAT HAPPENS WHEN YOU PRESS ONE, AND WHY IT IS NOT ALWAYS "RUN IT".
+// WHAT PRESSING ONE DOES, AND WHY IT IS NOT ALWAYS "RUN IT".
 //
-// A command shown with a choice or a placeholder in it -- `write arm|disarm`,
-// `live [PID...]` -- cannot simply be run, because somebody has to say which.
-// And a command that changes something should not fire because a sleeve
-// brushed a screen that lives on a dashboard.
-//
-// So: unambiguous, harmless commands run. Everything else opens a terminal
-// with the line typed and waiting, and nothing happens until a person presses
-// return. That is one keypress away from "it fires", and a long way from a
-// diagnostic tool that started a sweep because the tablet was leant on.
+// A command shown with a choice or a placeholder cannot simply be run: someone
+// has to say which. And a command that changes something should not fire
+// because a sleeve brushed a screen that lives on a dashboard. Those open a
+// terminal with the line typed and waiting; nothing happens until a person
+// presses return.
 
 import QtQuick
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -32,129 +31,87 @@ import Quickshell.Wayland
 ShellRoot {
   id: root
 
-  property var groups: []
-  property var actions: []
-  property var carStatus: ({ state: "unknown", label: "…" })
-  property string statusLine: "reading the command list…"
-  property string dataPath: Quickshell.env("HOME") + "/.local/share/omacar/omacar-commands.json"
-
-  // The terminals worth trying, in the order somebody is likely to have them.
-  readonly property var terminals: [
-    "ghostty", "alacritty", "kitty", "foot", "wezterm", "konsole", "xterm"
-  ]
+  property var targets: []
+  property var byCommand: ({})
+  property real sheetW: 0
+  property real sheetH: 0
   property string terminal: ""
 
+  readonly property string home: Quickshell.env("HOME")
+
+  // Where the commands are on the wallpaper.
   FileView {
-    id: data
-    path: root.dataPath
+    id: boxes
+    path: root.home + "/.local/share/omacar/omacar-boxes.json"
     watchChanges: true
     onFileChanged: reload()
     onLoaded: {
       try {
-        const doc = JSON.parse(text());
-        root.groups = doc.groups || [];
-        root.actions = doc.actions || [];
-        let n = 0;
-        for (const g of root.groups) n += (g.commands || []).length;
-        root.statusLine = n + " commands";
+        const d = JSON.parse(text());
+        root.sheetW = d.width || 0;
+        root.sheetH = d.height || 0;
+        root.targets = d.boxes || [];
       } catch (e) {
-        root.statusLine = "the command list would not parse: " + e;
+        root.targets = [];
       }
     }
-    onLoadFailed: {
-      root.statusLine = "no command list yet — run: omacar cheatsheet";
+    onLoadFailed: root.targets = []
+  }
+
+  // What each of them needs in order to run. The same file the picture is
+  // generated from, so a command cannot be tappable and unknown at once.
+  FileView {
+    id: data
+    path: root.home + "/.local/share/omacar/omacar-commands.json"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: {
+      try {
+        const d = JSON.parse(text());
+        const map = {};
+        for (const g of d.groups || []) {
+          for (const c of g.commands || []) map[c.command] = c;
+        }
+        root.byCommand = map;
+      } catch (e) {
+        root.byCommand = ({});
+      }
     }
   }
 
-  // Which terminal exists here. Asked once, rather than guessed.
   Process {
-    id: findTerminal
     running: true
     command: ["sh", "-c",
       "for t in ghostty alacritty kitty foot wezterm konsole xterm; do " +
       "command -v $t >/dev/null && { echo $t; exit 0; }; done; echo ''"]
-    stdout: StdioCollector {
-      onStreamFinished: root.terminal = text.trim()
-    }
+    stdout: StdioCollector { onStreamFinished: root.terminal = text.trim() }
   }
 
   Process { id: runner }
-  Process { id: actionRunner }
 
-  // THE STATUS IS LIVE HERE, WHICH IS THE POINT OF A SURFACE OVER A PICTURE.
-  // The wallpaper can only say what was true when it was drawn, and says so.
-  // This reads the daemon's own file every few seconds instead.
-  FileView {
-    id: liveFile
-    path: Quickshell.env("HOME") + "/.local/state/omacar/live.json"
-    watchChanges: true
-    onFileChanged: reload()
-    onLoaded: root.carStatus = readStatus(text())
-    onLoadFailed: root.carStatus = ({ state: "unknown", label: "no reading" })
-  }
-
-  Timer {
-    interval: 5000; running: true; repeat: true
-    onTriggered: liveFile.reload()
-  }
-
-  function readStatus(raw) {
-    try {
-      const d = JSON.parse(raw);
-      const age = (Date.now() / 1000) - (d.t || 0);
-      if (age > 120) return { state: "stale", label: "nothing polling" };
-      if (d.simulated) return { state: "sim", label: "simulator" };
-      if (!d.connected) return { state: "off", label: "not connected" };
-      const rpm = (d.values || {}).RPM || 0;
-      return { state: "on",
-               label: "connected" + (rpm > 200 ? " · " + Math.round(rpm) + " rpm" : "") };
-    } catch (e) {
-      return { state: "unknown", label: "unreadable" };
-    }
-  }
-
-  function dotColour(state) {
-    if (state === "on") return "#4ade80";
-    if (state === "sim") return "#fbbf24";
-    return "#5b6a7a";
-  }
-
-  function doAction(a) {
-    if (!a || !a.run || !a.run.length) return;
-    actionRunner.command = a.run;
-    actionRunner.running = true;
-    root.statusLine = a.label.toLowerCase();
-  }
-
-  // Strip the optional parts a usage line carries, and say whether what is
-  // left is something that can just be run.
   function plain(cmd) {
-    return cmd.replace(/\s*\[[^\]]*\]/g, "").trim();
-  }
-  function ambiguous(entry) {
-    return entry.confirm || plain(entry.command).indexOf("|") >= 0
-        || entry.command.indexOf("[") >= 0;
+    return String(cmd).replace(/\s*\[[^\]]*\]/g, "").trim();
   }
 
-  function fire(entry) {
-    const line = plain(entry.command);
-    if (!root.terminal) {
-      root.statusLine = "no terminal found to run it in";
-      return;
-    }
-    if (ambiguous(entry)) {
-      // Typed and waiting. `read -e -i` puts an editable line in front of the
-      // person, so a choice can be finished and nothing runs until return.
+  function ambiguous(cmd) {
+    const meta = root.byCommand[cmd];
+    if (meta && meta.confirm) return true;
+    return String(cmd).indexOf("[") >= 0 || plain(cmd).indexOf("|") >= 0;
+  }
+
+  function fire(cmd) {
+    if (!root.terminal) return;
+    const meta = root.byCommand[cmd] || {};
+    const line = plain(cmd);
+    const about = String(meta.description || "").replace(/"/g, "'");
+    if (ambiguous(cmd)) {
       runner.command = [root.terminal, "-e", "bash", "-c",
-        "printf '  %s\\n  %s\\n\\n' \"" + entry.command + "\" \"" +
-        entry.description.replace(/"/g, "'") + "\"; " +
+        "printf '  %s\\n  %s\\n\\n' \"" + cmd + "\" \"" + about + "\"; " +
         "read -e -i \"" + line + "\" -p '> ' c; eval \"$c\"; " +
         "printf '\\n[done] '; read -n1"];
-      root.statusLine = "ready: " + line;
     } else {
       runner.command = [root.terminal, "-e", "bash", "-c",
         line + "; printf '\\n[done] '; read -n1"];
-      root.statusLine = "ran: " + line;
     }
     runner.running = true;
   }
@@ -162,186 +119,39 @@ ShellRoot {
   PanelWindow {
     id: board
     anchors { top: true; bottom: true; left: true; right: true }
+    // TRANSPARENT, AND THAT IS THE WHOLE POINT. The wallpaper underneath is
+    // the reference; this only collects taps.
     color: "#00000000"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Bottom
-    // NOT KEYBOARD FOCUS. This sits under every window, all the time. Taking
-    // the keyboard would mean the thing behind your editor was eating your
-    // keystrokes, which is the worst possible behaviour for a reference.
+    // Never the keyboard. This sits under every window all the time, and a
+    // surface behind your editor that ate your keystrokes would be the worst
+    // possible behaviour for a reference.
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-    Rectangle {
-      anchors.fill: parent
-      gradient: Gradient {
-        GradientStop { position: 0.0; color: "#111a24" }
-        GradientStop { position: 0.55; color: "#0d1319" }
-        GradientStop { position: 1.0; color: "#090d12" }
-      }
-    }
+    // The picture is drawn for one screen size. If the compositor reports a
+    // different one, the targets are scaled rather than silently misplaced.
+    readonly property real sx: root.sheetW > 0 ? width / root.sheetW : 1
+    readonly property real sy: root.sheetH > 0 ? height / root.sheetH : 1
 
-    ColumnLayout {
-      anchors.fill: parent
-      anchors.margins: Math.round(parent.height * 0.045)
-      spacing: Math.round(parent.height * 0.018)
+    Repeater {
+      model: root.targets
+      Rectangle {
+        required property var modelData
+        x: modelData.x * board.sx
+        y: modelData.y * board.sy
+        width: modelData.w * board.sx
+        height: modelData.h * board.sy
+        radius: 6 * board.sx
+        // Only visible under a finger. A reference that glowed all over would
+        // be competing with the thing it is meant to be showing.
+        color: hover.hovered ? "#1e7fd0ff" : "#00000000"
+        border.color: hover.hovered ? "#557fd0ff" : "#00000000"
+        border.width: 1
+        Behavior on color { ColorAnimation { duration: 90 } }
 
-      RowLayout {
-        Layout.fillWidth: true
-        spacing: Math.round(board.width * 0.012)
-
-        Text {
-          text: "OmaCar"
-          color: "#e8eef5"
-          font.pixelSize: Math.round(board.height * 0.031)
-          font.weight: Font.DemiBold
-        }
-        Text {
-          text: "press a command to run it"
-          color: "#7d90a4"
-          font.pixelSize: Math.round(board.height * 0.0155)
-          Layout.alignment: Qt.AlignVCenter
-        }
-
-        Item { Layout.fillWidth: true }
-
-        // Between the heading and the buttons, and live rather than a snapshot.
-        RowLayout {
-          spacing: 8
-          Rectangle {
-            width: Math.round(board.height * 0.009)
-            height: width; radius: width / 2
-            color: root.dotColour(root.carStatus.state)
-          }
-          Text {
-            text: root.carStatus.label
-            color: "#94a7ba"
-            font.pixelSize: Math.round(board.height * 0.0148)
-          }
-        }
-
-        Item { Layout.fillWidth: true }
-
-        Text {
-          text: root.statusLine
-          color: "#5d92b4"
-          font.pixelSize: Math.round(board.height * 0.0138)
-        }
-
-        Repeater {
-          model: root.actions
-          Rectangle {
-            required property var modelData
-            implicitWidth: btnRow.implicitWidth + Math.round(board.height * 0.028)
-            implicitHeight: btnRow.implicitHeight + Math.round(board.height * 0.016)
-            radius: height / 2
-            color: btnHover.hovered ? "#1d2b38" : "#141d27"
-            border.color: btnHover.hovered ? "#3d5266" : "#2b3a4a"
-            border.width: 1
-            HoverHandler { id: btnHover }
-            TapHandler { onTapped: root.doAction(modelData) }
-            RowLayout {
-              id: btnRow
-              anchors.centerIn: parent
-              spacing: 7
-              Text {
-                text: modelData.label
-                color: "#cfe0ee"
-                font.pixelSize: Math.round(board.height * 0.0148)
-              }
-              Text {
-                text: modelData.about
-                color: "#6f8296"
-                font.pixelSize: Math.round(board.height * 0.0126)
-              }
-            }
-          }
-        }
-      }
-
-      Rectangle { Layout.fillWidth: true; height: 1; color: "#2b3a4a" }
-
-      GridLayout {
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        columns: 4
-        columnSpacing: Math.round(board.width * 0.024)
-        rowSpacing: 0
-
-        Repeater {
-          model: root.groups
-          ColumnLayout {
-            required property var modelData
-            Layout.alignment: Qt.AlignTop
-            Layout.fillWidth: true
-            Layout.preferredWidth: 1
-            spacing: 2
-
-            Text {
-              text: modelData.title
-              color: "#d7e3f0"
-              font.pixelSize: Math.round(board.height * 0.0162)
-              font.weight: Font.DemiBold
-              topPadding: Math.round(board.height * 0.014)
-            }
-            Text {
-              text: modelData.about
-              color: "#6f8296"
-              font.pixelSize: Math.round(board.height * 0.0132)
-              wrapMode: Text.WordWrap
-              Layout.fillWidth: true
-              bottomPadding: Math.round(board.height * 0.006)
-            }
-
-            Repeater {
-              model: modelData.commands
-              Rectangle {
-                required property var modelData
-                Layout.fillWidth: true
-                implicitHeight: entry.implicitHeight + 10
-                radius: 5
-                color: hover.hovered ? "#182430" : "#00000000"
-                border.color: hover.hovered ? "#2b3a4a" : "#00000000"
-                border.width: 1
-
-                HoverHandler { id: hover }
-                TapHandler {
-                  onTapped: root.fire(modelData)
-                }
-
-                ColumnLayout {
-                  id: entry
-                  anchors.left: parent.left
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  anchors.leftMargin: 5
-                  anchors.rightMargin: 5
-                  spacing: 0
-                  Text {
-                    text: modelData.command
-                    color: root.ambiguous(modelData) ? "#9ec4dd" : "#7fd0ff"
-                    font.family: "monospace"
-                    font.pixelSize: Math.round(board.height * 0.0142)
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                  }
-                  Text {
-                    text: modelData.description
-                    color: "#94a7ba"
-                    font.pixelSize: Math.round(board.height * 0.0130)
-                    wrapMode: Text.WordWrap
-                    Layout.fillWidth: true
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      Text {
-        text: "a dimmer command opens a terminal with the line ready — "
-            + "nothing runs until you press return"
-        color: "#56697c"
-        font.pixelSize: Math.round(board.height * 0.0122)
+        HoverHandler { id: hover }
+        TapHandler { onTapped: root.fire(modelData.command) }
       }
     }
   }

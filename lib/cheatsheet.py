@@ -376,6 +376,27 @@ MASONRY = """
   }
   if (!best) best = { n: 4, s: 0.6, fill: 0 };
   const shown = pack(best.n, best.s);
+
+  // WHERE EVERY COMMAND ENDED UP, so something else can be laid over the
+  // picture and know what is under the finger. The page is laid out at exactly
+  // the size it is drawn at, so these are image pixels with no conversion.
+  const boxes = [...main.querySelectorAll('.row')].map((row) => {
+    const r = row.getBoundingClientRect();
+    return {
+      command: row.querySelector('.cmd').textContent,
+      x: Math.round(r.left), y: Math.round(r.top),
+      w: Math.round(r.width), h: Math.round(r.height),
+    };
+  });
+  const out = document.createElement('script');
+  out.type = 'application/json';
+  out.id = 'omacar-boxes';
+  out.textContent = JSON.stringify({
+    width: Math.round(document.body.getBoundingClientRect().width),
+    height: Math.round(document.body.getBoundingClientRect().height),
+    boxes: boxes,
+  });
+  document.body.appendChild(out);
   root.dataset.packed = best.n + ' cols @' + best.s.toFixed(2)
     + ' fill=' + (best.fill * 100).toFixed(0) + '%'
     + ' tallest=' + Math.round(shown.tallest) + '/' + Math.round(avail);
@@ -461,6 +482,32 @@ def browser():
     return None
 
 
+def boxes_for(size, tmp, exe, src):
+    """Where each command landed in the picture.
+
+    A SECOND RUN OF THE SAME PAGE, because a headless browser will take a
+    screenshot or print the document, not both. The layout is deterministic --
+    same commands, same size, same fit -- so the second run lands in exactly
+    the same places as the first.
+    """
+    import json as _json
+    r = subprocess.run(
+        [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+         f"--user-data-dir={os.path.join(tmp, 'profile2')}",
+         "--hide-scrollbars", "--force-device-scale-factor=1",
+         f"--window-size={size[0]},{size[1]}",
+         "--virtual-time-budget=90000", "--dump-dom", f"file://{src}"],
+        capture_output=True, text=True, timeout=300)
+    m = re.search(r'<script type="application/json" id="omacar-boxes">(.*?)</script>',
+                  r.stdout, re.S)
+    if not m:
+        return None
+    try:
+        return _json.loads(html.unescape(m.group(1)))
+    except ValueError:
+        return None
+
+
 def render(out_path, size=None):
     """Write the reference as a PNG. Returns the path, or raises."""
     exe = browser()
@@ -487,6 +534,13 @@ def render(out_path, size=None):
             capture_output=True, text=True, timeout=180)
         if not os.path.exists(out_path):
             raise RuntimeError((r.stderr or "chromium wrote nothing").strip()[:300])
+        # The same page again, for the hit boxes the board needs.
+        got = boxes_for((w, h), tmp, exe, src)
+        if got:
+            import json as _json
+            os.makedirs(os.path.dirname(BOXES), exist_ok=True)
+            with open(BOXES, "w", encoding="utf-8") as f:
+                _json.dump(got, f)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return out_path
@@ -500,6 +554,12 @@ DEFAULT = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
 # are -- and the whole point of both is that they cannot.
 DATA = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
                     "omacar-commands.json")
+# WHERE EACH COMMAND IS IN THE PICTURE. The board lies over the wallpaper as a
+# sheet of invisible targets rather than drawing the reference a second time --
+# two drawings of one thing is two things to keep in step, and the one on top
+# was quietly winning.
+BOXES = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
+                     "omacar-boxes.json")
 
 # COMMANDS THAT CHANGE SOMETHING, and must be asked about before they run.
 #

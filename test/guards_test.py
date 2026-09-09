@@ -772,6 +772,16 @@ check("every field the board reads is in the data it is given",
              if k not in _keys), [])
 check("the board reads the file the picture writes",
       "omacar-commands.json" in _qml, True)
+# ONE RENDERING, NOT TWO. The board used to draw the whole reference itself,
+# which is a second copy of a thing that already exists as a picture — and
+# because it sits on top, a corrected wallpaper appeared for a moment and was
+# then painted over by the older-looking copy. It draws nothing now.
+check("the board lies over the picture rather than redrawing it",
+      "omacar-boxes.json" in _qml, True)
+check("and paints no background of its own",
+      "GradientStop" in _qml, False)
+check("so the wallpaper shows through",
+      'color: "#00000000"' in _qml, True)
 # A COMMAND THAT CHANGES SOMETHING DOES NOT FIRE ON A TAP. This is not the
 # safety boundary -- the write arm is -- it is about a screen that lives on a
 # dashboard and gets leant on.
