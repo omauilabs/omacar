@@ -176,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 59 | 28,464 |
-| JavaScript — the app | 48 | 15,924 |
-| CSS | 7 | 2,731 |
+| Python — the whole diagnostic side | 62 | 29,284 |
+| JavaScript — the app | 50 | 16,346 |
+| CSS | 8 | 2,877 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 6 | 1,710 |
-| Tests | 12 | 5,314 |
+| Shell — the CLI and the installer | 6 | 1,727 |
+| Tests | 12 | 5,585 |
 | Documentation | 22 | 5,144 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **65,254** |
+| **Tracked in git, all of it** | | **67,105** |
 
-**Tests** — 891 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 952 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -209,7 +209,7 @@ What is actually covered, straight out of the runner's own headings:
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
 | the dongle list the CLI checks is the one the browser uses | 12 |
-| the wallpaper reference cannot go stale or lose a command | 23 |
+| the wallpaper reference cannot go stale or lose a command | 24 |
 | the power button does not suspend a tablet that is driving | 12 |
 | plugging the adapter in puts the app on the screen | 5 |
 | a capture becomes a candidate, and never more than the evidence | 21 |
@@ -223,9 +223,12 @@ What is actually covered, straight out of the runner's own headings:
 | an agent's write proposal is judged before it is queued | 6 |
 | every screen the navigation names exists on disk | 3 |
 | the advisor names the model that actually answered | 3 |
+| the buttons that end the day can say why they did not | 19 |
+| the baby screen holds no credential and never claims to know | 21 |
+| a spoken request can move the screen, and nothing else | 18 |
 | The launch calendar | 6 |
 | The shaders the music screen ships | 10 |
-| The app starts in a browser | 7 |
+| The app starts in a browser | 9 |
 | A picture reaches the canvas | 1 |
 | The muxer, read back by ffmpeg | 6 |
 | Through the app, in a real browser | 11 |
@@ -312,16 +315,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 161 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 167 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` The assistant can put a screen up
+- `2026-09-09` The nursery push has a timer, and the installer was ignoring timers
+- `2026-09-09` The baby, from the road
+- `2026-09-09` A boot screen, and a place to put the film later
+- `2026-09-09` The Sleep and Shut down buttons say what happened
+- `2026-09-09` The polling line moves to the middle of the footer
 - `2026-09-09` Sleep and shutdown on the reference screen, and they ask first
 - `2026-09-09` The board shows the picture, because two surfaces on one layer have no order
-- `2026-09-09` The board was painting over the wallpaper with an older copy of itself
-- `2026-09-09` Masonry back, and the band of empty screen was Chromium's viewport
-- `2026-09-09` The wallpaper was redrawn and never reappeared
-- `2026-09-09` A parity plan against Snap-on, and what of theirs you can keep
-- `2026-09-09` Give the columns a line of clearance above the footer
-- `2026-09-09` The wallpaper fills the screen, after four separate bugs said it could not
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
