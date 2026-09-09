@@ -310,8 +310,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 142 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 143 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The hybrid screen becomes a battery screen, and covers all three of them
 - `2026-09-08` Plugging the adapter in puts the app on the screen
 - `2026-09-08` The tablet suspends, and in a car that reads as a dead tablet
 - `2026-09-08` A comparison that cannot work now says so instead of finding nothing
@@ -319,7 +320,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` A capture on a quiet bus reported that it was not running
 - `2026-09-08` The detached capture said it was listening when it was not
 - `2026-09-08` The preparation records what it proved, and says which browser proved it
-- `2026-09-08` The runbook records why the hotspot is a second device
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
