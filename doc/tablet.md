@@ -89,6 +89,19 @@ this: a wake lock cannot stop the power button.
 omacar tablet awake
 ```
 
+It does three things: tells logind to ignore the power button, the suspend key
+and the lid; masks the four sleep targets; and **rebinds the power button**,
+which is the one that actually bit. On this machine the key never reached
+logind at all — the compositor had it bound straight to
+`systemctl suspend-then-hibernate`, so logind's opinion of it was never
+consulted. The binding is backed up to `bindings.lua.omacar-backup` first, only
+a line matching that exact shape is touched, and a binding somebody chose
+deliberately is left alone.
+
+The power button opens the screensaver instead. A screensaver rather than a raw
+screen blank, deliberately: it exits on any input, so it cannot strand a driver
+behind a black screen with no way back.
+
 It ignores the power button, the suspend key and the lid, and masks the four
 sleep targets, so nothing suspends the machine. One sudo, and reversible with
 `omacar tablet sleep`. `omacar tablet` reports which state it is in, because a

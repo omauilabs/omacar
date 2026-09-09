@@ -727,6 +727,47 @@ _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").rea
 check("including the one that chooses the source",
       'fetch(withToken("/api/phone")' in _main, True)
 
+# ------------------------------------------------- the power button in a car
+head("the power button does not suspend a tablet that is driving")
+
+import tablet as _tab  # noqa: E402
+
+_real = ('o.bind("XF86PowerOff", "Suspend", "systemctl suspend-then-hibernate"'
+         ', { locked = true })')
+_safe = ('o.bind("XF86PowerOff", "Screen off", "omarchy-launch-screensaver"'
+         ', { locked = true })')
+check("the binding that caused it is recognised",
+      bool(_tab.SUSPEND.search(_real)), True)
+check("a binding somebody chose deliberately is not touched",
+      bool(_tab.SUSPEND.search(_safe)), False)
+check("and a safe one is recognised as already safe",
+      bool(_tab.SAFE.search(_safe)), True)
+# ONLY THE LINE IT EXPECTS. A rewrite that fired on anything mentioning the
+# power key would rewrite bindings nobody asked it to.
+check("plain volume bindings are left alone",
+      bool(_tab.SUSPEND.search('o.bind("XF86AudioRaiseVolume", "Louder", "x")')),
+      False)
+
+_tmp = tempfile.mkdtemp()
+_bind = os.path.join(_tmp, "bindings.lua")
+with open(_bind, "w", encoding="utf-8") as _f:
+    _f.write("-- a config\n" + _real + "\n")
+_keep = (_tab.BINDINGS, _tab.BACKUP)
+_tab.BINDINGS, _tab.BACKUP = _bind, _bind + ".omacar-backup"
+check("it reads the file as needing the fix", _tab.power_button(), "suspend")
+check("rewriting says so", _tab.make_power_button_safe(), "rewritten")
+check("and afterwards it is safe", _tab.power_button(), "safe")
+_after = open(_bind, encoding="utf-8").read()
+check("the original line is kept as a comment, not deleted",
+      "-- was: " in _after, True)
+check("a backup exists to restore from", os.path.exists(_tab.BACKUP), True)
+check("running it twice changes nothing more",
+      _tab.make_power_button_safe(), "safe")
+check("and restoring puts the original back", _tab.restore_power_button(), True)
+check("which is the file we started with", _tab.power_button(), "suspend")
+_tab.BINDINGS, _tab.BACKUP = _keep
+shutil.rmtree(_tmp, ignore_errors=True)
+
 # ------------------------------------------ the adapter opens the app
 head("plugging the adapter in puts the app on the screen")
 

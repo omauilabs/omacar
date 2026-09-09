@@ -180,13 +180,13 @@ the one that is wrong.
 | JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 6 | 1,631 |
-| Tests | 12 | 5,142 |
-| Documentation | 17 | 4,076 |
+| Shell — the CLI and the installer | 6 | 1,651 |
+| Tests | 12 | 5,183 |
+| Documentation | 18 | 4,228 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **62,721** |
+| **Tracked in git, all of it** | | **62,934** |
 
-**Tests** — 852 checks, **2 failing**. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 864 checks, **2 failing**. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -209,6 +209,7 @@ What is actually covered, straight out of the runner's own headings:
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
 | the dongle list the CLI checks is the one the browser uses | 12 |
+| the power button does not suspend a tablet that is driving | 12 |
 | plugging the adapter in puts the app on the screen | 5 |
 | a capture becomes a candidate, and never more than the evidence | 21 |
 | a sweep drafts into the car it swept, not the one in a default | 4 |
@@ -310,8 +311,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 144 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 145 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` A camera plan, and the one cable between the box and the tablet
 - `2026-09-08` Three hardware questions, researched and then attacked
 - `2026-09-08` The hybrid screen becomes a battery screen, and covers all three of them
 - `2026-09-08` Plugging the adapter in puts the app on the screen
@@ -319,7 +321,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` A comparison that cannot work now says so instead of finding nothing
 - `2026-09-08` A capture that stopped recording reported itself healthy for seven minutes
 - `2026-09-08` A capture on a quiet bus reported that it was not running
-- `2026-09-08` The detached capture said it was listening when it was not
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

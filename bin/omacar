@@ -492,6 +492,8 @@ tablet_status() {
   # suspends in a car does not report an error; it stops answering, the screen
   # flashes at the power button and will not come up, and whatever was
   # recording was not recording.
+  printf "  %-22s %s\n" "power button" \
+    "$(python3 "$ROOT/lib/tablet.py" 2>/dev/null | sed 's/^suspend$/SUSPENDS — omacar tablet awake/; s/^safe$/opens the screensaver/')"
   local sm dr
   read -r sm dr <<<"$(tablet_awake_status)"
   if [[ "$sm" == "yes" && "$dr" == "yes" ]]; then
@@ -568,6 +570,7 @@ tablet_awake() {
   echo "  It will, from now on:"
   echo "    · ignore the power button and the lid rather than suspending"
   echo "    · never suspend or hibernate on its own"
+  echo "    · give the power button to the screensaver instead"
   echo
   echo "  Both are reversible with: omacar tablet sleep"
   echo "  Do NOT do this to a laptop you carry around — it will stay awake in"
@@ -594,6 +597,22 @@ IdleAction=ignore
 EOF
   sudo systemctl mask sleep.target suspend.target hibernate.target     hybrid-sleep.target 2>&1 | sed 's/^/  /'
   sudo systemctl restart systemd-logind 2>/dev/null
+
+  # THE BINDING IS THE ONE THAT ACTUALLY BIT. logind ignoring the power key is
+  # the belt; this is the braces, because on this machine the key never reached
+  # logind at all — the compositor had it bound straight to suspend.
+  local rebound
+  rebound=$(python3 "$ROOT/lib/tablet.py" safe 2>/dev/null || echo error)
+  case "$rebound" in
+    rewritten)
+      echo "  the power button was bound to suspend; it opens the screensaver now"
+      echo "  (the original is in ~/.config/hypr/bindings.lua.omacar-backup)"
+      hyprctl reload >/dev/null 2>&1 || true ;;
+    safe)     echo "  the power button was already safe" ;;
+    "no file") echo "  no Hyprland bindings file here, so nothing to rebind" ;;
+    other)    echo "  the power button is bound to something else; left alone" ;;
+    *)        echo "  could not check the power button binding" ;;
+  esac
   echo
   echo "  done. It will not suspend, and the power button no longer sleeps it."
   echo "  Hold the power button for ten seconds to force it off if you must."
@@ -605,6 +624,7 @@ tablet_sleep() {
   echo "  Letting this machine suspend again."
   read -r -p "  Undo the awake setup? [y/N] " reply
   [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
+  python3 "$ROOT/lib/tablet.py" restore 2>/dev/null | sed 's/^/  /'
   sudo rm -f "$SLEEP_DROPIN"
   sudo systemctl unmask sleep.target suspend.target hibernate.target     hybrid-sleep.target 2>&1 | sed 's/^/  /'
   sudo systemctl restart systemd-logind 2>/dev/null
