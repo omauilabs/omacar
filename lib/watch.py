@@ -260,6 +260,10 @@ class Watch:
         # properly and instantly; this is the version that needs nothing from
         # anybody, and having both is harmless.
         self.autostart = cfg().get("autostart", True)
+        # On by default on a machine set up as a tablet, and harmless anywhere
+        # else: with no graphical session there is nothing to open.
+        self.open_on_plug = cfg().get("open_on_plug", True)
+        self.plug_view = str(cfg().get("plug_view", "hub") or "hub")
         self.saw_adapter = None
         self.last_hotplug = 0.0
         self.last_moving = 0.0
@@ -527,6 +531,18 @@ class Watch:
         self.raise_alert("hotplug", "Adapter plugged in",
                          f"Starting the daemon on {port}.", "low")
         hotplug.start_daemon()
+        # AND PUT THE APP ON THE SCREEN.
+        #
+        # Plugging the adapter in is the clearest statement anybody makes to
+        # this program: a car is about to be driven. Until now it started the
+        # daemon and left the tablet showing whatever it had been showing, so
+        # the driver still had to find and open the app before setting off —
+        # which is a thing to do with a phone in one hand at the kerb, and
+        # exactly the friction that decides whether a tool gets used.
+        if self.open_on_plug and hotplug.start_kiosk(self.plug_view):
+            self.raise_alert("kiosk", "Opened the app",
+                             f"The adapter appeared, so the {self.plug_view} "
+                             f"screen is up.", "low")
 
     def card(self, now):
         """Keep the bar panel's rollup fresh.

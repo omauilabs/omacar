@@ -69,6 +69,51 @@ def start_daemon():
     return daemon_running()
 
 
+def kiosk_running():
+    """Is the app already up on the screen.
+
+    Matched on the profile directory rather than on a pid file, because the
+    kiosk is a browser somebody may also have started by hand from the menu,
+    and a second fullscreen window over the first is worse than none.
+    """
+    profile = os.path.join(os.path.expanduser("~"), ".local", "share",
+                           "omacar", "kiosk")
+    try:
+        out = subprocess.run(["pgrep", "-f", f"user-data-dir={profile}"],
+                             capture_output=True, text=True, timeout=5)
+        return bool(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def start_kiosk(view="hub"):
+    """Put the app on the screen, because the adapter just appeared.
+
+    WHY THIS BELONGS TO HOTPLUG AND NOT TO A LOGIN UNIT. A tablet in a car is
+    not switched on for the app; it is switched on because the car was. The
+    thing that means "somebody is about to drive" is the adapter appearing on
+    the bus, and that is exactly the event this module already watches to start
+    the daemon. Opening the screen at login instead means the app is up all the
+    time the tablet is, including the whole time it sits in a house.
+
+    Best effort and quiet: a tablet with no graphical session, or no browser,
+    should carry on doing everything else rather than failing here.
+    """
+    if kiosk_running():
+        return False
+    if not os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+        # No session to draw on. Not a failure; there is simply no screen.
+        return False
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    try:
+        subprocess.Popen([os.path.join(root, "bin", "omacar"), "kiosk", view],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 # ---- the udev rule ---------------------------------------------------------
 
 def installed():

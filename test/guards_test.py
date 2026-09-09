@@ -727,6 +727,38 @@ _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").rea
 check("including the one that chooses the source",
       'fetch(withToken("/api/phone")' in _main, True)
 
+# ------------------------------------------ the adapter opens the app
+head("plugging the adapter in puts the app on the screen")
+
+import hotplug as _hp  # noqa: E402
+
+check("there is a way to ask whether the app is already up",
+      hasattr(_hp, "kiosk_running"), True)
+check("and a way to open it", hasattr(_hp, "start_kiosk"), True)
+# NOT A SECOND FULLSCREEN WINDOW OVER THE FIRST. The kiosk can also be started
+# from the menu by hand, so the plug event has to notice one that is already
+# there rather than stacking another on top of it.
+_was = _hp.kiosk_running
+_hp.kiosk_running = lambda: True
+check("it refuses to open a second one over the first",
+      _hp.start_kiosk(), False)
+_hp.kiosk_running = lambda: False
+# With no graphical session there is nothing to draw on, and that is not a
+# failure — a headless machine should carry on doing everything else.
+_env = dict(os.environ)
+for _v in ("WAYLAND_DISPLAY", "DISPLAY"):
+    os.environ.pop(_v, None)
+check("and does nothing quietly when there is no screen",
+      _hp.start_kiosk(), False)
+os.environ.update(_env)
+_hp.kiosk_running = _was
+
+import watch as _w  # noqa: E402
+
+check("the watchdog can be told not to do it",
+      "open_on_plug" in open(os.path.join(ROOT, "lib", "watch.py"),
+                             encoding="utf-8").read(), True)
+
 # ------------------------------------------------- a capture becomes a claim
 head("a capture becomes a candidate, and never more than the evidence")
 

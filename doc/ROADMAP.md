@@ -176,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 57 | 27,390 |
+| Python — the whole diagnostic side | 57 | 27,451 |
 | JavaScript — the app | 48 | 15,893 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,631 |
-| Tests | 12 | 5,110 |
+| Tests | 12 | 5,142 |
 | Documentation | 13 | 3,595 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **62,069** |
+| **Tracked in git, all of it** | | **62,162** |
 
-**Tests** — 849 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 854 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -209,6 +209,7 @@ What is actually covered, straight out of the runner's own headings:
 | the model comes from the free decoder, and the owner's name wins | 8 |
 | an actuator reaches a button only when validated, and sends only 0x2F | 20 |
 | the dongle list the CLI checks is the one the browser uses | 12 |
+| plugging the adapter in puts the app on the screen | 5 |
 | a capture becomes a candidate, and never more than the evidence | 21 |
 | a sweep drafts into the car it swept, not the one in a default | 4 |
 | a layout has a name, a car remembers which, and the old file still works | 13 |
@@ -309,8 +310,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 140 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 141 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` The tablet suspends, and in a car that reads as a dead tablet
 - `2026-09-08` A comparison that cannot work now says so instead of finding nothing
 - `2026-09-08` A capture that stopped recording reported itself healthy for seven minutes
 - `2026-09-08` A capture on a quiet bus reported that it was not running
@@ -318,7 +320,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` The preparation records what it proved, and says which browser proved it
 - `2026-09-08` The runbook records why the hotspot is a second device
 - `2026-09-08` The decoder report is written down, because the answer outlives the process
-- `2026-09-08` The runbook is one command now, and says which line to read
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
