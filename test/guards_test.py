@@ -787,6 +787,22 @@ check("it shows the picture the targets were measured from",
       "omacar-commands.png" in _qml, True)
 check("and places targets against where the image landed",
       "paintedWidth" in _qml, True)
+
+# A BUTTON THAT ENDS THE MACHINE ASKS FIRST. This screen lives on a dashboard
+# where a sleeve or a knee can reach it, and sleep and shutdown both stop
+# whatever it was doing while nobody is watching.
+_acts = {a["id"]: a for a in _cs.ACTIONS}
+check("there is a sleep button", "sleep" in _acts, True)
+check("and a shutdown button", "shutdown" in _acts, True)
+check("both ask before doing it",
+      [i for i in ("sleep", "shutdown") if not _acts[i].get("confirm")], [])
+# NOT suspend-then-hibernate: that is what the power button ran, its resume
+# never completed, and the tablet had to be held down for twenty seconds.
+check("sleep is a plain suspend, not a hibernate hand-off",
+      " ".join(_acts["sleep"]["run"]), "systemctl suspend")
+check("and the board arms before it fires", "root.armed" in _qml, True)
+check("opening the app does not ask, because it costs nothing",
+      _acts["dashboard"].get("confirm", False), False)
 # A COMMAND THAT CHANGES SOMETHING DOES NOT FIRE ON A TAP. This is not the
 # safety boundary -- the write arm is -- it is about a screen that lives on a
 # dashboard and gets leant on.

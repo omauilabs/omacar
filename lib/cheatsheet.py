@@ -174,6 +174,11 @@ CSS = """
          border: 1px solid #2b3a4a; background: #141d27;
          font-size: calc(0.01380 * var(--H)); color: #cfe0ee; }
   .btn .what { font-size: calc(0.01180 * var(--H)); color: #6f8296; }
+  /* A button that does something to the machine rather than to the app looks
+     like it. Warm rather than loud: this is a wallpaper, not an alarm. */
+  .btn.ask { border-color: #3a3a4e; }
+  .btn.danger { border-color: #4d3340; background: #1b1418; color: #e6cdd6; }
+  .btn.danger .what { color: #8d7280; }
   h1 { font-size: calc(0.03100 * var(--H)); font-weight: 640; letter-spacing: -.01em; }
   .sub { font-size: calc(0.01550 * var(--H)); color: #7d90a4; }
   .rule { height: 1px; background: linear-gradient(90deg,#2b3a4a,transparent);
@@ -388,6 +393,13 @@ MASONRY = """
       w: Math.round(r.width), h: Math.round(r.height),
     };
   });
+  // The header buttons, in the order they were written, so the board can put a
+  // target on each without matching text.
+  const buttons = [...document.querySelectorAll('.actions .btn')].map((el, i) => {
+    const r = el.getBoundingClientRect();
+    return { index: i, x: Math.round(r.left), y: Math.round(r.top),
+             w: Math.round(r.width), h: Math.round(r.height) };
+  });
   const out = document.createElement('script');
   out.type = 'application/json';
   out.id = 'omacar-boxes';
@@ -395,6 +407,7 @@ MASONRY = """
     width: Math.round(document.body.getBoundingClientRect().width),
     height: Math.round(document.body.getBoundingClientRect().height),
     boxes: boxes,
+    buttons: buttons,
   });
   document.body.appendChild(out);
   root.dataset.packed = best.n + ' cols @' + best.s.toFixed(2)
@@ -425,7 +438,8 @@ def page(when=None, size=None):
     cols = (f'<div class="col">{"".join(blocks)}</div>'
             + '<div class="col"></div>' * 3)
     actions = "".join(
-        f'<span class="btn">{html.escape(a["label"])}'
+        f'<span class="btn{" danger" if a.get("danger") else ""}'
+        f'{" ask" if a.get("confirm") else ""}">{html.escape(a["label"])}'
         f'<span class="what">{html.escape(a["about"])}</span></span>'
         for a in ACTIONS)
     n = sum(len(r) for _t, _a, r in groups)
@@ -609,6 +623,20 @@ ACTIONS = [
      "run": ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call",
              "omacar", "toggle"],
      "about": "the bar panel"},
+    # THESE TWO ASK FIRST, and it is not ceremony. This screen lives on a
+    # dashboard where a sleeve, a bag or a knee can find it, and one of these
+    # ends whatever the machine was doing while nobody is looking at it.
+    # Arming on the first press and firing on the second costs one extra tap
+    # and makes an accident impossible.
+    #
+    # Sleep is a plain suspend rather than suspend-then-hibernate. That
+    # distinction is not cosmetic here: the power button was bound to
+    # suspend-then-hibernate, the resume from hibernate never completed, and
+    # the tablet had to be held down for twenty seconds in a car park.
+    {"id": "sleep", "label": "Sleep", "confirm": True,
+     "run": ["systemctl", "suspend"], "about": "screen and machine off"},
+    {"id": "shutdown", "label": "Shut down", "confirm": True, "danger": True,
+     "run": ["systemctl", "poweroff"], "about": "press twice"},
 ]
 
 

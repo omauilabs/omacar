@@ -32,6 +32,9 @@ ShellRoot {
   id: root
 
   property var targets: []
+  property var buttons: []
+  property var actions: []
+  property string armed: ""
   property var byCommand: ({})
   property real sheetW: 0
   property real sheetH: 0
@@ -52,6 +55,7 @@ ShellRoot {
         root.sheetW = d.width || 0;
         root.sheetH = d.height || 0;
         root.targets = d.boxes || [];
+        root.buttons = d.buttons || [];
         // Cache-busted by the file's own name, which changes with its
         // contents, so a redrawn picture is a different source and the image
         // cannot show a stale copy.
@@ -79,6 +83,7 @@ ShellRoot {
           for (const c of g.commands || []) map[c.command] = c;
         }
         root.byCommand = map;
+        root.actions = d.actions || [];
       } catch (e) {
         root.byCommand = ({});
       }
@@ -94,6 +99,31 @@ ShellRoot {
   }
 
   Process { id: runner }
+  Process { id: actionRunner }
+
+  // ARM, THEN FIRE. Sleep and shutdown end whatever the machine was doing, and
+  // this screen lives on a dashboard where a sleeve or a knee can find it. The
+  // first press arms; the second, within a few seconds, does it. One extra tap
+  // is a small price for making an accident impossible.
+  Timer {
+    id: disarm
+    interval: 4000
+    onTriggered: root.armed = ""
+  }
+
+  function press(i) {
+    const a = root.actions[i];
+    if (!a || !a.run || !a.run.length) return;
+    if (a.confirm && root.armed !== a.id) {
+      root.armed = a.id;
+      disarm.restart();
+      return;
+    }
+    root.armed = "";
+    disarm.stop();
+    actionRunner.command = a.run;
+    actionRunner.running = true;
+  }
 
   function plain(cmd) {
     return String(cmd).replace(/\s*\[[^\]]*\]/g, "").trim();
@@ -161,6 +191,38 @@ ShellRoot {
     readonly property real sy: root.sheetH > 0 ? sheet.paintedHeight / root.sheetH : 1
     readonly property real ox: (width - sheet.paintedWidth) / 2
     readonly property real oy: (height - sheet.paintedHeight) / 2
+
+    // One target per header button, over where the picture drew it.
+    Repeater {
+      model: root.buttons
+      Rectangle {
+        required property var modelData
+        readonly property var act: root.actions[modelData.index] || ({})
+        readonly property bool isArmed: act.id !== undefined && root.armed === act.id
+        x: board.ox + modelData.x * board.sx
+        y: board.oy + modelData.y * board.sy
+        width: modelData.w * board.sx
+        height: modelData.h * board.sy
+        radius: height / 2
+        color: isArmed ? "#66d04b6b"
+             : (bhover.hovered ? "#267fd0ff" : "#00000000")
+        border.color: isArmed ? "#ffd04b6b"
+                    : (bhover.hovered ? "#557fd0ff" : "#00000000")
+        border.width: 1
+        Behavior on color { ColorAnimation { duration: 90 } }
+        HoverHandler { id: bhover }
+        TapHandler { onTapped: root.press(modelData.index) }
+
+        // Armed says so, because the label underneath cannot change.
+        Text {
+          anchors.centerIn: parent
+          visible: parent.isArmed
+          text: "press again"
+          color: "#ffe4ec"
+          font.pixelSize: Math.max(10, parent.height * 0.42)
+        }
+      }
+    }
 
     Repeater {
       model: root.targets
