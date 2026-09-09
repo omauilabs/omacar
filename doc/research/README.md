@@ -19,3 +19,8 @@ useful than one that says where its own floor is.
 | [The Surface's USB-C port](surface-usb-c.md) | What it can charge, power and carry, and what a car build needs around it |
 | [CarPlay and cellular](carplay-and-cellular.md) | Whether the phone keeps its data while on a wireless adapter |
 | [Cameras](cameras.md) | Where several camera streams should actually be encoded, and on what |
+| [Snap-on tablets](snapon-tablets.md) | What the line costs, and where the lock-in actually is |
+| [Snap-on accessories](snapon-accessories.md) | Which of their hardware carries over, and which is a waste of a weekend |
+| [What parity takes](snapon-gap.md) | The capability gaps, ranked by how hard they are to close |
+
+The plan built on the last three is [doc/parity-plan.md](../parity-plan.md).
