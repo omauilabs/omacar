@@ -210,6 +210,14 @@ async function startConnect() {
 // it needs to say; the evidence that OmaCar has already found the adapter
 // belongs in the line of prose next to it.
 function offlineLine() {
+  // BEFORE ANYTHING ABOUT THE CAR. If the app cannot reach its own server then
+  // it knows nothing about any adapter, and every line below this one would be
+  // a guess dressed as a reading -- "Not connected" next to a Connect button
+  // sends somebody to the OBD cable when the answer is a daemon that is not
+  // running.
+  if (store.error || !store.car) {
+    return "OmaCar cannot reach its own server — omacar server status";
+  }
   if (connecting) return "Connecting…";
   if (connectNote) return connectNote;
   if (adapter && adapter.warning) return adapter.warning;

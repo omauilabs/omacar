@@ -665,7 +665,16 @@ function paintBar() {
   const car = store.car;
   if (!car) {
     els.name.textContent = "OmaCar";
-    els.sub.textContent = "connecting…";
+    // TWO DIFFERENT NOTHINGS, AND THEY HAVE DIFFERENT FIXES.
+    //
+    // "connecting…" forever is what this said when the app could not reach its
+    // OWN SERVER, which reads as a car that has not answered yet. One of those
+    // is solved by checking a cable in a footwell and the other by starting a
+    // daemon, and sending somebody to the wrong one in a car park at night is
+    // the kind of small lie this tool exists not to tell.
+    els.sub.textContent = store.error
+      ? "cannot reach the OmaCar server — omacar server status"
+      : "connecting…";
     return;
   }
   els.name.textContent = car.name || "Unknown vehicle";

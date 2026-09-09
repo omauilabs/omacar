@@ -147,6 +147,50 @@ def main():
                                   encoding="utf-8").read())
         check("and it let go of the screen once the app was up",
               'id="boot"' not in dom)
+        # ---- and again with no server behind it at all -------------------
+        #
+        # THE FAILURE PATH IS THE ONE THAT LIED. With the OmaCar server down,
+        # every /api/ call 404s -- and the app said "connecting..." in the bar
+        # and "Not connected" with a Connect button on the hub, which is what
+        # it says when the CAR has not answered. Those two have completely
+        # different fixes: one is a cable in a footwell, the other is a daemon
+        # that is not running, and sending somebody to the wrong one in a car
+        # park at night is exactly the kind of small lie this tool exists not
+        # to tell.
+        static = free_port()
+        plain = subprocess.Popen(
+            [sys.executable, "-m", "http.server", str(static),
+             "--bind", "127.0.0.1"], cwd=SHARE,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        prof2 = tempfile.mkdtemp()
+        try:
+            for _ in range(40):
+                time.sleep(0.25)
+                try:
+                    with socket.create_connection(("127.0.0.1", static), 0.25):
+                        break
+                except OSError:
+                    continue
+            r2 = subprocess.run(
+                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 f"--user-data-dir={prof2}", "--virtual-time-budget=12000",
+                 "--dump-dom", f"http://127.0.0.1:{static}/app.html"],
+                capture_output=True, text=True, timeout=120)
+            dead = r2.stdout or ""
+            check("with no server, the boot screen still lets go",
+                  'id="boot"' not in dead)
+            check("and the app names the server rather than the car",
+                  "cannot reach the OmaCar server" in dead
+                  and "cannot reach its own server" in dead)
+            check("and does not send anybody to the OBD cable",
+                  "Not connected" not in dead)
+        finally:
+            plain.terminate()
+            try:
+                plain.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                plain.kill()
+            shutil.rmtree(prof2, ignore_errors=True)
     finally:
         server.terminate()
         try:
