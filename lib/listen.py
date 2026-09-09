@@ -831,8 +831,14 @@ def main(argv):
           f"nothing while it does{RESET}")
     cap = listen(seconds=args.seconds, can_id=args.can_id, note=args.note)
     _print_census(cap)
-    if args.save:
-        path = cap.save(raw=args.raw)
+    # NOT SAVING IS A CHOICE, NOT A CRASH. This print sat outside the `if`
+    # after an edit, so a capture run without --save reached an unbound name
+    # and died with a NameError after printing a perfectly good census.
+    if not args.save:
+        print(f"\n  {DIM}(not saved — add --save to keep it, "
+              f"--save --raw to keep every frame){RESET}\n")
+        return 0
+    path = cap.save(raw=args.raw)
     print(f"  saved: {path}")
     if not args.raw:
         # SAID WHEN IT HAPPENS, not discovered later. Without the frames this
@@ -1327,15 +1333,18 @@ def _marks_session(args):
     print()
     _print_census(cap, top=12)
     _print_discriminators(cap)
-    path = cap.save(raw=args.raw)
+    # A MARKS SESSION KEEPS ITS FRAMES WHETHER OR NOT ANYBODY ASKED FOR THEM.
+    #
+    # This is a procedure somebody performs in a parked car, holding a switch
+    # in each position and naming it, and it costs two minutes of their life
+    # that cannot be got back. Discarding the frames because a flag was not
+    # passed means the answer can be read once, on the day, and never checked
+    # against anything afterwards. That is exactly what happened to a whole
+    # drive across three drive modes on 8 September.
+    path = cap.save(raw=True)
     print(f"  saved: {path}")
-    if not args.raw:
-        # SAID WHEN IT HAPPENS, not discovered later. Without the frames this
-        # capture can be read but never compared with another, and the whole
-        # point of capturing two switch positions is to compare them.
-        print(f"  {DIM}(a census only — add --raw to keep the frames, which is "
-              f"what{RESET}")
-        print(f"  {DIM} comparing two switch positions needs){RESET}")
+    print(f"  {DIM}(with every frame, so this session can be compared with "
+          f"another one later){RESET}")
     print()
     return 0
 
