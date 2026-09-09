@@ -232,14 +232,41 @@ export default function ima(root) {
         command(group[0].command, group[0].safety)));
     }
 
-    const grid = h("div.grid.g3");
-    for (const q of qs) grid.appendChild(quantityCard(q, hoisted.has(q.id)));
+    // GROUPED, BECAUSE A HYBRID IS THREE THINGS AND THEY FAIL DIFFERENTLY.
+    //
+    // The pack, the motor, and the braking that puts energy back. An owner
+    // asking "how is my battery" is asking about one of them, and a flat list
+    // of fourteen quantities makes them answer that question by reading every
+    // row. It also stops the register reading as one long column of things we
+    // do not have: three short honest sections say the same thing without
+    // feeling like a wall.
+    const groups = (doc && doc.groups) || [];
+    const grid = h("div");
+    const bare = qs.filter((q) => !q.group);
+    for (const g of groups) {
+      const mine = qs.filter((q) => q.group === g.id);
+      if (!mine.length) continue;
+      const known = mine.filter((q) => q.state === "measured").length;
+      const inner = h("div.grid.g3");
+      for (const q of mine) inner.appendChild(quantityCard(q, hoisted.has(q.id)));
+      grid.appendChild(h("div.ima-group",
+        h("div.head", { style: { marginTop: "14px" } },
+          h("div", h("div.eyebrow", g.label),
+            h("p.muted", { style: { margin: "2px 0 0" } }, g.about || "")),
+          h("span.muted.right", `${known} of ${mine.length} reading`)),
+        inner));
+    }
+    if (bare.length) {
+      const inner = h("div.grid.g3");
+      for (const q of bare) inner.appendChild(quantityCard(q, hoisted.has(q.id)));
+      grid.appendChild(h("div.ima-group", inner));
+    }
 
     return h("section.sect",
       h("div.head",
         h("div", h("div.eyebrow", "What we can and cannot see"),
           h("div.title", { style: { fontSize: "1.05rem" } },
-            "The hybrid quantities, and the state of each")),
+            "The battery, the motor, and the braking that charges it")),
         h("span.muted.right", `${qs.length} tracked`)),
       h("p.lede",
         "A state, not a number. An empty gauge that has never had a reading "

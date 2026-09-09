@@ -176,15 +176,15 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 57 | 27,451 |
-| JavaScript — the app | 48 | 15,893 |
+| Python — the whole diagnostic side | 57 | 27,498 |
+| JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,631 |
 | Tests | 12 | 5,142 |
-| Documentation | 13 | 3,595 |
+| Documentation | 13 | 3,596 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **62,162** |
+| **Tracked in git, all of it** | | **62,241** |
 
 **Tests** — 854 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -310,8 +310,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 141 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 142 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-08` Plugging the adapter in puts the app on the screen
 - `2026-09-08` The tablet suspends, and in a car that reads as a dead tablet
 - `2026-09-08` A comparison that cannot work now says so instead of finding nothing
 - `2026-09-08` A capture that stopped recording reported itself healthy for seven minutes
@@ -319,7 +320,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` The detached capture said it was listening when it was not
 - `2026-09-08` The preparation records what it proved, and says which browser proved it
 - `2026-09-08` The runbook records why the hotspot is a second device
-- `2026-09-08` The decoder report is written down, because the answer outlives the process
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

@@ -166,7 +166,11 @@ const TABS = [
       // The hybrid screen reads files already on disk and opens no serial port,
       // so it draws with the car unplugged -- which is most of the time anybody
       // wants to look at it.
-      { id: "ima",    label: "Hybrid",   title: "IMA hybrid system",    mount: imaView, tier: "power" },
+      // NOT BEHIND A TIER. "How is my battery" is an owner's question, not a
+      // technician's, and on a 190,000-mile hybrid it is the most expensive
+      // one they have. Hiding it until somebody finds the mode switch is the
+      // wrong default for the car this was built for.
+      { id: "ima",    label: "Battery",  title: "Battery, motor and regen", mount: imaView },
       { id: "omaplay", label: "Phone",   title: "Your phone, and the car", mount: omaplayView, fast: true },
       // Fullscreen audio-reactive shaders off the microphone, with the car
       // still readable underneath. `fast` because the dock shows live numbers.

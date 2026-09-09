@@ -456,23 +456,63 @@ def _candidates(slug="honda-crz-2015"):
 # data about it: each entry says plainly which of them has ever produced a
 # reading on this car, and every one that has not carries the command that
 # would settle it.
+# WHAT A HYBRID IS, AS THREE THINGS RATHER THAN ONE.
+#
+# The pack, the motor, and the braking that puts energy back. They fail
+# differently, they are diagnosed differently, and an owner asking "how is my
+# battery" is asking about the first one and not the other two. Grouping them
+# also stops the register reading as a flat list of things we do not have.
+BATTERY, MOTOR, REGEN = "battery", "motor", "regen"
+
+GROUPS = [
+    (BATTERY, "The pack",
+     "The IMA battery itself: how full, how healthy, how warm, and whether it "
+     "is ageing evenly."),
+    (MOTOR, "The motor",
+     "The electric machine between the engine and the gearbox. It both drives "
+     "the car and generates."),
+    (REGEN, "Regenerative braking",
+     "What the car recovers instead of turning into heat at the discs. It is "
+     "the quantity a hybrid is bought for and the one no scan tool shows."),
+]
+
 _WANTED = [
-    ("soc", "State of charge", "%",
+    # -- the pack ------------------------------------------------------------
+    ("soc", BATTERY, "State of charge", "%",
      "How full the IMA pack is. The dash bars are the driver's version of it."),
-    ("pack_voltage", "Pack voltage", "V",
+    ("pack_voltage", BATTERY, "Pack voltage", "V",
      "Terminal voltage of the whole IMA pack."),
-    ("pack_current", "Pack current", "A",
+    ("pack_current", BATTERY, "Pack current", "A",
      "Charge and discharge current. The sign is what separates assist from regen."),
-    ("assist_regen", "Assist / regen", "kW",
-     "What the motor is doing right now, in power rather than in bars."),
-    ("pack_temp", "Pack temperature", "degC",
+    ("pack_temp", BATTERY, "Pack temperature", "degC",
      "The IMA pack's own temperature, which is what its cooling fan reacts to."),
-    ("cell_balance", "Cell block spread", "V",
+    ("cell_balance", BATTERY, "Cell block spread", "V",
      "The gap between the strongest and weakest block. It is what separates "
      "one tired block from a uniformly tired pack, and those are very "
      "different bills."),
-    ("motor_rpm", "Motor speed", "rpm",
+    ("pack_health", BATTERY, "State of health", "%",
+     "Capacity now against capacity when it was new. On a 190,000-mile car "
+     "this is the number that decides whether the pack is worth keeping."),
+    # -- the motor -----------------------------------------------------------
+    ("motor_rpm", MOTOR, "Motor speed", "rpm",
      "The IMA motor's own speed, as distinct from engine RPM."),
+    ("assist_regen", MOTOR, "Assist / regen", "kW",
+     "What the motor is doing right now, in power rather than in bars. "
+     "Positive is helping the engine; negative is generating."),
+    ("motor_temp", MOTOR, "Motor temperature", "degC",
+     "Heat is what limits how long a hybrid can assist. A motor that backs "
+     "off on a long climb is usually a thermal limit, not a fault."),
+    ("motor_torque", MOTOR, "Motor torque", "Nm",
+     "What the motor is actually contributing at the crank."),
+    # -- regenerative braking ------------------------------------------------
+    ("regen_power", REGEN, "Regen power", "kW",
+     "The rate energy is being recovered under braking, right now."),
+    ("regen_total", REGEN, "Energy recovered", "Wh",
+     "Accumulated over a drive, this is the only honest measure of whether "
+     "the hybrid half is earning its weight."),
+    ("brake_blend", REGEN, "Brake blending", "%",
+     "How much of a given brake application is the motor and how much is the "
+     "friction brakes. It is what wears the pads, or does not."),
 ]
 
 
@@ -507,8 +547,9 @@ def quantities():
                     if not str(c.get("name") or "").strip()]
 
     out = []
-    for qid, label, unit, why in _WANTED:
-        row = {"id": qid, "label": label, "unit": unit, "about": why,
+    for qid, group, label, unit, why in _WANTED:
+        row = {"id": qid, "group": group, "label": label, "unit": unit,
+               "about": why,
                "state": UNDISCOVERED, "value": None, "at": None,
                "source": None, "note": None, "next": None,
                "command": CMD_0X21, "safety": SAFETY}
@@ -553,8 +594,8 @@ def quantities():
     # it was in no poll tier and there was no column to put it in. Both are now
     # fixed (telemetry.SLOW, samples.soc), so the first drive with the adapter
     # plugged in either fills this row or proves the bitmap was lying.
-    row = {"id": "pack_remaining", "label": "Hybrid pack remaining life",
-           "unit": "%",
+    row = {"id": "pack_remaining", "group": BATTERY,
+           "label": "Hybrid pack remaining life", "unit": "%",
            "about": "Generic OBD-II mode 01 PID 0x5B. Not manufacturer data: "
                     "a standard reading this car says it supports.",
            "state": UNDISCOVERED, "value": None, "at": None, "source": None,
@@ -1012,6 +1053,12 @@ def summary():
                 "simulated": bool(car.get("simulated")),
             },
             "states": STATE_MEANS,
+            # The three things a hybrid is, so the screen can be organised the
+            # way an owner asks about it -- how is my battery, what is the
+            # motor doing, is the regen working -- rather than as one flat list
+            # of quantities we mostly do not have.
+            "groups": [{"id": g, "label": lab, "about": why}
+                       for g, lab, why in GROUPS],
             "quantities": qs,
             "measured": sum(1 for q in qs if q["state"] == MEASURED),
             "undiscovered": sum(1 for q in qs if q["state"] == UNDISCOVERED),
