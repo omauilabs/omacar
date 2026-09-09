@@ -778,10 +778,15 @@ check("the board reads the file the picture writes",
 # then painted over by the older-looking copy. It draws nothing now.
 check("the board lies over the picture rather than redrawing it",
       "omacar-boxes.json" in _qml, True)
-check("and paints no background of its own",
+check("and draws no reference of its own",
       "GradientStop" in _qml, False)
-check("so the wallpaper shows through",
-      'color: "#00000000"' in _qml, True)
+# IT SHOWS THE PICTURE, rather than trusting the wallpaper underneath it. Two
+# surfaces on the same layer have no defined order, so a transparent board can
+# end up below the wallpaper — every target beneath the thing it belongs on.
+check("it shows the picture the targets were measured from",
+      "omacar-commands.png" in _qml, True)
+check("and places targets against where the image landed",
+      "paintedWidth" in _qml, True)
 # A COMMAND THAT CHANGES SOMETHING DOES NOT FIRE ON A TAP. This is not the
 # safety boundary -- the write arm is -- it is about a screen that lives on a
 # dashboard and gets leant on.

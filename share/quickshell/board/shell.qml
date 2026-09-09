@@ -36,6 +36,7 @@ ShellRoot {
   property real sheetW: 0
   property real sheetH: 0
   property string terminal: ""
+  property string sheet: ""
 
   readonly property string home: Quickshell.env("HOME")
 
@@ -51,6 +52,11 @@ ShellRoot {
         root.sheetW = d.width || 0;
         root.sheetH = d.height || 0;
         root.targets = d.boxes || [];
+        // Cache-busted by the file's own name, which changes with its
+        // contents, so a redrawn picture is a different source and the image
+        // cannot show a stale copy.
+        root.sheet = "file://" + root.home
+                   + "/.local/share/omacar/omacar-commands.png?v=" + Date.now();
       } catch (e) {
         root.targets = [];
       }
@@ -119,8 +125,6 @@ ShellRoot {
   PanelWindow {
     id: board
     anchors { top: true; bottom: true; left: true; right: true }
-    // TRANSPARENT, AND THAT IS THE WHOLE POINT. The wallpaper underneath is
-    // the reference; this only collects taps.
     color: "#00000000"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Bottom
@@ -129,17 +133,41 @@ ShellRoot {
     // possible behaviour for a reference.
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-    // The picture is drawn for one screen size. If the compositor reports a
-    // different one, the targets are scaled rather than silently misplaced.
-    readonly property real sx: root.sheetW > 0 ? width / root.sheetW : 1
-    readonly property real sy: root.sheetH > 0 ? height / root.sheetH : 1
+    // IT SHOWS THE PICTURE ITSELF, rather than lying over the wallpaper.
+    //
+    // Being transparent and trusting the wallpaper underneath was nearly
+    // right and had one flaw with no fix: the wallpaper is drawn by another
+    // surface, and two surfaces on the same layer have no defined order. Ours
+    // could be under it, which puts every target beneath the thing it is
+    // meant to be on top of.
+    //
+    // Drawing the same PNG removes the question. There is still exactly one
+    // rendering — the picture — and now the targets are children of the image
+    // they belong to, so they cannot be misaligned by anything.
+    Image {
+      id: sheet
+      anchors.fill: parent
+      source: root.sheet
+      fillMode: Image.PreserveAspectFit
+      cache: false
+      asynchronous: true
+      smooth: true
+    }
+
+    // The picture is drawn for one screen size, and PreserveAspectFit may
+    // letterbox it on a screen of another shape. The targets are placed
+    // against where the image actually landed, not against the window.
+    readonly property real sx: root.sheetW > 0 ? sheet.paintedWidth / root.sheetW : 1
+    readonly property real sy: root.sheetH > 0 ? sheet.paintedHeight / root.sheetH : 1
+    readonly property real ox: (width - sheet.paintedWidth) / 2
+    readonly property real oy: (height - sheet.paintedHeight) / 2
 
     Repeater {
       model: root.targets
       Rectangle {
         required property var modelData
-        x: modelData.x * board.sx
-        y: modelData.y * board.sy
+        x: board.ox + modelData.x * board.sx
+        y: board.oy + modelData.y * board.sy
         width: modelData.w * board.sx
         height: modelData.h * board.sy
         radius: 6 * board.sx
