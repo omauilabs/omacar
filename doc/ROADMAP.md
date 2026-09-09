@@ -176,15 +176,15 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 58 | 27,643 |
+| Python — the whole diagnostic side | 59 | 28,028 |
 | JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,655 |
 | Tests | 12 | 5,258 |
-| Documentation | 18 | 4,229 |
+| Documentation | 18 | 4,230 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **63,159** |
+| **Tracked in git, all of it** | | **63,545** |
 
 **Tests** — 876 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -312,8 +312,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 148 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 149 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` Every command as a picture, for the wallpaper
 - `2026-09-09` A capture run without --save died on an unbound name
 - `2026-09-09` A drive across midnight was added to the odometer twice
 - `2026-09-09` The power-button fix moves from one machine into the repository
@@ -321,7 +322,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-08` Three hardware questions, researched and then attacked
 - `2026-09-08` The hybrid screen becomes a battery screen, and covers all three of them
 - `2026-09-08` Plugging the adapter in puts the app on the screen
-- `2026-09-08` The tablet suspends, and in a car that reads as a dead tablet
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,

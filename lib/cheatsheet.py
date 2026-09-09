@@ -306,6 +306,10 @@ def set_wallpaper(path):
     is printed rather than a claim that it was set.
     """
     tries = [
+        # Omarchy owns its own background, and asking it is both the thing that
+        # works and the thing that survives a theme change. It goes first for
+        # that reason rather than because it is likelier to be installed.
+        ("omarchy", ["omarchy-theme-bg-set", path]),
         ("swww", ["swww", "img", path]),
         ("hyprpaper", ["hyprctl", "hyprpaper", "reload", f",{path}"]),
         ("swaybg", None),          # swaybg takes no runtime commands
@@ -371,6 +375,8 @@ def main(argv):
             print(f"  {YELLOW}could not set it{RESET} — nothing here answers to "
                   f"a wallpaper command.")
             print(f"  {DIM}Point your desktop's wallpaper at the file above.{RESET}")
+    else:
+        print(f"  {DIM}--set to use it as the wallpaper{RESET}")
     print()
     return 0
 
