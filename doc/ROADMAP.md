@@ -176,15 +176,15 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 59 | 28,350 |
+| Python — the whole diagnostic side | 59 | 28,369 |
 | JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
 | Shell — the CLI and the installer | 6 | 1,710 |
 | Tests | 12 | 5,283 |
-| Documentation | 18 | 4,235 |
+| Documentation | 22 | 5,144 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **64,300** |
+| **Tracked in git, all of it** | | **65,228** |
 
 **Tests** — 881 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -312,16 +312,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 155 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 157 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` The wallpaper was redrawn and never reappeared
+- `2026-09-09` A parity plan against Snap-on, and what of theirs you can keep
 - `2026-09-09` Give the columns a line of clearance above the footer
 - `2026-09-09` The wallpaper fills the screen, after four separate bugs said it could not
 - `2026-09-09` The reference fills its screen, and gains a header you can press
 - `2026-09-09` The board finds the session's screen when it is started from somewhere without one
 - `2026-09-09` The command reference, as a surface you can press
 - `2026-09-09` Ask Omarchy for the wallpaper, since Omarchy owns it
-- `2026-09-09` Every command as a picture, for the wallpaper
-- `2026-09-09` A capture run without --save died on an unbound name
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
