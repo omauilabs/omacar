@@ -924,6 +924,23 @@ print()
         command -v quickshell >/dev/null || {
           echo "omacar: quickshell is not installed, and it is what draws this" >&2
           exit 1; }
+        # FIND THE SESSION'''S SCREEN, because this is often started from
+        # somewhere that has none. An ssh shell carries no WAYLAND_DISPLAY, so
+        # quickshell exits immediately and says nothing useful about why — and
+        # a tablet on a dashboard is exactly the machine somebody administers
+        # over ssh.
+        : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+        export XDG_RUNTIME_DIR
+        if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+          for w in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+            [[ -S "$w" ]] || continue
+            WAYLAND_DISPLAY="$(basename "$w")"
+            export WAYLAND_DISPLAY
+            break
+          done
+        fi
+        [[ -n "${WAYLAND_DISPLAY:-}" ]] || {
+          echo "omacar: no Wayland session to draw on" >&2; exit 1; }
         python3 "$ROOT/lib/cheatsheet.py" --json >/dev/null || exit 1
         if pgrep -f "quickshell.*$BOARD_QML" >/dev/null 2>&1; then
           echo "  already up — omacar board stop to take it down"
