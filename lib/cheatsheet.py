@@ -51,6 +51,8 @@ GROUPS = [
      ["write", "mode"]),
     ("The tablet", "A machine that lives in a car",
      ["tablet", "phone", "card", "state", "server"]),
+    ("This screen", "The reference you are looking at",
+     ["cheatsheet", "board"]),
     ("Agents and AI", "The car, as something a program can ask",
      ["ai", "mcp", "plugins", "profile"]),
     ("Without a car", "Everything here works on a desk",
@@ -134,7 +136,26 @@ CSS = """
     position: relative;
     -webkit-font-smoothing: antialiased;
   }
-  header { display: flex; align-items: baseline; gap: .9em; }
+  header { display: flex; align-items: center; gap: 1.1em; }
+  .title-wrap { display: flex; align-items: baseline; gap: .7em; }
+  .spacer { flex: 1 1 auto; }
+  /* The status is a snapshot on a picture and says so, because a wallpaper
+     drawn this morning that still claims "connected" this evening is a lie
+     told by a reference screen. */
+  .status { display: flex; align-items: center; gap: .5em;
+            font-size: 1.42vh; color: #94a7ba; }
+  .dot { width: .78vh; height: .78vh; border-radius: 50%; background: #56697c; }
+  .status[data-state="on"] .dot { background: #4ade80; }
+  .status[data-state="sim"] .dot { background: #fbbf24; }
+  .status[data-state="off"] .dot,
+  .status[data-state="stale"] .dot { background: #5b6a7a; }
+  .when { color: #56697c; font-size: 1.22vh; }
+  .actions { display: flex; gap: .6em; }
+  .btn { display: flex; align-items: baseline; gap: .5em;
+         padding: .55em 1.05em; border-radius: 999px;
+         border: 1px solid #2b3a4a; background: #141d27;
+         font-size: 1.38vh; color: #cfe0ee; }
+  .btn .what { font-size: 1.18vh; color: #6f8296; }
   h1 { font-size: 3.1vh; font-weight: 640; letter-spacing: -.01em; }
   .sub { font-size: 1.55vh; color: #7d90a4; }
   .rule { height: 1px; background: linear-gradient(90deg,#2b3a4a,transparent);
@@ -149,7 +170,7 @@ CSS = """
      in Python where it can be checked. */
   main { display: grid; grid-template-columns: repeat(4, 1fr);
          column-gap: 2.4vw; align-items: start; }
-  .col { min-width: 0; }
+  .col { min-width: 0; display: flex; flex-direction: column; }
   section { break-inside: avoid; margin-bottom: 2.5vh; }
   h2 { font-size: 1.62vh; font-weight: 660; color: #d7e3f0;
        letter-spacing: .015em; }
@@ -203,31 +224,115 @@ def pack(groups, columns=4):
     return cols
 
 
+# MASONRY, MEASURED RATHER THAN ESTIMATED.
+#
+# The first version guessed each group's height from its line count and dealt
+# them into four columns. The guess was poor: two columns ran to the bottom of
+# the screen and two stopped two thirds of the way down, which on a tablet is a
+# quarter of a small screen spent on nothing. Estimating the height of wrapped
+# text is not something to be good at from the outside.
+#
+# The browser already knows every height exactly, so it does the packing: the
+# sections are laid out once, measured, and moved into whichever column is
+# shortest at that moment. Tall groups land first so the last few can fill in
+# around them, which is what stops one column finishing far below the others.
+MASONRY = """
+(function () {
+  const main = document.querySelector('main');
+  const cols = [...main.querySelectorAll('.col')];
+  const sections = [...main.querySelectorAll('section')];
+  // Measured where they are, before anything moves.
+  const sized = sections.map((el) => ({ el, h: el.getBoundingClientRect().height }));
+  sections.forEach((el) => el.remove());
+  // Tallest first: a big block dropped in last is what leaves a column short.
+  sized.sort((a, b) => b.h - a.h);
+  const height = cols.map(() => 0);
+  const placed = cols.map(() => []);
+  for (const item of sized) {
+    let i = 0;
+    for (let k = 1; k < cols.length; k++) if (height[k] < height[i]) i = k;
+    placed[i].push(item);
+    height[i] += item.h;
+  }
+  // ONE PASS OF SECOND THOUGHTS. Tallest-first gets close and can still leave
+  // one column well short, because the last block that would have fitted was
+  // dealt somewhere else. So: repeatedly try moving one section from the
+  // tallest column to the shortest, and keep the move only if the gap between
+  // them actually narrows. It converges in a handful of steps and it is the
+  // difference between a quarter of a small screen being empty and not.
+  for (let pass = 0; pass < 40; pass++) {
+    let hi = 0, lo = 0;
+    for (let k = 1; k < cols.length; k++) {
+      if (height[k] > height[hi]) hi = k;
+      if (height[k] < height[lo]) lo = k;
+    }
+    const gap = height[hi] - height[lo];
+    if (gap < 8) break;
+    // The best candidate is the one that leaves the smallest gap afterwards.
+    let best = -1, bestGap = gap;
+    placed[hi].forEach((item, idx) => {
+      const after = Math.abs((height[hi] - item.h) - (height[lo] + item.h));
+      if (after < bestGap) { bestGap = after; best = idx; }
+    });
+    if (best < 0) break;
+    const [moved] = placed[hi].splice(best, 1);
+    placed[lo].push(moved);
+    height[hi] -= moved.h;
+    height[lo] += moved.h;
+  }
+  placed.forEach((items, i) => {
+    // Back into declaration order within each column, so reading down a column
+    // still follows the order the groups were written in.
+    items.sort((a, b) => sections.indexOf(a.el) - sections.indexOf(b.el));
+    items.forEach(({ el }) => cols[i].appendChild(el));
+  });
+  document.documentElement.dataset.packed = '1';
+})();
+"""
+
+
 def page(when=None):
     when = when or time.strftime("%-d %B %Y")
     groups = grouped()
-    cols = []
-    for col in pack(groups):
-        blocks = []
-        for title, about, rows in col:
-            items = "".join(
-                f'<div class="row"><div class="cmd">{_cmd_html(c)}</div>'
-                f'<div class="desc">{html.escape(d)}</div></div>'
-                for c, d in rows)
-            blocks.append(f"<section><h2>{html.escape(title)}</h2>"
-                          f'<div class="about">{html.escape(about)}</div>'
-                          f"{items}</section>")
-        cols.append(f'<div class="col">{"".join(blocks)}</div>')
-    blocks = cols
+    st = status_now()
+    seen_at = (time.strftime("%H:%M", time.localtime(st["at"]))
+               if st.get("at") else "")
+    blocks = []
+    for title, about, rows in groups:
+        items = "".join(
+            f'<div class="row"><div class="cmd">{_cmd_html(c)}</div>'
+            f'<div class="desc">{html.escape(d)}</div></div>'
+            for c, d in rows)
+        blocks.append(f"<section><h2>{html.escape(title)}</h2>"
+                      f'<div class="about">{html.escape(about)}</div>'
+                      f"{items}</section>")
+    # Four empty columns for the script to fill, and every section in the first
+    # one to begin with so a browser with no scripting still shows all of them.
+    cols = (f'<div class="col">{"".join(blocks)}</div>'
+            + '<div class="col"></div>' * 3)
+    actions = "".join(
+        f'<span class="btn">{html.escape(a["label"])}'
+        f'<span class="what">{html.escape(a["about"])}</span></span>'
+        for a in ACTIONS)
     n = sum(len(r) for _t, _a, r in groups)
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>OmaCar commands</title><style>{CSS}</style></head><body>
-<header><h1>OmaCar</h1>
-  <span class="sub">every command, generated from the tool itself</span></header>
+<header>
+  <div class="title-wrap"><h1>OmaCar</h1>
+    <span class="sub">every command, generated from the tool itself</span></div>
+  <div class="spacer"></div>
+  <div class="status" data-state="{html.escape(st['state'])}">
+    <span class="dot"></span><span>{html.escape(st['label'])}</span>
+    <span class="when">{html.escape('at ' + seen_at if seen_at else '')}</span>
+  </div>
+  <div class="spacer"></div>
+  <div class="actions">{actions}</div>
+</header>
 <div class="rule"></div>
-<main>{''.join(blocks)}</main>
+<main>{cols}</main>
 <footer><span>{n} commands &middot; omacar help</span>
   <span>generated {html.escape(when)}</span></footer>
+<script>{MASONRY}</script>
 </body></html>"""
 
 
@@ -308,6 +413,47 @@ CONFIRM = {"write", "prune", "demo", "sim", "mode", "tablet", "hotplug",
            "odometer", "service", "photo", "profile", "vehicle"}
 
 
+def status_now():
+    """Whether the car is there, as of this instant.
+
+    ON A PICTURE THIS IS A SNAPSHOT AND MUST SAY SO. A wallpaper drawn at nine
+    in the morning that still says "connected" at six in the evening is a lie
+    told by a reference screen, which is the one thing it must not be. So the
+    time it was true is drawn beside it, and the board -- which is a live
+    surface -- refreshes the same field instead.
+    """
+    import json as _json
+    try:
+        import records
+        with open(records.LIVE, encoding="utf-8") as f:
+            live = _json.load(f)
+    except Exception:                                         # noqa: BLE001
+        return {"state": "unknown", "label": "no reading", "at": None}
+    age = time.time() - (live.get("t") or 0)
+    if age > 120:
+        return {"state": "stale", "label": "nothing polling", "at": live.get("t")}
+    if live.get("simulated"):
+        return {"state": "sim", "label": "simulator", "at": live.get("t")}
+    if not live.get("connected"):
+        return {"state": "off", "label": "not connected", "at": live.get("t")}
+    values = live.get("values") or {}
+    rpm = values.get("RPM") or 0
+    return {"state": "on",
+            "label": "connected" + (f" · {rpm:.0f} rpm" if rpm > 200 else ""),
+            "at": live.get("t")}
+
+
+# The two things worth reaching for from a reference screen, and what they do.
+ACTIONS = [
+    {"id": "dashboard", "label": "Dashboard",
+     "run": ["omacar"], "about": "open the app"},
+    {"id": "plugin", "label": "Plugin",
+     "run": ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call",
+             "omacar", "toggle"],
+     "about": "the bar panel"},
+]
+
+
 def as_json():
     """The commands, grouped, with what each one needs to run."""
     out = []
@@ -324,7 +470,8 @@ def as_json():
                           "confirm": verb in CONFIRM,
                           "needs_input": needs_input})
         out.append({"title": title, "about": about, "commands": items})
-    return {"generated": time.time(), "groups": out}
+    return {"generated": time.time(), "groups": out,
+            "actions": ACTIONS, "status": status_now()}
 
 BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
 GREEN, YELLOW = "\033[32m", "\033[33m"

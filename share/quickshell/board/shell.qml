@@ -33,6 +33,8 @@ ShellRoot {
   id: root
 
   property var groups: []
+  property var actions: []
+  property var carStatus: ({ state: "unknown", label: "…" })
   property string statusLine: "reading the command list…"
   property string dataPath: Quickshell.env("HOME") + "/.local/share/omacar/omacar-commands.json"
 
@@ -51,6 +53,7 @@ ShellRoot {
       try {
         const doc = JSON.parse(text());
         root.groups = doc.groups || [];
+        root.actions = doc.actions || [];
         let n = 0;
         for (const g of root.groups) n += (g.commands || []).length;
         root.statusLine = n + " commands";
@@ -76,6 +79,52 @@ ShellRoot {
   }
 
   Process { id: runner }
+  Process { id: actionRunner }
+
+  // THE STATUS IS LIVE HERE, WHICH IS THE POINT OF A SURFACE OVER A PICTURE.
+  // The wallpaper can only say what was true when it was drawn, and says so.
+  // This reads the daemon's own file every few seconds instead.
+  FileView {
+    id: liveFile
+    path: Quickshell.env("HOME") + "/.local/state/omacar/live.json"
+    watchChanges: true
+    onFileChanged: reload()
+    onLoaded: root.carStatus = readStatus(text())
+    onLoadFailed: root.carStatus = ({ state: "unknown", label: "no reading" })
+  }
+
+  Timer {
+    interval: 5000; running: true; repeat: true
+    onTriggered: liveFile.reload()
+  }
+
+  function readStatus(raw) {
+    try {
+      const d = JSON.parse(raw);
+      const age = (Date.now() / 1000) - (d.t || 0);
+      if (age > 120) return { state: "stale", label: "nothing polling" };
+      if (d.simulated) return { state: "sim", label: "simulator" };
+      if (!d.connected) return { state: "off", label: "not connected" };
+      const rpm = (d.values || {}).RPM || 0;
+      return { state: "on",
+               label: "connected" + (rpm > 200 ? " · " + Math.round(rpm) + " rpm" : "") };
+    } catch (e) {
+      return { state: "unknown", label: "unreadable" };
+    }
+  }
+
+  function dotColour(state) {
+    if (state === "on") return "#4ade80";
+    if (state === "sim") return "#fbbf24";
+    return "#5b6a7a";
+  }
+
+  function doAction(a) {
+    if (!a || !a.run || !a.run.length) return;
+    actionRunner.command = a.run;
+    actionRunner.running = true;
+    root.statusLine = a.label.toLowerCase();
+  }
 
   // Strip the optional parts a usage line carries, and say whether what is
   // left is something that can just be run.
@@ -136,7 +185,9 @@ ShellRoot {
       spacing: Math.round(parent.height * 0.018)
 
       RowLayout {
-        spacing: 12
+        Layout.fillWidth: true
+        spacing: Math.round(board.width * 0.012)
+
         Text {
           text: "OmaCar"
           color: "#e8eef5"
@@ -147,16 +198,62 @@ ShellRoot {
           text: "press a command to run it"
           color: "#7d90a4"
           font.pixelSize: Math.round(board.height * 0.0155)
-          Layout.alignment: Qt.AlignBottom
-          bottomPadding: Math.round(board.height * 0.004)
+          Layout.alignment: Qt.AlignVCenter
         }
+
         Item { Layout.fillWidth: true }
+
+        // Between the heading and the buttons, and live rather than a snapshot.
+        RowLayout {
+          spacing: 8
+          Rectangle {
+            width: Math.round(board.height * 0.009)
+            height: width; radius: width / 2
+            color: root.dotColour(root.carStatus.state)
+          }
+          Text {
+            text: root.carStatus.label
+            color: "#94a7ba"
+            font.pixelSize: Math.round(board.height * 0.0148)
+          }
+        }
+
+        Item { Layout.fillWidth: true }
+
         Text {
           text: root.statusLine
           color: "#5d92b4"
-          font.pixelSize: Math.round(board.height * 0.0145)
-          Layout.alignment: Qt.AlignBottom
-          bottomPadding: Math.round(board.height * 0.004)
+          font.pixelSize: Math.round(board.height * 0.0138)
+        }
+
+        Repeater {
+          model: root.actions
+          Rectangle {
+            required property var modelData
+            implicitWidth: btnRow.implicitWidth + Math.round(board.height * 0.028)
+            implicitHeight: btnRow.implicitHeight + Math.round(board.height * 0.016)
+            radius: height / 2
+            color: btnHover.hovered ? "#1d2b38" : "#141d27"
+            border.color: btnHover.hovered ? "#3d5266" : "#2b3a4a"
+            border.width: 1
+            HoverHandler { id: btnHover }
+            TapHandler { onTapped: root.doAction(modelData) }
+            RowLayout {
+              id: btnRow
+              anchors.centerIn: parent
+              spacing: 7
+              Text {
+                text: modelData.label
+                color: "#cfe0ee"
+                font.pixelSize: Math.round(board.height * 0.0148)
+              }
+              Text {
+                text: modelData.about
+                color: "#6f8296"
+                font.pixelSize: Math.round(board.height * 0.0126)
+              }
+            }
+          }
         }
       }
 
