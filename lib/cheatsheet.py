@@ -125,6 +125,7 @@ def grouped(rows=None):
 # The look. Dark, because a wallpaper sits behind windows and a bright one
 # fights everything on top of it, and because this machine's app is dark.
 CSS = """
+  :root { --s: 1; }
   * { box-sizing: border-box; margin: 0; }
   html, body { width: 100%; height: 100%; }
   body {
@@ -172,20 +173,31 @@ CSS = """
          column-gap: 2.4vw; align-items: start; }
   .col { min-width: 0; display: flex; flex-direction: column; }
   section { break-inside: avoid; margin-bottom: 2.5vh; }
-  h2 { font-size: 1.62vh; font-weight: 660; color: #d7e3f0;
+  h2 { font-size: calc(1.62vh * var(--s)); font-weight: 660; color: #d7e3f0;
        letter-spacing: .015em; }
-  .about { font-size: 1.32vh; color: #6f8296; margin: .18em 0 .85em; }
+  /* PADDING, NOT MARGIN, and the difference cost an evening. A bottom margin
+     on the last child collapses out of its parent, so a heading measured on
+     its own came back shorter than the same heading with rows under it — by
+     about fifteen pixels a section, which over four sections is enough to
+     overflow every column. The fit then concluded that nothing fitted at any
+     size and left the type at its floor with a column empty. Padding is inside
+     the box and is always counted. */
+  .about { font-size: calc(1.32vh * var(--s)); color: #6f8296;
+           padding: .18em 0 .85em; }
+  /* A group broken across a column says so, the way a printed card does. */
+  .cont { font-weight: 400; font-size: .78em; color: #5d7286;
+          letter-spacing: .02em; }
   .row { display: grid; grid-template-columns: 1fr; gap: .04em;
-         padding: .3em 0 .42em; border-top: 1px solid #1b2530; }
+         padding: .34em 0 .46em; border-top: 1px solid #1b2530; }
   .row:first-of-type { border-top: 0; }
   /* MONOSPACE FOR THE THINGS YOU TYPE, AND NOTHING ELSE. Prose set in a
      terminal face is harder to read and looks like a document pretending to
      be a terminal. */
   .cmd { font-family: "JetBrains Mono", "CaskaydiaMono Nerd Font",
          ui-monospace, monospace;
-         font-size: 1.42vh; color: #7fd0ff; letter-spacing: -.01em; }
+         font-size: calc(1.42vh * var(--s)); color: #7fd0ff; letter-spacing: -.01em; }
   .cmd .arg { color: #5d92b4; }
-  .desc { font-size: 1.32vh; color: #94a7ba; line-height: 1.32; }
+  .desc { font-size: calc(1.32vh * var(--s)); color: #94a7ba; line-height: 1.32; }
   footer { position: absolute; left: 3.6vw; right: 3.6vw; bottom: 2.4vh;
            font-size: 1.2vh; color: #56697c;
            display: flex; justify-content: space-between; }
@@ -239,54 +251,164 @@ def pack(groups, columns=4):
 MASONRY = """
 (function () {
   const main = document.querySelector('main');
-  const cols = [...main.querySelectorAll('.col')];
-  const sections = [...main.querySelectorAll('section')];
-  // Measured where they are, before anything moves.
-  const sized = sections.map((el) => ({ el, h: el.getBoundingClientRect().height }));
-  sections.forEach((el) => el.remove());
-  // Tallest first: a big block dropped in last is what leaves a column short.
-  sized.sort((a, b) => b.h - a.h);
-  const height = cols.map(() => 0);
-  const placed = cols.map(() => []);
-  for (const item of sized) {
-    let i = 0;
-    for (let k = 1; k < cols.length; k++) if (height[k] < height[i]) i = k;
-    placed[i].push(item);
-    height[i] += item.h;
+  const root = document.documentElement;
+  const source = [...main.querySelectorAll('section')].map((sec) => ({
+    head: sec.querySelector('h2').textContent,
+    about: sec.querySelector('.about').textContent,
+    rows: [...sec.querySelectorAll('.row')].map((r) => r.outerHTML),
+  }));
+
+  function headHtml(title, about, cont) {
+    return '<h2>' + title + (cont ? ' <span class="cont">continued</span>' : '')
+         + '</h2><div class="about">' + about + '</div>';
   }
-  // ONE PASS OF SECOND THOUGHTS. Tallest-first gets close and can still leave
-  // one column well short, because the last block that would have fitted was
-  // dealt somewhere else. So: repeatedly try moving one section from the
-  // tallest column to the shortest, and keep the move only if the gap between
-  // them actually narrows. It converges in a handful of steps and it is the
-  // difference between a quarter of a small screen being empty and not.
-  for (let pass = 0; pass < 40; pass++) {
-    let hi = 0, lo = 0;
-    for (let k = 1; k < cols.length; k++) {
-      if (height[k] > height[hi]) hi = k;
-      if (height[k] < height[lo]) lo = k;
+
+  function columns(n) {
+    main.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';
+    main.innerHTML = '';
+    const cols = [];
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement('div');
+      c.className = 'col';
+      main.appendChild(c);
+      cols.push(c);
     }
-    const gap = height[hi] - height[lo];
-    if (gap < 8) break;
-    // The best candidate is the one that leaves the smallest gap afterwards.
-    let best = -1, bestGap = gap;
-    placed[hi].forEach((item, idx) => {
-      const after = Math.abs((height[hi] - item.h) - (height[lo] + item.h));
-      if (after < bestGap) { bestGap = after; best = idx; }
-    });
-    if (best < 0) break;
-    const [moved] = placed[hi].splice(best, 1);
-    placed[lo].push(moved);
-    height[hi] -= moved.h;
-    height[lo] += moved.h;
+    return cols;
   }
-  placed.forEach((items, i) => {
-    // Back into declaration order within each column, so reading down a column
-    // still follows the order the groups were written in.
-    items.sort((a, b) => sections.indexOf(a.el) - sections.indexOf(b.el));
-    items.forEach(({ el }) => cols[i].appendChild(el));
-  });
-  document.documentElement.dataset.packed = '1';
+
+  // Heights of every piece at this type size, measured in a column of the
+  // width they will actually be laid out in.
+  function measure(n, scale) {
+    root.style.setProperty('--s', scale);
+    const cols = columns(n);
+    const probe = document.createElement('div');
+    cols[0].appendChild(probe);
+    const parts = [];
+    for (const sec of source) {
+      probe.innerHTML = '<section>' + headHtml(sec.head, sec.about, false) + '</section>';
+      const headH = probe.firstChild.getBoundingClientRect().height;
+      const rowH = [];
+      for (const html of sec.rows) {
+        probe.innerHTML = '<section>' + html + '</section>';
+        rowH.push(probe.firstChild.getBoundingClientRect().height);
+      }
+      parts.push({ sec, headH, rowH });
+    }
+    // THE GAP BETWEEN SECTIONS COUNTS TOO. Leaving it out of the accounting
+    // made every column a little taller than the arithmetic said, so the fit
+    // read "does not fit" at sizes that fitted perfectly well and shrank the
+    // type until two columns were full and two were empty.
+    probe.innerHTML = '<section></section>';
+    const gap = parseFloat(getComputedStyle(probe.firstChild).marginBottom) || 0;
+    probe.remove();
+    return { parts, gap };
+  }
+
+  // FLOWED, NOT DEALT. Packing whole groups leaves the columns as uneven as
+  // the groups are: one nine-command group sets a floor, the type cannot grow
+  // past whatever that column allows, and the other three stop well short. A
+  // quarter of a tablet screen went that way.
+  //
+  // So a group may be broken across a column boundary, the way a printed
+  // reference card breaks one, with its heading repeated and marked. Never
+  // with a single orphaned line under a heading: a heading with one command
+  // beneath it reads as an error rather than a continuation.
+  function flow(measured, n, avail) {
+    const { parts, gap } = measured;
+    const cols = columns(n);
+    let at = 0, used = 0;
+    for (const { sec, headH, rowH } of parts) {
+      let i = 0;
+      let cont = false;
+      while (i < sec.rows.length) {
+        // How many rows still fit under a heading placed here.
+        let room = avail - used - headH - gap;
+        let fits = 0, h = 0;
+        while (i + fits < sec.rows.length && h + rowH[i + fits] <= room) {
+          h += rowH[i + fits];
+          fits++;
+        }
+        const left = sec.rows.length - i;
+        // NEVER LEAVE ONE ROW BEHIND, AND NEVER ABANDON A COLUMN TO AVOID IT.
+        //
+        // The first version moved the whole group to the next column whenever
+        // the break would have orphaned a single row. On a group of nine that
+        // threw away half a column to save one line, and left the first column
+        // ending two thirds of the way down while the rest were full.
+        //
+        // Keeping one row back is the cheap fix: put one fewer here so at
+        // least two carry over. The column stays full and nothing is orphaned.
+        if (left - fits === 1 && fits >= 3) fits -= 1;
+        if (fits < 2) {
+          if (at < n - 1) { at++; used = 0; continue; }
+          fits = left;                     // last column: it has to go in
+        }
+        const el = document.createElement('section');
+        el.innerHTML = headHtml(sec.head, sec.about, cont)
+                     + sec.rows.slice(i, i + fits).join('');
+        cols[at].appendChild(el);
+        used += headH + h + gap;
+        i += fits;
+        cont = true;
+      }
+    }
+    return Math.max(...cols.map((c) => c.getBoundingClientRect().height));
+  }
+
+  // MEASURED TO THE FOOTER'S ACTUAL TOP, not estimated from the viewport.
+  // The footer is positioned from the bottom, so reconstructing where it
+  // starts out of window height, its own height and the body padding got it
+  // wrong by about forty pixels — enough for the last line of the fullest
+  // column to sit underneath it.
+  const footer = document.querySelector('footer');
+  const mainTop = main.getBoundingClientRect().top;
+  const floor = footer ? footer.getBoundingClientRect().top
+                       : window.innerHeight
+                         - (parseFloat(getComputedStyle(document.body).paddingBottom) || 0);
+  const avail = floor - mainTop - 16;
+
+  // SCANNED, NOT BISECTED, because this does not behave the way bisection
+  // needs it to. Bisection assumes that if one size does not fit, no larger
+  // size will. Measured on this page: 0.95 overflowed the first column by ten
+  // pixels and 1.00 fitted with room to spare in all four, because a slightly
+  // larger type broke the groups at different places. Bisection walked into
+  // the 0.95 failure, concluded everything above it failed too, and settled at
+  // the floor with a column empty.
+  //
+  // So every size is tried, coarsely and then finely, and the largest that
+  // actually fits wins. Forty layouts in a headless browser is nothing.
+  const N = 4;
+  let best = 0;
+  for (let s = 2.20; s >= 0.60; s -= 0.05) {
+    if (flow(measure(N, s), N, avail) <= avail) { best = s; break; }
+  }
+  if (!best) best = 0.60;
+  for (let s = best + 0.045; s > best; s -= 0.01) {
+    if (flow(measure(N, s), N, avail) <= avail) { best = s; break; }
+  }
+  // BALANCED FOR THE FINAL PASS. Filling each column to the brim in turn
+  // leaves whatever is left over sitting alone in the last one — three full
+  // columns and a short fourth. Flowing to the average instead spreads the
+  // slack evenly, which reads as four columns of a page rather than three
+  // columns and a remainder. Tried a little at a time, because a lower target
+  // can need more columns than there are.
+  const m = measure(N, best);
+  let finalTall = flow(m, N, avail);
+  const total = [...main.querySelectorAll('.col')]
+    .reduce((sum, c) => sum + c.getBoundingClientRect().height, 0);
+  for (let t = Math.ceil(total / N); t <= avail; t += 12) {
+    const tall = flow(m, N, t);
+    const used = [...main.querySelectorAll('.col')]
+      .filter((c) => c.childElementCount).length;
+    if (tall <= avail && used === N) { finalTall = tall; break; }
+    finalTall = flow(m, N, avail);
+  }
+  const heights = [...main.querySelectorAll('.col')]
+    .map((c) => Math.round(c.getBoundingClientRect().height));
+  root.dataset.packed = N + '@' + best.toFixed(3)
+    + ' avail=' + Math.round(avail)
+    + ' cols=' + heights.join(',')
+    + ' tall=' + Math.round(finalTall);
 })();
 """
 
@@ -385,7 +507,10 @@ def render(out_path, size=None):
              f"--user-data-dir={os.path.join(tmp, 'profile')}",
              "--hide-scrollbars", "--force-device-scale-factor=1",
              f"--window-size={w},{h}", f"--screenshot={out_path}",
-             "--virtual-time-budget=4000", f"file://{src}"],
+             # The fit tries about forty layouts. Under a virtual clock that
+             # costs no real time, but the budget has to allow for it or the
+             # screenshot is taken of a half-fitted page.
+             "--virtual-time-budget=30000", f"file://{src}"],
             capture_output=True, text=True, timeout=180)
         if not os.path.exists(out_path):
             raise RuntimeError((r.stderr or "chromium wrote nothing").strip()[:300])

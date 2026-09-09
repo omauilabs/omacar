@@ -176,7 +176,7 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 59 | 28,222 |
+| Python — the whole diagnostic side | 59 | 28,347 |
 | JavaScript — the app | 48 | 15,924 |
 | CSS | 7 | 2,731 |
 | QML — the Quickshell plugin | 6 | 3,132 |
@@ -184,7 +184,7 @@ the one that is wrong.
 | Tests | 12 | 5,283 |
 | Documentation | 18 | 4,230 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **64,167** |
+| **Tracked in git, all of it** | | **64,292** |
 
 **Tests** — 881 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -312,8 +312,9 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 152 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 153 commits on `omacar-launch`. The most recent, unedited:
 
+- `2026-09-09` The reference fills its screen, and gains a header you can press
 - `2026-09-09` The board finds the session's screen when it is started from somewhere without one
 - `2026-09-09` The command reference, as a surface you can press
 - `2026-09-09` Ask Omarchy for the wallpaper, since Omarchy owns it
@@ -321,7 +322,6 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 - `2026-09-09` A capture run without --save died on an unbound name
 - `2026-09-09` A drive across midnight was added to the odometer twice
 - `2026-09-09` The power-button fix moves from one machine into the repository
-- `2026-09-09` A camera plan, and the one cable between the box and the tablet
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
