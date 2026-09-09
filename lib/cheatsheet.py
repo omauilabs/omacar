@@ -365,7 +365,10 @@ MASONRY = """
   const floor = footer ? footer.getBoundingClientRect().top
                        : window.innerHeight
                          - (parseFloat(getComputedStyle(document.body).paddingBottom) || 0);
-  const avail = floor - mainTop - 16;
+  // Sixteen pixels of clearance was not enough: the fullest column's last
+  // descenders still touched the footer on the tablet. Forty is a line's worth
+  // and costs a row nobody misses.
+  const avail = floor - mainTop - 40;
 
   // SCANNED, NOT BISECTED, because this does not behave the way bisection
   // needs it to. Bisection assumes that if one size does not fit, no larger
