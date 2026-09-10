@@ -1,0 +1,31 @@
+[Unit]
+Description=OmaCar — record the bus while the car is driven
+Documentation=file:__ROOT__/lib/drivelog.py
+# NOT PartOf=graphical-session.target, for the same reason as omacar-dtclog:
+# its whole job is to keep recording across a long drive on a tablet whose
+# screen may be off. Tying it to the session would stop it exactly when the
+# screen was turned off to save the battery.
+After=graphical-session.target
+StartLimitBurst=3
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/drivelog.py'
+
+# ALWAYS COMING BACK, which is different from every other unit here.
+#
+# The normal state of this program is to own no hardware and read one small
+# file every fifteen seconds, so an exit is never "nothing to do" -- it is a
+# fault. And the cost of staying down is measured in car time, which is the one
+# thing this project cannot buy back: a supervisor that quietly died in a car
+# park loses the whole return leg, and nobody is watching the screen to notice.
+Restart=always
+RestartSec=20
+
+# It must never be able to starve the compositor on a 2-core tablet that is
+# also drawing a dashboard.
+Nice=10
+
+[Install]
+WantedBy=default.target

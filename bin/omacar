@@ -10,6 +10,8 @@
 #   omacar live [PID...]      stream readings to the terminal
 #   omacar prospect [opts]    hunt for manufacturer-specific PIDs (read-only)
 #   omacar listen [marks]     listen to the bus and transmit nothing; find the byte a switch moves
+#   omacar drive [status|on|off]
+#                             record the bus for you, in legs, all the way home
 #   omacar phone [prep]       is the CarPlay adapter plugged in; `prep` gets ready for one
 #   omacar dtc [opts]         read stored fault data via UDS 0x19 (read-only)
 #   omacar dtclog [opts]      log DTC status periodically during a drive
@@ -772,6 +774,12 @@ case "${1:-open}" in
   live) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/live.py" "$@" ;;
   prospect) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/prospect.py" "$@" ;;
   listen) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/listen.py" "$@" ;;
+  # THE SUPERVISOR THAT RUNS `listen` FOR YOU. Written, argued and then left
+  # unreachable: nothing here dispatched to it and no unit started it, while
+  # its own error text told you to run a service that did not exist. The one
+  # thing this project cannot buy is car time, and the program that exists to
+  # spend it well could not be started.
+  drive) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/drivelog.py" "$@" ;;
   phone)
     shift
     # `phone prep` gets a machine ready for an adapter; everything else is the
