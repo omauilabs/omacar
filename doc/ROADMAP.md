@@ -176,17 +176,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 62 | 29,284 |
-| JavaScript — the app | 50 | 16,346 |
+| Python — the whole diagnostic side | 62 | 29,633 |
+| JavaScript — the app | 50 | 16,363 |
 | CSS | 8 | 2,877 |
 | QML — the Quickshell plugin | 6 | 3,132 |
-| Shell — the CLI and the installer | 6 | 1,727 |
-| Tests | 12 | 5,585 |
-| Documentation | 22 | 5,144 |
+| Shell — the CLI and the installer | 6 | 1,758 |
+| Tests | 12 | 5,791 |
+| Documentation | 23 | 5,275 |
 | Data — codes, resets, procedures, profiles | 7 | 1,455 |
-| **Tracked in git, all of it** | | **67,105** |
+| **Tracked in git, all of it** | | **67,887** |
 
-**Tests** — 952 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 979 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -217,7 +217,7 @@ What is actually covered, straight out of the runner's own headings:
 | a layout has a name, a car remembers which, and the old file still works | 13 |
 | no tool hands a full VIN to a model whose answers are spoken | 9 |
 | the assistant is reachable by hand, and only from this machine | 7 |
-| listening reads frames, transmits nothing, and never invents a rate | 27 |
+| listening reads frames, transmits nothing, and never invents a rate | 30 |
 | a live sample about another car is not this car's news | 6 |
 | a stored VIN survives a broken read | 5 |
 | an agent's write proposal is judged before it is queued | 6 |
@@ -226,9 +226,11 @@ What is actually covered, straight out of the runner's own headings:
 | the buttons that end the day can say why they did not | 19 |
 | the baby screen holds no credential and never claims to know | 21 |
 | a spoken request can move the screen, and nothing else | 18 |
+| a profile survives being written, and a finding survives the next one | 14 |
+| a detached capture that ended says why, and whether to worry | 7 |
 | The launch calendar | 6 |
 | The shaders the music screen ships | 10 |
-| The app starts in a browser | 9 |
+| The app starts in a browser | 12 |
 | A picture reaches the canvas | 1 |
 | The muxer, read back by ffmpeg | 6 |
 | Through the app, in a real browser | 11 |
@@ -315,16 +317,16 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**Shipped** — 167 commits on `omacar-launch`. The most recent, unedited:
+**Shipped** — 175 commits on `omacar-launch`. The most recent, unedited:
 
-- `2026-09-09` The assistant can put a screen up
-- `2026-09-09` The nursery push has a timer, and the installer was ignoring timers
-- `2026-09-09` The baby, from the road
-- `2026-09-09` A boot screen, and a place to put the film later
-- `2026-09-09` The Sleep and Shut down buttons say what happened
-- `2026-09-09` The polling line moves to the middle of the footer
-- `2026-09-09` Sleep and shutdown on the reference screen, and they ask first
-- `2026-09-09` The board shows the picture, because two surfaces on one layer have no order
+- `2026-09-09` The last of the twelve: a capture that stopped now says which stop
+- `2026-09-09` Thursday's finding would have been written where nothing reads
+- `2026-09-09` doc/drive-day.md — the runbook for Thursday and Friday
+- `2026-09-09` Nine ways Thursday's drive would have come home with nothing
+- `2026-09-09` The drive recorder was written, argued, and unreachable
+- `2026-09-09` A dead server said "Not connected", which is the car's word
+- `2026-09-09` Take the family detail out of the nursery prose
+- `2026-09-09` Roadmap: 952 checks, 67,105 lines, three new guard sections
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
