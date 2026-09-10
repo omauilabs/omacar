@@ -18,10 +18,16 @@ cd ~/Projects/omacar && git pull
 ./install.sh                       # picks up the new units
 systemctl --user daemon-reload
 systemctl --user enable --now omacar-drivelog.service
-omacar tablet status               # the FIRST row must say "enabled, running"
-omacar power status                # both must say yes
-df -h ~                            # four legs of frames need room
+
+omacar preflight                   # and this is the one that matters
 ```
+
+`omacar preflight` is the whole of the rest of this section. It asks the six
+questions somebody would otherwise run six commands for, in a driveway, in the
+dark, and it exits 0 only when nothing on this machine will stop a recording.
+It fixes nothing — every line names the command that would.
+
+It needs no car, so the right time to run it is the night before, indoors.
 
 `omacar tablet status` now leads with a **recording the bus** row. Until
 tonight there was no such row, which is how a tablet with a perfect dashboard

@@ -12,6 +12,7 @@
 #   omacar listen [marks]     listen to the bus and transmit nothing; find the byte a switch moves
 #   omacar drive [status|on|off]
 #                             record the bus for you, in legs, all the way home
+#   omacar preflight          is this machine ready to record a drive
 #   omacar phone [prep]       is the CarPlay adapter plugged in; `prep` gets ready for one
 #   omacar dtc [opts]         read stored fault data via UDS 0x19 (read-only)
 #   omacar dtclog [opts]      log DTC status periodically during a drive
@@ -803,6 +804,11 @@ case "${1:-open}" in
   # thing this project cannot buy is car time, and the program that exists to
   # spend it well could not be started.
   drive) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/drivelog.py" "$@" ;;
+  # SIX CHECKS AS ONE COMMAND. doc/drive-day.md asked somebody to run six
+  # things and read the answers in a driveway in the dark, which is six
+  # chances to skip the one that mattered. It needs the venv because it asks
+  # the serial layer whether an adapter is there.
+  preflight) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/preflight.py" "$@" ;;
   phone)
     shift
     # `phone prep` gets a machine ready for an adapter; everything else is the

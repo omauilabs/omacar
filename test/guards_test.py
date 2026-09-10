@@ -1821,6 +1821,55 @@ check("and exits zero for a finish, so a script is not told of a fault",
 check("an ending it cannot prove is reported as the guess it is",
       "most likely the" in _ls, True)
 
+# --------------------------------------------------------------- the preflight
+head("one command answers the six questions somebody would skip")
+
+import preflight as _pf   # noqa: E402
+import re as _re         # noqa: E402
+
+# WHY THIS EXISTS. doc/drive-day.md asked for six commands run in a driveway in
+# the dark before a ninety-mile drive. Two of the three things that have
+# actually cost this project a trip were visible beforehand and nobody looked:
+# a capture saved without its frame bytes, and a drive recorder that had never
+# been enabled on any machine while every status screen said the tablet was
+# ready.
+
+_s = _pf.Sheet()
+_s.row("recording the bus", True, "enabled and running")
+_s.row("adapter", False, "none found", "plug it in", blocking=False)
+check("a sheet with nothing blocking exits zero", _s.blockers, 0)
+
+_s2 = _pf.Sheet()
+_s2.row("recording the bus", False, "inactive", "enable it")
+_s2.row("adapter", False, "none found", "plug it in", blocking=False)
+check("a real fault blocks", _s2.blockers, 1)
+check("and a merely interesting one does not",
+      [r for r in _s2.rows if not r[1] and not r[4]] != [], True)
+
+# IT FIXES NOTHING. A preflight that silently repairs things is one you stop
+# reading, and the whole value is that somebody reads it.
+_src = open(os.path.join(ROOT, "lib", "preflight.py"), encoding="utf-8").read()
+for _verb in ("enable", "start", "restart", "install"):
+    check(f"it never runs systemctl {_verb} itself",
+          f'"systemctl", "--user", "{_verb}"' in _src, False)
+check("it only ever asks systemctl questions",
+      sorted(set(_re.findall(r'"systemctl",\s*(?:"--user",\s*)?"([a-z-]+)"', _src))),
+      ["is-active", "is-enabled"])
+
+# THE RECORDER GOES FIRST, because it is the one that was never on.
+check("the recorder is checked before anything about the car",
+      _src.index("def _recorder") < _src.index("def _port"), True)
+check("and the checks run in that order",
+      _src.index("_recorder(sheet)") < _src.index("_port(sheet)"), True)
+
+# IT NEEDS NO CAR. The night before, indoors, is exactly when it should be run.
+check("a missing adapter is not a reason to stay home",
+      'sheet.row("adapter", bool(port)' in _src and "blocking=False" in _src, True)
+
+_cli = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
+check("it is reachable", "omacar preflight" in _cli
+      and 'preflight) omacar_need_env' in _cli, True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
