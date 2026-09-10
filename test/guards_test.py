@@ -1781,6 +1781,46 @@ finally:
     _prof.PROFILE_DIRS = _was_dirs
     _sh3.rmtree(_tmp3, ignore_errors=True)
 
+# ------------------------------------ a capture that stopped says which stop
+head("a detached capture that ended says why, and whether to worry")
+
+# THE THREE ENDINGS LOOKED IDENTICAL. A detached `listen drive` returns 0 and
+# removes its running file whether somebody stopped it, the engine stopped, or
+# it silently hit a cap -- forty-five minutes, or sixty thousand lines off the
+# adapter. All three left nothing behind, so `omacar listen status` said
+# "nothing is listening", which reads like it was never started. On a
+# three-hour drive that is a recording that stopped in hour one with no sign.
+
+_tmpf = _tf3.mkdtemp()
+_was_fail = listen.FAILFILE
+try:
+    listen.FAILFILE = os.path.join(_tmpf, "listen-failed.json")
+    check("with nothing recorded there is no note", listen.last_failure(), None)
+
+    listen.note_failure("no OBD adapter is plugged in")
+    _f = listen.last_failure()
+    check("a session that could not start is a fault", _f["fault"], True)
+
+    listen.note_failure("it ran its full 45 minutes and finished", fault=False)
+    _f = listen.last_failure()
+    check("a session that finished is not", _f["fault"], False)
+    check("and it still says what happened",
+          "ran its full" in _f["why"], True)
+finally:
+    listen.FAILFILE = _was_fail
+    _sh3.rmtree(_tmpf, ignore_errors=True)
+
+_ls = open(os.path.join(ROOT, "lib", "listen.py"), encoding="utf-8").read()
+check("the status screen tells a finish from a failure",
+      'head = ("the last one did not start" if fault' in _ls, True)
+check("and exits zero for a finish, so a script is not told of a fault",
+      "return 1 if fault else 0" in _ls, True)
+# The cap counts lines inside elm.py and what survives here is parsed frames,
+# so this genuinely cannot be proven from the session -- and it says so rather
+# than guessing confidently.
+check("an ending it cannot prove is reported as the guess it is",
+      "most likely the" in _ls, True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

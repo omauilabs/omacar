@@ -519,11 +519,21 @@ def running():
 FAILFILE = os.path.join(records.STATE, "listen-failed.json")
 
 
-def note_failure(why):
+def note_failure(why, fault=True):
+    """Why the last session is not running.
+
+    `fault` separates the two answers this file has to give. A session that
+    could not start is worth driving back for; a session that ran its length
+    and finished is not -- but BOTH used to leave nothing behind, so `listen
+    status` said "nothing is listening" either way. On a detached capture that
+    quietly hit its forty-five minute cap in the first hour of a three-hour
+    drive, that sentence is the only thing anybody ever saw.
+    """
     try:
         os.makedirs(records.STATE, exist_ok=True)
         with open(FAILFILE, "w", encoding="utf-8") as f:
-            json.dump({"at": time.time(), "why": str(why)}, f)
+            json.dump({"at": time.time(), "why": str(why),
+                       "fault": bool(fault)}, f)
     except OSError:
         pass
 
@@ -793,11 +803,13 @@ def main(argv):
             failed = last_failure()
             if failed:
                 ago = (time.time() - (failed.get("at") or 0)) / 60.0
-                print(f"\n  {YELLOW}nothing is listening{RESET} — the last one "
-                      f"did not start")
+                fault = failed.get("fault", True)
+                head = ("the last one did not start" if fault
+                        else "the last one finished")
+                print(f"\n  {YELLOW}nothing is listening{RESET} — {head}")
                 print(f"    {failed.get('why') or 'no reason recorded'}"
                       f"   {DIM}{ago:.0f} min ago{RESET}\n")
-                return 1
+                return 1 if fault else 0
             print("\n  nothing is listening.\n")
             return 1
         mins = (time.time() - r["started"]) / 60.0
@@ -1237,6 +1249,11 @@ def _drive_session(args):
     # fuel stop, not the end of the recording. Ending the leg hands the port
     # back to the daemon and lets the next one start clean.
     last_line = {"at": time.time()}
+    started_at = time.time()
+    # `_stop_asked()` reads a file that the finally block deletes, so by the
+    # time the reason is worked out the answer has been thrown away. Remember
+    # it while it is still true.
+    _stop_asked_ever = {"yes": False}
     _inner_take = cap.add_line
 
     def seen(ln):
@@ -1246,6 +1263,7 @@ def _drive_session(args):
 
     def done_here():
         if _stop_asked():
+            _stop_asked_ever["yes"] = True
             return True
         if quiet_for and time.time() - last_line["at"] > quiet_for:
             return True
@@ -1300,6 +1318,41 @@ def _drive_session(args):
             os.remove(STOPFILE)
         except OSError:
             pass
+    # WHY IT ENDED, WRITTEN DOWN, because every reason looked identical.
+    #
+    # This path returns 0 whether somebody asked it to stop, the bus went
+    # quiet, or it silently hit a cap -- forty-five minutes by default, or
+    # sixty thousand lines. All three removed the running file and left
+    # nothing behind, so `omacar listen status` said "nothing is listening" in
+    # every case. On a three-hour drive that means the recording stopped in
+    # the first hour and the only evidence was a sentence that reads like it
+    # was never started.
+    #
+    # Not a fault: this is a session that did its job and finished. The note
+    # says which, and the status screen prints it as a finish rather than a
+    # failure.
+    ran = time.time() - started_at
+    asked = args.minutes * 60.0
+    kept = f"{len(cap.frames)} frames kept"
+    if _stop_asked_ever["yes"]:
+        why = f"you asked it to stop after {ran / 60:.0f} min. {kept}"
+    elif quiet_for and time.time() - last_line["at"] > quiet_for:
+        why = (f"the bus went quiet for {quiet_for:.0f}s — the engine "
+               f"stopped. {kept}")
+    elif ran >= asked * 0.98:
+        why = (f"it ran its full {args.minutes:.0f} minutes and finished. "
+               f"{kept} — start another, or use `omacar drive`, which "
+               f"re-legs by itself")
+    else:
+        # THE ONE THAT CANNOT BE TOLD APART FROM HERE, said as exactly that.
+        # The cap that ends it counts LINES off the adapter, inside elm.py,
+        # and what survives here is parsed frames -- so this cannot prove it
+        # was the limit. Guessing confidently would be worse than saying which
+        # two things it might be.
+        why = (f"it stopped after {ran / 60:.0f} of its {args.minutes:.0f} "
+               f"minutes, most likely the {DEFAULT_LIMIT}-line cap. {kept} — "
+               f"`omacar drive` re-legs instead of stopping")
+    note_failure(why, fault=False)
     return 0
 
 
