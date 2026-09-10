@@ -8,5 +8,22 @@ PartOf=graphical-session.target
 Type=simple
 ExecStart=%h/.local/bin/omacar kiosk
 
+# IT COMES BACK. Every sibling unit here states a restart policy deliberately
+# and this one stated none, which means "never".
+#
+# The likely trigger is a race at login: the kiosk needs a Wayland session and
+# a loopback server, and `omacar kiosk` exits 1 if either is not up yet. On a
+# tablet that boots straight into the car that is a coin toss, and losing it
+# leaves a dashboard that is simply absent for the whole trip -- the watchdog
+# starts a daemon and opens the app on hotplug, but it cannot reopen a kiosk
+# that died at login.
+#
+# RestartSec is five rather than one so a genuinely broken kiosk backs off
+# instead of spinning a browser, and there is no StartLimitBurst: a tablet in
+# a car that has failed three times in five minutes should keep trying, not
+# give up until somebody notices at the far end of a seventy-mile drive.
+Restart=always
+RestartSec=5
+
 [Install]
 WantedBy=default.target

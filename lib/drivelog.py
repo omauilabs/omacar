@@ -204,6 +204,7 @@ class Supervisor:
         cap = listenlib.Capture(note="drive")
         seconds = self.leg_minutes * 60
         last = {"at": time.time()}
+        beat = {"at": 0.0}
         inner = cap.add_line
 
         def saw(ln):
@@ -212,9 +213,30 @@ class Supervisor:
         cap.add_line = saw
 
         def done():
+            # THE HEARTBEAT LIVES HERE, and that is the point of putting it in
+            # the stop test rather than beside the frames.
+            #
+            # publish() had exactly one caller -- say() -- which runs once when
+            # a leg begins. So for the next twenty minutes the status file's
+            # timestamp did not move, while `omacar drive status` computes
+            # `alive = age < 120` and prints a red "nothing has been written
+            # for N min - it is not running" underneath a green "capturing".
+            # It is wrong for about ninety per cent of every leg, and it is
+            # the ONLY staleness alarm there is: one drive of that teaches a
+            # driver to ignore it, and after that a genuinely dead supervisor
+            # reads exactly the same.
+            #
+            # This runs on every read iteration whether or not frames arrive,
+            # which is what makes it a heartbeat rather than a frame counter --
+            # a silent bus must still prove the process is alive. One small
+            # atomic write every fifteen seconds.
+            now = time.time()
+            if now - beat["at"] >= 15.0:
+                beat["at"] = now
+                self.publish(cap)
             if self.stood_down():
                 return True
-            return time.time() - last["at"] > self.quiet
+            return now - last["at"] > self.quiet
 
         def began(c):
             self.legs += 1
@@ -362,8 +384,23 @@ def main(argv):
         except OSError:
             pass
         _event("stood up", detail="asked by hand")
-        print("\n  it will record again when the engine is running.\n")
-        return 0
+        # IT ONLY REMOVES THE MARKER. IT DOES NOT START ANYTHING.
+        #
+        # "it will record again when the engine is running" is true when a
+        # supervisor exists and a flat lie when one does not -- and on a
+        # machine where the unit was never enabled, which is every machine
+        # this has ever been installed on, that is the sentence somebody reads
+        # before driving seventy miles.
+        doc = status_doc()
+        alive = doc and (time.time() - (doc.get("at") or 0)) < 120
+        if alive:
+            print("\n  it will record again when the engine is running.\n")
+            return 0
+        print("\n  the marker is cleared, but nothing is supervising, so "
+              "nothing will record.")
+        print("  start it with:  systemctl --user enable --now "
+              "omacar-drivelog\n")
+        return 1
     if action in ("-h", "--help", "help"):
         print("\n  omacar drive           record the bus while the car is "
               "driven\n"

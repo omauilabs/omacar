@@ -85,7 +85,16 @@ MIN_FRAMES_PER_WINDOW = 5
 
 # A marks session ends when the person says so. This is only the backstop that
 # stops a forgotten terminal holding the adapter all night.
-MARKS_BACKSTOP = 1800.0
+# TWO HOURS, NOT THIRTY MINUTES.
+#
+# This is the safety net under a marks session, and it used to fire in the
+# middle of one. Thirty minutes is shorter than a drive: the reader thread
+# would stop, the main thread would stay parked in input() confirming marks
+# against a frame count that never moved again, and the session would look
+# healthy for the rest of the trip. A backstop exists so a forgotten session
+# does not hold the port forever, and two hours does that job without being
+# reachable during the procedure it protects.
+MARKS_BACKSTOP = 7200.0
 
 # A DRIVE IS LONGER THAN A CONNECTION.
 #
@@ -237,26 +246,43 @@ class Capture:
         return sorted(out, key=lambda r: (-r["count"], r["id"]))
 
     # -- windows, and what differs between them --------------------------------
-    def windows(self, settle=0.35):
+    def windows(self, settle=0.35, lead=3.0):
         """The frames belonging to each mark, as (label, frames).
 
-        A window runs from its mark to the next one, minus a settling period at
-        the front. The settle exists because a person presses a switch and THEN
-        reaches for the keyboard: without it the first fraction of a second of
-        every window still contains the previous state, and a byte that is
-        genuinely steady looks like it moved.
+        A window runs from its mark to the next one, trimmed at BOTH ends.
+
+        The settle at the front exists because a person presses a switch and
+        THEN reaches for the keyboard: without it the first fraction of a
+        second of every window still holds the previous state.
+
+        THE TRIM AT THE BACK IS THE SAME FACT, AND IT WAS MISSING. The switch
+        moves several seconds before the label is typed, so those seconds --
+        which are already the NEW state -- were being filed under the OLD
+        window. Every window therefore ended with a few seconds of the next
+        position in it, no byte was steady anywhere, and discriminators()
+        reported nothing at all. The procedure could have been performed
+        perfectly and still answered "none", which is the worst possible
+        outcome: it looks like the byte is not on this bus.
+
+        The trim is capped at a quarter of the window so it can never eat one.
+        A real marks window is a minute or two and loses the full lead; a very
+        short one loses a proportion and keeps its shape.
         """
         if not self.marks:
             return []
         bounds = [(t, label) for t, label in self.marks]
         out = []
         for i, (t0, label) in enumerate(bounds):
-            t1 = bounds[i + 1][0] if i + 1 < len(bounds) else float("inf")
             start = t0 + settle
-            out.append((label, [f for f in self.frames if start <= f[0] < t1]))
+            if i + 1 < len(bounds):
+                end = bounds[i + 1][0]
+                end -= min(lead, max(0.0, (end - start)) * 0.25)
+            else:
+                end = float("inf")
+            out.append((label, [f for f in self.frames if start <= f[0] < end]))
         return out
 
-    def discriminators(self, settle=0.35):
+    def discriminators(self, settle=0.35, lead=3.0):
         """Bytes that are steady within every window and differ between them.
 
         THE RULE, AND WHY IT IS THIS STRICT. A byte that merely differs across
@@ -271,7 +297,7 @@ class Capture:
         reported, because a list ranked by plausibility is how a person ends up
         believing the fourth item.
         """
-        wins = self.windows(settle)
+        wins = self.windows(settle, lead)
         if len(wins) < 2:
             return []
         # Per window: {ident: {byte_index: {values}}}, and how many times each
@@ -717,7 +743,21 @@ def main(argv):
     ap.add_argument("--id", dest="can_id", help="listen to one identifier only")
     ap.add_argument("--note", default="")
     ap.add_argument("--save", action="store_true", help="keep the capture")
-    ap.add_argument("--raw", action="store_true", help="keep every frame too")
+    # SAVING KEEPS THE FRAMES. THAT IS WHAT SAVING IS FOR.
+    #
+    # `--raw` used to be opt-in, and the census-only file it left behind can be
+    # read once and never compared with anything -- which is the whole point of
+    # keeping it. On 8 September a three-mode drive was recorded that way and
+    # answered nothing: the bytes were gone. The warning printed below was
+    # already there and was not enough, because it is read after the drive.
+    #
+    # `--raw` still works and now means nothing extra; `--no-raw` is the way
+    # to ask for a census-only file, which is a real thing to want on a tablet
+    # where a minute of a busy bus is tens of megabytes.
+    ap.add_argument("--raw", action="store_true",
+                    help="keep every frame (now the default for --save)")
+    ap.add_argument("--no-raw", dest="no_raw", action="store_true",
+                    help="save the census only, without the frames")
     ap.add_argument("captures", nargs="*", help="for adopt: the captures to compare")
     ap.add_argument("--signal", help="for adopt: which byte, as 17C.2")
     ap.add_argument("--as", dest="as_id", help="for adopt: the id to give it")
@@ -835,18 +875,19 @@ def main(argv):
     # after an edit, so a capture run without --save reached an unbound name
     # and died with a NameError after printing a perfectly good census.
     if not args.save:
-        print(f"\n  {DIM}(not saved — add --save to keep it, "
-              f"--save --raw to keep every frame){RESET}\n")
+        print(f"\n  {DIM}(not saved — add --save to keep it, frames and "
+              f"all){RESET}\n")
         return 0
-    path = cap.save(raw=args.raw)
+    keep_raw = not args.no_raw
+    path = cap.save(raw=keep_raw)
     print(f"  saved: {path}")
-    if not args.raw:
+    if not keep_raw:
         # SAID WHEN IT HAPPENS, not discovered later. Without the frames this
         # capture can be read but never compared with another, and the whole
         # point of capturing two switch positions is to compare them.
-        print(f"  {DIM}(a census only — add --raw to keep the frames, which is "
-              f"what{RESET}")
-        print(f"  {DIM} comparing two switch positions needs){RESET}")
+        print(f"  {DIM}(a census only, because --no-raw was passed. This "
+              f"file can be read{RESET}")
+        print(f"  {DIM} but never compared with another one.){RESET}")
     print()
     return 0
 
@@ -1272,6 +1313,28 @@ def _log_tail(path, lines=1):
         return ""
 
 
+def _marks_rescue(cap, name):
+    """A failed session still keeps what it heard.
+
+    Both error paths out of a marks session used to `return 1` and drop the
+    capture on the floor. The frames are already flushed under `name` while it
+    runs, so this is mostly about saying where they went -- but a session that
+    failed in the first second has nothing flushed yet, and this is what makes
+    that case honest rather than silent.
+    """
+    if not cap.frames and not cap.marks:
+        print(f"  {DIM}(nothing was heard, so there is nothing to keep){RESET}\n")
+        return 1
+    try:
+        path = cap.save(name, raw=True)
+        print(f"  kept what it heard: {path}")
+        print(f"  {DIM}({len(cap.frames)} frames, {len(cap.marks)} mark(s)) — "
+              f"a short session may still be worth comparing{RESET}\n")
+    except OSError as why:                                    # noqa: BLE001
+        print(f"  {DIM}(could not keep it: {why}){RESET}\n")
+    return 1
+
+
 def _marks_session(args):
     """Capture while a person presses things and says what they pressed.
 
@@ -1299,11 +1362,16 @@ def _marks_session(args):
     cap = Capture()
     done = threading.Event()
     failed = {}
+    # NAMED BEFORE IT STARTS, so the frames have somewhere to go while it runs.
+    # This session used to write nothing at all until it ended, which meant an
+    # adapter that dropped, a tablet that was shut, or either of the two error
+    # returns below threw away a procedure somebody had performed in a car.
+    marks_name = time.strftime("%Y%m%d-%H%M%S") + "-marks"
 
     def reader():
         try:
             listen(seconds=args.seconds, can_id=args.can_id, note=args.note,
-                   cap=cap, should_stop=done.is_set)
+                   cap=cap, should_stop=done.is_set, flush_as=marks_name)
         except Exception as why:                              # noqa: BLE001
             failed["why"] = why
         finally:
@@ -1314,11 +1382,20 @@ def _marks_session(args):
     time.sleep(1.2)
     if failed:
         print(f"\n  capture failed: {failed['why']}\n")
-        return 1
+        return _marks_rescue(cap, marks_name)
     try:
         while not done.is_set():
             label = input("  position> ").strip()
             if not label:
+                break
+            # THE READER MAY HAVE STOPPED WHILE THIS THREAD SAT IN input().
+            # It used to confirm regardless, against a frame count that had
+            # frozen, which reads as a healthy session for as long as somebody
+            # keeps typing into a dead one.
+            if done.is_set():
+                why = failed.get("why") or "it reached its limit"
+                print(f"    {YELLOW}not marked{RESET} — the capture has "
+                      f"stopped. {DIM}{why}{RESET}")
                 break
             cap.mark(label)
             print(f"    {YELLOW}marked{RESET} {label}  "
@@ -1329,7 +1406,7 @@ def _marks_session(args):
     t.join(timeout=6)
     if failed:
         print(f"\n  capture failed: {failed['why']}\n")
-        return 1
+        return _marks_rescue(cap, marks_name)
     print()
     _print_census(cap, top=12)
     _print_discriminators(cap)

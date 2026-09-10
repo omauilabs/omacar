@@ -492,7 +492,24 @@ tablet_status() {
   k=$(systemctl --user is-enabled omacar-kiosk.service 2>/dev/null || true)
   w=$(systemctl --user is-enabled omacar-watch.service 2>/dev/null || true)
   k=${k:-missing}; w=${w:-missing}
+  # THE ROW THIS SCREEN DID NOT HAVE, and its absence cost a whole trip.
+  #
+  # Every other line here is about the gauges. Nothing said whether anything
+  # was RECORDING -- so a tablet with a perfect dashboard, a healthy daemon
+  # and no capture supervisor reported itself completely ready, and four legs
+  # went by with nothing on disk. This is the only line that would have shown
+  # it, so it goes first.
+  local d da
+  d=$(systemctl --user is-enabled omacar-drivelog.service 2>/dev/null || true)
+  da=$(systemctl --user is-active omacar-drivelog.service 2>/dev/null || true)
+  d=${d:-missing}
   echo
+  if [[ "$da" == "active" ]]; then
+    printf "  %-22s %s\n" "recording the bus" "$d, running"
+  else
+    printf "  %-22s %s\n" "recording the bus" \
+      "$d, NOT running — systemctl --user enable --now omacar-drivelog"
+  fi
   printf "  %-22s %s\n" "kiosk at login" "$k"
   printf "  %-22s %s\n" "watchdog at login" "$w"
   printf "  %-22s %s\n" "adapter hotplug" \
@@ -524,6 +541,7 @@ tablet_setup() {
   echo "    · open fullscreen drive mode at login"
   echo "    · start the daemon when the adapter is plugged in"
   echo "    · switch to drive mode by itself when the car connects"
+  echo "    · record the bus in legs, whenever the engine is running"
   echo
   read -r -p "  Do that? [y/N] " reply
   [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
@@ -531,6 +549,11 @@ tablet_setup() {
 
   systemctl --user enable --now omacar-watch.service 2>&1 | sed 's/^/  /'
   systemctl --user enable omacar-kiosk.service 2>&1 | sed 's/^/  /'
+  # THE RECORDER, WHICH NOTHING HAS EVER ENABLED. The unit shipped, had an
+  # [Install] section, and sat disabled on every machine -- so "set this up as
+  # an in-car tablet" produced a tablet that showed the car beautifully and
+  # kept none of it.
+  systemctl --user enable --now omacar-drivelog.service 2>&1 | sed 's/^/  /'
   python3 -c "
 import sys; sys.path.insert(0, '$ROOT/lib')
 import api; api.save_drive_layout({'auto': 'connect', 'auto_return': True})

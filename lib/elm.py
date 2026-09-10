@@ -175,7 +175,26 @@ class Elm:
             while time.time() < deadline and seen < limit:
                 if should_stop is not None and should_stop():
                     break
-                chunk = self.ser.read(512)
+                # A DROPPED ADAPTER ENDS THE MONITOR, NOT THE PROGRAM.
+                #
+                # pyserial raises SerialException -- an OSError -- when the
+                # device goes away for a moment, and this rig has already done
+                # exactly that once ("device reports readiness to read but
+                # returned no data", quoted in connect.py). With no except
+                # here, that error went up through listen() and straight past
+                # the drive supervisor, which guards only Quiet and
+                # RuntimeError. A cable nudged at a pothole therefore ended
+                # the recording for the rest of the trip -- and, three times
+                # inside five minutes, would trip the unit's start limit and
+                # end it for the rest of the WEEK.
+                #
+                # Breaking instead returns everything heard so far to the
+                # caller, which flushes it, and the supervisor starts a fresh
+                # leg ninety seconds later.
+                try:
+                    chunk = self.ser.read(512)
+                except OSError:
+                    break
                 if not chunk:
                     continue
                 buf += chunk

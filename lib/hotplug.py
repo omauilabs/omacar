@@ -51,9 +51,32 @@ def adapter_present():
     return port if kind in ("wired", "override") else None
 
 
+def daemon_unit_active():
+    """Does systemd already have it, whatever the pidfile says.
+
+    THE PIDFILE IS WRITTEN TOO LATE TO BE THE ONLY ANSWER. daemon.py writes it
+    after its connect retry loop, so for the five to thirty seconds that loop
+    takes there is a running daemon and no file to prove it. Both udev and the
+    watchdog check that file, and in that window both conclude nothing is
+    running and start one -- two processes contending for one tty, which on a
+    drive is a link that keeps dropping for no visible reason.
+
+    Asking systemd closes the window without moving the pidfile write, which
+    cannot move: the not-connected exit above it is a bare sys.exit with no
+    try/finally and would strand the file, and the CLI polls for exactly that
+    file to know the daemon came up.
+    """
+    try:
+        r = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
+                            "omacar-daemon.service"], timeout=5)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def start_daemon():
     """Best effort. The daemon owns the serial port; this only asks for it."""
-    if daemon_running():
+    if daemon_running() or daemon_unit_active():
         return False
     if sim_running():
         # The simulator holds live.json. Two writers would fight, and the

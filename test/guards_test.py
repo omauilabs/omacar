@@ -1180,6 +1180,36 @@ check("nor is road speed", any(r["id"] == "400" for r in _rows), False)
 check("one window alone yields nothing to compare",
       listen.Capture().discriminators(), [])
 
+# THE SECONDS BETWEEN FLIPPING THE SWITCH AND TYPING THE LABEL.
+#
+# A person moves the switch and then reaches for the keyboard, so the last few
+# seconds before a mark are ALREADY the next position. Trimmed only at the
+# front, every window ended with a few seconds of the following state in it,
+# nothing was steady anywhere, and the answer came back "none" from a procedure
+# that had been performed perfectly. That is worse than a wrong answer: it
+# reads as the byte not being on this bus.
+_slow = listen.Capture(header_digits=3)
+_s = time.time()
+_positions = (0x01, 0x02, 0x03)
+for w, mode in enumerate(_positions):
+    _slow.marks.append((_s, ["econ", "normal", "sport"][w]))
+    for i in range(120):                       # ~12s of window at 10 Hz
+        _s += 0.1
+        _slow.frames.append((_s, "300", [i % 256, 0x00, mode, 0x7F]))
+    # the hand leaves the switch here and reaches for the keyboard: the next
+    # position is already on the bus for two seconds before the mark lands
+    if w + 1 < len(_positions):
+        for _i in range(20):
+            _s += 0.1
+            _slow.frames.append((_s, "300", [_i % 256, 0x00,
+                                             _positions[w + 1], 0x7F]))
+check("the switch is still found when the label lags the hand",
+      [(r["id"], r["byte"]) for r in _slow.discriminators()], [("300", 2)])
+check("and it reports the position each window was actually in",
+      [w["value"] for w in _slow.discriminators()[0]["per_window"]], [1, 2, 3])
+check("trimmed only at the front, that same capture answers nothing",
+      _slow.discriminators(lead=0.0), [])
+
 # A window that barely heard the identifier must not claim it was steady: a
 # serial link under load drops frames, and "seen twice, both the same" is
 # arithmetic rather than observation.
