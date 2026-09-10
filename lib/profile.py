@@ -79,14 +79,67 @@ CONFIDENCE_MEANS = {
 }
 
 
+def _merge(base, over):
+    """`over` wins, without deleting what it does not mention.
+
+    Lists of tables are merged by identity rather than replaced, so a profile
+    that records one new broadcast entry does not drop the four the bundled
+    file already had.
+    """
+    def ident(row):
+        for k in ("id", "name", "header", "test"):
+            if row.get(k) not in (None, ""):
+                return (k, row[k])
+        return ("_", repr(sorted(row.items())))
+
+    out = dict(base)
+    for k, v in over.items():
+        old = base.get(k)
+        if (isinstance(v, list) and isinstance(old, list)
+                and all(isinstance(x, dict) for x in v + old)):
+            by = {}
+            for row in old + v:                 # later wins on a collision
+                by[ident(row)] = row
+            out[k] = list(by.values())
+        elif isinstance(v, dict) and isinstance(old, dict):
+            out[k] = {**old, **v}
+        else:
+            out[k] = v
+    return out
+
+
 def load(slug):
+    """The bundled profile, with whatever this machine has learned on top.
+
+    IT USED TO RETURN THE FIRST MATCH AND STOP, and the bundled copy is first.
+    So on any car that ships with a profile -- which is the car this was built
+    for -- `omacar listen adopt` wrote its finding to the state copy and every
+    reader in the app kept loading the bundled one. The adoption was invisible.
+    Worse, the next adoption re-read the bundled file and overwrote the state
+    copy, so the first finding was gone as well.
+
+    Reading them all and folding them in order fixes both without the other
+    obvious answer's cost: simply reversing the search would make a stale state
+    copy mask every later improvement to the bundled file. Here the bundled
+    file stays the base, the machine's own findings sit on top, and a list of
+    tables is merged by identity rather than replaced -- so recording one new
+    broadcast entry cannot drop the four that were already there.
+
+    Returns (doc, path) where path is the STRONGEST file found, which is the
+    one a writer should be writing to.
+    """
+    doc, where = None, None
     for d in PROFILE_DIRS:
         for name in (slug + ".toml", slug + ".draft.toml"):
             p = os.path.join(d, name)
-            if os.path.exists(p):
-                with open(p, "rb") as f:
-                    return tomllib.load(f), p
-    return None, None
+            if not os.path.exists(p):
+                continue
+            with open(p, "rb") as f:
+                found = tomllib.load(f)
+            doc = found if doc is None else _merge(doc, found)
+            where = p
+            break                    # one file per directory: .toml beats .draft
+    return doc, where
 
 
 def available():
@@ -721,6 +774,76 @@ def _arr(xs):
     return "[" + ", ".join(str(x) for x in xs) + "]"
 
 
+# WHAT dumps() ITSELF DOES NOT KNOW ABOUT.
+#
+# The writer below is hand-rolled, section by section, and it knew about five:
+# car, meta, pid, broadcast and actuator. The shipped CR-Z profile also carries
+# [[module]], [poll] and [screens] -- so loading a profile and writing it back
+# DELETED all three, silently, and the only writer of profiles is the step that
+# records what a drive discovered. Adoption would have thrown away the module
+# map, the polling tiers and the screen switches in the act of saving a
+# finding.
+#
+# This carries anything the named sections did not handle through verbatim, so
+# a section added tomorrow survives a writer that has never heard of it. Being
+# generic it is plainer than the hand-written parts above -- which is the right
+# trade: unfamiliar data should be preserved exactly, not prettily.
+_KNOWN_SECTIONS = ("schema", "car", "meta", "pid", "broadcast", "actuator")
+
+
+def _toml_value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int) and not isinstance(v, bool):
+        return str(v)
+    if isinstance(v, float):
+        return repr(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    return _q(str(v))
+
+
+def _dump_unknown(doc):
+    """Every top-level section dumps() has no hand-written case for."""
+    out = []
+    for key in doc:
+        if key in _KNOWN_SECTIONS:
+            continue
+        value = doc[key]
+        if isinstance(value, list) and value and all(isinstance(x, dict) for x in value):
+            for row in value:
+                out.append("")
+                out.append(f"[[{key}]]")
+                for k, v in row.items():
+                    if isinstance(v, dict):
+                        continue          # handled below, as a nested table
+                        
+                    out.append(f"{k} = {_toml_value(v)}")
+                for k, v in row.items():
+                    if isinstance(v, dict):
+                        out.append("")
+                        out.append(f"  [{key}.{k}]")
+                        for kk, vv in v.items():
+                            out.append(f"  {kk} = {_toml_value(vv)}")
+        elif isinstance(value, dict):
+            out.append("")
+            out.append(f"[{key}]")
+            for k, v in value.items():
+                if isinstance(v, dict):
+                    continue
+                out.append(f"{k} = {_toml_value(v)}")
+            for k, v in value.items():
+                if isinstance(v, dict):
+                    out.append("")
+                    out.append(f"  [{key}.{k}]")
+                    for kk, vv in v.items():
+                        out.append(f"  {kk} = {_toml_value(vv)}")
+        else:
+            out.append("")
+            out.append(f"{key} = {_toml_value(value)}")
+    return out
+
+
 def dumps(doc):
     """A profile as TOML, written for a person to edit afterwards.
 
@@ -755,6 +878,17 @@ def dumps(doc):
     if car.get("vin_prefix"):
         L.append(f"vin_prefix = {_q(car['vin_prefix'])}   "
                  f"# model/year only -- never a whole VIN")
+    # AND EVERYTHING ELSE THE CAR SECTION HOLDS. The list above is what this
+    # writer was taught; the shipped CR-Z profile also carries the engine, the
+    # displacement, the redline, the kerb mass, the tank and the drivetrain,
+    # and writing the profile back deleted all seven. A writer that keeps only
+    # the fields it recognises is a writer that quietly narrows the format
+    # every time anybody saves.
+    for k in car:
+        if k in ("slug", "make", "model", "description", "protocol", "years",
+                 "vin_prefix"):
+            continue
+        L.append(f"{k} = {_toml_value(car[k])}")
     L.append("")
     L.append("[meta]")
     for k in ("created", "updated"):
@@ -764,6 +898,10 @@ def dumps(doc):
         L.append("contributors = [" + ", ".join(_q(c) for c in meta["contributors"]) + "]")
     if meta.get("checksum"):
         L.append(f"checksum = {_q(meta['checksum'])}   # integrity, NOT a signature")
+    for k in meta:
+        if k in ("created", "updated", "contributors", "checksum"):
+            continue
+        L.append(f"{k} = {_toml_value(meta[k])}")
 
     for p in doc.get("pid") or []:
         L.append("")
@@ -845,6 +983,8 @@ def dumps(doc):
                 if v is None or v == "":
                     continue
                 L.append(f"  {k} = " + (str(v) if isinstance(v, int) else _q(v)))
+
+    L += _dump_unknown(doc)
     return "\n".join(L) + "\n"
 
 

@@ -1689,6 +1689,98 @@ check("a screen the mode hides is not opened by asking for it",
 check("and it never moves silently",
       'toast((ask.who' in _main, True)
 
+# --------------------------------------------- saving a profile keeps it whole
+head("a profile survives being written, and a finding survives the next one")
+
+import profile as _prof   # noqa: E402
+import tomllib as _toml   # noqa: E402
+import tempfile as _tf3   # noqa: E402
+import shutil as _sh3     # noqa: E402
+
+# THE WRITER WAS LOSSY AND THE READER IGNORED THE RESULT.
+#
+# dumps() is hand-rolled section by section and knew about five of them, so
+# loading the shipped CR-Z profile and writing it back DELETED [[module]],
+# [poll] and [screens] -- plus seven fields of [car], including the engine and
+# the redline. And load() returned the first match, which is the bundled copy,
+# while adoption wrote the state copy: so a finding from a drive was written
+# where no reader looks, and the next adoption re-read the bundled file and
+# dropped the first finding too.
+#
+# Both are on the path this project exists for: `omacar listen adopt` is what
+# turns a drive into a recorded candidate.
+
+for _slug in ("honda-crz-2015", "bench-porsche"):
+    _doc, _ = _prof.load(_slug)
+    _back = _toml.loads(_prof.dumps(_doc))
+    check(f"{_slug} loses no section when written back",
+          sorted(set(_doc) - set(_back)), [])
+    check(f"{_slug} loses no value either",
+          [k for k in set(_doc) & set(_back) if _doc[k] != _back[k]], [])
+
+_shipped, _ = _prof.load("honda-crz-2015")
+check("the shipped profile really does carry the sections that were dropped",
+      all(k in _shipped for k in ("module", "poll", "screens")), True)
+check("and the car spec that was dropped with them",
+      bool(_shipped["car"].get("engine") and _shipped["car"].get("redline")), True)
+
+_tmp3 = _tf3.mkdtemp()
+_was_dirs = list(_prof.PROFILE_DIRS)
+try:
+    _state = os.path.join(_tmp3, "profiles")
+    _prof.PROFILE_DIRS = [_was_dirs[0], _state]
+    _target = os.path.join(_state, "honda-crz-2015.toml")
+
+    def _adopt(sid, byte):
+        """What lib/listen.py's adoption does, reduced to its write."""
+        doc, _ = _prof.load("honda-crz-2015")
+        entry = {"id": sid, "name": sid, "can_id": "17C", "byte": byte,
+                 "kind": "enum", "confidence": "candidate",
+                 "states": {"0x01": "econ"},
+                 "provenance": {"found_by": "omacar listen",
+                                "method": "held each position",
+                                "first_seen": "2026-09-10"}}
+        casts = [b for b in (doc.get("broadcast") or []) if b.get("id") != sid]
+        casts.append(entry)
+        doc["broadcast"] = casts
+        _prof.write(_target, doc)
+
+    _adopt("drive_mode", 2)
+    _one, _where = _prof.load("honda-crz-2015")
+    check("an adopted finding is visible to a reader at all",
+          any(b.get("id") == "drive_mode" for b in _one.get("broadcast") or []),
+          True)
+    check("and the writer is pointed at the copy that wins",
+          os.path.abspath(_where), os.path.abspath(_target))
+
+    _adopt("regen_level", 3)
+    _two, _ = _prof.load("honda-crz-2015")
+    _ids = [b.get("id") for b in _two.get("broadcast") or []]
+    check("a second adoption does not drop the first",
+          sorted(i for i in _ids if i in ("drive_mode", "regen_level")),
+          ["drive_mode", "regen_level"])
+    check("the bundled sections are still there afterwards",
+          all(k in _two for k in ("module", "poll", "screens")), True)
+    check("and so is the car spec",
+          _two["car"].get("engine"), _shipped["car"].get("engine"))
+
+    # The state copy must not be able to DELETE what the bundled file adds
+    # later -- that is the cost of the other obvious fix, reversing the search.
+    _merged = _prof._merge({"module": [{"header": "A"}, {"header": "B"}],
+                            "poll": {"fast": ["RPM"], "slow": ["TEMP"]}},
+                           {"module": [{"header": "B", "label": "newer"}],
+                            "poll": {"fast": ["RPM", "SPEED"]}})
+    check("merging keeps a table the newer file does not mention",
+          sorted(m["header"] for m in _merged["module"]), ["A", "B"])
+    check("and the newer copy of a table wins",
+          [m.get("label") for m in _merged["module"] if m["header"] == "B"],
+          ["newer"])
+    check("and a key the newer file does not mention survives",
+          _merged["poll"].get("slow"), ["TEMP"])
+finally:
+    _prof.PROFILE_DIRS = _was_dirs
+    _sh3.rmtree(_tmp3, ignore_errors=True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
