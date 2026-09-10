@@ -893,8 +893,33 @@ textarea { resize: vertical; min-height: 66px; }
 }
 
 /* The drive-mode editor. Offered only when the car is stopped, so it can be
-   ordinary-sized — but the targets are still thumbs, not pointers. */
-.drive-controls { display: grid; grid-auto-flow: column; gap: clamp(8px, 1.4vw, 16px); }
+   ordinary-sized — but the targets are still thumbs, not pointers.
+
+   TWO PINNED TRACKS, NOT AUTO-FLOW, AND THIS IS THE WHOLE FIX FOR A MEASURED
+   HAZARD.
+
+   `grid-auto-flow: column` sizes tracks to their content, so when Customise
+   goes away above 3 km/h the row collapsed from two columns to one: Workshop
+   grew from 552 to 1125 CSS pixels and its label centre slid 286 pixels — 54
+   millimetres — sideways, the instant the car crept past 1.9 mph. Worse, the
+   grown button then covered the exact spot Customise had occupied, so a thumb
+   aimed where Customise was landed on Workshop and navigated away from the
+   gauges at seventy. Measured in a real browser at 1368x912: dithering the
+   speed across the threshold flipped the layout 4.2 times a second, and
+   elementFromPoint at one fixed spot returned two different actions at that
+   rate.
+
+   THE HOUSE ALREADY KNEW. Read the comment on .subbar-lead above: "A RESERVED
+   SLOT, not a slot that appears... Letting it collapse meant that the moment
+   the adapter answered, the row moved 261px sideways. You reach for Scan, the
+   row moves, you land on Readiness." Same bug, same building, fixed once and
+   not applied here.
+
+   The trade, taken deliberately: the exit button is now permanently half
+   width rather than full width while moving. 552 pixels is 105 millimetres,
+   about ten times the coarse-pointer target size — a stable half-width target
+   beats a full-width one that moves 54 mm under the hand. */
+.drive-controls { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(8px, 1.4vw, 16px); }
 .drive-editor {
   background: var(--panel); border: 1px solid var(--edge); border-radius: 14px;
   padding: clamp(12px, 2vh, 20px); display: grid; gap: 10px;

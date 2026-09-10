@@ -25,6 +25,7 @@ whatever the owner has -- so a machine without one says so and passes. A test
 that cannot run is not a failure; a test that silently does nothing is.
 """
 
+import json
 import os
 import re
 import shutil
@@ -38,6 +39,75 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARE = os.path.join(ROOT, "share")
 
 fails = 0
+
+# Appended to a COPY of app.html. It drives the store directly rather than
+# faking a feed, because what is being measured is layout under a speed value,
+# not the network.
+GEOMETRY_PROBE = """
+<script type="module">
+import { store } from "./js/core.js";
+window.__st = store;
+</script>
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const rect = () => {
+    const el = document.querySelector(".drive-exit");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return [Math.round(r.x * 10) / 10, Math.round(r.y * 10) / 10,
+            Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10];
+  };
+  await wait(3500);
+  // THE SCREEN THE TABLET PAINTS WHEN SOMEBODY GETS IN. Read before anything
+  // navigates away from it: HOME is "hub", and the coolant number here used to
+  // be raw Celsius under a bare degree sign while two other screens showed the
+  // same instant in Fahrenheit.
+  // Read the value and the unit as separate elements. Taking textContent of
+  // the whole tile concatenates them with the label, and "89" + "\u00b0" +
+  // "Coolant" contains the substring "\u00b0C" -- which quietly satisfied a
+  // regex looking for a temperature scale, and made this check pass on the
+  // very code it was written to catch.
+  const cool = [...document.querySelectorAll(".hub-vital")]
+    .find((el) => (el.querySelector(".hub-vital-k") || {}).textContent === "Coolant");
+  const vitalV = cool ? (cool.querySelector(".hub-vital-v") || {}).textContent || "" : "";
+  const vitalU = cool ? (cool.querySelector(".hub-vital-u") || {}).textContent || "" : "";
+  const vital = vitalV;
+  location.hash = "#drive";
+  await wait(2500);
+  const tile = [...document.querySelectorAll(".drive-tile")]
+    .map((el) => el.textContent.trim())
+    .find((t) => t.includes("Coolant")) || "";
+  const digits = (t) => (t.match(/-?\d+/) || [""])[0];
+  const s = window.__st;
+  // SILENCE THE FAST POLLER FIRST. It calls refreshLive() every 250 ms and
+  // overwrites store.live with whatever the server says, so an injected speed
+  // survived for less time than it took to measure it -- and the probe
+  // reported "no movement" for a screen that was moving plenty. A test that
+  // cannot fail is worse than no test, so this one was checked by putting the
+  // old stylesheet back and watching it go red.
+  s.refreshLive = async () => {};
+  const at = async (kph) => {
+    s.live = Object.assign({}, s.live || {}, {
+      t: Date.now() / 1000, connected: true,
+      values: Object.assign({}, (s.live && s.live.values) || {},
+                            { SPEED: kph, RPM: 1800 }) });
+    s.emit("live");
+    await wait(220);
+    return rect();
+  };
+  const out = { viewport: [innerWidth, innerHeight],
+                hubCoolant: vital, hubUnit: vitalU, driveCoolant: tile,
+                agree: !!digits(vital) && digits(vital) === digits(tile),
+                unit: vitalU === "\u00b0F" || vitalU === "\u00b0C" };
+  out.stopped = await at(0);
+  out.rolling = await at(70);
+  out.creep = [];
+  for (const v of [3, 4, 3, 4, 3, 4]) out.creep.push(await at(v));
+  document.title = "GEOM " + JSON.stringify(out);
+})();
+</script>
+"""
 
 
 def ok(msg):
@@ -191,6 +261,87 @@ def main():
             except subprocess.TimeoutExpired:
                 plain.kill()
             shutil.rmtree(prof2, ignore_errors=True)
+        # ---- and the geometry a thumb has to hit ---------------------------
+        #
+        # MEASURED, NOT READ. The drive screen's exit button used to grow from
+        # 552 to 1125 CSS pixels the instant the car crept past 1.9 mph,
+        # sliding its label 286 pixels -- 54 mm -- sideways and covering the
+        # spot the other button had occupied. Dithering the speed across the
+        # threshold flipped it 4.2 times a second, so one fixed point on the
+        # glass meant two different actions at that rate. No amount of reading
+        # the stylesheet finds that; it is a rendered number.
+        #
+        # The page is measured in a COPY of share/, so nothing here can leave
+        # a probe behind in the repository.
+        probe = tempfile.mkdtemp()
+        copy = os.path.join(probe, "share")
+        shutil.copytree(SHARE, copy)
+        with open(os.path.join(copy, "app.html"), "a", encoding="utf-8") as f:
+            f.write(GEOMETRY_PROBE)
+        with open(os.path.join(copy, "_seed.html"), "w", encoding="utf-8") as f:
+            f.write('<script>localStorage.setItem("omacar.onboarded","1")</script>ok')
+        gport = free_port()
+        gsrv = subprocess.Popen(
+            [python_for_server(), os.path.join(ROOT, "lib", "serve.py"),
+             str(gport), copy],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        gprof = tempfile.mkdtemp()
+        try:
+            for _ in range(40):
+                time.sleep(0.25)
+                try:
+                    with socket.create_connection(("127.0.0.1", gport), 0.25):
+                        break
+                except OSError:
+                    continue
+            subprocess.run(
+                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 f"--user-data-dir={gprof}", "--virtual-time-budget=2000",
+                 "--dump-dom", f"http://127.0.0.1:{gport}/_seed.html"],
+                capture_output=True, timeout=120)
+            # 1368x912 is the INNER viewport of a Surface Pro 7 at scale 2, and
+            # --window-size sets the OUTER one: asking for 1368,912 gives an
+            # inner height of 769 and every number measured in it is wrong.
+            rg = subprocess.run(
+                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 f"--user-data-dir={gprof}", "--hide-scrollbars",
+                 "--force-device-scale-factor=1", "--window-size=1368,1055",
+                 "--virtual-time-budget=20000", "--dump-dom",
+                 # No hash: the probe reads the arrival screen first,
+                 # then navigates. Loading straight into #drive would skip the
+                 # screen the tablet actually paints when somebody gets in.
+                 f"http://127.0.0.1:{gport}/app.html"],
+                capture_output=True, text=True, timeout=180)
+            m = re.search(r"<title>GEOM (\{.*?\})</title>", rg.stdout, re.S)
+            if not m:
+                bad("the geometry probe returned nothing")
+            else:
+                g = json.loads(m.group(1).replace("&quot;", '"'))
+                vp = g.get("viewport") or []
+                check(f"the viewport really is the tablet's (got {vp[:2]})",
+                      vp[:2] == [1368, 912])
+                check(f"the exit button does not move when the car starts "
+                      f"rolling (stopped {g.get('stopped')}, "
+                      f"rolling {g.get('rolling')})",
+                      g.get("stopped") == g.get("rolling")
+                      and g.get("stopped") is not None)
+                check(f"the hub and the drive screen agree about the coolant "
+                      f"({g.get('hubCoolant')!r} vs {g.get('driveCoolant')!r})",
+                      bool(g.get("agree")))
+                check(f"and the hub says which scale it is in "
+                      f"(unit element reads {g.get('hubUnit')!r})",
+                      bool(g.get("unit")))
+                widths = sorted({r[2] for r in (g.get("creep") or []) if r})
+                check(f"nor flicker across the threshold in creeping traffic "
+                      f"(widths seen: {widths})", len(widths) == 1)
+        finally:
+            gsrv.terminate()
+            try:
+                gsrv.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                gsrv.kill()
+            shutil.rmtree(gprof, ignore_errors=True)
+            shutil.rmtree(probe, ignore_errors=True)
     finally:
         server.terminate()
         try:

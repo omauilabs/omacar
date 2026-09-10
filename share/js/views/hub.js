@@ -42,7 +42,7 @@
 // screen a repaint may change what a node SAYS; it may never change which node
 // it is.
 
-import { h, store, dist, U, readOnly,
+import { h, store, dist, temp, U, readOnly,
          adapterState, connectCar } from "../core.js";
 import { ICONS } from "../icons.js";
 import { explain } from "../learn.js";
@@ -149,9 +149,16 @@ const VITALS = [
   { key: "rpm", label: "RPM",
     value: (v) => (v.RPM != null ? String(Math.round(v.RPM)) : "--"),
     unit: () => "" },
+  // THE ONE VITAL THAT DID NOT CONVERT. Speed and Trip on this same row honour
+  // the unit system; coolant passed the raw Celsius through under a bare "°",
+  // so an imperial install read 88 here and 190 °F two screens away, for the
+  // same instant. This is the screen the tablet paints when somebody gets in
+  // — HOME is "hub" — so it is the number a driver sees first, and 105 °C, a
+  // near boil, read as "105 °", which in an imperial cabin reads as cold.
   { key: "coolant", label: "Coolant",
-    value: (v) => (v.COOLANT_TEMP != null ? String(Math.round(v.COOLANT_TEMP)) : "--"),
-    unit: () => "°" },
+    value: (v) => (v.COOLANT_TEMP != null
+                   ? String(Math.round(temp(v.COOLANT_TEMP, false))) : "--"),
+    unit: () => U.units.temp },
   { key: "trip", label: "Trip",
     value: (v, car) => (car.trip_km != null ? dist(car.trip_km, false) : "--"),
     unit: () => U.units.dist },
