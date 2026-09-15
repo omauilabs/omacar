@@ -310,6 +310,17 @@ bench_stop() {
   local pid; pid=$(bench_pid)
   [[ -z "$pid" ]] && { echo "bench not running"; return; }
   kill "$pid" 2>/dev/null || true
+  # WAIT FOR IT TO ACTUALLY GO. `kill` only asks. Without this, the very next
+  # `omacar bench status` could still see the process while the port file was
+  # already gone and report "running on " with nothing after it -- and that
+  # status line is the first gate in the car-session plan, the one that says
+  # whether every reading is about to come from the emulator.
+  local i
+  for i in $(seq 1 40); do
+    [[ -z "$(bench_pid)" ]] && break
+    sleep 0.1
+  done
+  [[ -n "$(bench_pid)" ]] && kill -9 "$pid" 2>/dev/null || true
   rm -f "$BENCH_PTY"
   echo "bench stopped"
 }
