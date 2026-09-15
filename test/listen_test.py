@@ -338,6 +338,43 @@ check("but the last-frame time made the stall visible",
       watch["stalled_seen"])
 check("and what it did hear was kept", len(captures_written()) == 1)
 
+# ------------------------------------------------------------------------
+head("An empty capture says which kind of empty it is")
+
+# THE FOURTH LIE, AND THE QUIET ONE. The three above were caught because
+# something visibly went wrong. This one never looked wrong: 32 of the 72
+# captures in this tree render as "0 frames, 0 identifiers" and `listen show`
+# drew a table header with nothing under it. Whether the bus was asleep,
+# whether the cable was dead, and whether lines had arrived and failed to
+# parse were all in the saved JSON, and none of the three reached a screen.
+
+_v = listen.quiet_verdict
+check("a capture with frames is not editorialised",
+      _v({"frames": 84, "monitor_protocol": "6"}) == "")
+# Lines that arrived and did not parse: the link was ALIVE. That is the
+# opposite diagnosis from a quiet car and it must not read like one.
+_alive = _v({"frames": 0, "rejected": 7, "monitor_protocol": None})
+check("lines that arrived but never parsed say the link was alive",
+      "the link was alive" in _alive)
+check("and it counts them", "7 lines" in _alive)
+check("one line is not '1 lines'", "1 line arrived" in
+      _v({"frames": 0, "rejected": 1, "monitor_protocol": None}))
+# THE ONE IT MUST NOT GUESS AT. A bus asleep with the ignition off and a
+# cable that was never seated produce byte-for-byte the same capture, and a
+# reading that picks either one is inventing evidence for a car nobody was
+# watching.
+_nothing = _v({"frames": 0, "rejected": 0, "monitor_protocol": None})
+check("nothing at all names both possibilities",
+      "sleeping bus" in _nothing and "cable" in _nothing)
+check("and diagnoses neither",
+      "dead link" not in _nothing and "fault" not in _nothing)
+# A protocol WAS found and the bus still said nothing: that is a measurement.
+_quiet = _v({"frames": 0, "rejected": 0, "monitor_protocol": "6"})
+check("a protocol that heard the bus makes the silence evidence",
+      "quiet bus" in _quiet and "protocol 6" in _quiet)
+check("and a protocol with rejects says so instead",
+      "rejected" in _v({"frames": 0, "rejected": 3, "monitor_protocol": "6"}))
+
 shutil.rmtree(_TMP, ignore_errors=True)
 print()
 if fails:

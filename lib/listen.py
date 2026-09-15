@@ -694,6 +694,42 @@ BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
 GREEN, YELLOW = "\033[32m", "\033[33m"
 
 
+def quiet_verdict(doc):
+    """Why a capture has no frames — what a blank census refuses to say.
+
+    A CAPTURE OF NOTHING IS NOT A MEASUREMENT OF SILENCE. Every empty capture
+    renders the same in `listen list` — 0 frames, 0 identifiers — and they are
+    not the same finding.
+
+    Three facts decide it, all saved since the first capture and none of them
+    ever shown. `monitor_protocol` is None when _pick_monitor_protocol() tried
+    every setting in MONITOR_PROTOCOLS and parsed nothing on any. `rejected`
+    counts lines that arrived and did not parse, which is the fact the
+    car-session plan asks for by name: a quiet bus is only real if it also
+    says zero lines arrived. `frames` is what survived both.
+
+    The one thing this will not do is guess. Nothing arriving on any protocol
+    is exactly what a bus asleep with the ignition off looks like, and also
+    exactly what a cable that was never seated looks like. The reading says so
+    rather than picking the flattering one — 32 of the 72 captures in this
+    tree are in that state, and the note field is all that separates them.
+    """
+    if doc.get("frames"):
+        return ""
+    rejected = doc.get("rejected") or 0
+    lines = f"{rejected} line{'' if rejected == 1 else 's'}"
+    proto = doc.get("monitor_protocol")
+    if proto is None:
+        if rejected:
+            return (f"{lines} arrived, none parsed on any protocol — "
+                    f"the link was alive, the reading was not")
+        return ("nothing arrived on any protocol — a sleeping bus and an "
+                "unseated cable look identical here")
+    if rejected:
+        return f"quiet on protocol {proto}, though {lines} were rejected"
+    return f"quiet bus, and heard as quiet on protocol {proto}"
+
+
 def _print_census(cap, top=25):
     rows = cap.census()
     print(f"\n  {BOLD}What this bus broadcasts{RESET}  "
@@ -855,8 +891,11 @@ def main(argv):
         print()
         for n in names:
             doc = load(n) or {}
-            print(f"    {n}   {doc.get('frames', 0)} frames, "
-                  f"{len(doc.get('census') or [])} identifiers   {doc.get('note', '')}")
+            line = (f"    {n}   {doc.get('frames', 0)} frames, "
+                    f"{len(doc.get('census') or [])} identifiers   "
+                    f"{doc.get('note', '')}")
+            why = quiet_verdict(doc)
+            print(f"{line}   {DIM}← {why}{RESET}" if why else line)
         if not names:
             print(f"    {DIM}no captures yet{RESET}")
         print()
@@ -868,8 +907,15 @@ def main(argv):
             print("  no such capture")
             return 1
         print(f"\n  {BOLD}{args.name}{RESET}  {doc.get('note','')}\n")
+        rows = doc.get("census") or []
+        if not rows:
+            # NOT AN EMPTY TABLE. A header with no rows under it is the one
+            # rendering that lets a dead link pass for a silent car.
+            why = quiet_verdict(doc) or "no identifiers in this capture"
+            print(f"    {DIM}{why}{RESET}\n")
+            return 0
         print(f"    {'id':<9} {'seen':>6} {'Hz':>7}  bytes  moving")
-        for r in (doc.get("census") or [])[:40]:
+        for r in rows[:40]:
             moving = ",".join(str(i) for i in r["varying_bytes"]) or "-"
             hz = f"{r['hz']:.1f}" if r.get("hz") else "-"
             print(f"    {r['id']:<9} {r['count']:>6} {hz:>7}  {r['length']:>5}  {moving}")
