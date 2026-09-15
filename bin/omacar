@@ -592,8 +592,14 @@ print('  auto drive mode: on connect')
 SLEEP_DROPIN=/etc/systemd/logind.conf.d/90-omacar-tablet.conf
 
 tablet_awake_status() {
-  local masked="no" dropin="no"
-  systemctl is-enabled sleep.target 2>/dev/null | grep -q masked && masked="yes"
+  local masked="no" dropin="no" state
+  # NOT `is-enabled ... | grep -q masked`. `is-enabled` EXITS 1 for a masked
+  # unit -- masked is a "not enabled" answer, not a failure -- and pipefail
+  # hands that 1 to the whole pipeline even though grep matched. The status
+  # line then said "half set up" at a fully set up machine, which is the one
+  # reading a driver checks before a drive.
+  state=$(systemctl is-enabled sleep.target 2>/dev/null || true)
+  [[ "$state" == masked* ]] && masked="yes"   # masked, and masked-runtime
   [[ -f "$SLEEP_DROPIN" ]] && dropin="yes"
   echo "$masked $dropin"
 }

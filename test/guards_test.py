@@ -865,6 +865,58 @@ check("which is the file we started with", _tab.power_button(), "suspend")
 _tab.BINDINGS, _tab.BACKUP = _keep
 shutil.rmtree(_tmp, ignore_errors=True)
 
+# ------------------------------------- and the status line says so truthfully
+head("`omacar tablet` reports the awake setup it actually found")
+
+import re as _re          # noqa: E402
+import subprocess as _sp  # noqa: E402
+
+# THE READING A DRIVER CHECKS BEFORE A DRIVE, so it does not get to be
+# approximately right. `systemctl is-enabled` EXITS 1 for a masked unit --
+# masked is a "not enabled" answer, not a failure -- and `set -euo pipefail`
+# handed that 1 to `is-enabled | grep -q masked` even when grep had matched.
+# A fully set up machine reported "half set up", telling the driver to re-run
+# a command that was already done.
+_sh = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
+_fn = _re.search(r"^tablet_awake_status\(\) \{.*?^\}", _sh, _re.S | _re.M)
+check("the status function is still there to test", bool(_fn), True)
+
+_stubs = tempfile.mkdtemp()
+with open(os.path.join(_stubs, "systemctl"), "w", encoding="utf-8") as _f:
+    # The real one: prints the state, and exits 1 for anything not enabled.
+    _f.write('#!/bin/sh\necho "$STUB_STATE"\n'
+             '[ "$STUB_STATE" = enabled ] && exit 0\nexit 1\n')
+os.chmod(os.path.join(_stubs, "systemctl"), 0o755)
+_dropin = os.path.join(_stubs, "90-omacar-tablet.conf")
+
+
+def _awake_status(state, dropin):
+    """Run the shipped function against a stubbed systemctl."""
+    if dropin:
+        open(_dropin, "w", encoding="utf-8").close()
+    elif os.path.exists(_dropin):
+        os.remove(_dropin)
+    env = dict(os.environ, STUB_STATE=state,
+               PATH=_stubs + os.pathsep + os.environ["PATH"])
+    out = _sp.run(["bash", "-c", "set -euo pipefail\n"
+                   f"SLEEP_DROPIN={_dropin}\n{_fn.group(0)}\n"
+                   "tablet_awake_status"],
+                  capture_output=True, text=True, env=env)
+    return out.stdout.strip()
+
+
+check("a masked sleep target reads as masked, despite the exit 1",
+      _awake_status("masked", True), "yes yes")
+check("and so does masked-runtime",
+      _awake_status("masked-runtime", True), "yes yes")
+check("targets masked but no drop-in is half, and says half",
+      _awake_status("masked", False), "yes no")
+check("a drop-in with the targets still live is the other half",
+      _awake_status("static", True), "no yes")
+check("and a plain laptop is neither",
+      _awake_status("static", False), "no no")
+shutil.rmtree(_stubs, ignore_errors=True)
+
 # ------------------------------------------ the adapter opens the app
 head("plugging the adapter in puts the app on the screen")
 
