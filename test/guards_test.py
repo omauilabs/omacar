@@ -1944,9 +1944,12 @@ _src = open(os.path.join(ROOT, "lib", "preflight.py"), encoding="utf-8").read()
 for _verb in ("enable", "start", "restart", "install"):
     check(f"it never runs systemctl {_verb} itself",
           f'"systemctl", "--user", "{_verb}"' in _src, False)
+# `cat` joined the list when the recorder learned to tell a unit that is off
+# from a unit that is not there. It is a question like the other two: it reads
+# a file and changes nothing.
 check("it only ever asks systemctl questions",
       sorted(set(_re.findall(r'"systemctl",\s*(?:"--user",\s*)?"([a-z-]+)"', _src))),
-      ["is-active", "is-enabled"])
+      ["cat", "is-active", "is-enabled"])
 
 # THE RECORDER GOES FIRST, because it is the one that was never on.
 check("the recorder is checked before anything about the car",
@@ -1957,6 +1960,49 @@ check("and the checks run in that order",
 # IT NEEDS NO CAR. The night before, indoors, is exactly when it should be run.
 check("a missing adapter is not a reason to stay home",
       'sheet.row("adapter", bool(port)' in _src and "blocking=False" in _src, True)
+
+# THE REMEDY HAS TO WORK ON THE MACHINE THAT NEEDS IT. A tablet set up before
+# the recorder existed has no unit file at all, and `systemctl is-active`
+# answers "inactive" for a unit that does not exist -- indistinguishable from
+# one that is installed and stopped. So this row printed a plausible state and
+# handed over `systemctl --user enable --now`, which on that machine answers
+# "No files found" and changes nothing: the check fires, the fix fails, and
+# the driver leaves believing both. Found on this tablet, where the unit had
+# never been laid down.
+_keep_run = _pf._run
+
+
+def _recorder_row(unit_present):
+    def _fake(cmd, timeout=10):
+        verb = cmd[2] if len(cmd) > 2 else ""
+        if verb == "cat":
+            return (0, "[Unit]", "") if unit_present else (1, "", "No files found")
+        if verb == "is-enabled":
+            return (1, "disabled", "")
+        if verb == "is-active":
+            return (3, "inactive", "")
+        return (0, "", "")
+    _pf._run = _fake
+    sheet = _pf.Sheet()
+    try:
+        _pf._recorder(sheet)
+    finally:
+        _pf._run = _keep_run
+    return sheet.rows[0]
+
+
+_absent = _recorder_row(False)
+check("a missing unit file is not reported as merely inactive",
+      "no unit file" in _absent[2], True)
+check("and it still blocks", _absent[1] is False and _absent[4] is True, True)
+check("the fix it offers is the one that lays the unit down",
+      "install.sh" in _absent[3], True)
+
+_present = _recorder_row(True)
+check("a unit that exists and is off keeps the enable command",
+      _present[3].startswith("systemctl --user enable --now"), True)
+check("and does not claim the file is missing",
+      "no unit file" in _present[2], False)
 
 _cli = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
 check("it is reachable", "omacar preflight" in _cli

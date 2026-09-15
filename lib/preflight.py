@@ -93,14 +93,40 @@ class Sheet:
         return 1 if self.blockers else 0
 
 
+UNIT = "omacar-drivelog.service"
+
+
+def _unit_present(name):
+    """Is there a unit file at all, as opposed to one that is merely off.
+
+    `systemctl --user is-active` answers "inactive" for a unit that does not
+    exist, which reads exactly like one that is installed and stopped.
+    `cat` is the question that tells them apart.
+    """
+    code, _out, _err = _run(["systemctl", "--user", "cat", name])
+    return code == 0
+
+
 def _recorder(sheet):
     """The one that was never on. It goes first because it always should have."""
-    code, out, _ = _run(["systemctl", "--user", "is-enabled",
-                         "omacar-drivelog.service"])
+    code, out, _ = _run(["systemctl", "--user", "is-enabled", UNIT])
     enabled = out == "enabled"
-    code, out, _ = _run(["systemctl", "--user", "is-active",
-                         "omacar-drivelog.service"])
+    code, out, _ = _run(["systemctl", "--user", "is-active", UNIT])
     active = out == "active"
+
+    # THE FIX HAS TO WORK ON THE MACHINE THAT NEEDS IT. A tablet set up before
+    # the recorder existed has no unit file at all, and `is-active` calls that
+    # "inactive" -- so this row printed a plausible state and then handed over
+    # `systemctl --user enable --now`, which on that machine answers "No files
+    # found" and changes nothing. That is the worst shape a preflight can
+    # take: the check fires, the remedy fails, and the driver leaves believing
+    # both. `install.sh` is idempotent and is what lays the units down.
+    if not (enabled or active) and not _unit_present(UNIT):
+        sheet.row("recording the bus", False,
+                  "no unit file on this machine — nothing is recording anything",
+                  "./install.sh   (then: systemctl --user enable --now "
+                  + UNIT + ")")
+        return
 
     if enabled and active:
         said = "enabled and running"
@@ -111,7 +137,7 @@ def _recorder(sheet):
     else:
         said = f"{out or 'not installed'} — nothing is recording anything"
     sheet.row("recording the bus", enabled and active, said,
-              "systemctl --user enable --now omacar-drivelog.service")
+              "systemctl --user enable --now " + UNIT)
 
     # A UNIT CAN BE ACTIVE AND THE PROGRAM STILL WEDGED, so ask the program.
     # ONLY WORTH ASKING IF SOMETHING IS SUPPOSED TO BE THERE. With the unit
