@@ -28,6 +28,7 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import connect  # noqa: E402
 import garage   # noqa: E402
 import records  # noqa: E402
 
@@ -661,7 +662,14 @@ def prepare(conn=None, obd=None):
     vin = read_vin(conn, obd)
     if not vin:
         return None
-    key, is_new = garage.switch_to(vin)
+    # A BENCH IS THE SIMULATED CAR, ON PURPOSE. discover.py already refuses to
+    # switch the garage on a bench; this path did not. Starting the daemon
+    # against the emulator repointed `current-vehicle` at the bench's fake VIN
+    # -- and LEFT IT THERE once the bench was stopped, so the next real drive
+    # would have filed its captures, its profile and its database under a
+    # Porsche. `switch_to` has carried the `simulated` flag for this since it
+    # was written; nothing had ever passed it.
+    key, is_new = garage.switch_to(vin, simulated=connect.bench_port() is not None)
     records.refresh_db()
     if is_new:
         print(f"  a car we have not seen before — VIN {vin}, "

@@ -1431,6 +1431,46 @@ check("a fresh record takes the VIN that opened it over a scrambled first read",
       _stored_vin(_db2), "WP0ZZZ99ZTS39")
 _db2.close()
 
+# ------------------------------------------------- the bench is not your car
+head("a bench never becomes the car in the garage")
+
+# THE ONE THAT WOULD HAVE SURVIVED THE BENCH. `prepare()` reads the VIN off
+# whatever answered and points the garage at it. Run against the emulator it
+# therefore pointed `current-vehicle` at the bench's fake Porsche -- and left
+# it there after the bench was stopped, so the next real drive would have
+# filed its captures, its profile and its database under a car that does not
+# exist. discover.py had refused to switch on a bench from the start; this
+# path never learned to. `switch_to` has carried the `simulated` flag since it
+# was written and nothing had ever passed it.
+
+import connect as _cx  # noqa: E402
+import garage  # noqa: E402
+import records  # noqa: E402
+
+_switched = []
+_keep = (survey.read_vin, garage.switch_to, _cx.bench_port, records.refresh_db)
+survey.read_vin = lambda *a, **k: "WP0ZZZ99ZTS390000"
+garage.switch_to = lambda vin, simulated=False: (_switched.append(
+    (vin, simulated)) or ("simulated" if simulated else "wp0zzz", False))
+records.refresh_db = lambda: None
+
+def _flag_after(bench):
+    """The `simulated` flag prepare() passed, or why it passed none."""
+    _cx.bench_port = (lambda: "/dev/pts/9") if bench else (lambda: None)
+    before = len(_switched)
+    survey.prepare(conn=object(), obd=object())
+    if len(_switched) == before:
+        return "prepare() never switched the garage"
+    return _switched[-1][1]
+
+
+check("a VIN read off the bench is filed as simulated", _flag_after(True), True)
+check("and a VIN read off a real adapter is not", _flag_after(False), False)
+check("the VIN itself is passed through either way",
+      [v for v, _ in _switched], ["WP0ZZZ99ZTS390000"] * 2)
+
+survey.read_vin, garage.switch_to, _cx.bench_port, records.refresh_db = _keep
+
 # --------------------------------------------------------- the agent's writes
 head("an agent's write proposal is judged before it is queued")
 
