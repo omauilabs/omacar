@@ -878,7 +878,10 @@ Panel {
     // the Now tab. With the car parked and the daemon stopped, the file does
     // not change from one read to the next, so nothing downstream should move
     // either.
-    if (JSON.stringify(d) !== JSON.stringify(root.sample)) root.sample = d
+    // `sample` is readonly -- it picks between demoSample and realSample. The
+    // live reader owns realSample; writing through the derived one threw on
+    // every tick and the panel never saw a new sample at all.
+    if (JSON.stringify(d) !== JSON.stringify(root.realSample)) root.realSample = d
   }
 
   // THE PANEL'S ONLY REMAINING CLOCK, and it keeps ticking with the panel
