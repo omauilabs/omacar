@@ -375,6 +375,60 @@ check("a protocol that heard the bus makes the silence evidence",
 check("and a protocol with rejects says so instead",
       "rejected" in _v({"frames": 0, "rejected": 3, "monitor_protocol": "6"}))
 
+# ------------------------------------------------------------------------
+head("A capture the adapter cut short does not pass for a healthy one")
+
+# THE FIFTH LIE, AND THE EXPENSIVE ONE. On 16 September seven captures in a
+# row -- including the marks session an entire drive existed to run -- took one
+# ~125-line buffer dump in three tenths of a second and then went silent. Every
+# one of them saved a census, printed a table, and read as a short but healthy
+# capture. parse() had always documented that BUFFER FULL, STOPPED and CAN
+# ERROR are among the "anything else" it rejects; add_line() folded all of them
+# into `rejected`, a count with no words in it. The adapter said why, seven
+# times, and nothing kept the sentence.
+
+_cap = listen.Capture(header_digits=3, note="t")
+for _ln in ("13A 0013000000000024", "158 0000000000000028", "BUFFER FULL",
+            "BUFFER FULL", "13A 00130000000000AA"):
+    _cap.add_line(_ln)
+check("frames still parse", len(_cap.frames) == 3)
+check("the adapter's words are kept", _cap.adapter_said == ["BUFFER FULL"])
+check("a repeated message is one fact, not fifty",
+      _cap.adapter_said.count("BUFFER FULL") == 1)
+check("and it is recognised as the adapter giving up",
+      _cap.overflowed() == ["BUFFER FULL"])
+# GARBLED HEX IS NOT A MESSAGE. An overrun produces plenty of it and there can
+# be thousands; keeping it would bury the one line that explains the capture.
+_noise = listen.Capture(header_digits=3)
+_noise.add_line("13A 00130000")
+_noise.add_line("ABCDEF0123456789")
+check("hex noise is not mistaken for something the adapter said",
+      _noise.adapter_said == [])
+check("and such a capture is not called cut short", _noise.overflowed() == [])
+# It survives the round trip to disk, which is where it has to be read from.
+check("it is saved with the capture",
+      _cap.asdict().get("adapter_said") == ["BUFFER FULL"])
+_doc = dict(_cap.asdict(), frames=3)
+check("the verdict leads with it, over every inference below",
+      "BUFFER FULL" in listen.quiet_verdict(_doc)
+      and "not quiet" in listen.quiet_verdict(_doc))
+
+# THE SHAPE, for the seven already on disk, saved before the words were kept.
+_shape = {"frames": 126, "rejected": 19, "monitor_protocol": "6",
+          "raw": [{"t": 3.2 + i * 0.002, "id": "13A", "data": "00"}
+                  for i in range(126)]}
+check("a capture that arrived in one burst is called cut short",
+      "shape of an adapter buffer that filled" in listen.quiet_verdict(_shape))
+check("and it says it is a shape, not the adapter's own word",
+      "said" not in listen.quiet_verdict(_shape))
+# A REAL CAPTURE SPREAD OVER TIME IS LEFT ALONE. The healthy one that day ran
+# 1662 frames over 36 seconds, and a tool that flagged that too would teach
+# somebody to ignore the flag.
+_healthy = {"frames": 1662, "rejected": 4, "monitor_protocol": "6",
+            "raw": [{"t": 21.9 + i * 0.0217, "id": "1DC", "data": "00"}
+                    for i in range(1662)]}
+check("a sustained capture is not flagged", listen.quiet_verdict(_healthy) == "")
+
 shutil.rmtree(_TMP, ignore_errors=True)
 print()
 if fails:

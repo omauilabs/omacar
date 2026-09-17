@@ -188,14 +188,53 @@ class Capture:
         self.frames = []                 # (t, can_id, [bytes])
         self.marks = []                  # (t, label)
         self.rejected = 0
+        # WHAT THE ADAPTER SAID WHEN IT STOPPED. parse() already documents that
+        # STOPPED, BUFFER FULL and CAN ERROR are among the "anything else" it
+        # rejects -- and every one of them was being folded into an anonymous
+        # count. On 16 September seven captures in a row took one ~125-line
+        # buffer dump in 0.3s and then went silent, and the saved evidence for
+        # every one of them was `rejected: 26`. The adapter had said why, in
+        # words, and nothing kept the words.
+        self.adapter_said = []           # distinct non-hex lines, oldest first
+
+    ADAPTER_SAID_CAP = 10
 
     def add_line(self, line):
         got = parse(line, self.header_digits)
         if got is None:
             self.rejected += 1
+            self._remember_chatter(line)
             return False
         self.frames.append((time.time(), got[0], got[1]))
         return True
+
+    def _remember_chatter(self, line):
+        """Keep the adapter's words, not a tally of them.
+
+        Hex noise from a truncated frame is not worth keeping and there can be
+        thousands of it, so only lines carrying letters outside the hex
+        alphabet count -- which is exactly the shape of a word. Distinct,
+        bounded, oldest first: the first few are the ones that explain the
+        capture, and a run of the same message is one fact, not fifty.
+        """
+        text = (line or "").strip().upper()
+        if not text or text == ">":
+            return
+        if set(text) <= HEXCHARS | {" "}:
+            return                       # garbled frame, not a message
+        if text in self.adapter_said:
+            return
+        if len(self.adapter_said) < self.ADAPTER_SAID_CAP:
+            self.adapter_said.append(text)
+
+    def overflowed(self):
+        """Did the adapter stop because it could not keep up.
+
+        A monitor that ends this way looks identical to a quiet bus in
+        everything the capture used to record: some frames, then nothing.
+        """
+        return [w for w in self.adapter_said
+                if "BUFFER" in w or "STOPPED" in w or "CAN ERROR" in w]
 
     def mark(self, label):
         self.marks.append((time.time(), str(label or "").strip() or "mark"))
@@ -349,6 +388,7 @@ class Capture:
             "vehicle": self.vehicle,
             "frames": len(self.frames),
             "rejected": self.rejected,
+            "adapter_said": list(self.adapter_said),
             "marks": [{"at": t, "label": lab} for t, lab in self.marks],
             "census": self.census(),
             "discriminators": self.discriminators(),
@@ -714,6 +754,27 @@ def quiet_verdict(doc):
     rather than picking the flattering one — 32 of the 72 captures in this
     tree are in that state, and the note field is all that separates them.
     """
+    # THE ADAPTER STOPPING OUTRANKS EVERY OTHER READING OF THIS CAPTURE, and
+    # unlike the rest of them it is not an inference -- the adapter said it.
+    # A capture cut off this way has frames, so every check below would have
+    # called it healthy and said nothing at all.
+    stopped = [w for w in (doc.get("adapter_said") or [])
+               if "BUFFER" in w or "STOPPED" in w or "CAN ERROR" in w]
+    if stopped:
+        return (f"the adapter said {stopped[0]} and stopped — the bus is "
+                f"faster than this link, not quiet")
+    # THE SHAPE, for the captures saved before the words were kept. Every
+    # stalled capture on 16 September holds its whole frame count inside a
+    # third of a second and nothing after it: one buffer dump at the speed of
+    # the serial link. That is an inference rather than the adapter's own
+    # sentence, and it says which it is.
+    raw = doc.get("raw") or []
+    if len(raw) >= 20:
+        ts = [r.get("t") or 0 for r in raw]
+        span = max(ts) - min(ts)
+        if 0 < span < 2.0:
+            return (f"{len(raw)} frames in {span:.1f}s and nothing after — the "
+                    f"shape of an adapter buffer that filled, not a quiet bus")
     if doc.get("frames"):
         return ""
     rejected = doc.get("rejected") or 0
@@ -736,6 +797,25 @@ def _print_census(cap, top=25):
           f"{DIM}{len(cap.frames)} frames, {len(rows)} identifiers"
           f"{f', {cap.rejected} lines not frames' if cap.rejected else ''}"
           f"{RESET}\n")
+    # SAID WHEN IT HAPPENS. A capture that ends this way still has frames and
+    # still prints a census, so it reads as a short but healthy capture -- and
+    # seven in a row on 16 September were read that way, including the marks
+    # session the whole drive existed to run.
+    stopped = cap.overflowed()
+    if stopped:
+        print(f"  {YELLOW}The adapter stopped: {stopped[0]}{RESET}  "
+              f"{DIM}it could not keep up{RESET}")
+        span = ((cap.frames[-1][0] - cap.frames[0][0]) if len(cap.frames) > 1
+                else 0.0)
+        if span > 0:
+            print(f"  {DIM}{len(cap.frames)} frames arrived in {span:.1f}s "
+                  f"({len(cap.frames) / span:.0f}/s), then nothing. This bus is "
+                  f"faster than a{RESET}")
+        print(f"  {DIM}115200 serial link can drain, so the adapter's buffer "
+              f"fills and it gives up.{RESET}")
+        print(f"  {DIM}Narrow it with --id <identifier> and the rate drops "
+              f"to something it can hold.{RESET}\n")
+
     if not rows:
         # SILENCE AND UNREADABILITY ARE DIFFERENT ANSWERS, and saying the first
         # when the second happened is how somebody concludes their car has
@@ -908,11 +988,16 @@ def main(argv):
             return 1
         print(f"\n  {BOLD}{args.name}{RESET}  {doc.get('note','')}\n")
         rows = doc.get("census") or []
+        why = quiet_verdict(doc)
+        if rows and why:
+            # A CUT-SHORT CAPTURE STILL HAS A CENSUS, and printing the table
+            # without this line is how seven of them read as healthy.
+            print(f"    {DIM}{why}{RESET}\n")
         if not rows:
             # NOT AN EMPTY TABLE. A header with no rows under it is the one
             # rendering that lets a dead link pass for a silent car.
-            why = quiet_verdict(doc) or "no identifiers in this capture"
-            print(f"    {DIM}{why}{RESET}\n")
+            print(f"    {DIM}{why or 'no identifiers in this capture'}"
+                  f"{RESET}\n")
             return 0
         print(f"    {'id':<9} {'seen':>6} {'Hz':>7}  bytes  moving")
         for r in rows[:40]:
