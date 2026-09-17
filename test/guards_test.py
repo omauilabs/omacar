@@ -2168,6 +2168,24 @@ check("and it says why, in terms of the pedal",
       "closed throttle" in _rep["why"] and "assist" in _rep["why"], True)
 check("the rest position is measured, not assumed", _rep["rest_throttle"], 12.9)
 
+# THE BAR MUST NOT CLAIM A MODE NOBODY SET TODAY. current() returning simply
+# the last mark is the same defect as a window that never ends, reached from
+# the other side: the vehicle bar is on a screen that never goes away, and it
+# would have worn ECON on a car driven for nine days in modes nobody wrote
+# down.
+_ndb = sqlite3.connect(":memory:")
+_ndb.execute("CREATE TABLE samples (t REAL, speed REAL, rpm REAL, throttle REAL,"
+             " load REAL, maf REAL, soc REAL)")
+for _i in range(30):
+    _ndb.execute("INSERT INTO samples VALUES (?,?,?,?,?,?,?)",
+                 (5000.0 + _i, 60, 2400, 35.0, 72.0, 14, 58))
+_dm._load = lambda: [{"at": 5005.0, "mode": "sport"}]
+check("a mark made during this drive is in force",
+      (_dm.current(now=5020.0, db=_ndb) or {}).get("mode"), "sport")
+check("and the same mark is not, an hour after the car stopped",
+      _dm.current(now=5005.0 + _dm.SESSION_CAP + 60, db=_ndb), None)
+_dm._load = _keep_load
+
 # A LABEL, NOT A COMMAND. Nothing here may reach the vehicle: this records
 # which mode a person selected on the car's own switch, and no identifier
 # anybody has found can select one.
@@ -2183,6 +2201,21 @@ check("the layout editor keeps its space when it hides",
       'editBtn.style.visibility = moving ? "hidden" : ""' in _drv, True)
 check("and the mode markers are not hidden with it",
       "modeRow.hidden" in _drv, False)
+
+# SPORT IS NOT A FAULT. The cockpit tints it red; red in this app is an active
+# DTC, a coolant temperature over 105, a failed launcher step. A red chip in
+# the bar that never leaves the screen reads as something being wrong with the
+# car, and a switch position somebody chose is not that.
+check("the mode chip never wears the fault colour",
+      "--bad" in _css.split(".mode-pill")[1].split("CSS")[0][:800], False)
+check("econ and normal keep the cockpit's own accents",
+      '.mode-pill[data-mode="econ"]' in _css
+      and '.mode-pill[data-mode="normal"]' in _css, True)
+# It is always a word. looks.js ships a night palette in which every hue
+# collapses to a lightness, and three tints two hours into the dark is not a
+# distinction anybody should be asked to make.
+check("and the chip always carries the word",
+      "textContent = String(mode).toUpperCase()" in _main, True)
 
 # ------------------------------------------------------------------- the dock
 head("the dock got bigger without getting quieter where it matters")

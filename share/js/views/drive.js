@@ -523,7 +523,13 @@ export default function drive(root, { arg } = {}) {
       const b = h("button.drive-mode", {
         type: "button",
         onclick: () => {
-          api.markDriveMode(m).then(() => { markedMode = m; paintModes(); })
+          api.markDriveMode(m).then(() => {
+            markedMode = m; paintModes();
+            // Tell the vehicle bar, which keeps the mode in frame on every
+            // screen. An event rather than an import: neither file should have
+            // to know the other exists to agree about this.
+            document.dispatchEvent(new CustomEvent("omacar:drivemode", { detail: m }));
+          })
             .catch(() => toast("could not write that down"));
         },
       }, m.toUpperCase());

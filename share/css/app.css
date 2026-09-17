@@ -1805,3 +1805,20 @@ ul.tight li { margin-bottom: 5px; }
   background: var(--raise); color: var(--ink); border-color: var(--accent);
 }
 .drive-mode:active { background: var(--hair); }
+
+/* ---- the drive mode, kept in frame --------------------------------------
+   ECON green and NORMAL blue are the cockpit's own accents. SPORT is amber
+   here and red there: red is this app's fault colour — an active DTC, a
+   coolant temperature over 105, a failed launcher step — and a red chip in the
+   one bar that never leaves the screen reads as something being wrong with the
+   car. SPORT is a switch position somebody chose, not a fault. */
+.mode-pill {
+  letter-spacing: .16em; font-size: .68rem; font-weight: 600;
+  border: 1px solid transparent;
+}
+.mode-pill[data-mode="econ"]   { background: var(--ok-bg);   color: var(--ok);
+                                 border-color: var(--ok); }
+.mode-pill[data-mode="normal"] { background: var(--info-bg); color: var(--info);
+                                 border-color: var(--info); }
+.mode-pill[data-mode="sport"]  { background: var(--warn-bg); color: var(--warn);
+                                 border-color: var(--warn); }

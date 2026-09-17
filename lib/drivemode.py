@@ -100,14 +100,29 @@ def mark(mode, at=None, vehicle=None):
     return entry, None
 
 
-def current(now=None):
-    """The mode in force, or None if nobody has said."""
+def current(now=None, db=None):
+    """The mode in force RIGHT NOW, or None.
+
+    Not simply the last mark. A mark expires the same way it does for
+    evidence() — at a gap in sampling that says the car was switched off, or
+    after SESSION_CAP — and the vehicle bar puts this on a screen that never
+    goes away. Returning the last thing anybody ever typed would have that bar
+    claiming ECON on a car that has since been driven for nine days in modes
+    nobody wrote down, which is the same defect as a window that never ends,
+    reached from the other side.
+    """
     marks = _load()
     if not marks:
         return None
     now = float(now or time.time())
     past = [m for m in marks if m["at"] <= now]
-    return past[-1] if past else None
+    if not past:
+        return None
+    last = past[-1]
+    for mode, t0, t1 in windows([last], db):
+        if t0 <= now <= t1:
+            return last
+    return None
 
 
 # A MARK DOES NOT LAST FOREVER, and letting it was the first bug this module
