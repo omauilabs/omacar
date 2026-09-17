@@ -1297,8 +1297,22 @@ ok("anything that removes a child does so from a key reconciler",
    all("have.values()" in ln or "fxHost" in ln for ln in _removes))
 ok("a value is only written when it changed",
    re.search(r"textContent\s*!==\s*\w+", _hub) is not None)
+# THE RADIO MOVED TO THE MUSIC PAGE, and the property moved with it rather
+# than being dropped. It used to be painted from inside the hub's own redraw,
+# which is why this guard read the hub; radioPanel() owns its painting now, so
+# a screen that hosts a radio gets one that keeps itself up to date and there
+# is one place to check instead of one per host.
+_radio_src = (_share / "js" / "radio.js").read_text(encoding="utf-8")
 ok("the radio repaints on radio events, not only on samples",
-   re.search(r"radio\.on\(\s*\w+\s*\)", _hub) is not None)
+   re.search(r"radio\.on\(\s*\w+\s*\)", _radio_src) is not None)
+ok("and the panel that does it is what the views mount",
+   "export function radioPanel()" in _radio_src
+   and "radioPanel" in (_share / "js" / "views" / "music.js")
+                        .read_text(encoding="utf-8"))
+# The slider is still the reason none of this may rebuild wholesale: a repaint
+# that replaces the range input destroys it under the finger dragging it.
+ok("and it still refuses to write over a slider being held",
+   "document.activeElement !== vol" in _radio_src)
 
 head("Themes you build")
 

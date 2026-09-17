@@ -46,6 +46,7 @@
 // owner's car and the owner's call, but the default is the careful one.
 
 import { h, clear, store, api, toast, U } from "../core.js";
+import { radioPanel } from "../radio.js";
 
 // ---------------------------------------------------------------- the shaders
 //
@@ -453,6 +454,16 @@ export default function music(root) {
 
   const notice = h("div.music-notice", { hidden: true });
   stage.appendChild(notice);
+
+  // ---- the radio -----------------------------------------------------------
+  //
+  // It was on the hub, which is the screen you land on rather than the screen
+  // you go to for music. Here it sits over the shader with the car still
+  // readable underneath, which is what this whole view is for.
+  const tuner = radioPanel();
+  tuner.node.classList.add("music-radio");
+  stage.appendChild(tuner.node);
+  stopFns.push(() => tuner.stop());
 
   // ---- the dock ------------------------------------------------------------
   //

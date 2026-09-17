@@ -1842,3 +1842,32 @@ ul.tight li { margin-bottom: 5px; }
                                  border-color: var(--info); }
 .mode-pill[data-mode="sport"]  { background: var(--warn-bg); color: var(--warn);
                                  border-color: var(--warn); }
+
+/* ---- the vitals, with what they measure moving behind them ---------------
+   The canvas is UNDER the text and the text is what the card is for. Nothing
+   here raises its own contrast; if a choice ever comes down to the effect
+   reading better or the number reading better, it is not a choice. */
+.hub-vital.has-fx { position: relative; overflow: hidden; isolation: isolate; }
+.card-fx {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  /* Low enough that it never competes with the reading, high enough to be seen
+     from across a cabin rather than only when looked for. */
+  opacity: .85;
+}
+.hub-vital.has-fx > .hub-vital-v,
+.hub-vital.has-fx > .hub-vital-k { position: relative; z-index: 1; }
+/* The number sits over moving pixels now, so it gets its own ground back --
+   a thin shadow in the card's own surface colour, not a box. */
+.hub-vital.has-fx > .hub-vital-v { text-shadow: 0 1px 10px var(--panel); }
+
+/* The radio, on the Music page. It sits over the shader rather than beside it:
+   this view's whole premise is that the car stays readable underneath, and a
+   player that pushed the stage around would break that for the sake of a row. */
+.music-radio {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: clamp(88px, 14vh, 150px); z-index: 3;
+  width: min(92vw, 40rem);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  border: 1px solid var(--edge-2); border-radius: 18px;
+  backdrop-filter: blur(8px);
+}

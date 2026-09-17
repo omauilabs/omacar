@@ -460,3 +460,61 @@ export function radioPlayer() {
           : null)),
     vol);
 }
+
+// ---- the player, wired ------------------------------------------------------
+//
+// radioPlayer() above is markup; this is markup that keeps itself up to date.
+//
+// IT LIVES HERE BECAUSE IT MOVED. The hub built this panel and painted it from
+// inside its own redraw, reaching into the player by class name for five
+// elements. That was a documented, deliberate coupling -- the volume control is
+// a range input, and rebuilding it mid-drag destroys the slider under the
+// finger holding it -- but it also meant the wiring belonged to whichever
+// screen happened to host the radio. Moving the radio to the Music page, where
+// it belongs, would have meant moving forty lines of painting with it and
+// leaving the coupling behind in a second place.
+//
+// So the panel owns its own painting, and a screen that wants a radio asks for
+// one and gets something that works.
+export function radioPanel() {
+  const node = radioPlayer();
+  const play = node.querySelector(".radio-play");
+  const name = node.querySelector(".radio-name");
+  const status = node.querySelector(".radio-status");
+  const vol = node.querySelector(".radio-vol");
+  const line = document.createTextNode("");
+  const count = h("span.radio-count");
+  if (status) {
+    while (status.firstChild) status.removeChild(status.firstChild);
+    status.appendChild(line);
+    status.appendChild(count);
+  }
+  if (vol) vol.style.touchAction = "pan-y";
+
+  function paint() {
+    if (play) {
+      play.textContent = radio.playing ? "❚❚" : "▶";
+      play.setAttribute("aria-label", radio.playing ? "Pause radio" : "Play radio");
+    }
+    const np = radio.now;
+    if (name) name.textContent = np.title || "Omarchy Radio";
+    const state = radio.failed ? "offline"
+      : radio.loading ? "connecting…"
+      : radio.playing ? "live" : "paused";
+    const text = np.artist ? np.artist : state;
+    if (line.data !== text) line.data = text;
+    if (status) status.classList.toggle("bad", radio.failed);
+    count.textContent = np.listeners != null ? `${np.listeners} listening` : "";
+    count.hidden = np.listeners == null;
+    // Never write over a slider somebody has hold of: the value it would be
+    // given is the value they just set, and the write moves the thumb out from
+    // under the finger mid-drag.
+    if (vol && document.activeElement !== vol) {
+      vol.value = String(Math.round(radio.volume * 100));
+    }
+  }
+
+  paint();
+  const off = radio.on(paint);
+  return { node, play, paint, stop: () => off && off() };
+}

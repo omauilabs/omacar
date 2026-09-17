@@ -45,8 +45,8 @@
 import { h, store, dist, temp, U, readOnly,
          adapterState, connectCar } from "../core.js";
 import { ICONS } from "../icons.js";
+import { mountCardEffect } from "../cardfx.js";
 import { explain } from "../learn.js";
-import { radio, radioPlayer } from "../radio.js";
 import { LOOKS, savedLook, saveLook, applyLook, nextLook, lookById,
          mountLookEffect } from "../looks.js";
 
@@ -145,10 +145,15 @@ function badgeFor(id, car) {
 const VITALS = [
   { key: "speed", label: "Speed",
     value: (v) => (v.SPEED != null ? String(Math.round(v.SPEED * U.units.km)) : "--"),
-    unit: () => U.units.speed },
+    unit: () => U.units.speed,
+    // ALWAYS km/h INTO THE EFFECT. The card converts for display; the stars
+    // must not, or the same road speed would streak differently in an imperial
+    // cabin than a metric one.
+    fx: "warp", fxValue: (v) => v.SPEED },
   { key: "rpm", label: "RPM",
     value: (v) => (v.RPM != null ? String(Math.round(v.RPM)) : "--"),
-    unit: () => "" },
+    unit: () => "",
+    fx: "gears", fxValue: (v) => v.RPM },
   // THE ONE VITAL THAT DID NOT CONVERT. Speed and Trip on this same row honour
   // the unit system; coolant passed the raw Celsius through under a bare "°",
   // so an imperial install read 88 here and 190 °F two screens away, for the
@@ -158,10 +163,18 @@ const VITALS = [
   { key: "coolant", label: "Coolant",
     value: (v) => (v.COOLANT_TEMP != null
                    ? String(Math.round(temp(v.COOLANT_TEMP, false))) : "--"),
-    unit: () => U.units.temp },
+    unit: () => U.units.temp,
+    // Celsius into the effect for the same reason, and because the bubble
+    // thresholds are physical: 40 is cold, 105 is a near boil, whatever the
+    // cabin is displaying.
+    fx: "coolant", fxValue: (v) => v.COOLANT_TEMP },
   { key: "trip", label: "Trip",
     value: (v, car) => (car.trip_km != null ? dist(car.trip_km, false) : "--"),
-    unit: () => U.units.dist },
+    unit: () => U.units.dist,
+    // A notional leg of 60 km, so the route fills over a normal drive rather
+    // than sitting at either end of it. With no trip at all it stays at the
+    // start: animating a journey nobody has taken is a small lie.
+    fx: "route", fxValue: (v, car) => (car.trip_km != null ? car.trip_km / 60 : 0) },
 ];
 
 function effectLabel() { return lookById(savedLook()).label; }
@@ -313,12 +326,12 @@ export default function hub(root) {
   // and a leaked subscription is unbounded.
   const offLive = store.on("live", paint);
   const offCar = store.on("car", paint);
-  const offRadio = radio.on(paint);
   paint();
   return () => {
-    offLive(); offCar(); offRadio();
+    offLive(); offCar();
     paintHub = null;
     if (fxStop) { fxStop(); fxStop = null; }
+    while (fxStops.length) fxStops.pop()();   // the four vital backgrounds
     if (fxHost) { fxHost.remove(); fxHost = null; }
     fxMode = null;
   };
@@ -366,16 +379,31 @@ function build(root) {
     h("div.row", { style: { gap: "12px" } }, connect, look, exit));
 
   // ---- vitals ----
+  //
+  // Each card carries the thing it measures, moving behind the number: stars
+  // streaking for speed, gears meshing at engine speed, coolant with bubbles
+  // that quicken as it warms, the trip drawn point to point. The canvas sits
+  // UNDER the text at low alpha and the reading always wins -- see cardfx.js,
+  // which inherits every rule effects.js set for the background looks.
   const vitalCells = VITALS.map((v) => {
     const value = h("span");
     const unit = h("span.hub-vital-u");
     return {
       spec: v, value, unit,
-      node: h("div.hub-vital",
+      node: h("div.hub-vital" + (v.fx ? ".has-fx" : ""),
         h("div.hub-vital-v", value, unit),
         h("div.hub-vital-k", { style: { fontSize: "1rem" } }, v.label)),
     };
   });
+  // Mounted after the nodes exist, torn down with the view. The readers pull
+  // from the live store rather than being pushed, so a card that is drawing
+  // thirty times a second does not drag the redraw cycle along with it.
+  const fxStops = [];
+  for (const c of vitalCells) {
+    if (!c.spec.fx) continue;
+    fxStops.push(mountCardEffect(c.node, c.spec.fx,
+                                 () => c.spec.fxValue(store.values || {}, store.car || {})));
+  }
   const vitals = h("div.hub-vitals", ...vitalCells.map((c) => c.node));
 
   // ---- primary tiles ----
@@ -436,29 +464,9 @@ function build(root) {
     return node;
   };
 
-  // ---- the radio ----
-  //
-  // radio.js owns this markup; the hub only writes text into it. It is built
-  // once for the same reason everything else here is, and more sharply: the
-  // volume control is a RANGE INPUT, so a drag on it sets radio.volume, which
-  // emits, which used to rebuild the player and destroy the slider under the
-  // finger that was dragging it. Reaching in by class name is a coupling, and
-  // it is the smaller of the two evils; the alternative is a player that cannot
-  // be adjusted while it is playing.
-  const player = radioPlayer();
-  const rPlay = player.querySelector(".radio-play");
-  const rName = player.querySelector(".radio-name");
-  const rStatus = player.querySelector(".radio-status");
-  const rVol = player.querySelector(".radio-vol");
-  const rLine = document.createTextNode("");
-  const rCount = h("span.radio-count");
-  if (rStatus) {
-    while (rStatus.firstChild) rStatus.removeChild(rStatus.firstChild);
-    rStatus.appendChild(rLine);
-    rStatus.appendChild(rCount);
-  }
-  if (rPlay) pressable(rPlay);
-  if (rVol) rVol.style.touchAction = "pan-y";
+  // The radio used to live here. It is on the Music page now, where somebody
+  // looking for it would think to look, and it takes its own painting with it
+  // -- see radioPanel() in radio.js.
 
   root.appendChild(h("div.hub",
     head,
@@ -466,7 +474,6 @@ function build(root) {
     // Learn mode is a per-browser setting reached through its own screen, so it
     // cannot change while this view is mounted; it is safe to resolve once.
     explain(h, "hub"),
-    player,
     grid,
     more));
 
@@ -523,25 +530,6 @@ function build(root) {
 
     syncKeys(more, SECONDARY.map((t) => t.id), makeChip);
 
-    // ---- the radio, in place ----
-    if (rPlay) {
-      text(rPlay, radio.playing ? "❚❚" : "▶");
-      rPlay.setAttribute("aria-label", radio.playing ? "Pause radio" : "Play radio");
-    }
-    const np = radio.now;
-    text(rName, np.title || "Omarchy Radio");
-    const status = radio.failed ? "offline"
-      : radio.loading ? "connecting…"
-      : radio.playing ? "live" : "paused";
-    const line = np.artist ? np.artist : status;
-    if (rLine.data !== line) rLine.data = line;
-    if (rStatus) rStatus.classList.toggle("bad", radio.failed);
-    text(rCount, np.listeners != null ? `${np.listeners} listening` : "");
-    rCount.hidden = np.listeners == null;
-    // Never write over a slider somebody has hold of: the value it would be
-    // given is the value they just set, and the write moves the thumb out from
-    // under the finger mid-drag.
-    if (rVol && document.activeElement !== rVol) rVol.value = String(Math.round(radio.volume * 100));
   }
 
   return paint;
