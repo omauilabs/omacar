@@ -2120,6 +2120,40 @@ check("the launcher is not a tab you can wander into mid-drive",
       and "hidden: true" in open(os.path.join(ROOT, "share", "js", "main.js"),
                                  encoding="utf-8").read(), True)
 
+# -------------------------------------------------------------- the charge dial
+head("the charge dial is drawn only when a reading is behind it")
+
+_ima = open(os.path.join(ROOT, "share", "js", "views", "ima.js"),
+            encoding="utf-8").read()
+
+# THE RULE THE WHOLE PAGE IS BUILT ON. A ring at zero beside the words "state
+# of charge" is not a placeholder on a 190,000-mile hybrid; it is a number
+# somebody acts on. So the dial returns nothing rather than rendering an empty
+# one, and the null check comes before anything is built.
+_fn = _ima[_ima.index("function chargeDial()"):]
+_guard = _fn.index("return null")
+_first_build = _fn.index('h("section.sect"')
+check("it returns nothing before it builds anything", _guard < _first_build, True)
+check("and the check covers all three empty shapes",
+      all(w in _fn[:_guard] for w in ("null", "undefined", "NaN")), True)
+
+# GEOMETRY FROM THE VENDORED DESIGN, so a later tweak here is a deliberate
+# divergence rather than a drift nobody notices.
+_design = open(os.path.join(ROOT, "doc", "design", "cockpit", "energy-view.tsx"),
+               encoding="utf-8").read()
+check("the cockpit's radius is kept", "R = 123" in _ima and 'r="123"' in _design, True)
+check("and its forty ticks", "i < 40" in _ima and "length: 40" in _design, True)
+
+# THE CLAIM THAT STOPPED BEING TRUE. This file opened for months by saying not
+# one live IMA quantity had ever been captured. SOC answered on 16 September,
+# and a stale claim in a header comment is how the next person concludes there
+# is nothing to draw.
+check("the page no longer claims nothing has ever answered",
+      "Not one live IMA quantity has ever been" in _ima, False)
+check("and it says what direction is actually read from",
+      "not\n            + \"from motor power" in _ima
+      or "not " in _ima and "motor power" in _ima, True)
+
 # ------------------------------------------------- the ported cockpit palettes
 head("a shipped theme keeps the colours it shipped with")
 

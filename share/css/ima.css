@@ -157,3 +157,46 @@
    that grid rather than as a new list. */
 .ima-gap { display: grid; gap: 0; }
 .ima-gap-names { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ---- the charge dial -----------------------------------------------------
+   Ported from crz-cockpit's energy view (doc/design/cockpit/energy-view.tsx).
+   Its geometry is kept exactly -- a 300-box, r=123, forty ticks at nine
+   degrees -- and its colours are not: the cockpit writes finished hex, this
+   takes the derived tokens so the ring stays legible in all three palettes and
+   in whatever somebody builds next. */
+.charge-stage {
+  display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  gap: clamp(16px, 4vw, 44px); align-items: center;
+}
+@media (max-width: 720px) { .charge-stage { grid-template-columns: 1fr; } }
+.charge-orbit { position: relative; width: 100%; max-width: 300px; margin: 0 auto; }
+.charge-orbit svg { width: 100%; height: auto; display: block; }
+.orbit-track { fill: none; stroke: var(--edge-2); stroke-width: 10; }
+.orbit-value {
+  fill: none; stroke: var(--accent); stroke-width: 10; stroke-linecap: round;
+  /* Slow enough to read as the pack moving, not as a needle being animated.
+     A dial that eases on every poll invents motion the car did not make. */
+  transition: stroke-dasharray .6s ease;
+}
+.orbit-tick { stroke: var(--faint); opacity: .4; }
+.orbit-reading {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px; pointer-events: none;
+}
+.orbit-reading strong {
+  font-size: clamp(2.6rem, 9vw, 4rem); font-weight: 600; line-height: 1;
+  letter-spacing: -.03em; font-variant-numeric: tabular-nums; color: var(--bright);
+}
+.orbit-reading small { font-size: .38em; margin-left: .12em; color: var(--dim); }
+.orbit-reading span {
+  font-size: .7rem; letter-spacing: .22em; color: var(--faint);
+  text-transform: uppercase;
+}
+.charge-story h3 { margin: 6px 0 4px; font-size: clamp(1.1rem, 3vw, 1.5rem); font-weight: 600; }
+.energy-state {
+  display: inline-flex; align-items: center; gap: 6px; font-size: .78rem;
+  letter-spacing: .18em; text-transform: uppercase;
+}
+.energy-state.charge { color: var(--ok); }
+.energy-state.assist { color: var(--accent); }
+.energy-state.rest { color: var(--faint); }

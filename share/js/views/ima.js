@@ -3,13 +3,21 @@
 // WHY THIS SCREEN IS MOSTLY A GAP REGISTER.
 //
 // The obvious version of this page is a wall of hybrid gauges: state of
-// charge, pack current, assist and regen, cell temperature. Every one of them
-// would be pointing at nothing. Not one live IMA quantity has ever been
-// captured from this car — service 0x22 was swept across 0x0000-0x0FFF on both
-// hybrid controllers and held nothing but part numbers, and service 0x21 has
-// never been asked with a header of the right width. A dial reading zero next
-// to the words "state of charge" is not a placeholder on a 190,000-mile
-// hybrid. It is a number somebody will act on.
+// charge, pack current, assist and regen, cell temperature. Nearly every one
+// of them would still be pointing at nothing — service 0x22 was swept across
+// 0x0000-0x0FFF on both hybrid controllers and held nothing but part numbers,
+// and service 0x21 has never been asked with a header of the right width. A
+// dial reading zero next to the words "state of charge" is not a placeholder
+// on a 190,000-mile hybrid. It is a number somebody will act on.
+//
+// ONE OF THEM ANSWERED, AND THIS FILE SAID OTHERWISE FOR TOO LONG. It used to
+// open by claiming not one live IMA quantity had ever been captured from this
+// car. That stopped being true on 16 September: HYBRID_BATTERY_REMAINING
+// filled 4,330 rows across 126 km, swinging 33 points between 43.9% and 76.9%,
+// falling under sustained load and recovering on a closed throttle. So state
+// of charge now gets the dial the rest of them have not earned — drawn only
+// when a reading is actually behind it, which is the same rule as before and
+// the reason the rest of the page is still a register.
 //
 // So the register below shows a STATE per quantity instead of a value per
 // quantity, and the undiscovered ones carry the exact command that would find
@@ -163,6 +171,85 @@ export default function ima(root) {
     if (quiet && next === sig) return;
     sig = next;
     draw();
+  }
+
+  // ------------------------------------------------------------ the charge
+  //
+  // THE ONE QUANTITY THAT ANSWERED. Everything below this on the page is a gap
+  // register, and it should be: service 0x22 swept 0x0000-0x0FFF across both
+  // hybrid controllers and held nothing but part numbers. But SOC is no longer
+  // in that list. HYBRID_BATTERY_REMAINING answers on this car, and on
+  // 16 September it filled 4,330 rows across 126 km -- a 33-point swing
+  // between 43.9% and 76.9%, falling under sustained load and recovering on a
+  // closed throttle. That is a measurement, so it gets a dial.
+  //
+  // The rule the rest of the page is built on still holds, and this obeys it:
+  // the dial is drawn ONLY when there is a reading behind it. With no pack
+  // reading there is no ring at zero next to the words "state of charge" --
+  // that is a number somebody acts on, and on a 190,000-mile hybrid it is the
+  // most expensive wrong number this screen could show.
+  //
+  // Geometry is the cockpit's: a 300-box, r=123, forty ticks at nine degrees,
+  // the arc rotated back a quarter turn so it starts at the top.
+  const R = 123, CIRC = 2 * Math.PI * R;
+
+  function svg(tag, attrs, ...kids) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    for (const kid of kids) if (kid) el.appendChild(kid);
+    return el;
+  }
+
+  function chargeDial() {
+    const soc = store.values && store.values.HYBRID_BATTERY_REMAINING;
+    if (soc === null || soc === undefined || Number.isNaN(Number(soc))) return null;
+    const pct = Math.min(100, Math.max(0, Number(soc)));
+    const face = svg("svg", { viewBox: "0 0 300 300", role: "img",
+                              "aria-label": `State of charge ${Math.round(pct)} percent` });
+    face.appendChild(svg("circle", { cx: 150, cy: 150, r: R, class: "orbit-track" }));
+    face.appendChild(svg("circle", {
+      cx: 150, cy: 150, r: R, class: "orbit-value",
+      "stroke-dasharray": `${(pct / 100) * CIRC} ${CIRC}`,
+      transform: "rotate(-90 150 150)" }));
+    for (let i = 0; i < 40; i++) {
+      face.appendChild(svg("line", { x1: 150, y1: 14, x2: 150, y2: 19,
+                                     transform: `rotate(${i * 9} 150 150)`,
+                                     class: "orbit-tick" }));
+    }
+    const dir = socDirection(pct);
+    return h("section.sect",
+      h("div.charge-stage",
+        h("div.charge-orbit", face,
+          h("div.orbit-reading",
+            h("strong", String(Math.round(pct)), h("small", "%")),
+            h("span", "STATE OF CHARGE"))),
+        h("div.charge-story",
+          h("span.energy-state." + dir.tone, dir.label),
+          h("h3", dir.line),
+          // WHAT THIS IS NOT. The cockpit drives its equivalent from signed
+          // motor power. This car answers no motor-power identifier anybody has
+          // found, so the direction here is the pack's own movement and nothing
+          // more -- which is worth saying on the screen rather than only in a
+          // commit message.
+          h("p.muted", "Direction is read from the charge itself moving, not "
+            + "from motor power — no motor-power identifier has answered on "
+            + "this car."))));
+  }
+
+  // The same short window the drive tile uses, for the same reason: a pack at
+  // rest jitters a few tenths between reads, and a direction invented out of
+  // that jitter is worse than no direction.
+  const socTrail = [];
+  const SOC_WINDOW_MS = 12000, SOC_MOVED = 0.4;
+
+  function socDirection(pct) {
+    socTrail.push({ t: Date.now(), soc: pct });
+    while (socTrail.length && Date.now() - socTrail[0].t > SOC_WINDOW_MS) socTrail.shift();
+    if (socTrail.length < 3) return { tone: "rest", label: "Settling", line: "Reading the pack." };
+    const drift = pct - socTrail[0].soc;
+    if (drift > SOC_MOVED) return { tone: "charge", label: "Charging", line: "Every slowdown gives back." };
+    if (drift < -SOC_MOVED) return { tone: "assist", label: "Assist", line: "Electric power, on demand." };
+    return { tone: "rest", label: "At rest", line: "Energy at rest." };
   }
 
   // ---------------------------------------------------------------- header
@@ -446,8 +533,9 @@ export default function ima(root) {
 
     // A real gauge on a real number: how many monitors the module was flagging
     // at the last sample, against the ceiling of how many it could possibly
-    // flag. Drawn because there is a measurement behind it — which is exactly
-    // why no gauge is drawn for state of charge.
+    // flag. Drawn because there is a measurement behind it — the same test the
+    // charge dial at the top of this page now passes, and every other hybrid
+    // quantity below still does not.
     const g = latest
       ? makeGauge("bar", { label: "Flagged", scale: { min: 0, max: ceiling } })
       : null;
@@ -687,6 +775,8 @@ export default function ima(root) {
         h("p.lede", doc.error)));
     }
     wrap.appendChild(header());
+    const dial = chargeDial();
+    if (dial) wrap.appendChild(dial);
     const reg = register(); if (reg) wrap.appendChild(reg);
     const cat = catalogues(); if (cat) wrap.appendChild(cat);
     const fl = flagged(); if (fl) wrap.appendChild(fl);
