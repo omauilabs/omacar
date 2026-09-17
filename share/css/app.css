@@ -95,7 +95,7 @@
    the .svc-entry and .drive-row width queries further down are the ones that
    are wrong, not this. */
 @media (pointer: coarse) {
-  :root { --tap: 56px; --tap-lg: 64px; --tabbar: 84px; --subtabs: 56px; }
+  :root { --tap: 56px; --tap-lg: 64px; --tabbar: 96px; --subtabs: 56px; }
 }
 
 /* The tier, stamped on the root by main.js from the server's answer.
@@ -182,7 +182,10 @@ button { font: inherit; color: inherit; }
 .subbar {
   height: var(--subtabs); flex: none; min-width: 0;
   display: flex; align-items: center; gap: 8px; padding: 0 12px;
-  border-bottom: 1px solid var(--edge);
+  /* No rule under this row. The dock below already reads as its own surface,
+     and the cockpit's "fewer borders" is most of what makes it feel calm. The
+     border ABOVE the navbar stays: that one separates the dock from a
+     scrolling view, which is a different job. */
 }
 /* A RESERVED SLOT, not a slot that appears.
    Sized rather than shrink-wrapped, and its button is hidden with visibility
@@ -266,10 +269,15 @@ button { font: inherit; color: inherit; }
 }
 
 /* ---- the tab bar ---- */
+/* THE DOCK. Ported from crz-cockpit's rail (doc/design/cockpit): 74-square
+   targets, 18px corners, and room between them. Its DESIGN-NOTES asks for
+   "fewer borders and quieter labels", and both are done here by giving the
+   targets space rather than by taking contrast away from them -- see the note
+   under .tab-in about what must NOT get quieter. */
 .tabbar {
   flex: 1; min-height: var(--tabbar);
   display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
-  align-items: stretch; gap: 2px; padding: 0 6px 4px;
+  align-items: center; gap: 10px; padding: 4px 12px 6px;
 }
 .tab {
   position: relative; min-height: var(--tap-lg); padding: 0;
@@ -279,11 +287,26 @@ button { font: inherit; color: inherit; }
   display: grid; place-items: center;
 }
 .tab-in {
-  display: grid; justify-items: center; gap: 3px;
-  min-width: 68px; padding: 7px 12px; border-radius: 14px;
+  display: grid; justify-items: center; gap: 5px; align-content: center;
+  min-width: 68px; padding: 7px 12px; border-radius: 16px;
   transition: background .12s, color .12s;
 }
-.tab-lbl { font-size: .82rem; letter-spacing: .04em; }
+/* The cockpit's 74-square, and it is a THUMB target -- so it lives with the
+   rest of the cabin density rather than being handed to a mouse that does not
+   need it. --tabbar steps to 96px in the same query, which is what gives it
+   room to be 74 without the pill touching the edge of the bar. */
+@media (pointer: coarse) {
+  .tab-in {
+    min-width: 74px; min-height: 74px; gap: 7px; border-radius: 18px;
+  }
+}
+/* QUIETER, BUT NOT DIMMER.
+   The cockpit's labels are small and widely tracked, and that is worth having.
+   What is NOT worth having is the obvious way to get there: walking the label
+   colour down toward the background. These sit on a dock in a car, and the
+   three signals below are what tell somebody which screen they are on at 2am
+   -- so the label gets smaller and more spaced, and keeps the ink it had. */
+.tab-lbl { font-size: .78rem; letter-spacing: .08em; }
 
 /* THREE SIGNALS FOR THE CURRENT TAB, NOT A TINT.
    looks.js ships a red-only night palette in which every hue collapses to a

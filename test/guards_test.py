@@ -2120,6 +2120,40 @@ check("the launcher is not a tab you can wander into mid-drive",
       and "hidden: true" in open(os.path.join(ROOT, "share", "js", "main.js"),
                                  encoding="utf-8").read(), True)
 
+# ------------------------------------------------------------------- the dock
+head("the dock got bigger without getting quieter where it matters")
+
+_css = open(os.path.join(ROOT, "share", "css", "app.css"), encoding="utf-8").read()
+
+# THREE SIGNALS, NOT A TINT. looks.js ships a red-only night palette in which
+# every hue collapses to a lightness, so "the current one is the blue one" does
+# not survive to 2am on a dark road. Restyling the dock is exactly the kind of
+# change that quietly takes one of these away.
+check("the current tab still takes the ink colour",
+      '.tab[aria-current="page"] { color: var(--ink); }' in _css, True)
+check("it still carries its own edge",
+      '.tab[aria-current="page"]::before' in _css, True)
+check("and its pill is still filled",
+      '.tab[aria-current="page"] .tab-in { background: var(--raise); }' in _css, True)
+_main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+check("and it is still announced to a screen reader",
+      'setAttribute("aria-current", "page")' in _main, True)
+
+# THE 74-SQUARE IS A THUMB TARGET. Handing it to a mouse wastes a dock that
+# does not need it, and -- the reason it is a guard -- the desktop --tabbar is
+# 72px, so a 74px pill outside the coarse query overflows the bar it sits in.
+_coarse = _css[_css.index("@media (pointer: coarse) {\n  .tab-in"):]
+check("the cockpit's 74-square is scoped to a coarse pointer",
+      "min-height: 74px" in _coarse[:400], True)
+check("and the bar has room for it",
+      "--tabbar: 96px" in _css and "--tabbar:  72px" in _css, True)
+
+# ---------------------------------------------------------------------------
+# The label may get smaller and wider-tracked. It may NOT get dimmer: that is
+# the obvious way to make a dock feel calm and it spends the one thing a
+# driver needs from it at night.
+check("the label keeps its ink", "color:" in _css.split(".tab-lbl {")[1].split("}")[0], False)
+
 # -------------------------------------------------------------- the charge dial
 head("the charge dial is drawn only when a reading is behind it")
 
