@@ -259,7 +259,7 @@ def main(argv):
     # The OBDLink EX runs at 115200; elm.py defaults to 38400, which is the SX.
     # Asked at the wrong rate an EX returns line noise rather than silence, so
     # a sweep would record "no responder" for every PID on the car.
-    el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+    el = elmlib.Elm(port, baudrate=connect.link_baud(port))
     print(f"\n  {BOLD}OmaCar prospector{RESET}  {DIM}{port} ({kind}){RESET}")
     el.init()
 

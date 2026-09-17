@@ -118,7 +118,7 @@ def burst(cands):
     if not connect.request_port(port):
         return {"t": time.time(), "skipped": "daemon would not yield"}
     try:
-        el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        el = elmlib.Elm(port, baudrate=connect.link_baud(port))
         try:
             el.init()
             v = dtclib.battery_volts(el)

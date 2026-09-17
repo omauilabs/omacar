@@ -119,7 +119,7 @@ def run(interval, headers, logpath, once=False, verbose=True):
                 if not leased:
                     rec = {"t": time.time(), "skipped": "daemon would not yield"}
                 else:
-                    el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+                    el = elmlib.Elm(port, baudrate=connect.link_baud(port))
                     try:
                         el.init()
                         v = dtclib.battery_volts(el)

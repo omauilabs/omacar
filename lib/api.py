@@ -741,7 +741,7 @@ def write_did(header, did, value, confirm=False, prior=None, who="the app"):
     out = {"header": header, "did": did, "service": "0x2E", "what": name,
            "consequence": consequence}
     try:
-        el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        el = elmlib.Elm(port, baudrate=connect.link_baud(port))
         el.init()
         try:
             out["volts"] = ops.preflight(el)
@@ -1545,7 +1545,7 @@ def handle_post(path, body):
         if not connect.request_port(port):
             return 409, {"error": "the daemon is holding the port"}
         try:
-            el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+            el = elmlib.Elm(port, baudrate=connect.link_baud(port))
             el.init()
             try:
                 ops.preflight(el)
@@ -1642,7 +1642,7 @@ def handle_post(path, body):
         if not connect.request_port(port):
             return 409, {"error": "the daemon is holding the port"}
         try:
-            el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+            el = elmlib.Elm(port, baudrate=connect.link_baud(port))
             el.init()
             try:
                 ops.preflight(el)

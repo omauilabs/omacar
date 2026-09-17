@@ -875,7 +875,7 @@ def t_request(args):
                       f"it with `omacar daemon stop`, or wait for its lease.")
 
     try:
-        conn = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        conn = elmlib.Elm(port, baudrate=connect.link_baud(port))
         conn.init()
     except Exception as why:                                  # noqa: BLE001
         try:

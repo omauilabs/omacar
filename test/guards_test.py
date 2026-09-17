@@ -2251,6 +2251,48 @@ check("and the bar has room for it",
 # driver needs from it at night.
 check("the label keeps its ink", "color:" in _css.split(".tab-lbl {")[1].split("}")[0], False)
 
+# ------------------------------------------------ the link that hears the bus
+head("the link is raised after the reset that would undo it")
+
+_elm = open(os.path.join(ROOT, "lib", "elm.py"), encoding="utf-8").read()
+
+# ORDER IS THE WHOLE THING. init() opens with ATZ, and ATZ puts the adapter
+# back on its default rate. A link raised before that line is silently undone:
+# the adapter drops to 115200, the handle stays where it was, and every read
+# afterwards blocks on bytes that can never parse. Measured on the car on
+# 17 September -- a 20-second capture sat in a serial read for three minutes at
+# zero CPU and reported "nothing was heard at all", on a bus carrying 1,900
+# frames a second.
+_reset = _elm.index('self.at("Z")')
+_raise = _elm.index("self.raise_baud()")
+check("the raise comes after the reset", _reset < _raise, True)
+# Checked on what link_baud RETURNS, not on whether the file mentions the word:
+# the comment in there explains why it stopped pre-raising, and a guard that
+# cannot tell a return statement from the paragraph above it fails on its own
+# explanation. That is twice now.
+_lb = open(os.path.join(ROOT, "lib", "connect.py"), encoding="utf-8").read()
+_lb = _lb.split("def link_baud")[1]
+_lb = _lb[:_lb.index("def ", 10)]
+check("connect.link_baud only detects; it does not raise",
+      "return detect_baud(port) or fallback" in _lb
+      and "return raise_baud" not in _lb, True)
+
+# IT FAILS CLOSED, which is why it may run on every connection. ATBRD is
+# specified to revert if the host does not confirm, and every path out of the
+# handshake here puts the handle back where it was.
+_fn = _elm[_elm.index("def raise_baud(self"):]
+_fn = _fn[:_fn.index("\n    def ", 10)] if "\n    def " in _fn[10:] else _fn[:4000]
+check("a refused handshake leaves the rate alone",
+      _fn.count("return False") >= 4, True)
+check("and a half-finished one puts the handle back",
+      _fn.count("self.ser.baudrate = cur") >= 2, True)
+check("it can be turned off without editing code",
+      "OMACAR_NO_FASTBAUD" in _fn, True)
+# A divisor the adapter cannot express is not a target: 4000000/div is what
+# actually happens, and asking for something else would set a rate nobody chose.
+check("the target has to be expressible as a divisor",
+      "4000000.0 / div" in _fn, True)
+
 # ---------------------------------------------------- history rows are objects
 head("a chart reads history rows by name, because that is what they are")
 

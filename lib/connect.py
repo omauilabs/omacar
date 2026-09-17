@@ -351,6 +351,106 @@ def detect_baud(port, candidates=BAUD_CANDIDATES, use_cache=True):
     return None
 
 
+# ---- a link fast enough to hear the bus ------------------------------------
+#
+# WHY THIS EXISTS, MEASURED ON THE CAR ON 17 SEPTEMBER.
+#
+# At 115200 this car's broadcast bus overflows the adapter. Every unfiltered
+# monitor on 16 September took one buffer -- 120 to 132 lines in three tenths
+# of a second, around 380/s -- and then went silent, including the marks
+# session an entire drive existed to run. It reads exactly like a quiet bus and
+# it is not: the bus offers frames faster than the link can drain them, the
+# adapter's buffer fills, and it stops.
+#
+# The same car, same adapter, same cable, at 500000:
+#
+#     28,557 lines over a full 15 seconds, sustained -- 1,907/s, no stall
+#     19,989 parsed frames, 34 identifiers, in 12 seconds
+#
+# Raised again to 1,000,000 it measured 1,918/s: identical. So ~1,900 frames a
+# second is THIS BUS, not the link, and 500000 is where the link stops being
+# the limit. There is no reason to run it hotter than that.
+#
+# WHY IT IS SAFE TO TRY. ATBRD is specified to fail closed: the adapter
+# acknowledges at the old rate, switches, and sends its identification at the
+# new one. If the host does not read that and answer within the window, the
+# adapter goes back on its own. A failed attempt costs nothing, which is why
+# this runs on every connection rather than being a setting somebody has to
+# find.
+#
+# It is deliberately NOT cached. ATBRD is volatile -- power the adapter down
+# and it is back to its default -- so the rate is negotiated fresh each time,
+# and _remember_baud() goes on storing the rate the adapter ANSWERS on rather
+# than the one we talked it up to.
+FAST_BAUD = 500000
+
+
+def raise_baud(port, current, target=FAST_BAUD):
+    """Talk the adapter up to `target`. Returns the rate now in force."""
+    if os.environ.get("OMACAR_NO_FASTBAUD"):
+        return current
+    if not target or not current or target <= current:
+        return current
+    try:
+        import serial
+    except ImportError:
+        return current
+    div = round(4000000.0 / target)
+    # The divisor is what the adapter actually takes, so a target it cannot
+    # express exactly is not a target -- ask for what will really happen, or
+    # leave it alone.
+    if div < 1 or div > 255 or abs(4000000.0 / div - target) > target * 0.02:
+        return current
+    try:
+        with serial.Serial(port, current, timeout=0.8) as s:
+            s.reset_input_buffer()
+            s.write(b"ATE0\r")
+            time.sleep(0.2)
+            s.reset_input_buffer()
+            s.write(b"ATBRD %02X\r" % div)
+            s.flush()
+            # READ ONLY TO THE FIRST CR. A fixed-size read here swallows the
+            # identification that follows at the NEW rate and turns it into
+            # line noise, and the handshake then fails on a link that was
+            # perfectly capable -- which is exactly how this went wrong the
+            # first time it was tried on the car.
+            if b"OK" not in s.read_until(b"\r").upper():
+                return current
+            s.baudrate = target
+            ident = s.read_until(b"\r").upper()
+            if b"ELM" not in ident and b"STN" not in ident:
+                return current            # unconfirmed: it reverts by itself
+            s.write(b"\r")
+            s.flush()
+            time.sleep(0.2)
+            if b"OK" not in s.read(64).upper():
+                return current
+            return target
+    except Exception:                                         # noqa: BLE001
+        return current
+
+
+def link_baud(port, fallback=38400):
+    """The rate to open this adapter at: what it answers on, raised if it can.
+
+    THIRTEEN CALL SITES WROTE `detect_baud(port) or 38400` BY HAND, which was
+    harmless while there was one answer and became the bug the moment there
+    were two. The first version of raise_baud() above was wired into connect()
+    alone -- the python-OBD path -- and the monitor path went on drowning at
+    115200, because listen.py builds its own Elm and picks its own rate. The
+    capture that proved the link could carry 1,907 frames a second was followed
+    by an `omacar listen capture` that stalled at 129 in three tenths of one.
+    So there is one function now, and adding a second way to open an adapter
+    means noticing this one.
+    """
+    # NO RAISE HERE. It used to, and ATZ inside Elm.init() undid it every
+    # time -- see Elm.raise_baud(), which now does it on the live handle after
+    # the reset. This stays because thirteen call sites wrote
+    # `detect_baud(port) or 38400` by hand, and one of them should be able to
+    # change without the other twelve being missed.
+    return detect_baud(port) or fallback
+
+
 def connect(timeout=3, fast=False, lease=True):
     """Connect python-obd, quietly. Exits with a useful message if it can't."""
     import logging
@@ -386,7 +486,9 @@ def connect(timeout=3, fast=False, lease=True):
     if override:
         baud = int(override)
     else:
-        baud = detect_baud(port) or 38400
+        # Before python-OBD takes the port: it owns the handle after this, and
+        # both sides have to agree on the rate first.
+        baud = link_baud(port)
 
     conn = obd.OBD(port, baudrate=baud, fast=fast, timeout=timeout)
     return conn, port, kind

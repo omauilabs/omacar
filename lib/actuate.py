@@ -292,7 +292,7 @@ def begin(test, seconds, entry, who="the app"):
         _remove(STOP)
         el = None
         try:
-            el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+            el = elmlib.Elm(port, baudrate=connect.link_baud(port))
             el.init()
             volts = ops.preflight(el)
             if not elmlib.aim(el, entry["header"]):

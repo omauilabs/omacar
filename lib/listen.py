@@ -622,7 +622,7 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
     if not connect.request_port(port):
         raise RuntimeError("the daemon is holding the port")
     try:
-        el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        el = elmlib.Elm(port, baudrate=connect.link_baud(port))
         el.init()
         # The DIAGNOSTIC protocol's header width is recorded as a hint and
         # nothing more. Broadcast traffic on the same wire is routinely a

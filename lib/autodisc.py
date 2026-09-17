@@ -154,7 +154,7 @@ def one_pass(headers, service, rng, budget_s, spent_on_battery, on_note):
     doc = frontier.load(key)
 
     try:
-        el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        el = elmlib.Elm(port, baudrate=connect.link_baud(port))
         try:
             el.init()
             while time.time() - started < budget_s:

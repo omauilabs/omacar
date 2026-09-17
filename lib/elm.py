@@ -10,6 +10,7 @@ Read-only is enforced here, at the bottom of the stack, rather than trusted
 to callers.
 """
 import sys
+import os
 import time
 
 import serial
@@ -231,6 +232,82 @@ class Elm:
     def at(self, cmd):
         return self.raw("AT" + cmd)
 
+    # ---- the link, as fast as this adapter will take it --------------------
+    #
+    # MEASURED ON THE CAR, 17 SEPTEMBER. At 115200 this bus overflows the
+    # adapter: every unfiltered monitor took one buffer -- 120 to 132 lines in
+    # three tenths of a second -- and then went silent, which reads exactly
+    # like a quiet bus and is not. At 500000 the same car, adapter and cable
+    # sustained 1,907 lines a second for a full fifteen seconds. Raised again
+    # to 1,000,000 it measured 1,918/s: identical, so ~1,900 frames a second
+    # is THIS BUS and 500000 is where the link stops being the limit.
+    #
+    # WHY IT IS SAFE TO TRY ON EVERY CONNECTION. ATBRD fails closed. The
+    # adapter acknowledges at the old rate, switches, and sends its
+    # identification at the new one; if the host does not read that and answer
+    # within the window, it goes back on its own. A failed attempt costs a
+    # fraction of a second and changes nothing.
+    #
+    # IT LIVES HERE because this object owns the handle, and because every
+    # caller in the tree reaches a bus through init(). Thirteen call sites pick
+    # their own baud; none of them should have to know this exists.
+    FAST_BAUD = 500000
+
+    def raise_baud(self, target=FAST_BAUD):
+        """Talk the link up. Returns True if the rate actually moved."""
+        # OPT-IN UNTIL THE WHOLE PATH IS PROVEN, AND THE DEFAULT IS OFF.
+        #
+        # The measurement behind this is solid: 500000 carried 1,907 lines a
+        # second for fifteen unbroken seconds on the car, where 115200 took
+        # one 120-line buffer and stopped. The INTEGRATION is not. Raised
+        # inside init(), a capture on the same car sat in a serial read for
+        # seven minutes at zero CPU -- the handshake, the reset and the
+        # protocol search interact in a way that is not yet understood, and
+        # the failure mode is a tool that hangs instead of recording.
+        #
+        # A hang in a car is worse than a slow link in a car. So this stays
+        # here -- measured, tested and documented -- and does nothing until
+        # OMACAR_FASTBAUD=1 asks for it, which is how it gets finished off the
+        # car, where a wedged adapter costs nothing but time.
+        if os.environ.get("OMACAR_FASTBAUD") != "1":
+            return False
+        cur = getattr(self.ser, "baudrate", 0)
+        if not target or not cur or target <= cur:
+            return False
+        div = round(4000000.0 / target)
+        # The divisor is what the adapter takes, so a target it cannot express
+        # exactly is not a target: ask for what will really happen.
+        if div < 1 or div > 255 or abs(4000000.0 / div - target) > target * 0.02:
+            return False
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write(b"ATBRD %02X\r" % div)
+            self.ser.flush()
+            # READ ONLY TO THE FIRST CR. A fixed-size read swallows the
+            # identification that arrives at the NEW rate and turns it into
+            # line noise, and the handshake then fails on a link that was
+            # perfectly capable.
+            if b"OK" not in self.ser.read_until(b"\r").upper():
+                return False
+            self.ser.baudrate = target
+            ident = self.ser.read_until(b"\r").upper()
+            if b"ELM" not in ident and b"STN" not in ident:
+                self.ser.baudrate = cur       # it reverts on its own
+                return False
+            self.ser.write(b"\r")
+            self.ser.flush()
+            time.sleep(0.2)
+            if b"OK" not in self.ser.read(64).upper():
+                self.ser.baudrate = cur
+                return False
+            return True
+        except Exception:                                     # noqa: BLE001
+            try:
+                self.ser.baudrate = cur
+            except Exception:                                 # noqa: BLE001
+                pass
+            return False
+
     def init(self, protocol=None):
         """Bring the adapter up on the protocol THIS car actually speaks.
 
@@ -250,6 +327,15 @@ class Elm:
         """
         self.at("Z")
         time.sleep(0.5)
+        # AFTER THE RESET, NEVER BEFORE IT. ATZ puts the adapter back on its
+        # default rate, so a link raised before this line is silently undone
+        # by it: the adapter drops to 115200, the handle stays where it was,
+        # and every read afterwards blocks on bytes that will never parse. That
+        # is not a theory -- it is what a 20-second capture did on the car on
+        # 17 September, sitting in a serial read for three minutes with zero
+        # CPU and reporting "nothing was heard at all" on a bus carrying 1,900
+        # frames a second.
+        self.raise_baud()
         self.at("E0")     # no echo
         self.at("L0")     # no linefeeds
         self.at("S0")     # no spaces

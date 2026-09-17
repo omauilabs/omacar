@@ -256,7 +256,7 @@ def learn(deep=False, on_step=None, on_module=None):
     if not connect.request_port(port):
         raise RuntimeError("the daemon is holding the port")
     try:
-        el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+        el = elmlib.Elm(port, baudrate=connect.link_baud(port))
         el.init()
         v = dtclib.battery_volts(el)
         if v is not None and v < dtclib.LOW_VOLTS:

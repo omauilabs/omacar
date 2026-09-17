@@ -574,7 +574,7 @@ def main(argv):
     atexit.register(connect.release_port)
 
     headers = [h.strip().upper() for h in args.headers.split(",") if h.strip()]
-    el = elmlib.Elm(port, baudrate=(connect.detect_baud(port) or 38400))
+    el = elmlib.Elm(port, baudrate=connect.link_baud(port))
     print(f"\n  {BOLD}OmaCar fault reader{RESET}  {DIM}service 0x19 · {port} ({kind}){RESET}")
     el.init()
 
