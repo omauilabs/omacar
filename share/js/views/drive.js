@@ -20,6 +20,13 @@ import { KINDS, makeGauge, kindsFor, normaliseKind } from "../gauges.js";
 
 const ACK_KEY = "omacar.ackAlert";
 
+// The IMA tile's memory. A pack's direction cannot be read from one sample, so
+// the last few are kept here -- in the view, not the store, because nothing
+// else needs them and a tile that is not on screen should cost nothing.
+const SOC_WINDOW_MS = 12000;   // a few live samples, not a trend line
+const SOC_MOVED = 0.4;         // a resting pack jitters less than this between reads
+const socTrail = [];
+
 // ---------------------------------------------------------------- the catalogue
 //
 // Everything drive mode can show. `get` returns { v, n, tone } — the number,
@@ -103,6 +110,55 @@ const TILES = {
     scale: () => ({ min: 10, max: 16, step: 2, tick: (x) => String(Math.round(x)),
                     bands: [{ to: 11.8, tone: "bad" },
                             { from: 11.8, to: 12.4, tone: "warn" }] }),
+  },
+  // ---- the hybrid ---------------------------------------------------------
+  //
+  // THE PACK, WHICH IS NOT THE `volts` TILE ABOVE. `volts` is
+  // CONTROL_MODULE_VOLTAGE -- the 12V system the adapter itself sits on -- and
+  // reading it as the traction battery is the single easiest mistake to make
+  // on a car like this. They are labelled so the difference is on the screen:
+  // "Battery, 12V" against "IMA charge".
+  //
+  // The daemon has stored HYBRID_BATTERY_REMAINING into samples.soc since the
+  // column was added, and on 16 September it filled 4,330 rows across 126 km.
+  // Nothing has ever drawn it.
+  charge: {
+    label: "IMA charge",
+    get: (v) => {
+      const soc = v.HYBRID_BATTERY_REMAINING;
+      return { v: num(soc, (x) => Math.round(x)), n: "%",
+               tone: soc === null || soc === undefined ? ""
+                   : soc < 20 ? "bad" : soc < 35 ? "warn" : "" };
+    },
+    read: (v) => raw(v.HYBRID_BATTERY_REMAINING),
+    // A pack is not a fuel tank: the ends of this range are where the car
+    // stops letting you use it, not where it is empty or full. The observed
+    // working band on this car over a 126 km drive was 43.9% to 76.9%.
+    scale: () => ({ min: 0, max: 100, step: 25,
+                    bands: [{ to: 20, tone: "bad" }, { from: 20, to: 35, tone: "warn" }] }),
+  },
+  ima: {
+    label: "IMA",
+    // CHARGING / ASSIST / STEADY, FROM THE CHARGE ITSELF.
+    //
+    // The honest caveat: this car answers no motor-power identifier we have
+    // found, so the direction here is the pack's own movement over the last
+    // few samples and nothing more. It is not signed motor power and it does
+    // not pretend to be -- which is why it says "charging" rather than a
+    // number of kilowatts it cannot know.
+    get: (v) => {
+      const soc = v.HYBRID_BATTERY_REMAINING;
+      if (soc === null || soc === undefined) return { v: "—", n: "no pack reading" };
+      socTrail.push({ t: Date.now(), soc });
+      while (socTrail.length && Date.now() - socTrail[0].t > SOC_WINDOW_MS) socTrail.shift();
+      if (socTrail.length < 3) return { v: "…", n: "settling" };
+      const drift = soc - socTrail[0].soc;
+      // A pack at rest still jitters a fraction of a percent between reads, so
+      // below this it is called steady rather than manufacturing a direction.
+      if (drift > SOC_MOVED) return { v: "Charging", n: "regen", tone: "good" };
+      if (drift < -SOC_MOVED) return { v: "Assist", n: "motor helping" };
+      return { v: "Steady", n: "at rest" };
+    },
   },
   fuel: {
     label: "Fuel",
