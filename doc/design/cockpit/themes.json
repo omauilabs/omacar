@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "The crz-cockpit palettes, expressed as OmaCar themes.",
+    "",
+    "The cockpit prototype defines its look as raw CSS custom properties -- ",
+    "thirty-odd output tokens per palette, written by hand. OmaCar's themes are ",
+    "eight source colours and a mode, and everything the app paints with is ",
+    "derived from those by lib/theme.py, which is where the contrast floors ",
+    "live: where `faint` is walked until it clears 5:1 on the surface it will ",
+    "actually sit on, where a warning is pulled until it survives sunlight.",
+    "",
+    "So these are ported as SOURCES, not as output. A palette that is beautiful ",
+    "on a Mac at a desk and illegible through a windscreen at noon is the exact ",
+    "failure the derivation exists to prevent, and pasting the cockpit's ",
+    "finished tokens in would have walked straight past it.",
+    "",
+    "background / foreground / accent are the cockpit's own --background, ",
+    "--foreground and --mint. red, green and blue carry the drive-mode accents ",
+    "DESIGN-NOTES.md names: SPORT red, ECON green, NORMAL blue. yellow and ",
+    "magenta are chosen to sit in each palette's own temperature, because the ",
+    "cockpit never defined them.",
+    "",
+    "Install: omacar theme import doc/design/cockpit/themes.json"
+  ],
+  "themes": {
+    "cockpit-night": {
+      "name": "Cockpit",
+      "mode": "dark",
+      "background": "#111416",
+      "foreground": "#f1f4f2",
+      "accent": "#9af6ca",
+      "red": "#ff8091",
+      "green": "#7ee0a8",
+      "yellow": "#f2d08a",
+      "blue": "#99c6fa",
+      "magenta": "#c9a6f5"
+    },
+    "cockpit-day": {
+      "name": "Cockpit, day",
+      "mode": "light",
+      "background": "#eaf0f3",
+      "foreground": "#182227",
+      "accent": "#117450",
+      "red": "#b3283c",
+      "green": "#117450",
+      "yellow": "#8a6200",
+      "blue": "#316aaa",
+      "magenta": "#6b3fa0"
+    },
+    "cockpit-deep": {
+      "name": "Deep night",
+      "mode": "dark",
+      "background": "#090909",
+      "foreground": "#d1bca5",
+      "accent": "#d4a472",
+      "red": "#c96a5a",
+      "green": "#a3946a",
+      "yellow": "#d4a472",
+      "blue": "#bba08b",
+      "magenta": "#b08a7a"
+    }
+  }
+}

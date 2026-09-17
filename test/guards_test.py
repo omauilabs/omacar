@@ -2120,6 +2120,41 @@ check("the launcher is not a tab you can wander into mid-drive",
       and "hidden: true" in open(os.path.join(ROOT, "share", "js", "main.js"),
                                  encoding="utf-8").read(), True)
 
+# ------------------------------------------------- the ported cockpit palettes
+head("a shipped theme keeps the colours it shipped with")
+
+import themes as _th   # noqa: E402
+
+# THE SILENT ONE. _clean() replaces any colour it cannot parse with the SEED
+# value rather than refusing the theme, which is right for a hand-edited file
+# and lethal for one in the repository: a single typo'd hex would leave a
+# theme that installs cleanly, looks almost right, and is wearing somebody
+# else's blue. So every colour in the shipped file has to survive the round
+# trip unchanged.
+_tf = os.path.join(ROOT, "doc", "design", "cockpit", "themes.json")
+with open(_tf, encoding="utf-8") as _f:
+    _doc = _json.load(_f)
+_ported = _doc.get("themes") or {}
+check("the ported palettes are there", sorted(_ported),
+      ["cockpit-day", "cockpit-deep", "cockpit-night"])
+_lost = []
+for _tid, _body in _ported.items():
+    _clean = _th._clean(_tid, _body)
+    if not _clean:
+        _lost.append(f"{_tid}: refused outright")
+        continue
+    for _k in _th.COLOURS:
+        if _clean[_k] != str(_body.get(_k, "")).lower():
+            _lost.append(f"{_tid}.{_k} became {_clean[_k]}")
+    if _clean["mode"] != _body.get("mode"):
+        _lost.append(f"{_tid}.mode became {_clean['mode']}")
+check("every colour survives the round trip", _lost, [])
+# The cockpit's own background is the one value a reader can check against
+# doc/design/cockpit/globals.css, so it is worth naming.
+check("the night palette is the cockpit's own background",
+      _ported["cockpit-night"]["background"], "#111416")
+check("and the day one is a light mode", _ported["cockpit-day"]["mode"], "light")
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

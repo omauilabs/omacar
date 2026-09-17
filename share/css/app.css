@@ -1738,13 +1738,19 @@ ul.tight li { margin-bottom: 5px; }
   width: min(92vw, 44rem); display: flex; flex-direction: column; gap: 6px;
   text-align: left;
 }
+/* --panel-2, NOT --ghost. `ghost` is an ink in this palette -- dots, gauge
+   ticks, a dead needle -- and using it as a surface painted these rows mid-grey
+   the moment a theme with real surface steps was worn. The steps are
+   ground -> panel -> panel-2 -> raise, and a row sitting on the view's own
+   ground wants the next one up. */
 .launch-step {
   display: grid; grid-template-columns: 1.6rem 9rem 1fr; gap: 10px;
   align-items: baseline; padding: 10px 12px; border-radius: 12px;
-  background: var(--ghost); font-size: clamp(.85rem, 2vh, 1.05rem);
+  background: var(--panel-2); font-size: clamp(.85rem, 2vh, 1.05rem);
 }
-.launch-step.ok .launch-mark { color: var(--ok, var(--accent)); }
-.launch-step.warn { background: var(--warn-bg, var(--ghost)); }
+.launch-step.ok .launch-mark { color: var(--ok); }
+.launch-step.warn { background: var(--warn-bg); }
+.launch-step.warn .launch-mark { color: var(--warn); }
 .launch-step.bad { background: var(--bad-bg); }
 .launch-step.bad .launch-mark { color: var(--bad); }
 .launch-what { color: var(--bright); }
@@ -1752,7 +1758,7 @@ ul.tight li { margin-bottom: 5px; }
 .launch-foot { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .launch-anyway {
   min-height: 64px; padding: 0 22px; border-radius: 999px;
-  border: 1px solid var(--edge); background: transparent; color: var(--bright);
+  border: 1px solid var(--edge-2); background: transparent; color: var(--bright);
   font-size: 1rem; cursor: pointer;
 }
 .launch-note { color: var(--faint); font-size: .85rem; }

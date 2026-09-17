@@ -31,6 +31,7 @@ Nine decisions, and the result is legible by construction.
 import json
 import os
 import re
+import sys
 import time
 
 STORE = os.path.join(os.path.expanduser(
@@ -171,3 +172,77 @@ def active():
     except OSError:
         stamp = int(time.time())
     return store["themes"][tid], stamp
+
+
+# ---- from the command line ---------------------------------------------------
+#
+# A theme is normally built in the app, which is the right place for it: you
+# want to see the palette on the screen it will be worn on. This exists for the
+# other case -- a set of themes that lives in the repository as a file, ported
+# from somewhere else, that should land on a tablet the same way every time.
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    verb = argv[0] if argv else "list"
+    store = load()
+
+    if verb in ("-h", "--help", "help"):
+        print("  omacar theme                       what is installed, and "
+              "which is worn\n"
+              "  omacar theme use <id>              wear one ('omarchy' "
+              "follows the desktop)\n"
+              "  omacar theme import <file.json>    add the themes in a file")
+        return 0
+
+    if verb == "list":
+        worn = store["active"]
+        for tid, t in sorted(store["themes"].items()):
+            mark = "*" if tid == worn else " "
+            print(f"  {mark} {tid:<18} {t['name']:<22} {t['mode']}")
+        if not store["themes"]:
+            print("  none built yet")
+        print(f"\n  wearing: {worn}")
+        return 0
+
+    if verb == "use":
+        if len(argv) < 2:
+            print("  which one? omacar theme list", file=sys.stderr)
+            return 2
+        _store, err = select(argv[1])
+        print(f"  {err}" if err else f"  wearing {argv[1]}")
+        return 1 if err else 0
+
+    if verb == "import":
+        if len(argv) < 2:
+            print("  which file?", file=sys.stderr)
+            return 2
+        try:
+            with open(argv[1], encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError) as why:
+            print(f"  cannot read it: {why}", file=sys.stderr)
+            return 1
+        themes = doc.get("themes") if isinstance(doc, dict) else None
+        if not isinstance(themes, dict) or not themes:
+            print("  no themes in that file", file=sys.stderr)
+            return 1
+        added, refused = 0, []
+        for tid, body in themes.items():
+            _store, err = put(tid, body)
+            if err:
+                # NAMED, NOT COUNTED. A file with one bad entry should say which
+                # one, or the next edit is a guess.
+                refused.append(f"{tid}: {err}")
+            else:
+                added += 1
+        print(f"  {added} theme(s) installed")
+        for r in refused:
+            print(f"  refused {r}")
+        return 0
+
+    print(f"  unknown: {verb}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
