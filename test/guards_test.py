@@ -2057,6 +2057,48 @@ check("the car is proven from the live sample, not the start command",
       "connected" in _bsrc and "WAIT_CONNECT" in _bsrc, True)
 check("it is reachable", "begin) omacar_need_env" in _cli, True)
 
+# ------------------------------------------------- the screen it is pressed on
+head("the launcher shows the sequence rather than spinning over it")
+
+# A SPINNER OVER AN UNKNOWN STATE IS THE FAILURE ITSELF. `listen marks` stopped
+# receiving frames twenty seconds in while the status file went on saying
+# "capturing", and no screen said otherwise. So the launcher polls real steps.
+check("the steps can be read while it runs",
+      api.handle_get("/api/begin", "")[0], 200)
+check("and it is started by a POST", "/api/begin" in
+      open(os.path.join(ROOT, "lib", "api.py"), encoding="utf-8").read(), True)
+
+# TWO RUNS WOULD FIGHT OVER THE ONE SERIAL PORT, which is the exact failure the
+# sequence exists to prevent -- so a second press joins the run in flight.
+_api_src = open(os.path.join(ROOT, "lib", "api.py"), encoding="utf-8").read()
+check("a second press cannot start a second run",
+      '_BEGIN["running"]' in _api_src and "return 200, {\"running\": True" in _api_src,
+      True)
+check("the run is guarded by a lock, not a bare flag",
+      "_BEGIN_LOCK" in _api_src, True)
+
+_lsrc = open(os.path.join(ROOT, "share", "js", "views", "launcher.js"),
+             encoding="utf-8").read()
+# IT NEVER OPENS THE DASHBOARD OVER A FAILURE. A dashboard full of dashes looks
+# close enough to working to be believed at sixty miles an hour.
+_auto = _lsrc.index("handover = setTimeout")
+check("the handover to the dashboard sits inside the success branch",
+      _lsrc.rindex("s.rc === 0", 0, _auto) > _lsrc.rindex("s.running", 0, _auto),
+      True)
+check("a failure leaves the reason on screen instead",
+      "the marked line says why" in _lsrc, True)
+# Leaving anyway is a decision somebody makes, not something that happens to
+# them, so it is a button and it says what it costs.
+check("opening it anyway is an explicit press",
+      "Open the dashboard anyway" in _lsrc, True)
+check("and it says nothing is being recorded",
+      "Nothing will be recorded" in _lsrc, True)
+check("the launcher is not a tab you can wander into mid-drive",
+      'id: "launcher"' in open(os.path.join(ROOT, "share", "js", "main.js"),
+                               encoding="utf-8").read()
+      and "hidden: true" in open(os.path.join(ROOT, "share", "js", "main.js"),
+                                 encoding="utf-8").read(), True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

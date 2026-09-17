@@ -247,6 +247,11 @@ export const api = {
   // is one edit here rather than three across the views.
   adapter: () => req("/api/adapter"),
   daemon: (action) => req("/api/daemon", { method: "POST", body: JSON.stringify({ action }) }),
+  // The pre-drive sequence. Start returns immediately; the steps arrive by
+  // polling, because they take tens of seconds and the screen has to show
+  // each one landing rather than a spinner over an unknown state.
+  beginStart: () => req("/api/begin", { method: "POST", body: "{}" }),
+  beginStatus: () => req("/api/begin"),
   history: (q) => req("/api/history?" + new URLSearchParams(q)),
   trips: (n) => req("/api/trips?n=" + (n || 20)),
   records: (q) => req("/api/records?" + new URLSearchParams(q || {})),

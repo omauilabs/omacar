@@ -20,6 +20,7 @@ import replayView from "./views/replay.js";
 import resetsView from "./views/resets.js";
 import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
+import launcherView from "./views/launcher.js";
 import nurseryView from "./views/nursery.js";
 import { createOmaPlay } from "./omaplay/layer.js";
 import { mockSource, dongleSource } from "./omaplay/source.js";
@@ -172,6 +173,9 @@ const TABS = [
       // one they have. Hiding it until somebody finds the mode switch is the
       // wrong default for the car this was built for.
       { id: "ima",    label: "Battery",  title: "Battery, motor and regen", mount: imaView },
+      // The power-on screen. `hidden` because it is a destination the tablet
+      // is pointed at, not somewhere to browse to mid-drive.
+      { id: "launcher", label: "Begin", title: "Ready to drive", mount: launcherView, hidden: true },
       { id: "omaplay", label: "Phone",   title: "Your phone, and the car", mount: omaplayView, fast: true },
       // Fullscreen audio-reactive shaders off the microphone, with the car
       // still readable underneath. `fast` because the dock shows live numbers.
@@ -315,6 +319,11 @@ function route() {
 const tabOf = (v) => (v && v.tab) || null;
 const hiddenView = (v) => !!(v.ai && !store.aiOn)
                        || !!(v.nursery && !store.nurseryOn)
+                       // A destination rather than a place to browse to. The
+                       // launcher is what the tablet is POINTED at on power-on;
+                       // a tab for it mid-drive is a button that stops the car
+                       // being read in order to check whether it can be read.
+                       || !!v.hidden
                        || !tierAllows(v);
 
 // The one piece of history the app keeps.

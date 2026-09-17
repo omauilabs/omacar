@@ -1710,3 +1710,50 @@ ul.tight li { margin-bottom: 5px; }
 @media (prefers-reduced-motion: reduce) {
   .music-canvas { filter: saturate(.7); }
 }
+
+/* ---- the power-on screen -------------------------------------------------
+   Sized for a thumb on a dash mount, not a mouse at a desk. Every target here
+   clears 64px because the person pressing it is sitting in a car that is
+   already running, and often in the dark. */
+.launch {
+  min-height: calc(100vh - var(--vbar) - var(--nav));
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: safe center; gap: clamp(10px, 2.2vh, 26px);
+  padding: clamp(16px, 4vh, 48px); text-align: center;
+}
+.launch-title {
+  font-size: clamp(2.2rem, 9vh, 5rem); font-weight: 600; letter-spacing: -.03em;
+}
+.launch-sub { color: var(--dim); font-size: clamp(.95rem, 2.4vh, 1.3rem); }
+.launch-go {
+  min-width: min(74vw, 30rem); min-height: clamp(84px, 16vh, 168px);
+  border-radius: 999px; border: 1px solid var(--edge);
+  background: var(--accent); color: var(--ground);
+  font-size: clamp(1.4rem, 4.4vh, 2.6rem); font-weight: 600;
+  letter-spacing: .02em; cursor: pointer;
+}
+.launch-go[disabled] { opacity: .55; cursor: default; }
+/* The steps are the screen once it is running, so they get the room. */
+.launch-steps {
+  width: min(92vw, 44rem); display: flex; flex-direction: column; gap: 6px;
+  text-align: left;
+}
+.launch-step {
+  display: grid; grid-template-columns: 1.6rem 9rem 1fr; gap: 10px;
+  align-items: baseline; padding: 10px 12px; border-radius: 12px;
+  background: var(--ghost); font-size: clamp(.85rem, 2vh, 1.05rem);
+}
+.launch-step.ok .launch-mark { color: var(--ok, var(--accent)); }
+.launch-step.warn { background: var(--warn-bg, var(--ghost)); }
+.launch-step.bad { background: var(--bad-bg); }
+.launch-step.bad .launch-mark { color: var(--bad); }
+.launch-what { color: var(--bright); }
+.launch-said { color: var(--dim); }
+.launch-foot { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.launch-anyway {
+  min-height: 64px; padding: 0 22px; border-radius: 999px;
+  border: 1px solid var(--edge); background: transparent; color: var(--bright);
+  font-size: 1rem; cursor: pointer;
+}
+.launch-note { color: var(--faint); font-size: .85rem; }
+.launch-bad { color: var(--bad); }

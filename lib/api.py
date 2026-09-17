@@ -960,6 +960,75 @@ def _daemon_state(action, changed, note):
     return out
 
 
+# ---- getting ready to drive --------------------------------------------------
+#
+# `omacar begin` is the seven pre-drive steps as one press (see lib/begin.py).
+# The launcher screen needs to SHOW it happening rather than spin over an
+# unknown state -- a spinner over an unknown state is precisely how the marks
+# session was lost, with the status file still saying "capturing" long after
+# the frames had stopped. So the run happens here, in a thread, and its steps
+# accumulate where the screen can poll them.
+_BEGIN = {"running": False, "steps": [], "rc": None, "at": 0.0}
+_BEGIN_LOCK = threading.Lock()
+
+
+def _begin_run():
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cmd = [os.path.join(root, "bin", "omacar"), "begin", "--json", "--no-open"]
+    rc = 1
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True)
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                step = json.loads(line)
+            except ValueError:
+                continue
+            with _BEGIN_LOCK:
+                _BEGIN["steps"].append(step)
+                _BEGIN["at"] = time.time()
+        rc = proc.wait(timeout=10)
+    except Exception:                                         # noqa: BLE001
+        rc = 1
+    finally:
+        with _BEGIN_LOCK:
+            _BEGIN["rc"] = rc
+            _BEGIN["running"] = False
+            _BEGIN["at"] = time.time()
+
+
+def begin_status():
+    with _BEGIN_LOCK:
+        return 200, {"running": _BEGIN["running"], "steps": list(_BEGIN["steps"]),
+                     "rc": _BEGIN["rc"], "at": _BEGIN["at"]}
+
+
+def begin_start():
+    """Start the pre-drive sequence, or report the one already running."""
+    if _networked():
+        # Same promise daemon_control keeps: a cockpit is a screen for a car,
+        # not a console for starting processes on somebody else's machine.
+        return 403, {"error": "the drive is started from the machine it runs "
+                              "on, not from a cockpit display"}
+    with _BEGIN_LOCK:
+        if _BEGIN["running"]:
+            # NOT A SECOND RUN. Two of these racing would fight over the one
+            # serial port, which is the failure this sequence exists to stop.
+            return 200, {"running": True, "steps": list(_BEGIN["steps"]),
+                         "rc": None, "at": _BEGIN["at"]}
+        _BEGIN["running"] = True
+        _BEGIN["steps"] = []
+        _BEGIN["rc"] = None
+        _BEGIN["at"] = time.time()
+    threading.Thread(target=_begin_run, daemon=True,
+                     name="omacar-begin").start()
+    return 200, {"running": True, "steps": [], "rc": None, "at": _BEGIN["at"]}
+
+
 def daemon_control(action):
     """Start or stop the gauge daemon. (status, payload), as the routes want.
 
@@ -1056,6 +1125,8 @@ def handle_get(path, query):
     """(status, payload) or None when it is not ours."""
     if path == "/api/snapshot":
         return 200, records.snapshot()
+    if path == "/api/begin":
+        return begin_status()
     if path == "/api/screen":
         # Which screen was last asked for, and by whom. Read four times a
         # minute by the app; it holds nothing but a view id and a timestamp.
@@ -1299,6 +1370,8 @@ def handle_post(path, body):
         data = json.loads(body or "{}")
     except ValueError:
         data = {}
+    if path == "/api/begin":
+        return begin_start()
     if path == "/api/daemon":
         return daemon_control(str(data.get("action") or "").strip().lower())
     if path == "/api/screen":
