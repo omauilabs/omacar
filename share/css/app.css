@@ -734,14 +734,25 @@ textarea { resize: vertical; min-height: 66px; }
 .app[data-drive="1"] .drive-tile-k,
 .app[data-drive="1"] .drive-unit { font-weight: 500; }
 
+/* LARGER AND CENTRED, which is the cockpit's whole treatment of this row
+   (doc/design/cockpit/DESIGN-NOTES.md). It was already centred; what it did not
+   have was the scale. 24vh to 30vh on a 912px-tall tablet is 219px to 274px of
+   number, which is the difference between reading it and glancing at it.
+   The ceiling stays a clamp rather than a fixed size because this screen is
+   also opened on a phone. */
 .drive-hero { text-align: center; }
 .drive-speed {
-  font-size: clamp(5rem, 24vh, 15rem); font-weight: 600; line-height: .86;
-  letter-spacing: -.04em; font-variant-numeric: tabular-nums;
+  font-size: clamp(5rem, 30vh, 17rem); font-weight: 600; line-height: .86;
+  letter-spacing: -.045em; font-variant-numeric: tabular-nums;
 }
+/* QUIETER, THE SAME WAY THE DOCK'S LABELS GOT QUIETER: by size and tracking,
+   never by ink. --faint is already LIFTED on this screen -- see the sunlight
+   block above, where it is re-derived at 64% of --ink because the desk value
+   disappears through a windscreen -- and walking it back down here would
+   undo that deliberately. */
 .drive-unit {
-  font-size: clamp(.8rem, 2.2vh, 1.3rem); letter-spacing: .32em;
-  color: var(--faint); text-transform: uppercase; margin-top: .5rem;
+  font-size: clamp(.75rem, 2vh, 1.15rem); letter-spacing: .38em;
+  color: var(--faint); text-transform: uppercase; margin-top: .6rem;
 }
 .drive-state {
   font-size: clamp(.8rem, 2vh, 1.2rem); color: var(--dim); margin-top: .3rem;
@@ -750,8 +761,12 @@ textarea { resize: vertical; min-height: 66px; }
 .drive[data-state="offline"] .drive-speed { color: var(--faint); }
 
 .drive-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(8px, 1.4vw, 20px); }
+/* FEWER BORDERS. The cockpit's tiles are surfaces, not boxes: the step from
+   --ground to --panel is what separates them, and a hairline on top of that is
+   a second statement of the same thing. The radius grows to match the dock's
+   18px so the screen reads as one family. */
 .drive-tile {
-  background: var(--panel); border: 1px solid var(--edge); border-radius: 14px;
+  background: var(--panel); border: 1px solid transparent; border-radius: 18px;
   padding: clamp(10px, 2vh, 22px); text-align: center;
 }
 .drive-tile-k {
@@ -1793,7 +1808,12 @@ ul.tight li { margin-bottom: 5px; }
    the way the dock marks its current tab -- a filled pill AND an outline, not
    a tint, because looks.js ships a night palette in which every hue collapses
    to a lightness. */
-.drive-modes { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+/* .drive-controls is a two-column grid — Workshop and Customise — so without
+   this the markers land in column one and hang off to the left under it. */
+.drive-modes {
+  grid-column: 1 / -1;
+  display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
+}
 .drive-mode {
   min-height: var(--tap); min-width: 6.5rem; padding: 0 16px;
   border-radius: 999px; border: 1px solid var(--edge-2);

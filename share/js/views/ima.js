@@ -14,10 +14,15 @@
 // open by claiming not one live IMA quantity had ever been captured from this
 // car. That stopped being true on 16 September: HYBRID_BATTERY_REMAINING
 // filled 4,330 rows across 126 km, swinging 33 points between 43.9% and 76.9%,
-// falling under sustained load and recovering on a closed throttle. So state
-// of charge now gets the dial the rest of them have not earned — drawn only
-// when a reading is actually behind it, which is the same rule as before and
-// the reason the rest of the page is still a register.
+// falling under sustained load and recovering on a closed throttle.
+//
+// AND IT IS THE GENERIC ONE, WHICH THIS FILE IS CAREFUL ABOUT. PID 0x5B is
+// "hybrid pack remaining life", a standard mode 01 reading. The manufacturer's
+// own state of charge, off the hybrid controllers, has never answered and the
+// register below still says so. The dial is labelled for the number it draws,
+// because a screen showing 64% over the words STATE OF CHARGE while the row
+// underneath says that quantity was never discovered is not a subtlety — it is
+// the page contradicting itself.
 //
 // So the register below shows a STATE per quantity instead of a value per
 // quantity, and the undiscovered ones carry the exact command that would find
@@ -205,7 +210,7 @@ export default function ima(root) {
     if (soc === null || soc === undefined || Number.isNaN(Number(soc))) return null;
     const pct = Math.min(100, Math.max(0, Number(soc)));
     const face = svg("svg", { viewBox: "0 0 300 300", role: "img",
-                              "aria-label": `State of charge ${Math.round(pct)} percent` });
+                              "aria-label": `Hybrid pack remaining ${Math.round(pct)} percent` });
     face.appendChild(svg("circle", { cx: 150, cy: 150, r: R, class: "orbit-track" }));
     face.appendChild(svg("circle", {
       cx: 150, cy: 150, r: R, class: "orbit-value",
@@ -222,7 +227,7 @@ export default function ima(root) {
         h("div.charge-orbit", face,
           h("div.orbit-reading",
             h("strong", String(Math.round(pct)), h("small", "%")),
-            h("span", "STATE OF CHARGE"))),
+            h("span", "PACK REMAINING"))),
         h("div.charge-story",
           h("span.energy-state." + dir.tone, dir.label),
           h("h3", dir.line),
@@ -231,9 +236,11 @@ export default function ima(root) {
           // found, so the direction here is the pack's own movement and nothing
           // more -- which is worth saying on the screen rather than only in a
           // commit message.
-          h("p.muted", "Direction is read from the charge itself moving, not "
-            + "from motor power — no motor-power identifier has answered on "
-            + "this car."))));
+          h("p.muted", "Generic OBD-II mode 01 PID 0x5B — the pack's remaining "
+            + "life, not the manufacturer's state of charge, which this car has "
+            + "never given up. Direction is read from that number moving, not "
+            + "from motor power: no motor-power identifier has answered here "
+            + "either."))));
   }
 
   // The same short window the drive tile uses, for the same reason: a pack at
@@ -267,12 +274,23 @@ export default function ima(root) {
   let span = 30;
   let history = null;
   let historyFor = null;
+  let newestAt = null;          // when the car was last heard from, at all
+
+  // A SESSION, not a fixed window. The same boundary lib/drivemode.py uses:
+  // ten minutes of silence means the ignition went off, so "the last drive" is
+  // the run of samples ending at the newest one and stopping at the first such
+  // gap walking backwards.
+  const GAP_S = 600;
 
   function loadHistory() {
     const want = span;
-    api.history({ mins: want }).then((d) => {
+    const q = want === "last" && newestAt
+      ? { from: newestAt - 3 * 3600, to: newestAt, n: 900 }
+      : { mins: typeof want === "number" ? want : 30 };
+    api.history(q).then((d) => {
       if (want !== span) return;          // a slower answer for a span nobody
-      history = d; historyFor = want;     // is looking at any more
+      newestAt = (d && d.newest) || newestAt;   // is looking at any more
+      history = d; historyFor = want;
       draw();
     }).catch(() => { history = null; });
   }
@@ -284,28 +302,49 @@ export default function ima(root) {
     // chart with no points is indistinguishable from a car with no readings —
     // so this would have drawn an honest-looking empty state over real data.
     const rows = (history && history.rows) || [];
-    const pts = rows
+    let pts = rows
       .filter((r) => r && r.soc !== null && r.soc !== undefined && r.t)
       .map((r) => [r.t, r.soc]);
-    const spans = h("div.trace-spans", ...[20, 30, 120].map((m) =>
-      h("button.trace-span", {
-        type: "button",
-        "aria-current": m === span ? "true" : null,
-        onclick: () => { span = m; history = null; loadHistory(); draw(); },
-      }, m < 60 ? `${m} min` : `${m / 60} h`)));
+    const pick = (v, label) => h("button.trace-span", {
+      type: "button",
+      "aria-current": v === span ? "true" : null,
+      onclick: () => { span = v; history = null; loadHistory(); draw(); },
+    }, label);
+    const spans = h("div.trace-spans",
+      ...[20, 30, 120].map((m) => pick(m, m < 60 ? `${m} min` : `${m / 60} h`)),
+      // Offered only once we know there IS a last drive to show.
+      newestAt ? pick("last", "Last drive") : null);
 
     if (pts.length < 2) {
       // Same rule as the dial. A flat line through one point is a drawing of
       // nothing that looks exactly like a drawing of something.
+      //
+      // BUT AN EMPTY WINDOW HAS TWO MEANINGS, and saying the same sentence to
+      // both is how a parked car reads as a broken one. "No readings in the
+      // last thirty minutes" is equally true of a car that drove 126 km
+      // yesterday and of a car that has never been plugged in. If there is a
+      // newest sample at all, it says when — and offers that drive, which is
+      // the thing somebody actually wanted to look at.
       return h("section.sect",
         h("div.head", h("div.eyebrow", "Recent charge")),
         spans,
-        h("p.muted", historyFor === null
-          ? "Reading the last " + span + " minutes…"
-          : "No pack readings in the last " + span + " minutes. The daemon "
-            + "records them whenever it has the port."));
+        historyFor === null
+          ? h("p.muted", "Reading…")
+          : newestAt
+            ? h("p.muted", "Nothing in this window — the car has been parked. "
+                + "The last pack reading was " + ago(newestAt) + ".")
+            : h("p.muted", "No pack readings have ever been recorded on this "
+                + "car. The daemon keeps them whenever it has the port."));
     }
 
+    if (span === "last") {
+      // Walk back from the newest point and stop at the first silence long
+      // enough to mean the ignition was off. Three hours of query, one drive
+      // of answer.
+      let i = pts.length - 1;
+      while (i > 0 && pts[i][0] - pts[i - 1][0] <= GAP_S) i--;
+      pts = pts.slice(i);
+    }
     const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
     const lo = Math.max(0, Math.min(...pts.map((p) => p[1])) - 4);
     const hi = Math.min(100, Math.max(...pts.map((p) => p[1])) + 4);

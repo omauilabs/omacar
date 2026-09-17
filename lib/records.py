@@ -835,6 +835,25 @@ def trips(db, n=20):
 # ordinary thing. A car that never answered stores NULLs, stats() then reports
 # no such channel, and nothing is drawn. Deciding that a reading actually
 # varies enough to be a gauge is lib/ima.py's job, not this reader's.
+def newest_sample(db):
+    """When the car was last heard from at all, or None.
+
+    A window with nothing in it has two very different meanings — the car is
+    parked and was last driven yesterday, or nothing has ever been recorded —
+    and a screen that cannot tell them apart says "no readings" to both.
+    """
+    if db is None or not has(db, "samples"):
+        return None
+    try:
+        row = db.execute("SELECT MAX(t) AS t FROM samples").fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    t = row["t"] if hasattr(row, "keys") else row[0]
+    return float(t) if t else None
+
+
 SAMPLE_COLS = ["t", "rpm", "speed", "load", "throttle", "coolant", "intake",
                "maf", "stft", "ltft", "timing", "lphk", "eff", "soc"]
 

@@ -2312,6 +2312,24 @@ check("and its forty ticks", "i < 40" in _ima and "length: 40" in _design, True)
 # is nothing to draw.
 check("the page no longer claims nothing has ever answered",
       "Not one live IMA quantity has ever been" in _ima, False)
+
+# THE DIAL IS LABELLED FOR THE NUMBER IT DRAWS. lib/ima.py keeps two quantities
+# apart on purpose: "State of charge" is manufacturer data off the hybrid
+# controllers and has never answered, while "Hybrid pack remaining life" is
+# generic mode 01 PID 0x5B and has. The dial draws the second. Labelling it as
+# the first put 64% under the words STATE OF CHARGE directly above a register
+# row saying that quantity was never discovered — the page contradicting itself
+# on one screen.
+# Checked against what is RENDERED, not against the file: the paragraph above
+# explaining this fix says the words too, and a guard that cannot tell a label
+# from a comment fails on its own explanation.
+check("the dial does not borrow the undiscovered quantity's name",
+      'h("span", "STATE OF CHARGE")' in _ima, False)
+check("it names the reading it has", "PACK REMAINING" in _ima, True)
+check("and says which PID that is", "0x5B" in _ima, True)
+_imapy = open(os.path.join(ROOT, "lib", "ima.py"), encoding="utf-8").read()
+check("the register still keeps the two apart",
+      '"State of charge"' in _imapy and "remaining life" in _imapy, True)
 check("and it says what direction is actually read from",
       "not\n            + \"from motor power" in _ima
       or "not " in _ima and "motor power" in _ima, True)

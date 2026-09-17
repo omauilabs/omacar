@@ -1159,9 +1159,16 @@ def handle_get(path, query):
         else:
             mins = qint(query, "mins", 20, 1, 60 * 24 * 14)
             series = records.samples(db, since=time.time() - mins * 60, limit=n)
+        # WHEN THE CAR WAS LAST HEARD FROM AT ALL, so an empty window can say
+        # which kind of empty it is. "No readings in the last 30 minutes" is
+        # true of a car parked overnight and of a car that has never been
+        # plugged in, and a screen that cannot tell them apart is one more
+        # place this tool would be saying nothing while looking like it knew.
+        newest = records.newest_sample(db)
         if db:
             db.close()
-        return 200, {"rows": series, "cols": records.SAMPLE_COLS}
+        return 200, {"rows": series, "cols": records.SAMPLE_COLS,
+                     "newest": newest}
     if path == "/api/trips":
         db = records.connect()
         out = records.trips(db, qint(query, "n", 20, 1, 200)) if db else []

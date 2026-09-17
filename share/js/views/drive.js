@@ -123,7 +123,9 @@ const TILES = {
   // column was added, and on 16 September it filled 4,330 rows across 126 km.
   // Nothing has ever drawn it.
   charge: {
-    label: "IMA charge",
+    // PID 0x5B: the pack's remaining life, which is not the manufacturer's
+    // state of charge -- see the note on the dial in views/ima.js.
+    label: "IMA pack",
     get: (v) => {
       const soc = v.HYBRID_BATTERY_REMAINING;
       return { v: num(soc, (x) => Math.round(x)), n: "%",
