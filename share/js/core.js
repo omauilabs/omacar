@@ -292,6 +292,8 @@ export const api = {
   vehicle: (body) => req("/api/vehicle", { method: "POST", body: JSON.stringify(body) }),
   theme: () => req("/api/theme"),
   themes: () => req("/api/themes"),
+  selectTheme: (id) => req("/api/themes", { method: "POST",
+                                            body: JSON.stringify({ action: "select", id }) }),
   themesDo: (body) => req("/api/themes", { method: "POST", body: JSON.stringify(body) }),
   setOdometer: (km) => req("/api/odometer", { method: "POST", body: JSON.stringify({ km }) }),
   service: (body) => req("/api/service", { method: "POST", body: JSON.stringify(body) }),

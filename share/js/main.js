@@ -676,6 +676,27 @@ function buildBar() {
   //
   // Hidden until asked: a button for software you have not installed is a
   // worse greeting than no button, and `present` summons nothing to find out.
+  // ---- day and night -----------------------------------------------------
+  //
+  // THERE WAS NO SUCH CONTROL, AND SOMEBODY WENT LOOKING FOR IT. The theme
+  // system has had a light/dark mode per theme from the start, and the only
+  // way to change it was the Themes screen. Next to it in this bar sits the
+  // assistant, whose glyph is a disc with rays -- so the thing that looks
+  // most like a brightness control was the one that opens the advisor, and
+  // "the light/dark toggle in the header does not work" is a fair description
+  // of a button that was never that.
+  //
+  // It switches between the light theme and the dark one and REMEMBERS the
+  // pair, so going back returns to the dark theme you were actually wearing
+  // rather than whichever dark one sorts first. In a car this is the day/night
+  // switch, which is a thing you reach for while moving.
+  els.daynight = h("button.vbar-btn", {
+    type: "button", id: "btn-daynight", hidden: true,
+    onclick: () => toggleDayNight(),
+  }, icon(ICONS.moon, 20));
+  bar.appendChild(els.daynight);
+  loadThemeModes();
+
   els.orb = h("button.vbar-btn", {
     type: "button", id: "btn-assistant", hidden: true,
     "aria-label": "Ask the assistant", title: "Ask the assistant",
@@ -696,6 +717,59 @@ function buildBar() {
     "aria-label": "Settings", title: "Units, privacy, learn mode",
     onclick: openSettings,
   }, icon(GEAR, 20)));
+}
+
+// What the two sides of the toggle are, learned from the server once.
+let themeModes = { light: null, dark: null, active: null };
+
+async function loadThemeModes() {
+  try {
+    const d = await api.themes();
+    const list = (d && d.themes) || [];
+    themeModes.active = (d && d.active) || null;
+    const cur = list.find((t) => t.id === themeModes.active);
+    for (const t of list) {
+      if (t.mode === "light" && !themeModes.light) themeModes.light = t.id;
+      if (t.mode === "dark" && !themeModes.dark) themeModes.dark = t.id;
+    }
+    // Prefer the one being worn as its own side of the pair.
+    if (cur) themeModes[cur.mode] = cur.id;
+    paintDayNight(cur ? cur.mode : null);
+  } catch { /* an older server, or none: no button, which is honest */ }
+}
+
+function paintDayNight(mode) {
+  if (!els.daynight) return;
+  // A TOGGLE WITH NOWHERE TO GO DOES NOT APPEAR. If this machine has only dark
+  // themes built, a button that shrugs is worse than no button — that is the
+  // complaint this control exists to answer, and repeating it in a new place
+  // would be its own joke.
+  const usable = !!(themeModes.light && themeModes.dark
+                    && themeModes.light !== themeModes.dark);
+  els.daynight.hidden = !usable;
+  if (!usable) return;
+  const dark = mode !== "light";
+  clear(els.daynight);
+  els.daynight.appendChild(icon(dark ? ICONS.sun : ICONS.moon, 20));
+  els.daynight.title = dark ? "Switch to the day palette"
+                            : "Switch to the night palette";
+  els.daynight.setAttribute("aria-label", els.daynight.title);
+}
+
+async function toggleDayNight() {
+  const goingLight = !document.documentElement.dataset.mode
+    ? true
+    : document.documentElement.dataset.mode !== "light";
+  const want = goingLight ? themeModes.light : themeModes.dark;
+  if (!want) return;
+  try {
+    await api.selectTheme(want);
+    themeModes.active = want;
+    paintDayNight(goingLight ? "light" : "dark");
+    await applyTheme();   // repaints from the palette the server derives
+  } catch (e) {
+    toast(String((e && e.message) || e), "bad");
+  }
 }
 
 function paintDriveMode(mode) {

@@ -2302,6 +2302,54 @@ check("and the default is off", '!= "1"' in _fn, True)
 check("the target has to be expressible as a divisor",
       "4000000.0 / div" in _fn, True)
 
+# ----------------------------------------- the garage holds cars, not fixtures
+head("the emulator's cars do not pass for cars you own")
+
+import garage as _g2   # noqa: E402
+
+# TWO OF THE THREE CARS IN THIS GARAGE WERE THE EMULATOR. `simulated` has been
+# a column, a describe() field and a badge in the garage view since each was
+# added -- and survey.py wrote `json.dumps(False)` into it unconditionally, so
+# no record on any machine ever carried true. A 2026 Porsche and a second CR-Z
+# sat in the list looking exactly like cars somebody owns.
+_svy = open(os.path.join(ROOT, "lib", "survey.py"), encoding="utf-8").read()
+check("the flag is measured, not asserted",
+      'json.dumps(bool(connect.bench_port()))' in _svy, True)
+check("and the hardcoded false is gone",
+      '("simulated", json.dumps(False))' in _svy, False)
+
+# THE KEY IS THE HONEST SOURCE. A record filed under SIM_KEY is the simulator
+# whatever any flag inside it says, and that does not depend on somebody having
+# remembered to set one.
+_gsrc = open(os.path.join(ROOT, "lib", "garage.py"), encoding="utf-8").read()
+check("a record filed as the simulator says so regardless",
+      'or key == SIM_KEY' in _gsrc, True)
+check("and the view already had somewhere to show it",
+      'car.simulated' in open(os.path.join(ROOT, "share", "js", "views",
+                                           "garage.js"), encoding="utf-8").read(), True)
+
+# ------------------------------------------------------ day and night, in reach
+head("the light/dark toggle exists and goes somewhere")
+
+_m = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+check("there is a day/night control in the vehicle bar",
+      'id: "btn-daynight"' in _m, True)
+check("it can actually select a theme",
+      "selectTheme" in open(os.path.join(ROOT, "share", "js", "core.js"),
+                            encoding="utf-8").read(), True)
+# A TOGGLE WITH NOWHERE TO GO DOES NOT APPEAR. Shipping a second button that
+# shrugs, to answer a complaint about a button that shrugged, would be a joke
+# at the owner's expense.
+check("and it hides itself when there is no pair to switch between",
+      "els.daynight.hidden = !usable" in _m, True)
+# The assistant's glyph is a disc with rays, which is most of why somebody
+# tapped it expecting the lights to change. The toggle's own icons have to be
+# tellable apart from it at arm's length.
+_ic = open(os.path.join(ROOT, "share", "js", "icons.js"), encoding="utf-8").read()
+check("the toggle has its own sun and moon", "sun:" in _ic and "moon:" in _ic, True)
+check("and the moon is a crescent, not another rayed disc",
+      len(_ic.split("moon: [")[1].split("]")[0].split('","')), 1)
+
 # ------------------------------------- the handshake, against an echoing ELM
 head("the link handshake survives the echo ATZ turns back on")
 

@@ -17,6 +17,16 @@ export const ICONS = {
           "M15.8 8.6a5.4 5.4 0 0 1 0 6.8"],
   advisor: ["M12 3.2v3.1", "M12 17.7v3.1", "M4.6 7.6l2.7 1.5", "M16.7 14.9l2.7 1.5",
             "M4.6 16.4l2.7-1.5", "M16.7 9.1l2.7-1.5", "M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2z"],
+  // A sun and a moon, for the day/night toggle in the vehicle bar. The
+  // `advisor` glyph above is ALSO a disc with rays, which is most of why
+  // somebody tapped it expecting the lights to change and got the assistant.
+  // These two are drawn to be told apart at arm's length in a moving car: the
+  // sun keeps its rays, the moon is an unmistakable crescent with none.
+  sun: ["M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z",
+        "M12 2.4v2.4", "M12 19.2v2.4", "M2.4 12h2.4", "M19.2 12h2.4",
+        "M5.2 5.2l1.7 1.7", "M17.1 17.1l1.7 1.7",
+        "M5.2 18.8l1.7-1.7", "M17.1 6.9l1.7-1.7"],
+  moon: ["M20.1 14.6A8.6 8.6 0 0 1 9.4 3.9a8.6 8.6 0 1 0 10.7 10.7z"],
   report: ["M6.5 3h7.5l4 4v14h-11.5z", "M14 3v4.5h4", "M9 12.5h6", "M9 16h6"],
   live: ["M12 3a9 9 0 1 0 9 9", "M12 12l5-5"],
   themes: ["M12 3.4a8.6 8.6 0 1 0 0 17.2c1.3 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.1 0-1 .8-1.8 1.8-1.8h1.6a4.5 4.5 0 0 0 4.2-4.6c0-3.9-3.9-6.7-8.6-6.7z",

@@ -147,7 +147,17 @@ def describe(key):
             except (ValueError, TypeError):
                 v[k] = raw
         out["vin"] = v.get("vin")
-        out["simulated"] = bool(v.get("simulated"))
+        # THE KEY IS THE HONEST SOURCE, and the stored flag was never written
+        # by anything. `simulated` has been a column, a describe() field and a
+        # badge in the garage view since each was added, and every record on
+        # this machine carried false -- including the one keyed `simulated`
+        # itself, which showed up in the garage as "2015 Honda CR-Z" beside the
+        # real one, with the emulator's VIN on it. Two of the three cars in the
+        # list were the emulator.
+        #
+        # SIM_KEY is structural: nothing but the simulator is ever filed there,
+        # so it does not depend on a flag somebody remembered to set.
+        out["simulated"] = bool(v.get("simulated")) or key == SIM_KEY
         out["name"] = v.get("name") or " ".join(
             str(x) for x in (v.get("year"), v.get("make"), v.get("model")) if x)
         for f in ("driver", "plate", "notes", "model_source"):

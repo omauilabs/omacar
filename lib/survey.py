@@ -388,8 +388,13 @@ def read_identity(conn, obd, db, supported, record_key=None):
                    (k, json.dumps(v)))
     db.execute("INSERT OR REPLACE INTO vehicle VALUES (?,?)",
                ("protocol", json.dumps(conn.protocol_name())))
+    # NOT HARDCODED FALSE, WHICH IS WHAT IT WAS. `simulated` is a column, a
+    # describe() field and a badge in the garage view, and this line meant no
+    # record on any machine had ever carried true -- so the emulator's cars sat
+    # in the garage list looking exactly like cars somebody owns. On this one
+    # that was two of the three: a 2026 Porsche and a second CR-Z.
     db.execute("INSERT OR REPLACE INTO vehicle VALUES (?,?)",
-               ("simulated", json.dumps(False)))
+               ("simulated", json.dumps(bool(connect.bench_port()))))
 
     codes = [r[0] for r in db.execute(
         "SELECT code FROM faults WHERE status IN ('stored','pending','permanent')")]
