@@ -826,6 +826,9 @@ case "${1:-open}" in
   # chances to skip the one that mattered. It needs the venv because it asks
   # the serial layer whether an adapter is there.
   preflight) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/preflight.py" "$@" ;;
+  # preflight ASKS; begin DOES. The difference is a desk the night before
+  # versus a driveway with the engine running -- see lib/begin.py.
+  begin) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/begin.py" "$@" ;;
   phone)
     shift
     # `phone prep` gets a machine ready for an adapter; everything else is the

@@ -2008,6 +2008,55 @@ _cli = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
 check("it is reachable", "omacar preflight" in _cli
       and 'preflight) omacar_need_env' in _cli, True)
 
+# ------------------------------------------------------- one press, in a car
+head("`begin` acts where preflight only asks")
+
+import begin as _bg           # noqa: E402
+import contextlib as _ctx    # noqa: E402
+import io as _io             # noqa: E402
+
+
+def _quietly(fn):
+    """begin() reports as it goes; the suite's own output stays readable."""
+    with _ctx.redirect_stdout(_io.StringIO()):
+        return fn()
+
+
+# THE TWO FILES ARE DELIBERATELY OPPOSITE and a later tidy-up could collapse
+# them into one. preflight reports at a desk and repairs nothing; begin runs in
+# a driveway with the engine going and is allowed to change things. Each guard
+# below fails if either drifts toward the other.
+_bsrc = open(os.path.join(ROOT, "lib", "begin.py"), encoding="utf-8").read()
+check("begin is allowed to stop a unit", '"stop", RECORDER' in _bsrc, True)
+check("and preflight still is not",
+      any(f'"systemctl", "--user", "{v}"' in _src for v in ("stop", "start")), False)
+
+_r = _bg.Run(quiet=True)
+_quietly(lambda: _r.say("a", False, "broken", fatal=True))
+_quietly(lambda: _r.say("b", False, "worth knowing", fatal=False))
+_quietly(lambda: _r.say("c", True, "fine"))
+check("only a fatal step is a reason not to drive", _r.failed, 1)
+check("every step is kept for the launcher to read", len(_r.steps), 3)
+
+# A BENCH IS THE ONE THAT LOOKS LIKE SUCCESS. Every reading would be the
+# emulator's, the screen would fill with numbers, and none of them would be
+# the car — so it has to stop the run rather than warn inside it.
+_keep = _bg.connect.bench_port
+_bg.connect.bench_port = lambda: "/dev/pts/9"
+_r2 = _bg.Run(quiet=True)
+check("a running bench refuses the whole sequence",
+      _quietly(lambda: _bg._adapter(_r2)) is None, True)
+check("and it is fatal", _r2.failed, 1)
+check("and it says how to clear it", "bench stop" in _r2.steps[-1]["said"], True)
+_bg.connect.bench_port = _keep
+
+# THE START COMMAND RETURNING IS NOT THE CAR ANSWERING -- on 16 September
+# `daemon start` printed "did not start" for a daemon that was already up and
+# about to connect perfectly. So the proof is live.json, not an exit code.
+check("the car is proven from the live sample, not the start command",
+      "connected" in _bsrc and "WAIT_CONNECT" in _bsrc, True)
+check("it is reachable", "begin) omacar_need_env" in _cli, True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
