@@ -2286,8 +2286,11 @@ check("a refused handshake leaves the rate alone",
       _fn.count("return False") >= 4, True)
 check("and a half-finished one puts the handle back",
       _fn.count("self.ser.baudrate = cur") >= 2, True)
-check("it can be turned off without editing code",
-      "OMACAR_NO_FASTBAUD" in _fn, True)
+# IT SHIPS OFF. The measurement is proven; the integration is not, and the
+# failure mode is a capture that hangs in a car rather than one that records
+# slowly. Turning it on is an env var, so finishing it needs no edit here.
+check("it is opt-in from the environment", "OMACAR_FASTBAUD" in _fn, True)
+check("and the default is off", '!= "1"' in _fn, True)
 # A divisor the adapter cannot express is not a target: 4000000/div is what
 # actually happens, and asking for something else would set a rate nobody chose.
 check("the target has to be expressible as a divisor",
