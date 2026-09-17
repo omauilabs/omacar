@@ -2284,8 +2284,14 @@ _fn = _elm[_elm.index("def raise_baud(self"):]
 _fn = _fn[:_fn.index("\n    def ", 10)] if "\n    def " in _fn[10:] else _fn[:4000]
 check("a refused handshake leaves the rate alone",
       _fn.count("return False") >= 4, True)
-check("and a half-finished one puts the handle back",
-      _fn.count("self.ser.baudrate = cur") >= 2, True)
+# EVERY WAY OUT SETTLES THE LINK. Restoring only our own side is not enough:
+# once ATBRD has been written the adapter may have moved regardless of what we
+# then decide, and two ends on different rates is a tool that HANGS rather than
+# one that says no. _settle() puts the handle where the adapter actually is.
+check("every bail-out settles the link rather than assuming",
+      _fn.count("_settle(cur, target)") >= 3, True)
+check("and there is something for it to settle to",
+      "def _settle(self" in _elm, True)
 # IT SHIPS OFF. The measurement is proven; the integration is not, and the
 # failure mode is a capture that hangs in a car rather than one that records
 # slowly. Turning it on is an env var, so finishing it needs no edit here.
@@ -2295,6 +2301,123 @@ check("and the default is off", '!= "1"' in _fn, True)
 # actually happens, and asking for something else would set a rate nobody chose.
 check("the target has to be expressible as a divisor",
       "4000000.0 / div" in _fn, True)
+
+# ------------------------------------- the handshake, against an echoing ELM
+head("the link handshake survives the echo ATZ turns back on")
+
+
+class EchoingElm:
+    """An ELM327 that echoes every command, as a real one does after ATZ.
+
+    Output is held as (rate, bytes) segments, because the ordering is the
+    whole subtlety of this handshake: the acknowledgement goes out at the OLD
+    rate and the identification that follows it at the NEW one. A host reads a
+    segment only while it is on that segment's rate -- which is what a
+    mismatched serial link really looks like, and what a fake that switched
+    before queueing the OK cannot show.
+    """
+
+    def __init__(self, brd=True, confirm=True):
+        self.baudrate = 115200          # the HOST side
+        self.rate = 115200              # the ADAPTER side
+        self.echo = True
+        self.brd, self.confirm = brd, confirm
+        self.segs = []                  # [(rate, bytes)]
+
+    def _put(self, data, rate=None):
+        self.segs.append((rate if rate is not None else self.rate, data))
+
+    def reset_input_buffer(self):
+        self.segs = []
+
+    def flush(self):
+        pass
+
+    def write(self, data):
+        cmd = data.decode("ascii", "replace").strip().upper()
+        if self.echo and cmd:
+            self._put(cmd.encode() + b"\r")
+        if cmd == "ATE0":
+            self.echo = False
+            self._put(b"OK\r")
+        elif cmd.startswith("ATBRD"):
+            if not self.brd:
+                self._put(b"?\r")
+                return
+            self._put(b"OK\r")                       # at the OLD rate
+            new_rate = int(4000000 / int(cmd.split()[1], 16))
+            self._put(b"ELM327 v1.4b\r", new_rate)   # at the NEW rate
+            self.rate = new_rate
+        elif cmd == "":
+            if self.confirm:
+                self._put(b"OK\r")
+        elif cmd == "ATI":
+            self._put(b"ELM327 v1.4b\r")
+
+    def _front(self):
+        while self.segs and not self.segs[0][1]:
+            self.segs.pop(0)
+        if not self.segs:
+            return b""
+        rate, data = self.segs[0]
+        return data if rate == self.baudrate else b""
+
+    def _take(self, n):
+        data = self._front()[:n]
+        if data:
+            rate, buf = self.segs[0]
+            self.segs[0] = (rate, buf[len(data):])
+        return data
+
+    def read(self, n=1):
+        return self._take(n)
+
+    def read_until(self, term=b"\r"):
+        data = self._front()
+        i = data.find(term)
+        return self._take(i + 1 if i >= 0 else len(data))
+
+
+def _fresh_elm(**kw):
+    e = elm.Elm.__new__(elm.Elm)
+    e.ser = EchoingElm(**kw)
+    return e
+
+
+_keep_env = os.environ.get("OMACAR_FASTBAUD")
+os.environ["OMACAR_FASTBAUD"] = "1"
+
+# THE BUG THIS SHIPPED WITH. init() calls raise_baud() straight after ATZ, and
+# ATZ restores ATE1. With echo on the adapter repeats the command back BEFORE
+# it answers, so a read to the first carriage return collects "ATBRD 08",
+# finds no OK, and gives up -- while the adapter switches anyway. Handle at
+# 115200, adapter at 500000, every read afterwards blocking on bytes that can
+# never parse: seven minutes at zero CPU on a bus carrying 1,900 frames/sec.
+_e = _fresh_elm()
+check("it raises the link against an adapter that is echoing",
+      _e.raise_baud(500000), True)
+check("both ends end up on the same rate",
+      (_e.ser.baudrate, _e.ser.rate), (500000, 500000))
+
+# NEVER A MISMATCHED LINK. Once ATBRD is written the adapter may have moved
+# whatever we then decide, and a bail-out that only restores our own side
+# leaves the two ends disagreeing -- which reads as a tool that stops, not one
+# that says no. An adapter that switches and then refuses to confirm is the
+# nastiest shape of that.
+_e2 = _fresh_elm(confirm=False)
+check("a switch that is never confirmed does not raise", _e2.raise_baud(500000), False)
+check("and the handle is left where the adapter actually is",
+      _e2.ser.baudrate, _e2.ser.rate)
+
+# An adapter with no ATBRD at all is simply left alone.
+_e3 = _fresh_elm(brd=False)
+check("an adapter without ATBRD is left where it was", _e3.raise_baud(500000), False)
+check("at the rate it started on", (_e3.ser.baudrate, _e3.ser.rate), (115200, 115200))
+
+if _keep_env is None:
+    os.environ.pop("OMACAR_FASTBAUD", None)
+else:
+    os.environ["OMACAR_FASTBAUD"] = _keep_env
 
 # ---------------------------------------------------- history rows are objects
 head("a chart reads history rows by name, because that is what they are")

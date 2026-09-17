@@ -280,6 +280,21 @@ class Elm:
         if div < 1 or div > 255 or abs(4000000.0 / div - target) > target * 0.02:
             return False
         try:
+            # ECHO OFF FIRST, AND THIS IS THE WHOLE BUG IT SHIPPED WITH.
+            #
+            # init() calls this straight after ATZ, and ATZ restores the
+            # adapter's defaults -- including ATE1. With echo on, the adapter
+            # answers ATBRD by repeating the command back BEFORE it says OK. A
+            # read to the first carriage return then collects "ATBRD 08",
+            # finds no OK in it, and gives up -- while the adapter goes ahead
+            # and switches. Handle at 115200, adapter at 500000, every read
+            # after that blocking on bytes that can never parse. That is the
+            # seven-minute hang at zero CPU, and it is why this does not rely
+            # on the caller having turned echo off yet.
+            self.ser.reset_input_buffer()
+            self.ser.write(b"ATE0\r")
+            self.ser.flush()
+            time.sleep(0.25)
             self.ser.reset_input_buffer()
             self.ser.write(b"ATBRD %02X\r" % div)
             self.ser.flush()
@@ -288,25 +303,51 @@ class Elm:
             # line noise, and the handshake then fails on a link that was
             # perfectly capable.
             if b"OK" not in self.ser.read_until(b"\r").upper():
+                # It may still have switched on us -- see _settle().
+                self._settle(cur, target)
                 return False
             self.ser.baudrate = target
             ident = self.ser.read_until(b"\r").upper()
             if b"ELM" not in ident and b"STN" not in ident:
-                self.ser.baudrate = cur       # it reverts on its own
+                self._settle(cur, target)
                 return False
             self.ser.write(b"\r")
             self.ser.flush()
             time.sleep(0.2)
             if b"OK" not in self.ser.read(64).upper():
-                self.ser.baudrate = cur
+                self._settle(cur, target)
                 return False
             return True
         except Exception:                                     # noqa: BLE001
-            try:
-                self.ser.baudrate = cur
-            except Exception:                                 # noqa: BLE001
-                pass
+            self._settle(cur, target)
             return False
+
+    def _settle(self, *rates):
+        """Put the handle back on whatever the adapter is actually answering.
+
+        THE FAILURE MODE THAT MATTERS IS NOT A SLOW LINK, IT IS A HUNG ONE.
+        Once ATBRD has been written the adapter may have switched whatever we
+        then decide, so a bail-out that only restores our own side can leave
+        the two ends disagreeing -- and disagreeing reads as a tool that stops
+        rather than a tool that says no. Whatever happens above, the handle
+        ends up where the adapter is, or back where it started.
+        """
+        for rate in rates:
+            try:
+                self.ser.baudrate = rate
+                self.ser.reset_input_buffer()
+                self.ser.write(b"ATI\r")
+                self.ser.flush()
+                time.sleep(0.3)
+                if b"ELM" in self.ser.read(80).upper():
+                    return rate
+            except Exception:                                 # noqa: BLE001
+                continue
+        try:
+            self.ser.baudrate = rates[0]
+        except Exception:                                     # noqa: BLE001
+            pass
+        return None
 
     def init(self, protocol=None):
         """Bring the adapter up on the protocol THIS car actually speaks.
