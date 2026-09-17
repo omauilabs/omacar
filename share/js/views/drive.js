@@ -483,6 +483,9 @@ export default function drive(root, { arg } = {}) {
   // disappears is a control somebody hunts for at sixty.
   let exitBtn = null;
   let editBtn = null;
+  let modeRow = null;
+  let markedMode = null;
+  const modeBtns = new Map();
 
   function buildControls() {
     if (exitBtn) return;
@@ -498,13 +501,63 @@ export default function drive(root, { arg } = {}) {
     }, "Customise");
     controls.appendChild(exitBtn);
     controls.appendChild(editBtn);
+
+    // WHICH MODE THE SWITCH IS IN, WRITTEN DOWN.
+    //
+    // ECON, NORMAL and SPORT change the pedal map and how hard IMA assists, and
+    // no identifier anybody has found reports which is selected — so the only
+    // way to label a drive is for the person who moved the switch to say so.
+    // Four labelled windows exist on this car and every one was recorded
+    // parked, where the three modes are identical by construction. The reason
+    // there is no driving data is that collecting it meant typing in a moving
+    // car.
+    //
+    // THESE STAY WHEN THE CAR IS MOVING, and `Customise` above does not. That
+    // is deliberate and it is not an oversight of the same rule: rearranging
+    // gauges at 70 mph is a mis-tap that ruins the screen you are reading,
+    // while this one writes a note. Nothing here reaches the vehicle — it
+    // cannot select a mode, only record the one you selected — and a wrong tap
+    // is undone by tapping the right one.
+    modeRow = h("div.drive-modes");
+    for (const m of ["econ", "normal", "sport"]) {
+      const b = h("button.drive-mode", {
+        type: "button",
+        onclick: () => {
+          api.markDriveMode(m).then(() => { markedMode = m; paintModes(); })
+            .catch(() => toast("could not write that down"));
+        },
+      }, m.toUpperCase());
+      modeRow.appendChild(b);
+      modeBtns.set(m, b);
+    }
+    controls.appendChild(modeRow);
+    api.driveMode().then((d) => { markedMode = d && d.mode; paintModes(); })
+      .catch(() => {});
+  }
+
+  function paintModes() {
+    for (const [m, b] of modeBtns) {
+      if (m === markedMode) b.setAttribute("aria-current", "true");
+      else b.removeAttribute("aria-current");
+    }
   }
 
   function paintControls() {
     buildControls();
     const moving = (store.values.SPEED || 0) > 3;
     // Only when stopped. This is the one rule the editor does not bend.
-    editBtn.hidden = moving;
+    //
+    // A RESERVED SLOT, not a slot that appears -- the same trick, and for the
+    // same reason, as .subbar-lead in app.css. `hidden` collapses the button
+    // and everything below it jumps; with the mode markers now sharing this
+    // block, the Exit target moved 64px down the screen the moment the car
+    // started rolling. A control that moves out from under a thumb at the
+    // instant somebody is reaching for it is the failure that check exists to
+    // catch, and it caught this.
+    //
+    // visibility keeps the space, and still takes the button out of reach and
+    // out of the tab order, so the rule above is unchanged.
+    editBtn.style.visibility = moving ? "hidden" : "";
     const want = editing ? "Done" : "Customise";
     if (editBtn.textContent !== want) editBtn.textContent = want;
   }

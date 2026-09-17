@@ -1127,6 +1127,12 @@ def handle_get(path, query):
         return 200, records.snapshot()
     if path == "/api/begin":
         return begin_status()
+    if path == "/api/drivemode":
+        import drivemode
+        cur = drivemode.current()
+        return 200, {"mode": cur["mode"] if cur else None,
+                     "at": cur["at"] if cur else None,
+                     "modes": list(drivemode.MODES)}
     if path == "/api/screen":
         # Which screen was last asked for, and by whom. Read four times a
         # minute by the app; it holds nothing but a view id and a timestamp.
@@ -1372,6 +1378,16 @@ def handle_post(path, body):
         data = {}
     if path == "/api/begin":
         return begin_start()
+    if path == "/api/drivemode":
+        # A LABEL, NOT A COMMAND. This writes down which mode the driver has
+        # selected on the car's own switch; it does not and cannot select one.
+        # The distinction matters enough to be in the route: nothing here
+        # reaches the vehicle.
+        import drivemode
+        entry, err = drivemode.mark(str(data.get("mode") or ""))
+        if err:
+            return 400, {"error": err}
+        return 200, {"mode": entry["mode"], "at": entry["at"]}
     if path == "/api/daemon":
         return daemon_control(str(data.get("action") or "").strip().lower())
     if path == "/api/screen":

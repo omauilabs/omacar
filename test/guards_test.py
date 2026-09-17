@@ -2120,6 +2120,70 @@ check("the launcher is not a tab you can wander into mid-drive",
       and "hidden: true" in open(os.path.join(ROOT, "share", "js", "main.js"),
                                  encoding="utf-8").read(), True)
 
+# --------------------------------------------------------- the three drive modes
+head("a drive-mode label does not outlive the drive it was made on")
+
+import drivemode as _dm   # noqa: E402
+
+# THE FIRST BUG THIS MODULE FOUND WAS ITS OWN. With every window running until
+# the next mark, the last "normal" mark from 8 September was still in force on
+# 16 September and quietly labelled all 4,367 samples of a 126 km drive home as
+# NORMAL. Nobody had said that. A label nobody made is worse than no label: it
+# is evidence, and it would have been used.
+_mdb = sqlite3.connect(":memory:")
+_mdb.execute("CREATE TABLE samples (t REAL, speed REAL, rpm REAL, throttle REAL,"
+             " load REAL, maf REAL, soc REAL)")
+# One short drive, then eight days of silence, then another drive nobody labelled.
+for _i in range(60):
+    _mdb.execute("INSERT INTO samples VALUES (?,?,?,?,?,?,?)",
+                 (1000.0 + _i, 50, 2200, 30.0, 70.0, 12, 60))
+for _i in range(200):
+    _mdb.execute("INSERT INTO samples VALUES (?,?,?,?,?,?,?)",
+                 (700000.0 + _i, 90, 2600, 40.0, 80.0, 18, 55))
+_wins = _dm.windows([{"at": 1000.0, "mode": "econ"}], _mdb)
+check("a mark covers the drive it was made on", len(_wins), 1)
+check("and stops at the silence that ended it", _wins[0][2] < 1100.0, True)
+check("so it never reaches a later drive", _wins[0][2] < 700000.0, True)
+
+# THE REFUSAL. All four labelled windows on this car were recorded parked, at a
+# closed throttle — where the modes are identical BY CONSTRUCTION, because
+# there is no pedal input to remap and no assist being asked for. Fitting a
+# boundary to that data would produce a confident answer to a question the data
+# cannot contain.
+_pdb = sqlite3.connect(":memory:")
+_pdb.execute("CREATE TABLE samples (t REAL, speed REAL, rpm REAL, throttle REAL,"
+             " load REAL, maf REAL, soc REAL)")
+for _m, _t in (("econ", 2000.0), ("sport", 2100.0)):
+    for _i in range(50):
+        # Parked: throttle on its stop, no road speed. Exactly the four windows
+        # this car actually has.
+        _pdb.execute("INSERT INTO samples VALUES (?,?,?,?,?,?,?)",
+                     (_t + _i, 0.0, 750, 12.9, 26.0, 2.0, 60))
+_keep_load = _dm._load
+_dm._load = lambda: [{"at": 2000.0, "mode": "econ"}, {"at": 2100.0, "mode": "sport"}]
+_rep = _dm.evidence(_pdb)
+_dm._load = _keep_load
+check("parked windows are not usable evidence", _rep["usable"], False)
+check("and it says why, in terms of the pedal",
+      "closed throttle" in _rep["why"] and "assist" in _rep["why"], True)
+check("the rest position is measured, not assumed", _rep["rest_throttle"], 12.9)
+
+# A LABEL, NOT A COMMAND. Nothing here may reach the vehicle: this records
+# which mode a person selected on the car's own switch, and no identifier
+# anybody has found can select one.
+_dsrc = open(os.path.join(ROOT, "lib", "drivemode.py"), encoding="utf-8").read()
+check("the module never opens a port",
+      any(w in _dsrc for w in ("import elm", "import connect", "serial")), False)
+
+# The markers stay reachable while the car is moving, unlike the layout editor
+# beside them — and the editor's slot is RESERVED rather than collapsed, or the
+# Exit target moves out from under a thumb at the moment somebody reaches for it.
+_drv = open(os.path.join(ROOT, "share", "js", "views", "drive.js"), encoding="utf-8").read()
+check("the layout editor keeps its space when it hides",
+      'editBtn.style.visibility = moving ? "hidden" : ""' in _drv, True)
+check("and the mode markers are not hidden with it",
+      "modeRow.hidden" in _drv, False)
+
 # ------------------------------------------------------------------- the dock
 head("the dock got bigger without getting quieter where it matters")
 

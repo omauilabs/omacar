@@ -1786,3 +1786,22 @@ ul.tight li { margin-bottom: 5px; }
 }
 .launch-note { color: var(--faint); font-size: .85rem; }
 .launch-bad { color: var(--bad); }
+
+/* ---- writing down the drive mode ----------------------------------------
+   Three targets on the drive screen, sized to be hit once, deliberately, by
+   somebody who has just moved the physical switch. The current one is marked
+   the way the dock marks its current tab -- a filled pill AND an outline, not
+   a tint, because looks.js ships a night palette in which every hue collapses
+   to a lightness. */
+.drive-modes { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.drive-mode {
+  min-height: var(--tap); min-width: 6.5rem; padding: 0 16px;
+  border-radius: 999px; border: 1px solid var(--edge-2);
+  background: transparent; color: var(--faint);
+  font-size: .82rem; letter-spacing: .14em; cursor: pointer;
+  touch-action: manipulation; transition: background .12s, color .12s;
+}
+.drive-mode[aria-current="true"] {
+  background: var(--raise); color: var(--ink); border-color: var(--accent);
+}
+.drive-mode:active { background: var(--hair); }

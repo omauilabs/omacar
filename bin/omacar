@@ -846,6 +846,7 @@ case "${1:-open}" in
   write) shift; exec "$OMACAR_PY" "$ROOT/lib/write.py" "$@" ;;
   profile) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/profilecli.py" "$@" ;;
   theme) shift; exec python3 "$ROOT/lib/themes.py" "$@" ;;
+  drivemode) shift; exec python3 "$ROOT/lib/drivemode.py" "$@" ;;
   daemon)
     case "${2:-status}" in
       start) daemon_start ;;

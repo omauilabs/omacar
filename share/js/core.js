@@ -252,6 +252,10 @@ export const api = {
   // each one landing rather than a spinner over an unknown state.
   beginStart: () => req("/api/begin", { method: "POST", body: "{}" }),
   beginStatus: () => req("/api/begin"),
+  // Writing down which mode the driver selected on the car's own switch. It
+  // does not select one; nothing here reaches the vehicle.
+  driveMode: () => req("/api/drivemode"),
+  markDriveMode: (mode) => req("/api/drivemode", { method: "POST", body: JSON.stringify({ mode }) }),
   history: (q) => req("/api/history?" + new URLSearchParams(q)),
   trips: (n) => req("/api/trips?n=" + (n || 20)),
   records: (q) => req("/api/records?" + new URLSearchParams(q || {})),
