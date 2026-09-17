@@ -252,6 +252,79 @@ export default function ima(root) {
     return { tone: "rest", label: "At rest", line: "Energy at rest." };
   }
 
+  // ------------------------------------------------------- recent charge
+  //
+  // The cockpit pairs its dial with a recent-power graph, and says plainly in
+  // DESIGN-NOTES that its history is "collected from current demo readings".
+  // This one is not: samples.soc has 4,330 real rows from 16 September alone,
+  // and /api/history already serves soc as one of its channels.
+  //
+  // WHAT IT PLOTS IS CHARGE, NOT POWER, and the label says charge. Power would
+  // be the honest thing to draw and this car will not give it up -- the
+  // difference between the two is the difference between a measurement and a
+  // derivative of one, and drawing the second under the first one's name is
+  // how a graph starts being believed for something it cannot show.
+  let span = 30;
+  let history = null;
+  let historyFor = null;
+
+  function loadHistory() {
+    const want = span;
+    api.history({ mins: want }).then((d) => {
+      if (want !== span) return;          // a slower answer for a span nobody
+      history = d; historyFor = want;     // is looking at any more
+      draw();
+    }).catch(() => { history = null; });
+  }
+
+  function chargeTrace() {
+    // ROWS ARE OBJECTS, NOT TUPLES. /api/history ships a `cols` list beside
+    // them, which reads exactly like an index map and is not one: every row is
+    // keyed by name. Indexing them by position finds nothing, silently, and a
+    // chart with no points is indistinguishable from a car with no readings —
+    // so this would have drawn an honest-looking empty state over real data.
+    const rows = (history && history.rows) || [];
+    const pts = rows
+      .filter((r) => r && r.soc !== null && r.soc !== undefined && r.t)
+      .map((r) => [r.t, r.soc]);
+    const spans = h("div.trace-spans", ...[20, 30, 120].map((m) =>
+      h("button.trace-span", {
+        type: "button",
+        "aria-current": m === span ? "true" : null,
+        onclick: () => { span = m; history = null; loadHistory(); draw(); },
+      }, m < 60 ? `${m} min` : `${m / 60} h`)));
+
+    if (pts.length < 2) {
+      // Same rule as the dial. A flat line through one point is a drawing of
+      // nothing that looks exactly like a drawing of something.
+      return h("section.sect",
+        h("div.head", h("div.eyebrow", "Recent charge")),
+        spans,
+        h("p.muted", historyFor === null
+          ? "Reading the last " + span + " minutes…"
+          : "No pack readings in the last " + span + " minutes. The daemon "
+            + "records them whenever it has the port."));
+    }
+
+    const t0 = pts[0][0], t1 = pts[pts.length - 1][0];
+    const lo = Math.max(0, Math.min(...pts.map((p) => p[1])) - 4);
+    const hi = Math.min(100, Math.max(...pts.map((p) => p[1])) + 4);
+    const W = 600, H = 150;
+    const x = (t) => (t1 === t0 ? 0 : ((t - t0) / (t1 - t0)) * W);
+    const y = (v) => H - ((v - lo) / (hi - lo || 1)) * H;
+    const face = svg("svg", { viewBox: `0 0 ${W} ${H}`, class: "trace",
+                              preserveAspectRatio: "none", role: "img",
+                              "aria-label": `State of charge over the last ${span} minutes` });
+    face.appendChild(svg("polyline", {
+      class: "trace-line", points: pts.map((p) => `${x(p[0])},${y(p[1])}`).join(" ") }));
+    return h("section.sect",
+      h("div.head.wrapline",
+        h("div.eyebrow", "Recent charge"),
+        h("span.muted.right", `${Math.round(lo)}–${Math.round(hi)}%`)),
+      spans,
+      h("div.trace-wrap", face));
+  }
+
   // ---------------------------------------------------------------- header
   function header() {
     const v = (doc && doc.vehicle) || {};
@@ -776,7 +849,11 @@ export default function ima(root) {
     }
     wrap.appendChild(header());
     const dial = chargeDial();
-    if (dial) wrap.appendChild(dial);
+    if (dial) {
+      wrap.appendChild(dial);
+      if (historyFor !== span) loadHistory();
+      wrap.appendChild(chargeTrace());
+    }
     const reg = register(); if (reg) wrap.appendChild(reg);
     const cat = catalogues(); if (cat) wrap.appendChild(cat);
     const fl = flagged(); if (fl) wrap.appendChild(fl);

@@ -2251,6 +2251,37 @@ check("and the bar has room for it",
 # driver needs from it at night.
 check("the label keeps its ink", "color:" in _css.split(".tab-lbl {")[1].split("}")[0], False)
 
+# ---------------------------------------------------- history rows are objects
+head("a chart reads history rows by name, because that is what they are")
+
+# THE TRAP IS THE `cols` LIST. /api/history ships it beside the rows and it
+# reads exactly like an index map. It is not one: every row is keyed by name.
+# A chart indexing by position finds nothing, silently — and a chart with no
+# points is indistinguishable from a car with no readings, so the bug renders
+# as an honest-looking "no pack readings" over a drive that has 867 of them.
+import records as _rc2   # noqa: E402
+
+_hdb = sqlite3.connect(":memory:")
+# The row_factory is WHY they are mappings -- records.rows() does dict(r), and
+# without it every row is a tuple and the dict() raises. Setting it here is not
+# test decoration: it is the same line records.connect() sets, and it is the
+# whole reason a consumer may read by name.
+_hdb.row_factory = sqlite3.Row
+_hdb.execute("CREATE TABLE samples (t REAL, rpm REAL, speed REAL, load REAL,"
+             " throttle REAL, coolant REAL, intake REAL, maf REAL, stft REAL,"
+             " ltft REAL, timing REAL, lphk REAL, eff REAL, soc REAL)")
+_hdb.execute("INSERT INTO samples (t, soc, speed) VALUES (1000.0, 61.5, 50.0)")
+_hrows = _rc2.samples(_hdb, since=0, limit=10)
+check("a history row is a mapping", isinstance(_hrows[0], dict), True)
+check("keyed by channel name", _hrows[0].get("soc"), 61.5)
+check("and NOT by position",
+      isinstance(_hrows[0].get(0, KeyError), type(KeyError)) or 0 not in _hrows[0],
+      True)
+_imasrc = open(os.path.join(ROOT, "share", "js", "views", "ima.js"),
+               encoding="utf-8").read()
+check("the charge trace reads them by name",
+      "r.soc" in _imasrc and "cols.indexOf" not in _imasrc, True)
+
 # -------------------------------------------------------------- the charge dial
 head("the charge dial is drawn only when a reading is behind it")
 

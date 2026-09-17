@@ -200,3 +200,25 @@
 .energy-state.charge { color: var(--ok); }
 .energy-state.assist { color: var(--accent); }
 .energy-state.rest { color: var(--faint); }
+
+/* ---- recent charge ------------------------------------------------------- */
+.trace-spans { display: flex; gap: 8px; margin: 8px 0 10px; flex-wrap: wrap; }
+.trace-span {
+  min-height: var(--tap); padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--edge-2); background: transparent; color: var(--faint);
+  font-size: .8rem; cursor: pointer; touch-action: manipulation;
+}
+.trace-span[aria-current="true"] {
+  background: var(--raise); color: var(--ink); border-color: var(--accent);
+}
+.trace-wrap { width: 100%; }
+/* preserveAspectRatio is none on the svg, so the line stretches to whatever
+   width the card is. A charge trace is read for its SHAPE over time, not for
+   its gradient in degrees, and locking the aspect wastes the width a tablet
+   has plenty of. */
+.trace { width: 100%; height: clamp(110px, 18vh, 190px); display: block; }
+.trace-line {
+  fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
