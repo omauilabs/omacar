@@ -760,7 +760,14 @@ textarea { resize: vertical; min-height: 66px; }
 }
 .drive[data-state="offline"] .drive-speed { color: var(--faint); }
 
-.drive-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(8px, 1.4vw, 20px); }
+.drive-row {
+  display: grid; gap: clamp(8px, 1.4vw, 20px);
+  /* --cols is written inline by the view from the saved layout; --cols-eff is
+     what actually gets used, so a media query can reinterpret the preference
+     without fighting an inline style it can never outrank. */
+  --cols-eff: var(--cols, 3);
+  grid-template-columns: repeat(var(--cols-eff), minmax(0, 1fr));
+}
 /* FEWER BORDERS. The cockpit's tiles are surfaces, not boxes: the step from
    --ground to --panel is what separates them, and a hairline on top of that is
    a second statement of the same thing. The radius grows to match the dock's
@@ -927,8 +934,9 @@ textarea { resize: vertical; min-height: 66px; }
 
 /* On a dashboard the rail is a row of things to poke at while driving. */
 @media (max-width: 760px), (max-height: 560px) {
-  .drive-row { grid-template-columns: repeat(3, 1fr); }
+  .drive-row { --cols-eff: 3; }
 }
+
 
 /* The drive-mode editor. Offered only when the car is stopped, so it can be
    ordinary-sized — but the targets are still thumbs, not pointers.
@@ -1870,4 +1878,36 @@ ul.tight li { margin-bottom: 5px; }
   background: color-mix(in srgb, var(--panel) 86%, transparent);
   border: 1px solid var(--edge-2); border-radius: 18px;
   backdrop-filter: blur(8px);
+}
+
+/* ---- turned on its side -------------------------------------------------
+   THE TABLET GETS ROTATED, so this is a layout that has to work, not a
+   courtesy for small screens. A Surface Pro 7+ in portrait is 912 x 1368
+   logical, which is wider than most phone breakpoints and taller than any of
+   them -- so width queries answer "desktop" and every one of them is wrong
+   here, the same trap the density note at the top of this file describes.
+   `orientation` is the query that tells the truth.
+
+   THE FAILURE IT FIXES. .drive is a four-row grid whose first row is 1fr, so
+   the hero takes every spare pixel. At 912 x 1368 that is about six hundred
+   of them: the speed sat stranded near the top with the tiles pushed to the
+   bottom and a void between, which reads as a broken screen rather than a
+   tall one. In portrait the rows size to their content and the whole block
+   centres as one, which is what `align-content: safe center` was already
+   there to do.
+
+   AND IT LIVES AT THE END OF THIS FILE ON PURPOSE. Every rule here overrides
+   one defined earlier, at the same specificity -- so placed anywhere but last
+   it silently loses. It was written two hundred lines up first, and .hub-vitals
+   went on drawing four across in portrait because its own rule came later. */
+@media (orientation: portrait) {
+  .drive { grid-template-rows: auto auto auto auto; }
+  /* Four tiles across 912px is 228px each and legible, but two rows of two is
+     easier to take in at a glance, and glancing is the whole job. */
+  .drive-row { --cols-eff: 2; }
+  .hub-vitals { grid-template-columns: repeat(2, 1fr); }
+  /* The vehicle bar wraps its own text at this width; giving it the room
+     stops the odometer and the protocol breaking across two lines each. */
+  .vbar { gap: 12px; padding: 0 12px; }
+  .hub-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

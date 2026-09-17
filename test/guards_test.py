@@ -2350,6 +2350,40 @@ check("the toggle has its own sun and moon", "sun:" in _ic and "moon:" in _ic, T
 check("and the moon is a crescent, not another rayed disc",
       len(_ic.split("moon: [")[1].split("]")[0].split('","')), 1)
 
+# ------------------------------------------------------- turned on its side
+head("the portrait rules come last, or they lose")
+
+_css2 = open(os.path.join(ROOT, "share", "css", "app.css"), encoding="utf-8").read()
+_port = _css2.index("@media (orientation: portrait)")
+
+# CASCADE ORDER IS THE WHOLE MECHANISM. Every rule in that block overrides one
+# defined earlier at the same specificity, so anywhere but last it silently
+# loses -- which is exactly what happened: written two hundred lines up, and
+# .hub-vitals went on drawing four across in portrait because its own rule came
+# after it.
+for _sel in (".hub-vitals {", ".drive-row {", ".vbar {", ".hub-grid {"):
+    check(f"portrait overrides {_sel.strip(' {')} after it is defined",
+          _css2.index(_sel) < _port, True)
+
+# ORIENTATION, NOT WIDTH. A Surface Pro 7+ in portrait is 912 x 1368 logical --
+# wider than a phone breakpoint and taller than any of them -- so width queries
+# answer "desktop" and every one of them is wrong here. The density note at the
+# top of this file already says so about `pointer: coarse`.
+check("it asks about orientation rather than guessing from width",
+      "@media (orientation: portrait)" in _css2, True)
+
+# The drive hero is a 1fr row: in a 1368px-tall viewport it takes six hundred
+# spare pixels and strands the speed at the top with a void beneath it.
+check("and the drive rows size to their content when tall",
+      "grid-template-rows: auto auto auto auto" in _css2[_port:], True)
+
+# A column count written as an inline style cannot be reinterpreted by any
+# stylesheet, which is why the view writes a property instead.
+_drv2 = open(os.path.join(ROOT, "share", "js", "views", "drive.js"),
+             encoding="utf-8").read()
+check("the view publishes the column count rather than the computed value",
+      'setProperty("--cols"' in _drv2 and "gridTemplateColumns" not in _drv2, True)
+
 # --------------------------------------------- a duration is not an instant
 head("nothing hands a timestamp to a function that wants an elapsed time")
 

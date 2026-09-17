@@ -437,7 +437,12 @@ export default function drive(root, { arg } = {}) {
   function build() {
     clear(row);
     cells = [];
-    row.style.gridTemplateColumns = `repeat(${layout.columns}, 1fr)`;
+    // A PROPERTY, NOT THE COMPUTED VALUE. Writing grid-template-columns here
+    // put the column count in an inline style, which no stylesheet can win
+    // against -- so the layout could not be reinterpreted when the tablet is
+    // turned on its side. The rule in app.css derives the effective count from
+    // this, and the portrait block overrides that derivation.
+    row.style.setProperty("--cols", String(layout.columns));
     for (const id of layout.tiles) {
       const def = catalogue[id];
       if (!def) continue;
