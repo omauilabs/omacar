@@ -43,7 +43,10 @@ fails = 0
 # Appended to a COPY of app.html. It drives the store directly rather than
 # faking a feed, because what is being measured is layout under a speed value,
 # not the network.
-GEOMETRY_PROBE = """
+# A RAW STRING: the probe is JavaScript, and `\d` in a plain Python string is
+# an invalid escape that only survives by accident. Python has warned about it
+# for years and has said it will stop accepting it.
+GEOMETRY_PROBE = r"""
 <script type="module">
 import { store } from "./js/core.js";
 window.__st = store;
@@ -59,6 +62,26 @@ window.__st = store;
             Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10];
   };
   await wait(3500);
+  // A READING TO COMPARE, BECAUSE THE DEFECT IS A DISAGREEMENT AND NOT A GAP.
+  //
+  // What this pair of checks was written to catch is one screen showing raw
+  // Celsius while another shows Fahrenheit for the same instant. With no car
+  // plugged in both screens correctly show a dash, `agree` requires digits,
+  // and the check failed on every machine that was not sitting in a car --
+  // which is every machine the suite normally runs on. A test that can only
+  // pass with a vehicle attached is a test nobody can act on, so the probe
+  // supplies the instant itself.
+  //
+  // The poller is silenced FIRST for the same reason it is silenced below: it
+  // overwrites store.live every 250 ms, and an injected value that is gone
+  // before it is read reports a fault that is not there.
+  window.__st.refreshLive = async () => {};
+  window.__st.live = Object.assign({}, window.__st.live || {}, {
+    t: Date.now() / 1000, connected: true,
+    values: Object.assign({}, (window.__st.live && window.__st.live.values) || {},
+                          { COOLANT_TEMP: 89, SPEED: 0, RPM: 0 }) });
+  window.__st.emit("live");
+  await wait(400);
   // THE SCREEN THE TABLET PAINTS WHEN SOMEBODY GETS IN. Read before anything
   // navigates away from it: HOME is "hub", and the coolant number here used to
   // be raw Celsius under a bare degree sign while two other screens showed the
@@ -86,7 +109,8 @@ window.__st = store;
   // reported "no movement" for a screen that was moving plenty. A test that
   // cannot fail is worse than no test, so this one was checked by putting the
   // old stylesheet back and watching it go red.
-  s.refreshLive = async () => {};
+  s.refreshLive = async () => {};   // already silenced above; kept so this
+                                    // block still reads as self-contained
   const at = async (kph) => {
     s.live = Object.assign({}, s.live || {}, {
       t: Date.now() / 1000, connected: true,
@@ -302,6 +326,14 @@ def main():
             # 1368x912 is the INNER viewport of a Surface Pro 7 at scale 2, and
             # --window-size sets the OUTER one: asking for 1368,912 gives an
             # inner height of 769 and every number measured in it is wrong.
+            #
+            # WHAT IS NOT KNOWN, and it is worth writing down rather than
+            # leaving the next person to rediscover it. Asking for this exact
+            # size, on this exact profile, the seed page comes back with an
+            # inner height of 912 and app.html comes back with 968 — same
+            # flags, same run, same browser. So the 56px is something the app's
+            # own page does, not the browser chrome, and a calibration measured
+            # on the seed page measures the wrong page. Chromium 151, Sep 2026.
             rg = subprocess.run(
                 [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
                  f"--user-data-dir={gprof}", "--hide-scrollbars",
