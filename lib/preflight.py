@@ -121,6 +121,28 @@ def _recorder(sheet):
     # found" and changes nothing. That is the worst shape a preflight can
     # take: the check fires, the remedy fails, and the driver leaves believing
     # both. `install.sh` is idempotent and is what lays the units down.
+    # ONE PORT HAS ONE OWNER, AND EITHER OWNER RECORDS.
+    #
+    # This row used to assume the recorder was the only thing that keeps a
+    # drive. It is not. The daemon samples the car into `samples` -- 4,367 rows
+    # across 126 km on 16 September, which is the record that survived the day
+    # the recorder and every capture stalled -- and it is also the only thing
+    # that feeds the dashboard. The two cannot both hold the serial port, so
+    # `omacar begin` stops the recorder and starts the daemon on purpose.
+    #
+    # Shouting "nothing is recording anything" at a machine that is sampling
+    # and drawing a live dashboard is a false alarm, and a preflight that cries
+    # wolf before a drive is one somebody learns to walk past.
+    if not (enabled or active):
+        try:
+            import hotplug
+            if hotplug.daemon_running():
+                sheet.row("recording the bus", True,
+                          "the daemon is sampling — it owns the port and feeds "
+                          "the dashboard")
+                return
+        except Exception:                                     # noqa: BLE001
+            pass
     if not (enabled or active) and not _unit_present(UNIT):
         sheet.row("recording the bus", False,
                   "no unit file on this machine — nothing is recording anything",

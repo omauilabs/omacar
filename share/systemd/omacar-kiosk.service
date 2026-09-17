@@ -6,7 +6,13 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/omacar kiosk
+# THE LAUNCHER, NOT THE HUB. `omacar kiosk` on its own opens the app's HOME,
+# which is right when a person opens it at a desk and wrong for the one
+# occasion this unit exists for: a tablet coming up in a car. What that person
+# needs first is the one button that gets the machine ready and then hands over
+# to the dashboard -- not a screen of tabs, and not a dashboard whose numbers
+# may be dashes because nothing was started.
+ExecStart=%h/.local/bin/omacar kiosk launcher
 
 # IT COMES BACK. Every sibling unit here states a restart policy deliberately
 # and this one stated none, which means "never".

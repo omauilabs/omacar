@@ -1998,6 +1998,27 @@ check("and it still blocks", _absent[1] is False and _absent[4] is True, True)
 check("the fix it offers is the one that lays the unit down",
       "install.sh" in _absent[3], True)
 
+# EITHER OWNER RECORDS. One serial port has one owner, and `omacar begin`
+# stops the recorder to give the daemon the port on purpose -- the daemon
+# samples into `samples` (4,367 rows across 126 km on 16 September, the record
+# that survived the day every capture stalled) and it is the only thing that
+# feeds the dashboard. Shouting "nothing is recording anything" at a machine
+# that is doing both is a false alarm, and a preflight that cries wolf before a
+# drive is one somebody learns to walk past.
+import hotplug as _hp2   # noqa: E402
+
+_keep_dr = _hp2.daemon_running
+_hp2.daemon_running = lambda: True
+_pf._run = lambda cmd, timeout=10: (3, "inactive", "")
+_sheet_d = _pf.Sheet()
+_pf._recorder(_sheet_d)
+_hp2.daemon_running = _keep_dr
+_pf._run = _keep_run
+check("a sampling daemon counts as recording the bus", _sheet_d.rows[0][1], True)
+check("and it is not a reason to stay home", _sheet_d.blockers, 0)
+check("it says which owner has the port",
+      "daemon" in _sheet_d.rows[0][2] and "port" in _sheet_d.rows[0][2], True)
+
 _present = _recorder_row(True)
 check("a unit that exists and is off keeps the enable command",
       _present[3].startswith("systemctl --user enable --now"), True)
