@@ -2350,6 +2350,43 @@ check("the toggle has its own sun and moon", "sun:" in _ic and "moon:" in _ic, T
 check("and the moon is a crescent, not another rayed disc",
       len(_ic.split("moon: [")[1].split("]")[0].split('","')), 1)
 
+# --------------------------------------------- a duration is not an instant
+head("nothing hands a timestamp to a function that wants an elapsed time")
+
+# "SEEN 20713D AGO" ON THE GARAGE SCREEN. since() takes an ELAPSED time in
+# seconds; six call sites passed `Date.now() / 1000 - t` and two passed the
+# timestamp itself -- a duration of about 1.79 billion seconds, rendered as
+# fifty-six years. The arithmetic was never wrong. The argument was, and
+# nothing in the name said so, which is why there are two names now.
+import glob as _glob   # noqa: E402
+
+_bad = []
+for _path in sorted(_glob.glob(os.path.join(ROOT, "share", "js", "**", "*.js"),
+                               recursive=True)):
+    _src = open(_path, encoding="utf-8").read()
+    for _m in _re.finditer(r"\bsince\(([^)]*)\)", _src):
+        _arg = _m.group(1).strip()
+        if not _arg or _arg.startswith("secs"):
+            continue
+        # A legitimate call subtracts an instant from now. Anything that is
+        # merely a field holding a moment -- *_at, last_seen -- is the bug.
+        if "Date.now()" in _arg:
+            continue
+        if _re.search(r"(_at\b|last_seen\b|\bat\b)", _arg):
+            _bad.append(f"{os.path.relpath(_path, ROOT)}: since({_arg})")
+check("every since() is handed a duration", _bad, [])
+_core = open(os.path.join(ROOT, "share", "js", "core.js"), encoding="utf-8").read()
+check("and there is a name for the other shape", "export function ago(at)" in _core, True)
+
+# THE TWO GLYPHS IN THE VEHICLE BAR HAVE TO BE TELLABLE APART. The advisor is a
+# disc with rays, and mistaking it for a brightness control is the complaint
+# the day/night toggle exists to answer -- so the toggle's own daytime icon is
+# a half-disc on a horizon, not a second rayed disc.
+_ic2 = open(os.path.join(ROOT, "share", "js", "icons.js"), encoding="utf-8").read()
+_sun = _ic2.split("sun: [")[1].split("],")[0]
+check("the toggle's day icon is not another rayed disc",
+      _sun.count('"M') <= 5 and "18.4h17.2" in _sun, True)
+
 # ------------------------------------- the handshake, against an echoing ELM
 head("the link handshake survives the echo ATZ turns back on")
 

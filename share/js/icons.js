@@ -22,10 +22,17 @@ export const ICONS = {
   // somebody tapped it expecting the lights to change and got the assistant.
   // These two are drawn to be told apart at arm's length in a moving car: the
   // sun keeps its rays, the moon is an unmistakable crescent with none.
-  sun: ["M12 7.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z",
-        "M12 2.4v2.4", "M12 19.2v2.4", "M2.4 12h2.4", "M19.2 12h2.4",
-        "M5.2 5.2l1.7 1.7", "M17.1 17.1l1.7 1.7",
-        "M5.2 18.8l1.7-1.7", "M17.1 6.9l1.7-1.7"],
+  // A SUNRISE, NOT A SUN. The first version of this was a disc with eight
+  // symmetric rays -- which is very nearly the `advisor` glyph above, and the
+  // two then sat side by side in the vehicle bar being mistaken for each
+  // other. That is the whole complaint this control was added to answer, so
+  // repeating it one button along would have been funny rather than useful.
+  //
+  // A half-disc sitting on a horizon cannot be read as a full disc at arm's
+  // length, in a car, at a glance -- which is the only test that matters.
+  sun: ["M3.4 18.4h17.2",
+        "M6.6 14.6a5.4 5.4 0 0 1 10.8 0",
+        "M12 4.2v2.6", "M4.9 7.4l1.8 1.8", "M19.1 7.4l-1.8 1.8"],
   moon: ["M20.1 14.6A8.6 8.6 0 0 1 9.4 3.9a8.6 8.6 0 1 0 10.7 10.7z"],
   report: ["M6.5 3h7.5l4 4v14h-11.5z", "M14 3v4.5h4", "M9 12.5h6", "M9 16h6"],
   live: ["M12 3a9 9 0 1 0 9 9", "M12 12l5-5"],

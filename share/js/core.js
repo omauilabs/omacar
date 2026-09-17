@@ -186,6 +186,21 @@ export function since(secs) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// AN INSTANT, NOT A DURATION -- and the difference is why this exists.
+//
+// since() takes an ELAPSED time in seconds. Six call sites hand it
+// `Date.now() / 1000 - t` and two handed it the timestamp itself, which is a
+// duration of about 1.79 billion seconds and rendered, on the garage screen,
+// as "seen 20713d ago". Fifty-six years. The arithmetic was never wrong; the
+// argument was, and nothing in the name said so.
+//
+// So the two shapes get two names. Anything holding a moment in time uses this
+// one and cannot make that mistake.
+export function ago(at) {
+  if (at === null || at === undefined) return "";
+  return since(Date.now() / 1000 - at);
+}
+
 export const MONTH_NAMES = MONTHS;
 
 // Remaining service life, on Honda's own countdown: 15% is book it, 5% is now,

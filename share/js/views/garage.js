@@ -16,7 +16,7 @@
 // screen is for looking at a car that is not in front of you, which is exactly
 // when picking the wrong one is easiest and least obvious.
 
-import { h, store, api, since, toast } from "../core.js";
+import { h, store, api, ago, toast } from "../core.js";
 import { explain } from "../learn.js";
 import { vin as maskVin, plate as maskPlate, person } from "../privacy.js";
 
@@ -77,7 +77,7 @@ export default function garage(root) {
     const bits = [];
     if (car.vin) bits.push(h("span.mono", maskVin(car.vin)));
     if (car.plate) bits.push(h("span", maskPlate(car.plate)));
-    bits.push(h("span", car.last_seen ? "seen " + since(car.last_seen) : "never connected"));
+    bits.push(h("span", car.last_seen ? "seen " + ago(car.last_seen) : "never connected"));
     // Where the model came from, when the owner did not type it. The VIN
     // carries make and year; the model is asked of the free government
     // decoder, and a reader deserves to know which words are whose.

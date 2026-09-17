@@ -10,7 +10,7 @@
 // So they share a screen. What we found on the left, what it means on the
 // right, and the same vocabulary in both.
 
-import { h, store, api, since, toast } from "../core.js";
+import { h, store, api, since, ago, toast } from "../core.js";
 import { learn, TOPICS } from "../learn.js";
 import { onboard, showOnboarding } from "../onboard.js";
 
@@ -62,7 +62,7 @@ export default function learnView(root) {
       h("div.eyebrow", "Part one"),
       h("div.title", "What OmaCar knows about this car"),
       h("p.lede", has
-        ? `Last learned ${k.learned_at ? since(k.learned_at) : "recently"}. `
+        ? `Last learned ${k.learned_at ? ago(k.learned_at) : "recently"}. `
           + "Run it again any time — it adds what it finds rather than starting over."
         : "Nothing yet. Plug in the adapter, turn the ignition to position II, "
           + "and let it look around. Everything it does here only reads."),
