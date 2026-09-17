@@ -21,6 +21,7 @@ import resetsView from "./views/resets.js";
 import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
 import launcherView from "./views/launcher.js";
+import effectsView from "./views/effects.js";
 import nurseryView from "./views/nursery.js";
 import { createOmaPlay } from "./omaplay/layer.js";
 import { mockSource, dongleSource } from "./omaplay/source.js";
@@ -180,6 +181,11 @@ const TABS = [
       // Fullscreen audio-reactive shaders off the microphone, with the car
       // still readable underneath. `fast` because the dock shows live numbers.
       { id: "music",  label: "Music",    title: "Music",                mount: musicView,  fast: true },
+      // A destination somebody opens on purpose, while parked, to look at.
+      // The hub's four effects are readings rendered as motion and belong
+      // behind their numbers; these two are not that, and putting them behind
+      // a gauge would be decoration pretending to be instrumentation.
+      { id: "effects", label: "Effects", title: "Scanner and Leviathan", mount: effectsView },
       { id: "dash",   label: "Overview", title: "Overview",             mount: dash,       fast: true },
       { id: "garage", label: "Profile",  title: "Every car you own",    mount: garageView },
     ],

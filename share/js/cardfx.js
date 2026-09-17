@@ -318,3 +318,163 @@ export function mountCardEffect(host, kind, read) {
     canvas.remove();
   };
 }
+
+// ---------------------------------------------------------- the two homages
+//
+// A screen of its own, because these are not instruments. The four above are
+// readings rendered as motion and belong behind the numbers they describe;
+// these are for looking at while parked, and putting them behind a gauge would
+// be the moment this tool started lying for effect.
+//
+// They still take the car as input, because a scanner that sweeps at a fixed
+// rate is a screensaver and this project has enough of those in it already.
+
+function makeScanner() {
+  // KITT. One red eye sweeping a bar of cells, and the thing everybody gets
+  // wrong is the easing: the original is a physical scanner, so it slows at
+  // the ends rather than bouncing at constant speed. A sine does that for
+  // free and nothing else looks right.
+  let phase = 0;
+  return (ctx, w, h, t, v, pal) => {
+    const rpm = Math.max(0, (v && v.rpm) || 0);
+    // Idle sweeps slowly; at speed it hurries. The car is driving the eye.
+    phase += 0.012 + (rpm / 7000) * 0.05;
+    const cells = 34;
+    const gap = Math.max(2, w * 0.004);
+    const cw = (w - gap * (cells - 1)) / cells;
+    const cy = h / 2;
+    const ch = Math.min(h * 0.42, 130);
+    const head = (Math.sin(phase) * 0.5 + 0.5) * (cells - 1);
+    for (let i = 0; i < cells; i++) {
+      // Distance from the eye, in cells. The falloff is steep: KITT is a
+      // bright head with a short tail, not a gradient across the whole bar.
+      const d = Math.abs(i - head);
+      const lit = Math.max(0, 1 - d / 5.5);
+      const a = 0.05 + lit * lit * 0.95;
+      ctx.fillStyle = `rgba(255,${Math.round(30 + lit * 40)},${Math.round(28 + lit * 30)},${a})`;
+      const x = i * (cw + gap);
+      const hh = ch * (0.55 + lit * 0.45);
+      ctx.fillRect(x, cy - hh / 2, cw, hh);
+    }
+    // The glow, which is most of the effect. One soft pass, not a blur filter:
+    // a canvas blur on every frame is the kind of thing that costs a dashboard
+    // its frame budget on an Intel GPU.
+    const hx = head * (cw + gap) + cw / 2;
+    const g = ctx.createRadialGradient(hx, cy, 0, hx, cy, ch * 1.5);
+    g.addColorStop(0, "rgba(255,40,36,0.28)");
+    g.addColorStop(1, "rgba(255,40,36,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, cy - ch * 1.5, w, ch * 3);
+  };
+}
+
+function makeMoya() {
+  // Farscape's Moya is a living ship: warm golden bioluminescence moving under
+  // a shell, never a hard edge and never a repeat. So this is slow drifting
+  // light with no geometry in it at all -- the moment it reads as a pattern it
+  // stops reading as alive.
+  let blobs = null;
+  return (ctx, w, h, t, v, pal) => {
+    const soc = v && v.soc != null ? v.soc : null;
+    // The pack drives how lit she is. A ship at rest glows low; charged, she
+    // is bright. With no reading at all it settles mid -- honest, because the
+    // alternative is showing "empty" for a number we do not have.
+    const life = soc == null ? 0.5 : Math.max(0, Math.min(1, soc / 100));
+    if (!blobs) {
+      blobs = Array.from({ length: 7 }, (_, i) => ({
+        px: Math.random(), py: Math.random(),
+        vx: (Math.random() - 0.5) * 0.00006,
+        vy: (Math.random() - 0.5) * 0.00005,
+        r: 0.22 + Math.random() * 0.30, ph: Math.random() * 7,
+      }));
+    }
+    ctx.globalCompositeOperation = "lighter";
+    for (const b of blobs) {
+      b.px += b.vx * 16; b.py += b.vy * 16;
+      if (b.px < -0.3) b.px = 1.3; if (b.px > 1.3) b.px = -0.3;
+      if (b.py < -0.3) b.py = 1.3; if (b.py > 1.3) b.py = -0.3;
+      const breathe = 0.78 + Math.sin(t / 2600 + b.ph) * 0.22;
+      const x = b.px * w, y = b.py * h;
+      const r = b.r * Math.min(w, h) * 1.5 * breathe;
+      // Brighter than the first pass, which read as a dark screen with a
+      // smudge on it. She is lit from inside; the shell is what is dark.
+      const a = (0.10 + life * 0.26) * breathe;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(226,168,86,${a})`);
+      g.addColorStop(0.45, `rgba(214,138,60,${a * 0.55})`);
+      g.addColorStop(1, "rgba(150,80,30,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over";
+  };
+}
+
+const SHOWS = { scanner: makeScanner, moya: makeMoya };
+
+export const SHOW_EFFECTS = Object.keys(SHOWS);
+
+/** A full-screen homage. Same rules; `read()` returns {rpm, soc, speed}. */
+export function mountShow(host, kind, read) {
+  const make = SHOWS[kind];
+  if (!make) return () => {};
+  // NOTE: reduced-motion is NOT checked here, and that is deliberate. These
+  // are a screen somebody chose to open and look at, not decoration arriving
+  // uninvited behind something they were trying to read. The four card
+  // effects refuse under that setting; a page whose entire content is an
+  // animation would just be blank.
+  const canvas = document.createElement("canvas");
+  canvas.className = "show-fx";
+  host.appendChild(canvas);
+  const ctx = canvas.getContext("2d", { alpha: true });
+  if (!ctx) { canvas.remove(); return () => {}; }
+
+  const draw = make();
+  let pal = palette();
+  let w = 0, h = 0, raf = 0, last = 0, stopped = false;
+
+  function resize() {
+    const r = host.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    w = r.width; h = r.height;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    pal = palette();
+  }
+  const ro = new ResizeObserver(resize);
+  ro.observe(host);
+  resize();
+
+  function loop(now) {
+    if (stopped) return;
+    raf = requestAnimationFrame(loop);
+    if (now - last < FRAME) return;
+    last = now;
+    if (!w || !h) return;
+    ctx.clearRect(0, 0, w, h);
+    let v = null;
+    try { v = read(); } catch { v = null; }
+    draw(ctx, w, h, now, v, pal);
+  }
+
+  function onVisibility() {
+    if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+    else if (!raf && !stopped) { last = 0; raf = requestAnimationFrame(loop); }
+  }
+  document.addEventListener("visibilitychange", onVisibility);
+  raf = requestAnimationFrame(loop);
+
+  return () => {
+    stopped = true;
+    cancelAnimationFrame(raf);
+    document.removeEventListener("visibilitychange", onVisibility);
+    ro.disconnect();
+    canvas.remove();
+  };
+}

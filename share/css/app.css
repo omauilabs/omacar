@@ -1880,6 +1880,43 @@ ul.tight li { margin-bottom: 5px; }
   backdrop-filter: blur(8px);
 }
 
+/* ---- the two homages ----------------------------------------------------
+   A screen somebody opens to look at, so the stage gets the room and the
+   explanation sits under it rather than over it. Both shows draw light on
+   black; the card below is the only thing with a surface. */
+.show {
+  min-height: calc(100vh - var(--vbar) - var(--nav));
+  display: grid; grid-template-rows: 1fr auto; gap: clamp(12px, 2.5vh, 28px);
+  padding: clamp(12px, 2.5vh, 32px);
+}
+.show-stage {
+  position: relative; border-radius: 20px; overflow: hidden;
+  background: #05070a; min-height: 40vh;
+}
+/* Moya is warm light on near-black; the scanner wants the darkest ground it
+   can get or the glow has nothing to sit against. */
+.show-stage[data-show="scanner"] { background: #06060a; }
+.show-fx { position: absolute; inset: 0; display: block; }
+.show-card {
+  background: var(--panel); border: 1px solid var(--edge-2); border-radius: 18px;
+  padding: clamp(12px, 2vh, 20px);
+}
+.show-title { font-size: clamp(1.3rem, 3.4vh, 2rem); font-weight: 600; }
+.show-sub {
+  font-size: .72rem; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--faint); margin-top: 2px;
+}
+.show-note { color: var(--dim); margin: 10px 0 14px; max-width: 62ch; }
+.show-picker { display: flex; gap: 10px; flex-wrap: wrap; }
+.show-pick {
+  min-height: var(--tap); padding: 0 20px; border-radius: 999px;
+  border: 1px solid var(--edge-2); background: transparent; color: var(--faint);
+  font-size: .95rem; cursor: pointer; touch-action: manipulation;
+}
+.show-pick[aria-current="true"] {
+  background: var(--raise); color: var(--ink); border-color: var(--accent);
+}
+
 /* ---- turned on its side -------------------------------------------------
    THE TABLET GETS ROTATED, so this is a layout that has to work, not a
    courtesy for small screens. A Surface Pro 7+ in portrait is 912 x 1368
@@ -1910,4 +1947,7 @@ ul.tight li { margin-bottom: 5px; }
      stops the odometer and the protocol breaking across two lines each. */
   .vbar { gap: 12px; padding: 0 12px; }
   .hub-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Taller than it is wide: the stage takes the extra height rather than
+     leaving the card stranded at the bottom of it. */
+  .show-stage { min-height: 52vh; }
 }
