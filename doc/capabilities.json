@@ -103,6 +103,7 @@
     "tpms-tool": {"title": "TPMS trigger and programming tool", "notes": "A 125 kHz trigger that wakes and programs direct TPMS sensors. Out of reach of a USB radio, which can only listen."},
     "internet": {"title": "An internet connection", "notes": "A phone hotspot in the car. Everything marked with it degrades to saying so when offline, and nothing else needs it."},
     "home-machine": {"title": "An always-on Omarchy machine at home, on the same tailnet", "notes": "Pushes documents to the car, relays Work sessions, and is where a backup would live. No cloud host."},
+    "car-network": {"title": "A network in the car: the tablet's own hotspot, or a travel router", "notes": "What rear-seat tablets join. The phone's hotspot would do for internet, but the car's own devices should reach each other without it."},
     "claude": {"title": "A Claude subscription, logged in through Claude Code", "notes": "The advisor and Work run on the owner's own subscription through the local `claude` CLI. Not hardware, and listed here because it is a thing you must have."}
   },
 
@@ -1343,6 +1344,45 @@
       "notes": "Opt-in and off by default. The cabin camera's microphone gives a level, never words. It never judges the driver, and never repeats or nags; the response is offered once. No audio is recorded by default, as the Cameras tab already says. Recording cabin audio needs every party's consent in California, where the owner lives (Penal Code s632, all-party consent for confidential communications), so recording stays off unless the owner turns it on with that warning shown. A warning, not a refusal: the owner decides."
     },
     {
+      "id": "safe.rear-seat-reminder",
+      "domain": "safety",
+      "title": "Check the back seat",
+      "user": "Never walk away from the car with a child still in it.",
+      "agent": "At the end of a trip with 'Kids on board' set, says 'Check the back seat' once, on screen and aloud, and keeps it up until acknowledged.",
+      "status": "next",
+      "tier": "none",
+      "needs": [],
+      "depends": ["ui.home", "diag.live-data", "safe.alert-audio"],
+      "evidence": [],
+      "notes": "Stage 1, next after the event package (decided 2026-09-28). A 'Kids on board' toggle on Begin or Home, which the app can remember from the last drive. The reminder fires when the engine is off and the car is parked. It needs no sensors: it is a reminder, not a detector. Opt-in. Why it matters is a dated claim in doc/roadmap.json: more than a thousand US children have died of vehicular heatstroke since 1998, by NHTSA's count, which is marked unverified because NHTSA's page refused an automated read."
+    },
+    {
+      "id": "safe.rear-seat-watch",
+      "domain": "safety",
+      "title": "A child left behind, noticed after the car is off",
+      "user": "If a child is still in the car after I have walked away, my phone is told.",
+      "agent": "After the ignition is off, watches the cabin camera and microphone for motion or crying, and sends one message to the owner's phone.",
+      "status": "research",
+      "tier": "none",
+      "needs": ["usb-camera", "internet"],
+      "depends": ["safe.rear-seat-reminder", "safe.dashcam"],
+      "evidence": [],
+      "notes": "Stage 2 of Check the back seat. It needs the tablet to stay awake on its own battery after the car is off, and a connection to send from. Messages use the owner's standing consent, set up in advance, as safe.crash does. Detection only: nothing is recorded. False alarms and missed children are both costly, which is why this is research and stage 1 is not."
+    },
+    {
+      "id": "safe.child-cry",
+      "domain": "safety",
+      "title": "Crying in the back seat",
+      "user": "If the baby has been crying for a while, tell me calmly, and tell me where I can stop.",
+      "agent": "Recognises crying on the device, gives one calm notice such as 'The baby has been crying for 5 minutes', and names the next safe place to stop once navigation exists.",
+      "status": "research",
+      "tier": "none",
+      "needs": ["usb-camera"],
+      "depends": ["safe.alert-audio", "safe.dashcam"],
+      "evidence": [],
+      "notes": "Opt-in. Detects only and records nothing; see the Penal Code s632 note on safe.cabin-sound. It does not alarm. A rear-facing baby camera, an optional fourth camera, shows its picture only when the car is stopped, never while moving, the rule plat.nursery already follows. Candidate classifier: MediaPipe's Audio Classifier, whose default model is YAMNet, trained on AudioSet; YAMNet's class map includes 'Baby cry, infant cry' (both checked 2026-09-28, sources in doc/roadmap.json). Runs in the page, like drowsy mode's face tracker."
+    },
+    {
       "id": "safe.awake",
       "domain": "safety",
       "title": "The screen stays on while the car moves",
@@ -1576,6 +1616,19 @@
       "depends": ["safe.alert-audio"],
       "evidence": [],
       "notes": ""
+    },
+    {
+      "id": "media.rear-screens",
+      "domain": "media",
+      "title": "Screens for the back seat",
+      "user": "The kids' tablets get games, films and 'how long until we're there', and I can pause or quiet them without taking my eyes off the road.",
+      "agent": "Serves a family profile to the rear tablets and pauses, dims or sets their volume when the driver asks by voice or with one tap.",
+      "status": "later",
+      "tier": "none",
+      "needs": ["car-network"],
+      "depends": ["hw.cockpit"],
+      "evidence": [],
+      "notes": "Kids' tablets join the car's network through cockpit mode, which is read-only, so nothing on them can touch the car. The family profile offers games and kids' plugins (the plugin study of 2026-09-28 found kids and education plugins in the Omarchy community directory, such as Kids Math and a kids' clock), films from a local library that work offline, and a trip view of how long is left. From the driver's seat: pause, dim and volume only, by one tap or by voice; everything else only while parked. Opt-in. Later by default; the owner can move it up."
     },
     {
       "id": "media.calls",

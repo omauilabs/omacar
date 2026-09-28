@@ -821,7 +821,7 @@ the file that will prove it landed.
 
 In this order, which is the owner's, with one exception. The event package
 starts as soon as the cameras work lands, whatever else is under way, because
-it is the other half of the cameras.
+it is the other half of the cameras, and "Check the back seat" follows it.
 
 **The event package** (`own.incident-kit`, decided 2026-09-28). In the owner's
 words: "if the car suddenly brakes or stops or there's an accident … the
@@ -834,6 +834,17 @@ or impact reading), the location once GPS exists, and a short summary page.
 It can be reviewed on the tablet, downloaded from another device through the
 read-only cockpit mode, or exported as one file for an insurer. Location is
 added when the receiver exists, and the package does not wait for it.
+
+**Check the back seat, stage 1** (`safe.rear-seat-reminder`, decided
+2026-09-28). The owner has kids. A "Kids on board" toggle sits on Begin or
+Home, and the app can remember it from the last drive. At the end of a trip,
+with the engine off and the car parked, the screen and the voice say "Check
+the back seat" once, and the notice stays until it is acknowledged. It needs
+no sensors, because it is a reminder and not a detector, and it is opt-in.
+NHTSA counts more than a thousand US children dead of vehicular heatstroke
+since 1998. That figure is in the claims list, marked unverified, because
+NHTSA's page refused an automated read. Stage 2, noticing a child left behind
+after the car is off, is research.
 
 **1. IMA and Honda data: the 2026-09-29 discovery drives.** Asymmetry 3
 claims that coverage is expensive per vendor and nearly free per community.
@@ -960,6 +971,12 @@ The larger pieces are:
   and voice-only while driving. It comes after the Next items, then OmaMenu
   (decided 2026-09-28).
 - **OmaMenu**, a system-wide replacement for the Omarchy menu.
+- **Screens for the back seat** (`media.rear-screens`, and the owner can move
+  it up). Kids' tablets join the car's network through the read-only cockpit
+  mode with a family profile: games and kids' plugins, films from a local
+  library that work offline, and how long until we're there. None of it can
+  touch the car. The driver can pause, dim or set the volume with one tap or
+  by voice, and anything more waits until the car is parked. It is opt-in.
 - **Impacts felt by the tablet itself** (`safe.impact`). It reads the tablet's
   own accelerometer, which on the Surface Pro 7+ is an IIO device through the
   Intel ISH, checked on the tablet on 2026-09-28. On a jolt it locks the same
@@ -998,6 +1015,25 @@ opt-in and off by default. It never judges the driver and never repeats or
 nags. No audio is recorded by default. Recording cabin audio needs everyone's
 consent in California under Penal Code §632, so it stays off unless the owner
 turns it on with that warning shown. That is a warning, not a refusal.
+
+**The back seat.** In the owner's words, parents should be able to "have or
+control screens from the back seat for family entertainment or games", and "if
+a baby is crying in the back seat and I'm driving, there's some safety
+implications there that we could potentially address". Both pieces here are
+opt-in, as is the rear-screen work in Later.
+
+- **Crying in the back seat** (`safe.child-cry`, research). An on-device
+  classifier recognises crying. It detects and records nothing. The candidate
+  is MediaPipe's Audio Classifier with YAMNet, whose AudioSet classes include
+  "Baby cry, infant cry". It does not alarm. It gives one calm notice, such as
+  "The baby has been crying for 5 minutes", with the next safe place to stop
+  once navigation exists. A rear-facing baby camera shows its picture only
+  when the car is stopped, the rule the nursery screen already follows.
+- **A child left behind** (`safe.rear-seat-watch`, research, stage 2 of Check
+  the back seat). After the ignition is off, the cabin camera and microphone
+  would look for motion or crying and message the owner's phone under the
+  standing consent crash detection uses. It needs the tablet awake on its own
+  battery, and a connection.
 
 ---
 

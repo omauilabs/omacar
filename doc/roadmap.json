@@ -192,6 +192,27 @@
       "how": "Read the section on the Legislature's own site. This is why cabin audio is never recorded by default and why turning it on shows that warning; it is not legal advice, and other states differ."
     },
     {
+      "text": "More than 1,000 children have died of vehicular heatstroke in the United States since 1998, by NHTSA's count.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": false,
+      "sources": [
+        "https://www.nhtsa.gov/campaign/heatstroke"
+      ],
+      "how": "NHTSA's page and the National Safety Council's (injuryfacts.nsc.org, hotcars) both refused automated reads on 2026-09-28 with HTTP 403, so the figure was seen only in search results summarising NHTSA. Open NHTSA's heatstroke page in a browser and confirm the count, then mark this verified. It is the reason safe.rear-seat-reminder exists, not a number the app shows."
+    },
+    {
+      "text": "MediaPipe's Audio Classifier task uses YAMNet as its default model, an audio event classifier trained on AudioSet, and supports Python, the web, Android and iOS. YAMNet's class map includes 'Baby cry, infant cry' (index 20, /t/dd00002).",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://developers.google.com/edge/mediapipe/solutions/audio/audio_classifier",
+        "https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv"
+      ],
+      "how": "Open the task guide and the class map. A class existing is not the classifier working in a car: road noise, music and an older child's shouting all need testing before safe.child-cry says anything."
+    },
+    {
       "text": "The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.",
       "asserted": "2026-09-28",
       "recheck_days": 90,
