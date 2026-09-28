@@ -217,9 +217,13 @@ const TABS = [
         { id: "report", label: "Report",  title: "Vehicle report",    mount: report },
       ] },
     ] },
+  // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
+  // no `claude` CLI, that it is not set up and what it needs -- an honest
+  // state, and the one the tab should show. Hidden, it was still what the tab
+  // opened, with no chip row, so Work could not be reached at all.
   { id: "agent", label: "Agent", icon: ICONS.agent,
     views: [
-      { id: "advisor", label: "Car",  title: "Oma Agent", mount: advisor, ai: true },
+      { id: "advisor", label: "Car",  title: "Oma Agent", mount: advisor },
       { id: "work",    label: "Work", title: "Work",      mount: workView },
     ] },
 ];
@@ -289,6 +293,11 @@ const VIEWS = [
 // write location.hash except in direct response to a tap or a keypress.
 const HOME = "home";
 
+// Where a tab takes you: its first screen the navigation shows. Never a hidden
+// one -- that is a screen the chip row does not list, reached with no way to
+// the rest of the tab.
+const tabRoot = (t) => t.views.find((v) => !hiddenView(v));
+
 // THE MODE, WHICH THE SERVER DECIDES AND THIS FILE ONLY REFLECTS.
 //
 // A view carries `tier` when it is not for everybody. The registry above is
@@ -329,8 +338,7 @@ function route() {
 }
 
 const tabOf = (v) => (v && v.tab) || null;
-const hiddenView = (v) => !!(v.ai && !store.aiOn)
-                       || !!(v.nursery && !store.nurseryOn)
+const hiddenView = (v) => !!(v.nursery && !store.nurseryOn)
                        // A destination rather than a place to browse to. The
                        // launcher is what the tablet is POINTED at on power-on;
                        // a tab for it mid-drive is a button that stops the car
@@ -447,7 +455,7 @@ function buildNav() {
     const pip = h("span.pip", { hidden: true });
     const btn = h("button.tab", {
       type: "button",
-      onclick: () => goto(t.views[0].id),
+      onclick: () => { const v = tabRoot(t); if (v) goto(v.id); },
     }, h("span.tab-in", icon(t.icon, 22), h("span.tab-lbl", t.label)), pip);
     bar.appendChild(btn);
     els.tabs.set(t.id, { btn, pip });
@@ -522,9 +530,8 @@ function paintNavState() {
 
   for (const t of TABS) {
     const { btn, pip } = els.tabs.get(t.id);
-    // A tab whose only screen is the advisor disappears when there is no AI
-    // available, rather than leading somewhere that apologises.
-    btn.hidden = t.views.every(hiddenView);
+    // A tab with no screen to show disappears, rather than leading nowhere.
+    btn.hidden = !tabRoot(t);
     if (tab === t.id) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
     const b = tabBadge(t.id);
@@ -1233,7 +1240,8 @@ async function boot() {
     const n = parseInt(e.key, 10);
     if (n >= 1 && n <= TABS.length) {
       const t = TABS[n - 1];
-      if (!t.views.every(hiddenView)) goto(t.views[0].id);
+      const v = tabRoot(t);
+      if (v) goto(v.id);
       return;
     }
     if (e.key === "r" && !e.metaKey && !e.ctrlKey) { store.refreshCar(); toast("Refreshed"); }

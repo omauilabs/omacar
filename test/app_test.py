@@ -362,6 +362,30 @@ CALLOUT_PROBE = r"""
 </script>
 """
 
+# THE AGENT TAB WITHOUT AI. The tab button used to go to its first view, the
+# advisor, which the navigation hides when there is no AI -- so it opened a
+# screen the chip row did not list, drew no chips, and left Work unreachable.
+AGENT_PROBE = r"""
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  await wait(3500);
+  const tabs = [...document.querySelectorAll("#tabbar .tab")];
+  tabs[tabs.length - 1].click();
+  await wait(1500);
+  const wrap = document.querySelector("#stage .wrap");
+  let ai = null;
+  try { ai = (await (await fetch("/api/ai/available", { cache: "no-store" })).json()).available; }
+  catch { ai = null; }
+  const out = { ai, view: wrap ? wrap.dataset.view : null,
+                text: wrap ? wrap.textContent.replace(/\s+/g, " ").trim().slice(0, 200) : "",
+                chips: [...document.querySelectorAll("#subbar-chips .chip[data-key]")]
+                  .map((c) => c.textContent.trim()) };
+  document.title = "AGENT " + JSON.stringify(out);
+})();
+</script>
+"""
+
 # Emulates the Surface's touch screen: `pointer: coarse` matches, `hover` does
 # not. Checked on Chromium 151 by reading both media queries back.
 COARSE = ("--blink-settings=primaryPointerType=2,availablePointerTypes=2,"
@@ -511,6 +535,35 @@ def callout_check(exe):
                and got[a][1] < got[b][3] and got[b][1] < got[a][3]]
         check(f"{orient}: no two X-ray callouts overlap ({len(ids)} drawn; "
               f"overlapping: {hit})", len(ids) == 5 and hit == [])
+
+
+# The server's answer to "is there an advisor?" replaced by "no" before the
+# app boots (this runs ahead of main.js, which is a deferred module), so the
+# no-AI state is exercised on a machine that has the CLI.
+NO_AI = r"""
+<script>
+const __fetch = window.fetch;
+window.fetch = (u, o) => String(u).includes("/api/ai/available")
+  ? Promise.resolve(new Response('{"available": false}', { headers: { "Content-Type": "application/json" } }))
+  : __fetch(u, o);
+</script>
+"""
+
+
+def agent_check(exe):
+    """The Agent tab opens a screen it lists, and says so when AI is not set up."""
+    for label, prefix in (("as this server reports it", ""), ("with no AI", NO_AI)):
+        g = run_probe(exe, prefix + AGENT_PROBE, "AGENT")
+        if not g:
+            bad(f"{label}: the agent probe returned nothing")
+            continue
+        check(f"{label}: the Agent tab opens a screen its chip row lists, with "
+              f"Work reachable (chips {g.get('chips')}, opened {g.get('view')!r})",
+              g.get("chips") == ["Car", "Work"] and g.get("view") == "advisor")
+        if prefix or g.get("ai") is False:
+            check(f"{label}: and it says the advisor is not set up "
+                  f"(got {g.get('text')[:90]!r})",
+                  "needs the Claude CLI" in (g.get("text") or ""))
 
 
 def lost_server_check(exe):
@@ -928,6 +981,8 @@ def main():
         fit_check(exe)
         # ---- and the X-ray's labels stay apart --------------------------
         callout_check(exe)
+        # ---- and the Agent tab with or without AI -----------------------
+        agent_check(exe)
     finally:
         server.terminate()
         try:

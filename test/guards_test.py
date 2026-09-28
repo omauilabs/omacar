@@ -2797,6 +2797,46 @@ finally:
     (ai.bundle, ai.available, ai.run_claude, ai.cache_path, ai.records.write_record) = _ai_was
     _sh_ai.rmtree(_ai_tmp, ignore_errors=True)
 
+# THE CLI WHERE ITS INSTALLER PUTS IT. On the tablet `claude` lives only in
+# ~/.local/bin, and the server runs under systemd, whose PATH does not have
+# it -- so shutil.which() said no, and the advisor said it was not installed.
+# A scratch HOME with a fake CLI in ~/.local/bin, and a PATH that holds
+# nothing: it must be found, and it must be what run_claude() runs.
+_cl_home = _tf_ai.mkdtemp()
+_cl_env = {k: os.environ.get(k) for k in ("HOME", "PATH")}
+_cl_run = ai.subprocess.run
+_cl_cmd = []
+try:
+    os.makedirs(os.path.join(_cl_home, ".local", "bin"))
+    _cl_fake = os.path.join(_cl_home, ".local", "bin", "claude")
+    with open(_cl_fake, "w") as _f:
+        _f.write("#!/bin/sh\nexit 0\n")
+    os.chmod(_cl_fake, 0o755)
+    os.environ["HOME"] = _cl_home
+    os.environ["PATH"] = os.path.join(_cl_home, "empty")
+    check("claude in ~/.local/bin only, off PATH, is found", ai.claude_bin(), _cl_fake)
+    check("and the advisor is available", ai.available(), True)
+
+    class _Done:
+        returncode, stdout, stderr = 0, _json.dumps({"result": "{}"}), ""
+
+    def _capture(cmd, **kw):
+        _cl_cmd.append(cmd)
+        return _Done()
+    ai.subprocess.run = _capture
+    ai.run_claude("p", "claude-opus-5-5", "x")
+    check("and that path is the one it runs", (_cl_cmd[0] or [None])[0], _cl_fake)
+    os.remove(_cl_fake)
+    check("with it gone, the advisor says it is not there", ai.available(), False)
+finally:
+    ai.subprocess.run = _cl_run
+    for _k, _v in _cl_env.items():
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
+    _sh_ai.rmtree(_cl_home, ignore_errors=True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

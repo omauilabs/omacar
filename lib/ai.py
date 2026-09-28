@@ -205,9 +205,27 @@ PROMPTS = {
 }
 
 
+def claude_bin():
+    """The `claude` CLI, found where it is actually installed, or None.
+
+    Not PATH alone. The CLI's own installer puts it in ~/.local/bin, and on the
+    tablet the server runs under systemd, whose PATH does not include that --
+    so shutil.which() said there was no CLI on a machine that had one, and the
+    advisor said it was not installed. PATH first, then the installer's homes.
+    """
+    found = shutil.which("claude")
+    if found:
+        return found
+    for p in (os.path.expanduser("~/.local/bin/claude"),
+              os.path.expanduser("~/.claude/local/claude")):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
 def available():
     """Whether the local Claude CLI is there to be driven."""
-    return shutil.which("claude") is not None
+    return claude_bin() is not None
 
 
 # ---- the evidence bundle ----------------------------------------------------
@@ -478,7 +496,7 @@ def _answering_model(envelope, asked_for):
 def run_claude(prompt, model, extra_system):
     """One headless turn. No tools, one turn, JSON out."""
     cmd = [
-        "claude", "-p",
+        claude_bin() or "claude", "-p",
         "--output-format", "json",
         "--model", model,
         # REPLACE the CLI's own system prompt rather than appending to it.

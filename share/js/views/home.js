@@ -146,7 +146,7 @@ function phoneCard() {
 function agentCard() {
   const q = h("div.ag-q", { hidden: true });
   const a = h("div.ag-a", { hidden: true });
-  const empty = h("div.hc-ph-s", "Ask about your car: what a code means, what is due, how a drive went.");
+  const empty = h("div.hc-ph-s");
   const node = tappable(h("div.card.hc.hc-agent",
     h("div.hc-title", icon(ICONS.agent, 18), "Oma Agent", h("span.chev", icon(ICONS.chevron, 18))),
     q, a, empty), "advisor");
@@ -154,6 +154,12 @@ function agentCard() {
   return {
     node,
     paint() {
+      // NOT AN INVITATION IT CANNOT KEEP. Without the `claude` CLI the
+      // advisor is not set up, and the card says so instead of offering to
+      // answer questions.
+      text(empty, store.aiOn
+        ? "Ask about your car: what a code means, what is due, how a drive went."
+        : "Not set up on this machine: the advisor needs the Claude CLI.");
       if (Date.now() - asked < 60000) return;
       asked = Date.now();
       api.aiHistory().then((d) => {
