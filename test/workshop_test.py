@@ -1096,7 +1096,9 @@ ok("the aurora renders into a small buffer, not the full canvas",
 head("Gauges")
 
 _gauges = (_share / "js" / "gauges.js").read_text(encoding="utf-8")
-_drive = (_share / "js" / "views" / "drive.js").read_text(encoding="utf-8")
+# The catalogue these checks read (scale, read, the fuel-trim bands) moved out
+# of drive.js and into readings.js so Home and Vehicle can share it too.
+_drive = (_share / "js" / "readings.js").read_text(encoding="utf-8")
 api_src = (pathlib.Path(__file__).resolve().parent.parent / "lib" / "api.py"
            ).read_text(encoding="utf-8")
 

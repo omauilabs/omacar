@@ -7,6 +7,7 @@
 // service schedule is a tool that gets in the way of the thing it is watching.
 
 import { h, clear, icon, store, U, api, toast, confirmDialog, dist, grouped, since, withToken } from "./core.js";
+import { record } from "./trail.js";
 
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
@@ -1167,6 +1168,8 @@ async function boot() {
   // paintNavState(), so the bar is correct on whichever tick arrives first.
   store.on("car", () => { paintBar(); autoDrive(); });
   store.on("live", () => { paintBar(); autoDrive(); });
+  // Every sample, for the sparklines. Cheap: an array push per reading.
+  store.on("live", () => record(store.live));
 
   honourInitialView();
   // Before the first paint. A night-red look that arrives a beat late is a
