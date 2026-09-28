@@ -107,12 +107,10 @@ h1, h2, h3 { font-family: var(--display); }
    proportional 8 at that size reads as a printing error. */
 .g-num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
-/* Small figures that were already mono and are still right: the odometer in
-   the vehicle bar, numeric table columns, the replay clock and its values, and
-   the service dates. Named here only to pin tabular on the ones app.css left
+/* Small figures that were already mono and are still right: numeric table
+   columns, the replay clock and its values, and the service dates. Named here only to pin tabular on the ones app.css left
    without it — a monospace does not need it, and these are not guaranteed to
    be monospace any more once somebody picks a stack. */
-.vbar .odo,
 .tbl .num,
 .rp-time,
 .rp-v,

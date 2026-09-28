@@ -314,7 +314,7 @@ export function radioBars() {
   }
 
   function tick() {
-    // hub.js rebuilds the whole player on every radio event, so the loop
+    // hub.js rebuilt the whole player on every radio event, so the loop
     // belonging to a discarded copy has to notice and let go of itself.
     //
     // BUT NOT BEFORE IT HAS EVER BEEN MOUNTED. radioBars() builds `wrap` and

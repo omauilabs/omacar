@@ -1,8 +1,8 @@
 // Home: the screen the tablet shows when somebody gets in.
 //
 // Cards in a grid, in the order and at the sizes the layout says
-// (share/data/home-cards.json defines the cards; the owner's arrangement comes
-// from the server in the layout editor's task). Every number comes from the same
+// (share/data/home-cards.json defines the cards; the owner's arrangement is
+// kept on the server by lib/homelayout.py and edited in homeedit.js). Every number comes from the same
 // readings catalogue drive mode uses and says where it came from: a tile that
 // has no value draws words, never a zero.
 

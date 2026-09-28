@@ -6,7 +6,7 @@
 // then separately remember to turn the animation off. The combinations that
 // make sense are few, and each has a name and an occasion.
 //
-// So: one control, five looks, each coherent.
+// So: one control, and every look in it coherent.
 
 import { mountEffect } from "./effects.js";
 
@@ -55,7 +55,7 @@ export function lookById(id) {
 // A look has to survive navigation -- the whole point of night red is that it
 // stays red while you move between screens -- so it is set once, at the top,
 // and never touched by a view mount. Only the background canvas, which is
-// genuinely per-view, is mounted and torn down with the hub.
+// genuinely per-view, is mounted and torn down with Home.
 export function applyLook(id) {
   // documentElement, not #app. html and body read --ground from :root, so a
   // look set on #app left the page behind the app unthemed, and anything
@@ -73,7 +73,7 @@ export function nextLook(id) {
   return LOOKS[(i + 1) % LOOKS.length].id;
 }
 
-// Effect lifecycle, kept here so the hub does not have to know which looks
+// Effect lifecycle, kept here so Home does not have to know which looks
 // carry an animation and which do not.
 export function mountLookEffect(host, id) {
   return mountEffect(host, lookById(id).effect);

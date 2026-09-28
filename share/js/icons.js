@@ -1,7 +1,7 @@
 // Icon paths, shared.
 //
-// These lived in main.js, which was fine until a second consumer appeared. The
-// hub imports them and main.js imports the hub, so leaving them in main.js
+// These lived in main.js, which was fine until a second consumer appeared.
+// Home imports them and main.js imports Home, so leaving them in main.js
 // would have made the two files import each other -- and an ES module cycle
 // fails at load time as an undefined binding, not as a clear error.
 export const ICONS = {

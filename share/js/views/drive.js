@@ -17,7 +17,7 @@
 import { h, clear, store, api, U, dist, mins,
          since, toast } from "../core.js";
 import { KINDS, makeGauge, kindsFor, normaliseKind } from "../gauges.js";
-import { READINGS as TILES, num, raw, asTemp, pct, learnedFor, learnedKey } from "../readings.js";
+import { READINGS as TILES, learnedFor, learnedKey } from "../readings.js";
 
 const ACK_KEY = "omacar.ackAlert";
 
@@ -173,7 +173,7 @@ export default function drive(root, { arg } = {}) {
     // Still #dash, and deliberately: the button says Workshop and #dash is the
     // workshop overview. The app's two-homes problem was a router that moved
     // the user on its own; a labelled button going where its label says is not
-    // that, and repointing it at the hub would have made the word a lie.
+    // that, and repointing it at Home would have made the word a lie.
     exitBtn = h("button.drive-exit", {
       onclick: () => { location.hash = "#dash"; },
     }, "Workshop");

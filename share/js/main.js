@@ -1096,10 +1096,9 @@ export async function loadAuto() {
 
 // ---------------------------------------------------------------- the theme
 //
-// The palette comes from Omarchy, not from this app. An application on this
-// desktop that ships its own colours is a guest who turned up in its own
-// clothes — and when the theme changes, everything else on screen changes with
-// it and a tool that did not would look broken rather than distinctive.
+// The desktop's theme is a look, "Omarchy theme" (looks.js). With it chosen,
+// the palette comes from the desktop and follows it when it changes; with any
+// other look -- the default OmaCar one included -- it is the stylesheet's own.
 let themeStamp = -1;
 let themeSheet = null;
 
@@ -1114,12 +1113,12 @@ let themeSheet = null;
 // in the desktop theme, which is exactly what "the theme does not carry over
 // into the nav and top bar" looks like.
 //
-// A <style> appended after app.css gives the intended three-layer cascade:
-//   app.css :root      the shipped default        (0,1,0), first
-//   this sheet :root   the Omarchy theme          (0,1,0), later — wins
-//   app.css :root[..]  the look the user picked   (0,2,0) — wins over both
-// so an untouched app follows the desktop, and choosing a look overrides it
-// deliberately, which is the whole reason a look exists.
+// A <style> appended after app.css gives the cascade:
+//   app.css :root      the shipped default, OmaCar   (0,1,0), first
+//   this sheet :root   the Omarchy theme             (0,1,0), later — wins
+//   app.css :root[..]  any other look                (0,2,0) — wins over both
+// and the sheet exists only while the Omarchy look is chosen, so an untouched
+// app wears OmaCar's own palette.
 async function applyTheme() {
   // THE DESKTOP THEME IS A LOOK NOW, NOT THE DEFAULT. Removed the moment
   // another look is chosen, so the stylesheet's own palette is what shows.

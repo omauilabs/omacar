@@ -2215,9 +2215,8 @@ check("econ and normal keep the cockpit's own accents",
 # collapses to a lightness, and three tints two hours into the dark is not a
 # distinction anybody should be asked to make.
 #
-# THE CHIP MOVED. It used to be painted in main.js's top bar; Task 6 moved it
-# onto Home's speed dial (share/js/views/home.js), so that is what this guard
-# reads now.
+# THE CHIP MOVED. It used to be painted in main.js's top bar; it now sits on
+# Home's speed dial (share/js/views/home.js), so that is what this guard reads.
 _home_dial = open(os.path.join(ROOT, "share", "js", "views", "home.js"),
                   encoding="utf-8").read()
 check("and the chip always carries the word",
@@ -2368,8 +2367,8 @@ _port = _css2.index("@media (orientation: portrait)")
 # the hub's old vitals strip went on drawing four across in portrait because
 # its own rule came after it.
 #
-# .hub-vitals and .hub-grid dropped out of this tuple with the hub itself
-# (Task 6): those selectors no longer exist in app.css at all, so checking
+# .hub-vitals and .hub-grid dropped out of this tuple with the hub itself:
+# those selectors no longer exist in app.css at all, so checking
 # their order would only ever fail. .drive-row and .vbar still live in the
 # same portrait block and still have to come last, so they stay.
 for _sel in (".drive-row {", ".vbar {"):

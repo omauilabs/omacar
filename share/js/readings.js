@@ -2,7 +2,7 @@
 //
 // This was drive mode's private catalogue (views/drive.js), and Home and
 // Vehicle need the same numbers formatted the same way: the whole reason
-// app_test.py checks that the hub and the drive screen agree about coolant is
+// app_test.py checks that Home and the drive screen agree about coolant is
 // that two copies of a formatter WILL drift. So there is one copy, here.
 //
 // Each entry now also names the PID it reads, so a tile can tell the two kinds

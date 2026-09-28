@@ -1282,8 +1282,8 @@ head("Home, built once")
 # fires every 250ms. Four times a second the whole screen was destroyed and
 # made again: that is what the blinking was, and it also meant the volume
 # slider could not be dragged, because the element under your finger stopped
-# existing. The hub is gone (Task 6); the build-once rules it was written to
-# protect moved with it onto Home, so this reads home.js now.
+# existing. The hub is gone, replaced by Home; the build-once rules it was
+# written to protect moved onto Home, so this reads home.js now.
 _hub = (_share / "js" / "views" / "home.js").read_text(encoding="utf-8")
 # These asserted one implementation's identifiers -- `update`, `remountRadio`,
 # the literal "!== text" -- and so they failed the moment a different build-once
@@ -1545,8 +1545,9 @@ for _sel, _body in _display_rules:
            "tabular-nums" in _body)
 
 # And the small figures app.css left without it, now that --mono is no longer
-# guaranteed to be a monospace once somebody picks a stack.
-for _cls in (".vbar .odo", ".tbl .num", ".rp-time", ".rp-v", ".svc-when",
+# guaranteed to be a monospace once somebody picks a stack. (".vbar .odo" left
+# this list with the odometer, which the top bar no longer carries.)
+for _cls in (".tbl .num", ".rp-time", ".rp-v", ".svc-when",
              ".sig-v", ".learn-stat-n", ".g-num"):
     ok(f"{_cls} is pinned to tabular figures",
        re.search(re.escape(_cls) + r"[^{}]*\{[^{}]*tabular-nums", _fcss, re.S)

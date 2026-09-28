@@ -272,10 +272,10 @@ def palette_of(raw):
 
     # THE IN-CAR INK, WHICH THE THEME NEVER REACHED.
     #
-    # The hub -- the driving screen, its tiles, and the radio transport -- is
-    # painted entirely in --bright and --bright-2, on the rule that hierarchy
-    # in a moving vehicle comes from size and weight rather than from dimming
-    # (see the .hub block in app.css). Those two were the only tokens the
+    # The in-car ink -- the gauges' needles and numbers now, and the whole of
+    # the hub before Home replaced it -- is painted in --bright and --bright-2,
+    # on the rule that hierarchy in a moving vehicle comes from size and
+    # weight rather than from dimming. Those two were the only tokens the
     # stylesheet defined and this function did not emit, so they stayed at the
     # hardcoded #FFFFFF/#C8D4D2 forever: every other surface followed the
     # Omarchy theme and the entire car dashboard, radio play button included,

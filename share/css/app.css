@@ -69,11 +69,11 @@
   --on-warn: #1A1305;
   --on-ai:   #0B0718;
 
-  /* The hub is designed for direct sunlight, so it uses a harder foreground
-     than the rest of the app. Going through tokens rather than literals is
-     what lets a look change it in ONE place -- the previous version listed
-     every affected selector per look, and every new hub rule silently
-     reintroduced white into the night palettes. */
+  /* The gauges are read at a glance in direct sunlight, so they use a harder
+     foreground than the rest of the app. Going through tokens rather than
+     literals is what lets a look change it in ONE place -- the previous
+     version listed every affected selector per look, and every new hub rule
+     silently reintroduced white into the night palettes. */
   --bright:   #FFFFFF;
   --bright-2: #CAD4DA;
 
@@ -243,7 +243,7 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--edge-2); border-radius: 999px;
   background: transparent; color: var(--dim); font: inherit; font-size: .86rem;
   cursor: pointer; transition: background .12s, color .12s, border-color .12s;
-  /* A short label must not produce a short target: "Hub" is three characters
+  /* A short label must not produce a short target: "Car" is three characters
      and would otherwise be half the width of "Readiness". */
   min-width: 64px; justify-content: center;
   touch-action: manipulation;
@@ -265,14 +265,14 @@ button { font: inherit; color: inherit; }
    A lock that appears would move the chip's right edge and slide the chips
    after it -- which is the very bug this replaced. Reserving the space costs
    about 1.6em on every write-capable chip, permanently, and moves nothing
-   ever. Only the chips that can ever lock carry it, so Hub and Codes are not
+   ever. Only the chips that can ever lock carry it, so Overview and Codes are not
    padded for a state they cannot reach. */
 .chip[data-write]::after {
   content: "\1F512"; display: inline-block; width: 1em; margin-left: 8px;
   font-size: .8em; text-align: center; visibility: hidden;
 }
 .chip[data-write].chip-locked::after { visibility: visible; opacity: .8; }
-/* The left slot: either where you came from, or the offer to open the hub
+/* The left slot: either where you came from, or the offer to open Home
    because the adapter has answered. It is a chip and not a jump -- software
    must not drag somebody off a fault code because the ELM327 re-linked at a
    set of lights. */
@@ -469,7 +469,7 @@ button { font: inherit; color: inherit; }
 }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); flex: none; }
-.dot.ok { background: var(--ok); box-shadow: 0 0 9px rgba(74,206,138,.55); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 9px color-mix(in srgb, var(--ok) 55%, transparent); }
 .dot.warn { background: var(--warn); box-shadow: 0 0 9px rgba(229,180,87,.5); }
 .dot.bad { background: var(--bad); box-shadow: 0 0 9px rgba(232,93,78,.5); }
 .dot.info { background: var(--info); }
@@ -768,7 +768,7 @@ textarea { resize: vertical; min-height: 66px; }
    the screen is full" were the same bug wearing two hats. */
 /* Drive mode keeps the navigation. It is the one screen where a driver has
    the least attention to spare on finding a way out, and the bar is the way
-   out -- one tap on Car, or on the Hub chip. Hiding it here would mean adding
+   out -- one tap on Home, or on any other tab. Hiding it here would mean adding
    plumbing in order to remove the exit. */
 .drive-stage { padding: 0 !important; overflow: auto; }
 /* SIZED TO ITS STAGE, NOT REBUILT FROM THE VIEWPORT.
@@ -1315,15 +1315,12 @@ ul.tight li { margin-bottom: 5px; }
 .radio-count { margin-left: 10px; color: var(--faint); }
 
 /* ---- background effects ----
-   Behind everything, non-interactive, and clipped to the view. The stage is
-   the positioning context, so the canvas cannot spill over the bars. */
-.fx-host {
-  position: absolute; inset: 0; z-index: 0;
-  pointer-events: none; overflow: hidden; border-radius: var(--r);
-}
+   A look's animated background (effects.js) is a canvas that fills whatever
+   host it is mounted in: on Home, .home-fx (home.css), behind the grid and
+   only while parked. */
 .fx-canvas { position: absolute; inset: 0; display: block; }
-/* Content sits above it. Without this the tiles are painted under the canvas
-   and the whole screen becomes decoration. */
+/* The stage is the positioning context for anything a view places
+   absolutely, so nothing positioned inside a view can spill over the bars. */
 .stage { position: relative; }
 
 /* ---- themes ----
@@ -1447,7 +1444,7 @@ ul.tight li { margin-bottom: 5px; }
    status colours below are LIGHTNESS variants of red rather than hues --
    severity is carried by brightness, the one channel still available. */
 
-/* NO !important HERE. Task 10 took it back out.
+/* NO !important HERE, THOUGH THERE USED TO BE.
    It earned its keep once, when applyTheme() wrote the live Omarchy palette as
    INLINE custom properties on documentElement -- an inline declaration
    outranks every author rule, so only !important let a look override it. That
@@ -1495,12 +1492,12 @@ ul.tight li { margin-bottom: 5px; }
      The rule that makes this legible is not the palette, it is the contrast
      direction. Everything here is near-black ink on near-white ground, the
      semantic colours are the PRINT values app.html already declares for paper
-     -- chosen against white and already checked -- and --bright, which the hub
-     uses to punch through glare on a dark ground, inverts to the darkest ink
+     -- chosen against white and already checked -- and --bright, which the
+     gauges use to punch through glare on a dark ground, inverts to the darkest ink
      in the set rather than staying white, because on this ground white is the
      glare.
 
-     Deliberately not derived from the Omarchy theme. Every other look here
+     Deliberately not derived from the Omarchy theme. Only the Omarchy look
      follows the desktop; this one is a physical override for a condition the
      desktop knows nothing about, and a light theme's own palette is chosen for
      a room rather than for a windscreen at noon. */
@@ -1578,24 +1575,6 @@ ul.tight li { margin-bottom: 5px; }
   --ink-2: #C2453D; --accent: #E0493F; --accent-fill: #8E2A24;
   --on-accent: #FFD9D6; --rec: #FF5A48; --accent-bg: rgba(224, 73, 63, .14);
 }
-.radio-meta { flex: 1 1 auto; min-width: 0; }
-.radio-name, .radio-status {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.radio-count { margin-left: 10px; color: var(--faint); }
-
-/* ---- background effects ----
-   Behind everything, non-interactive, and clipped to the view. The stage is
-   the positioning context, so the canvas cannot spill over the rail or bar. */
-.fx-host {
-  position: absolute; inset: 0; z-index: 0;
-  pointer-events: none; overflow: hidden; border-radius: var(--r);
-}
-.fx-canvas { position: absolute; inset: 0; display: block; }
-/* Content sits above it. Without this the tiles are painted under the canvas
-   and the whole screen becomes decoration. */
-.stage { position: relative; }
-
 /* ---- replay ---- */
 .replay { display: grid; gap: 14px; }
 .rp-spans { display: grid; gap: 8px; margin-top: 12px;
@@ -1913,8 +1892,9 @@ ul.tight li { margin-bottom: 5px; }
   /* Four tiles across 912px is 228px each and legible, but two rows of two is
      easier to take in at a glance, and glancing is the whole job. */
   .drive-row { --cols-eff: 2; }
-  /* The vehicle bar wraps its own text at this width; giving it the room
-     stops the odometer and the protocol breaking across two lines each. */
+  /* The top bar wraps its own text at this width; the tighter gap and
+     padding give the page title, the car's name and the source badge the
+     room to stay on one line each. */
   .vbar { gap: 12px; padding: 0 12px; }
   /* Taller than it is wide: the stage takes the extra height rather than
      leaving the card stranded at the bottom of it. */
