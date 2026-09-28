@@ -8,7 +8,7 @@
 export function badge(car, live, serverError) {
   if (serverError && !car) {
     return { text: "NO SERVER", tone: "bad",
-             title: "Cannot reach the OmaCar server — omacar server status" };
+             title: "cannot reach the OmaCar server — omacar server status" };
   }
   if (!car) return { text: "STARTING", tone: "", title: "Waiting for the first snapshot" };
   const s = live || car.live || {};

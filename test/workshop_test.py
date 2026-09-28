@@ -1218,8 +1218,10 @@ ok("and it says DEMO when it is showing one",
    is not None)
 ok("one button moves both surfaces together",
    "function toggleDemo" in _panelsrc and "omacar demo start" in _panelsrc)
+# The badge moved from main.js's "DEMO · not your car" pill to provenance.js's
+# badge() in the frame redesign, and the word changed to SIMULATED with it.
 ok("the browser app badges a simulated car too",
-   "DEMO · not your car" in (_share / "js" / "main.js").read_text(encoding="utf-8"))
+   "SIMULATED" in (_share / "js" / "provenance.js").read_text(encoding="utf-8"))
 
 head("The logger that waits")
 
