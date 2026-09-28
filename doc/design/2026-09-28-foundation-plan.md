@@ -170,6 +170,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARE = os.path.join(ROOT, "share")
 TESTS = os.path.join(ROOT, "test", "js")
 
+# The browser finder and the free port come from app_test.py, the suite that
+# first ran this app in a browser -- one copy of how a browser is found.
+sys.path.insert(0, os.path.join(ROOT, "test"))
+from app_test import browser, free_port  # noqa: E402
+
 RUNNER = """<!doctype html><meta charset="utf-8"><title>RUNNING</title>
 <script type="module">
 const files = %s;
@@ -186,20 +191,6 @@ for (const f of files) {
 document.title = "RESULT " + JSON.stringify(out);
 </script>
 """
-
-
-def browser():
-    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
-        p = shutil.which(name)
-        if p:
-            return p
-    return None
-
-
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def main():
@@ -3866,7 +3857,6 @@ same outer-window allowance: app.html's inner height comes back 56 px short of
 
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -3877,17 +3867,16 @@ SHARE = os.path.join(ROOT, "share")
 SIZES = {"landscape": (1368, 968), "portrait": (912, 1424)}
 VIEWS = ("home", "vehicle")
 
-
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+# One copy of how a browser, a port and the server's python are found:
+# test/app_test.py's.
+sys.path.insert(0, os.path.join(ROOT, "test"))
+from app_test import browser, free_port, python_for_server  # noqa: E402
 
 
 def main(argv):
     out = argv[1] if len(argv) > 1 else "/tmp/omacar-shots"
     os.makedirs(out, exist_ok=True)
-    exe = shutil.which("chromium") or shutil.which("google-chrome")
+    exe = browser()
     if not exe:
         print("no chromium here")
         return 1
@@ -3897,8 +3886,7 @@ def main(argv):
     with open(os.path.join(copy, "_seed.html"), "w", encoding="utf-8") as f:
         f.write('<script>localStorage.setItem("omacar.onboarded","1")</script>ok')
     port = free_port()
-    py = os.path.expanduser("~/.local/share/omacar/venv/bin/python")
-    srv = subprocess.Popen([py if os.path.exists(py) else sys.executable,
+    srv = subprocess.Popen([python_for_server(),
                             os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     prof = tempfile.mkdtemp()
