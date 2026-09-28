@@ -8,10 +8,10 @@
 
 import { h, clear, icon, store, api } from "../core.js";
 import { ICONS } from "../icons.js";
-import { READINGS } from "../readings.js";
+import { READINGS, readingState } from "../readings.js";
 import { makeGauge } from "../gauges.js";
 import { makeSignalTile } from "../sigtile.js";
-import { footerLine } from "../provenance.js";
+import { footerLine, sourceKey } from "../provenance.js";
 import { asset } from "../assets.js";
 import { tyreState } from "../systems.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
@@ -34,6 +34,7 @@ function tappable(node, id) {
 
 function dialCard() {
   const speed = READINGS.speed;
+  const rpmReading = READINGS.rpm;
   const g = makeGauge("arc", { scale: speed.scale() });
   const rpm = h("div.dial-rpm");
   // A LABEL, NOT A READING: no identifier reports the drive mode, so this is
@@ -55,13 +56,27 @@ function dialCard() {
     paint() {
       const s = store.sample, v = store.values, car = store.car;
       g.update(speed.get(v, s, car), speed.read(v, s, car));
+      // THE DIAL NAMES ITS SOURCE LIKE ANY OTHER LIVE NUMBER. Speed and RPM
+      // are readings like a sig tile's, just drawn on a needle and in a div
+      // instead of in a box -- so each carries the same data-state/data-src
+      // pair, set the same way sigtile.js sets it (readingState + sourceKey),
+      // so this card cannot draw a live number without saying where it came
+      // from. Never a value with no state, or a state with no source.
+      const speedState = readingState(speed, s);
+      g.el.dataset.state = speedState;
+      if (speedState === "live") g.el.dataset.src = sourceKey(car, s);
+      else delete g.el.dataset.src;
+      const rpmState = readingState(rpmReading, s);
+      rpm.dataset.state = rpmState;
+      if (rpmState === "live") rpm.dataset.src = sourceKey(car, s);
+      else delete rpm.dataset.src;
       // NAME THE SERVER, NEVER THE CAR. store.error && !store.car means
       // OmaCar cannot reach its own daemon -- nothing below this line knows
       // anything about a vehicle, so "Car off" would send somebody to the
       // OBD cable when the fix is `omacar server status`.
       const noServer = store.error && !store.car;
       text(rpm, noServer ? "No server"
-        : store.connected ? `${READINGS.rpm.get(v, s, car).v} rpm` : "Car off");
+        : store.connected ? `${rpmReading.get(v, s, car).v} rpm` : "Car off");
       begin.hidden = store.connected || noServer;
       if (Date.now() - asked > 30000) {
         asked = Date.now();

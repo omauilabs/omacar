@@ -269,16 +269,23 @@ def main():
         check("and it let go of the screen once the app was up",
               'id="boot"' not in dom)
 
-        # 4. EVERY DRAWN NUMBER SAYS WHERE IT CAME FROM. A signal tile that
-        #    draws a value carries data-src (sim, bench, obd, recorded); one
-        #    that is waiting or absent carries none and draws words instead.
-        #    Home is the arrival screen, so this reads the tiles it painted.
-        tiles = re.findall(r'<div class="sig[^"]*"[^>]*>', dom)
-        check(f"Home drew its signal tiles (found {len(tiles)})", len(tiles) >= 4)
+        # 4. EVERY DRAWN NUMBER SAYS WHERE IT CAME FROM. A sig tile carries
+        #    data-state (live, waiting, absent) on itself; so does the dial
+        #    card's speed gauge and its RPM figure, the same way, since a
+        #    number drawn on a needle or in a plain div is exactly as capable
+        #    of lying as one drawn in a box. Scoped to data-state itself
+        #    rather than to a tile's class, so a future card is caught by
+        #    adopting the shared marker, not by guessing its markup in
+        #    advance. One that says "live" carries data-src (sim, bench, obd,
+        #    recorded); no other state may. Home is the arrival screen, so
+        #    this reads what it painted.
+        tiles = re.findall(r'<[^>]*\bdata-state="[a-z]+"[^>]*>', dom)
+        check(f"Home drew readings that name their state (found {len(tiles)})",
+              len(tiles) >= 4)
         live_tiles = [t for t in tiles if 'data-state="live"' in t]
-        check("every tile drawing a number names its source",
+        check("every reading drawing a number names its source",
               all(re.search(r'data-src="[a-z]+"', t) for t in live_tiles))
-        check("and no tile that is not live claims one",
+        check("and no reading that is not live claims one",
               not any('data-src=' in t for t in tiles if t not in live_tiles))
         # ---- and again with no server behind it at all -------------------
         #
