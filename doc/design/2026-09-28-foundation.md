@@ -136,7 +136,7 @@ Follows mockup 5.
 
 ### Car imagery and private assets
 
-- **X-ray render (Vehicle):** taken from image 1 by colour-to-alpha against its white background. That keeps the translucent body panels as partial transparency, so they composite correctly over the dark ground. It is stored with a JSON file of callout anchor points in render coordinates. Image 1 is 1504 px wide, which is about 1:1 on the Surface at the Vehicle hero's width at 2× scale.
+- **X-ray render (Vehicle):** the owner's image 1 is already a transparent render (RGBA), shipped as-is, so its see-through panels composite correctly over the dark ground. It is stored with a JSON file of callout anchor points in render coordinates. Image 1 is 1504 px wide, which is about 1:1 on the Surface at the Vehicle hero's width at 2× scale.
 - **Home car image:** the owner is supplying a transparent image of the car. Until it arrives, Home shows a placeholder: a quiet outline slot with the callouts still anchored, so the layout is final and only the picture changes.
 - **Private assets.** Both car images carry Honda's badge. They ship in the app but never in the public repo:
   - They live in `share/assets/private/`, which is git-ignored.

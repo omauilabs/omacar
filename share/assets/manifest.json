@@ -3,8 +3,8 @@
   "assets": {
     "crz-xray": {
       "file": "crz-xray.png",
-      "use": "Vehicle: the X-ray render, from the owner's mockup kit (image 1), colour-to-alpha against its white ground by tools/color_to_alpha.py",
-      "sha256": "73ba4fa519261261ec61e0183ca91e3fc29ac0314a575e754aae66af099bf004",
+      "use": "Vehicle: the owner's transparent X-ray render, from the mockup kit (image 1), shipped as-is with its own alpha channel",
+      "sha256": "cf48ffc9276d4a812f5f5614fe7d76adb742a3333c6df293886b00ced035f9cd",
       "width": 1504,
       "height": 1046,
       "anchors": {
