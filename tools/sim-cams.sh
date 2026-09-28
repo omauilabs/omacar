@@ -5,7 +5,7 @@
 # so nothing touches ~/Videos, the real runtime directory, the real live.json
 # or the real settings.
 #
-#   tools/sim-cams.sh python3 tools/shoot.py /tmp/shots 'cams=?still=1#cameras@1368,968'
+#   tools/sim-cams.sh python3 tools/shoot.py /tmp/shots 'cams=?still=1#cameras@1368,912'
 #
 # It waits, up to 60 s, until the recorder reports every role recording; runs
 # the command with the same environment; then stops the recorder by its pid.
