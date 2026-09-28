@@ -714,7 +714,14 @@ async function loadThemeModes() {
     // Prefer the one being worn as its own side of the pair.
     if (cur) themeModes[cur.mode] = cur.id;
     paintDayNight(cur ? cur.mode : null);
-  } catch { /* an older server, or none: no button, which is honest */ }
+  } catch {
+    // An older server, or none: no light/dark pair to learn. That only means
+    // the button has nowhere to go WITHIN the Omarchy look -- outside it the
+    // toggle needs no theme modes at all, so it must still be painted, or it
+    // stays hidden at its creation default forever and "always works" is a lie
+    // on exactly the host this app most needs it to hold on.
+    paintDayNight();
+  }
 }
 
 function paintDayNight(mode) {

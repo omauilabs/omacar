@@ -305,6 +305,14 @@ def main():
                   and "cannot reach its own server" in dead)
             check("and does not send anybody to the OBD cable",
                   "Not connected" not in dead)
+            # THE DAY/NIGHT BUTTON ALSO HAS TO SURVIVE THIS. /api/themes is one
+            # more route this bare static server does not have, and outside the
+            # Omarchy look the button needs no theme pair at all -- so it must
+            # still be visible here, not just once the car is reachable.
+            btn = re.search(r'<button[^>]*id="btn-daynight"[^>]*>', dead)
+            check("and the day/night button is not stuck hidden without a "
+                  "theme endpoint",
+                  btn is not None and "hidden" not in btn.group(0))
         finally:
             plain.terminate()
             try:
