@@ -88,13 +88,32 @@ Colours sampled from the mockups (`scripts/sample-mockup.py`, median of 7×7 pat
 Landscape follows mockup 3, portrait follows mockup 4.
 
 - **Speed dial:** arc with speed, rpm, and the drive-mode pill (ECON, NORMAL or SPORT) only when `drive.js`'s drive-mode logic can tell it; otherwise no pill. Tapping it opens Gauges full screen.
-- **Car:** the plain render with callouts that are real. The car itself cannot say which wheel is low, so by default there is one tyre callout carrying the deflation warning's state (OK, warning or not read). The callout component also takes per-wheel pressure and temperature, and draws the mockups' four corner callouts when a per-wheel source exists (see open question 5).
+- **Car:** the plain render with callouts that are real. The car itself cannot say which wheel is low, so by default there is one tyre callout carrying the deflation warning's state (OK, warning or not read). The callout component also takes per-wheel pressure and temperature, and draws the mockups' four corner callouts when a per-wheel source exists (see open question 1).
 - **Navigation card:** placeholder until step 3, saying "Navigation arrives with offline maps".
 - **Four signal tiles:** Coolant, 12V system, Fuel and Hybrid pack, each with its value, unit, range and a sparkline of the last minutes. Hybrid pack reads PID 0x5B and is labelled "Hybrid pack" with the same wording `ima.js` uses, never "state of charge". A reading the car does not support shows "Not on this car", and a supported reading with no answer yet shows "Waiting for the car". The tile choice uses the existing `omacar-drive.json`.
 - **Phone:** CarPlay and Android Auto rows that open OmaPlay. A row is shown only for what the connected dongle supports.
 - **Dashcams:** placeholder until step 2.
 - **Oma Agent:** the last exchange and a tap target into Agent.
 - **Footer:** the provenance line from the mockups ("Vehicle data: OBD-II + Honda enhanced · simulated"), built from the actual source.
+
+### Customize layout
+
+Home's cards can be rearranged and resized, as the mockups' "Customize layout" button suggests.
+
+- **Edit mode:**
+  - "Customize layout" or a long press on a card enters it.
+  - Cards gain a drag handle and a size control.
+  - The rest of the screen dims.
+  - Only available while parked. Entering it while the car moves is refused with the reason, the same rule write screens follow.
+- **Grid:**
+  - Cards snap to the orientation's grid: 12 columns landscape, 6 portrait.
+  - Each card type declares its allowed sizes. The speed dial and car are large or hero; signal tiles are small or medium.
+  - Dragging reflows the other cards; there is no free placement, so a layout can never overlap or leave a card off screen.
+- **Saved per orientation** in `~/.config/omarchy/omacar-home.json`, next to `omacar-drive.json`:
+  - The server validates it: unknown cards are dropped, missing cards are appended.
+  - Reset returns to the mockup layout.
+  - Adding and removing cards uses the same editor. The tile choice from `omacar-drive.json` migrates into it once.
+- **Input:** pointer events only, so touch and mouse behave the same. A drag that leaves the grid snaps back. Nothing is saved until "Done".
 
 ### Vehicle
 
@@ -115,10 +134,16 @@ Follows mockup 5.
 - Nothing in this step invents a reading the mockups show but the car lacks: per-wheel tyre temperatures, Honda's own IMA state of charge, or a data-source switch for enhanced signals that were never validated.
 - A guard test fails the build if a view renders a numeric reading without a source.
 
-### Car imagery
+### Car imagery and private assets
 
-- **X-ray render:** taken from image 1 by colour-to-alpha against its white background. That keeps the translucent body panels as partial transparency, so they composite correctly over the dark ground. It is stored with a JSON file of callout anchor points in render coordinates. Image 1 is 1504 px wide, which is about 1:1 on the Surface at the Vehicle hero's width at 2× scale.
-- **Plain render for Home:** the only copy is inside the mockups at about 420 px wide, too soft at 2×. See open question 1.
+- **X-ray render (Vehicle):** taken from image 1 by colour-to-alpha against its white background. That keeps the translucent body panels as partial transparency, so they composite correctly over the dark ground. It is stored with a JSON file of callout anchor points in render coordinates. Image 1 is 1504 px wide, which is about 1:1 on the Surface at the Vehicle hero's width at 2× scale.
+- **Home car image:** the owner is supplying a transparent image of the car. Until it arrives, Home shows a placeholder: a quiet outline slot with the callouts still anchored, so the layout is final and only the picture changes.
+- **Private assets.** Both car images carry Honda's badge. They ship in the app but never in the public repo:
+  - They live in `share/assets/private/`, which is git-ignored.
+  - `omacar assets sync [--from <host>:<path>]` copies them from the Omarchy box to the Surface over Tailscale. It defaults to the box's copy.
+  - Committed code names them in `share/assets/manifest.json` (file name, size, callout anchors, SHA-256), so a missing or wrong file is detected rather than drawn broken.
+  - A missing asset falls back to the placeholder. `omacar doctor` reports it.
+  - A guard test fails if any file under `share/assets/private/` is tracked by git.
 
 ### Opus 5.5
 
@@ -130,23 +155,22 @@ Follows mockup 5.
 2. Commits, one job each:
    1. tokens, fonts and icon sprite
    2. the frame: top bar, tab bar, routes, with every old view re-homed and the guard test
-   3. Home
-   4. Vehicle
-   5. car imagery and callout anchors
-   6. Opus 5.5
-   7. contrast and honesty guard tests
+   3. private assets: manifest, sync command, placeholder and guard
+   4. Home
+   5. the layout editor
+   6. Vehicle, with the X-ray render and callout anchors
+   7. Opus 5.5
+   8. contrast and honesty guard tests
 3. Checks: `test/all.sh` green; screenshots at 1368×912 and 912×1368 against `omacar-sim`, set side by side with mockups 3, 4 and 5 for review; then a run on the Surface itself.
 4. Rollback: the PR is one branch, and the old look stays reachable as the "Omarchy theme" look until the owner signs off.
 
+## Decided with the owner (2026-09-28)
+
+1. **Home's car image:** the owner supplies a transparent image. Until then, a placeholder.
+2. **Honda's badge:** Honda-badged images ship in the app but stay out of git (see private assets).
+3. **"Customize layout":** full drag-to-arrange, not just tile choice.
+4. **The mockups:** stay out of git, in `doc/design/mockups/`.
+
 ## Open questions
 
-1. **Home's plain car render.** Options:
-   - a photo of the owner's own CR-Z with the background removed, which fits `doc/car3d.md`'s preference for the real car;
-   - a new render;
-   - the X-ray render with its translucency turned off.
-
-   Until decided, Home uses the X-ray render at reduced glow.
-2. **Honda's badge in a public repo.** `omauilabs/omacar` is public, and the mockup renders carry the Honda "H". Keep the renders out of git, fetched at install into `~/.local/share/omacar/`, or remove the badge from the committed copies.
-3. **"Customize layout".** The mockups show it. This step keeps it to choosing Home's four tiles; a drag-to-arrange editor is left out unless wanted.
-4. **The mockups themselves.** They are kept git-ignored in `doc/design/mockups/` for the screenshot comparisons. Say if they should be committed, which would make them public.
-5. **Tyre sensors.** The owner has Tymate TM2 sensors on the wheels, which broadcast pressure and temperature on 433.92 MHz to a solar receiver. A USB radio receiver (RTL-SDR) running `rtl_433` may decode them, which would give real per-wheel pressure and temperature. That becomes its own small step after Cameras if a test capture decodes. This step only makes the Home and Vehicle tyre callouts ready for it.
+1. **Tyre sensors.** The owner has Tymate TM2 sensors on the wheels, which broadcast pressure and temperature on 433.92 MHz to a solar receiver. A USB radio receiver (RTL-SDR) running `rtl_433` may decode them, which would give real per-wheel pressure and temperature. That becomes its own small step after Cameras if a test capture decodes. This step only makes the Home and Vehicle tyre callouts ready for it.
