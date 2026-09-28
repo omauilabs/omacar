@@ -31,7 +31,12 @@ if "serial" not in sys.modules:
             raise RuntimeError("the guard tests never open a port")
 
     _serial.Serial = _Serial
-    _serial.SerialException = type("SerialException", (Exception,), {})
+    # AN OSError, BECAUSE THAT IS WHAT pyserial RAISES. A stub deriving it from
+    # bare Exception cannot see the bug where a caller catches OSError and
+    # believes it has caught a serial fault -- or the one that was live here,
+    # where a caller caught RuntimeError and had not. A stub that is wrong
+    # about the hierarchy tests the stub rather than the tree.
+    _serial.SerialException = type("SerialException", (OSError,), {})
     _tools = types.ModuleType("serial.tools")
     _lp = types.ModuleType("serial.tools.list_ports")
     _lp.comports = lambda: []
@@ -2025,6 +2030,17 @@ check("a unit that exists and is off keeps the enable command",
 check("and does not claim the file is missing",
       "no unit file" in _present[2], False)
 
+# BUT A MACHINE THAT CAN SUSPEND ITSELF IS. It is the only row here describing
+# something that has already destroyed a leg -- 8 September 2026, suspended at
+# 15:57 mid-recording, never resumed -- and it shipped as merely interesting,
+# sitting in the same yellow column as "this laptop cannot sleep". Asserted on
+# the argument rather than the comment, because the comment above it already
+# said it ends drives while the code said otherwise.
+_suspend_row = _src[_src.index('sheet.row("cannot suspend itself"'):]
+_suspend_row = _suspend_row[:_suspend_row.index(")\n")]
+check("suspending itself is a reason to stay home",
+      "blocking=False" in _suspend_row, False)
+
 _cli = open(os.path.join(ROOT, "bin", "omacar"), encoding="utf-8").read()
 check("it is reachable", "omacar preflight" in _cli
       and 'preflight) omacar_need_env' in _cli, True)
@@ -2655,6 +2671,62 @@ check("every colour survives the round trip", _lost, [])
 check("the night palette is the cockpit's own background",
       _ported["cockpit-night"]["background"], "#111416")
 check("and the day one is a light mode", _ported["cockpit-day"]["mode"], "light")
+
+# ------------------------------------------- the recorder loses a leg, not the day
+head("the drive recorder survives the adapter going away")
+
+import drivelog as _dl   # noqa: E402
+import listen as _ln     # noqa: E402
+
+# pyserial raises SerialException from serial.Serial() and from init()'s setup
+# writes, both of which run BEFORE the protected read loop -- and it is an
+# OSError, not a RuntimeError. leg() caught Quiet and RuntimeError only, so an
+# adapter re-enumerating (vibration on a dash mount, the voltage dip at crank)
+# walked out of leg(), out of run(), past main()'s KeyboardInterrupt-only
+# guard, and exited the process. That alone would have cost one leg. What it
+# actually cost was the day: RestartSec=20 meant three of them inside a minute
+# tripped StartLimitBurst=3, after which systemd stopped restarting it for
+# good, with nobody watching a screen to notice.
+check("a serial fault is an OSError, not a RuntimeError",
+      issubclass(sys.modules["serial"].SerialException, OSError), True)
+
+_sup = _dl.Supervisor(once=True)
+_said = []
+_sup.say = lambda state, detail="", **f: _said.append((state, detail))
+_orig_listen = _ln.listen
+
+
+def _vanish(*a, **k):
+    raise sys.modules["serial"].SerialException("[Errno 5] Input/output error")
+
+
+_ln.listen = _vanish
+try:
+    _lost_only_the_leg = _sup.leg() is False
+except OSError:
+    _lost_only_the_leg = False           # it escaped, which is the old bug
+finally:
+    _ln.listen = _orig_listen
+
+check("the adapter vanishing costs the leg, not the supervisor",
+      _lost_only_the_leg, True)
+check("and the reason is on the status screen",
+      any(s == "declined" for s, _d in _said), True)
+
+# THE OTHER HALF OF THE SAME FAILURE. The unit's own comment promises it is
+# "ALWAYS COMING BACK" because staying down is measured in car time; a start
+# limit is the one setting that breaks that promise, and it was set.
+_unit = open(os.path.join(ROOT, "share", "systemd", "omacar-drivelog.service"),
+             encoding="utf-8").read()
+# Directives, not the word: the comment above the setting has to be free to
+# name what was removed and why, and a grep over the whole file cannot tell
+# an explanation from an instruction.
+_directives = [ln.strip() for ln in _unit.splitlines()
+               if ln.strip() and not ln.strip().startswith("#")]
+check("nothing rate-limits the restart that keeps it alive",
+      any(d.startswith("StartLimitBurst") for d in _directives), False)
+check("and the restart itself is still unconditional",
+      any(d == "Restart=always" for d in _directives), True)
 
 # ----------------------------------------------------------------------- done
 print()

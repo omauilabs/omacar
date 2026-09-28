@@ -19,8 +19,20 @@ cd ~/Projects/omacar && git pull
 systemctl --user daemon-reload
 systemctl --user enable --now omacar-drivelog.service
 
+omacar tablet awake                # one sudo, and it asks first
+
 omacar preflight                   # and this is the one that matters
 ```
+
+`omacar tablet awake` is in that list because suspending is the failure that has
+actually destroyed a drive: on 8 September the tablet asked for
+suspend-then-hibernate at 15:57 while it was recording, and that boot never
+resumed. It masks the sleep targets and takes the power button away from
+suspend. Preflight refuses to pass without it, which it used to do — the row was
+there, coloured yellow, next to "this laptop cannot sleep".
+
+It is interactive and needs one sudo, so it is a thing to do indoors rather than
+in the driveway.
 
 `omacar preflight` is the whole of the rest of this section. It asks the six
 questions somebody would otherwise run six commands for, in a driveway, in the
