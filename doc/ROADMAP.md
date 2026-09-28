@@ -813,7 +813,21 @@ the file that will prove it landed.
 
 ### Next
 
-In this order, which is the owner's.
+In this order, which is the owner's, with one exception. The event package
+starts as soon as the cameras work lands, whatever else is under way, because
+it is the other half of the cameras.
+
+**The event package** (`own.incident-kit`, decided 2026-09-28). In the owner's
+words: "if the car suddenly brakes or stops or there's an accident … the
+cameras will automatically flag that time for all three cameras and save that
+as a special package that can be referred to later or downloaded or
+reviewed". Every event becomes one package: a hard stop, an impact, or a tap
+on Mark event or Save clip. It holds the clips from all three cameras for the
+locked window, the drive data for that window (speed, pedal, brake, and any g
+or impact reading), the location once GPS exists, and a short summary page.
+It can be reviewed on the tablet, downloaded from another device through the
+read-only cockpit mode, or exported as one file for an insurer. Location is
+added when the receiver exists, and the package does not wait for it.
 
 **1. IMA and Honda data: the 2026-09-29 discovery drives.** Asymmetry 3
 claims that coverage is expensive per vendor and nearly free per community.
@@ -940,6 +954,13 @@ The larger pieces are:
   and voice-only while driving. It comes after the Next items, then OmaMenu
   (decided 2026-09-28).
 - **OmaMenu**, a system-wide replacement for the Omarchy menu.
+- **Impacts felt by the tablet itself** (`safe.impact`). It reads the tablet's
+  own accelerometer, which on the Surface Pro 7+ is an IIO device through the
+  Intel ISH, checked on the tablet on 2026-09-28. On a jolt it locks the same
+  camera window and builds the same package, even with no adapter talking,
+  such as a bump while parked. It feeds crash detection and parking watch.
+  Potholes, door slams and a tablet knocked in its mount are the false
+  positives to beat before it may trigger anything.
 - **Warnings the owner can accept** (`safe.accept-risk`): turning routine
   guessing, the voltage floor, the agent limits and the plugin driving rules
   from refusals into warnings, as decided on 2026-09-28. Until it lands the
@@ -960,6 +981,17 @@ body states, crash detection with a consented message, reading messages
 aloud, valuation without licensed data, comparing your car against others like
 it without a server, an advisor that works with no signal, which Omarchy
 plugins can work in a car, and sandboxing plugins at all.
+
+**Loud moments in the cabin** (`safe.cabin-sound`) is research too. In the
+owner's words: "road rage … if there's loud ruckus, it could either record
+that or offer some comfort". The cabin camera's microphone would measure
+loudness only, such as sustained shouting or a long horn, never words. It
+would mark a video-only event and offer one gentle, optional response: lower
+the music, one calm spoken line, or a suggestion to take a break. It is
+opt-in and off by default. It never judges the driver and never repeats or
+nags. No audio is recorded by default. Recording cabin audio needs everyone's
+consent in California under Penal Code §632, so it stays off unless the owner
+turns it on with that warning shown. That is a warning, not a refusal.
 
 ---
 

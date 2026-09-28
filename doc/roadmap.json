@@ -170,6 +170,28 @@
       "how": "Open both repositories and read their licence files. If the licence of the maintained version changes, the reason for not bundling it goes away; the decision of 2026-09-28 still stands until the owner revisits it."
     },
     {
+      "text": "The Surface Pro 7+'s accelerometer is reachable on Linux: the Intel ISH presents it as the HID sensor accel_3d, an IIO device with raw x, y and z channels, sampled at 10 Hz by default. iio-sensor-proxy's D-Bus interface exposes only orientation and tilt, not acceleration, so impact detection has to read IIO directly.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://hadess.pages.freedesktop.org/iio-sensor-proxy/gdbus-net.hadess.SensorProxy.html",
+        "https://docs.kernel.org/hid/hid-sensor.html",
+        "https://github.com/linux-surface/linux-surface/wiki/Supported-Devices-and-Features"
+      ],
+      "how": "Read on the owner's tablet on 2026-09-28 (Surface Pro 7+, kernel 7.2.5-3-omarchy): /sys/bus/iio/devices/iio:device2 is accel_3d, driven by hid_sensor_accel_3d over intel_ish_ipc, with in_accel_x_raw, in_accel_y_raw, in_accel_z_raw, a scale of 0.000009806 and a sampling frequency of 10. The sources describe the general mechanism and the proxy's interface; the device read is the evidence for this tablet. Re-check with `cat /sys/bus/iio/devices/iio:device*/name` on the tablet."
+    },
+    {
+      "text": "California Penal Code s632 makes it an offence to record a confidential communication without the consent of all parties to it; a conversation is not confidential where the parties can reasonably expect to be overheard or recorded.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=PEN&sectionNum=632"
+      ],
+      "how": "Read the section on the Legislature's own site. This is why cabin audio is never recorded by default and why turning it on shows that warning; it is not legal advice, and other states differ."
+    },
+    {
       "text": "The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.",
       "asserted": "2026-09-28",
       "recheck_days": 90,

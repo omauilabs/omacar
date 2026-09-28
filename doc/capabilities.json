@@ -1249,7 +1249,7 @@
       "needs": ["usb-camera", "obd-usb"],
       "depends": ["safe.dashcam", "diag.live-data"],
       "evidence": ["share/js/views/cameras.js"],
-      "notes": "Being built on redesign/cameras. A 16 km/h drop in one second, about 0.45 g, locks 30 s either side."
+      "notes": "Being built on redesign/cameras. Triggers: hard braking as built (a 16 km/h drop in one second, about 0.45 g, locks 30 s either side); an impact, once safe.impact exists; and the manual Mark event and Save clip. Every trigger locks all three cameras for the same window, and every event becomes a package (own.incident-kit)."
     },
     {
       "id": "safe.drowsy",
@@ -1286,7 +1286,7 @@
       "status": "later",
       "tier": "none",
       "needs": ["usb-camera"],
-      "depends": ["safe.dashcam"],
+      "depends": ["safe.dashcam", "safe.impact"],
       "evidence": [],
       "notes": "Power while parked is the hard part, not the software."
     },
@@ -1312,9 +1312,35 @@
       "status": "research",
       "tier": "none",
       "needs": ["internet"],
-      "depends": ["nav.gps", "safe.events"],
+      "depends": ["nav.gps", "safe.events", "safe.impact"],
       "evidence": [],
       "notes": "False positives and sending on the owner's behalf both need care; consent is set up in advance, never assumed."
+    },
+    {
+      "id": "safe.impact",
+      "domain": "safety",
+      "title": "Feel a jolt or impact, even with no car connected",
+      "user": "A bump while parked, or a knock on the road, is caught even when the adapter is not talking.",
+      "agent": "Reads the tablet's own accelerometer, and on a jolt locks the same camera window and builds the same event package.",
+      "status": "later",
+      "tier": "none",
+      "needs": [],
+      "depends": ["safe.events"],
+      "evidence": [],
+      "notes": "Checked on the owner's Surface Pro 7+ on 2026-09-28: the accelerometer arrives through the Intel ISH as the HID sensor `accel_3d` under /sys/bus/iio, with raw x, y and z and a scale in m/s^2, sampled at 10 Hz by default. iio-sensor-proxy runs there, and its D-Bus interface gives only orientation and tilt, never acceleration, so this reads IIO directly. A 10 Hz reading can miss the peak of a short impact; whether the rate can be raised is unverified. False positives are the hard part: potholes, speed bumps, a door slammed, the tablet knocked in its mount. Thresholds are tuned against recorded drives before this may trigger anything. Only tablets and laptops with an accelerometer have it. Feeds safe.crash and safe.parking-watch."
+    },
+    {
+      "id": "safe.cabin-sound",
+      "domain": "safety",
+      "title": "Loud moments in the cabin",
+      "user": "When there is shouting or a long horn, mark the moment, and maybe help me calm down.",
+      "agent": "Measures loudness only, marks a video-only event, and offers one gentle response: lower the music, one calm spoken line, or a suggestion to take a break.",
+      "status": "research",
+      "tier": "none",
+      "needs": ["usb-camera"],
+      "depends": ["safe.dashcam", "safe.alert-audio"],
+      "evidence": [],
+      "notes": "Opt-in and off by default. The cabin camera's microphone gives a level, never words. It never judges the driver, and never repeats or nags; the response is offered once. No audio is recorded by default, as the Cameras tab already says. Recording cabin audio needs every party's consent in California, where the owner lives (Penal Code s632, all-party consent for confidential communications), so recording stays off unless the owner turns it on with that warning shown. A warning, not a refusal: the owner decides."
     },
     {
       "id": "safe.awake",
@@ -1781,15 +1807,15 @@
     {
       "id": "own.incident-kit",
       "domain": "ownership",
-      "title": "After an accident",
-      "user": "Photos, the report, the drive data and the clips in one place for the insurer.",
-      "agent": "Gathers the evidence around an event into one file the owner can send.",
-      "status": "later",
+      "title": "An event package for every incident",
+      "user": "If the car brakes hard, stops suddenly or crashes, everything about that moment is saved together to review, download or send.",
+      "agent": "Builds one package per event: the clips from all three cameras for the locked window, the drive data for it, the location once GPS exists, and a short summary page.",
+      "status": "next",
       "tier": "none",
-      "needs": [],
+      "needs": ["usb-camera"],
       "depends": ["safe.events", "own.share-file"],
       "evidence": [],
-      "notes": ""
+      "notes": "Next, as soon as the cameras work lands (decided 2026-09-28). Every event becomes a package: a hard stop, an impact once safe.impact exists, Mark event or Save clip. The drive data covers speed, pedal, brake and any g or impact reading the car or tablet gives. Location comes from nav.gps when it exists, and the package does not wait for it. Review it on the tablet, download it from another device through the read-only cockpit mode (lib/serve.py, which needs a route for it), or export it as one file for an insurer."
     },
     {
       "id": "own.sale-handover",
