@@ -128,3 +128,19 @@
    reading". Hidden rather than removed, so the slot keeps its width and nothing
    else in the tile reflows when a value arrives. */
 .sig:not([data-state="live"]) .sig-spark { visibility: hidden; }
+
+/* ---- edit mode ---------------------------------------------------------- */
+.home-editbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.home-editbar[hidden] { display: none; }
+.he-note { margin-right: auto; font-size: .8rem; color: var(--ink-2); }
+.btn-primary { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
+.home-grid.editing > [data-card] { outline: 1.5px dashed var(--edge-2); outline-offset: -1px;
+  touch-action: none; cursor: grab; animation: he-wiggle .9s ease-in-out infinite alternate; }
+.home-grid.editing > .dragging { z-index: 5; cursor: grabbing; animation: none; opacity: .95;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .45); }
+@keyframes he-wiggle { from { rotate: -.25deg; } to { rotate: .25deg; } }
+@media (prefers-reduced-motion: reduce) { .home-grid.editing > [data-card] { animation: none; } }
+.he-ctl { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 2; }
+.he-size, .he-rm { min-width: var(--tap); min-height: var(--tap); border-radius: 12px;
+  background: var(--raise); border: 1px solid var(--edge-2); color: var(--ink);
+  font: inherit; font-size: .75rem; display: grid; place-items: center; }

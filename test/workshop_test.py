@@ -1668,6 +1668,40 @@ _bare = _prof.normalize({"car": {"slug": "x"}, "pid": []})
 ok("a profile with no capability sections gains none",
    "module" not in _bare and "poll" not in _bare and "screens" not in _bare)
 
+# ---- Home's layout ------------------------------------------------------------
+head("Home's layout")
+import homelayout  # noqa: E402
+
+for _p in (homelayout.HOME_CFG, api.DRIVE_CFG):
+    if os.path.exists(_p):
+        os.remove(_p)
+_cat = homelayout.catalogue()
+_dflt = [list(x) for x in _cat["default"]["landscape"]]
+_first = homelayout.home_layout()
+ok("with no file, Home is the catalogue's default", _first["landscape"]["cards"] == _dflt)
+ok("and nothing starts hidden", _first["landscape"]["hidden"] == [] and _first["portrait"]["hidden"] == [])
+_saved = homelayout.save_home_layout({
+    "landscape": {"cards": [["car", "xl"], ["nope", "m"], ["car", "l"], ["dial", "huge"]], "hidden": []},
+    "portrait": _first["portrait"]})
+_land = _saved["landscape"]
+ok("an unknown card is dropped", all(c != "nope" for c, _ in _land["cards"]))
+ok("a card placed twice is kept once", [c for c, _ in _land["cards"]].count("car") == 1)
+ok("a size the card does not have becomes its first size",
+   ["dial", list(_cat["cards"]["dial"]["sizes"])[0]] in _land["cards"])
+ok("a default card that was left out is remembered as removed", "nav" in _land["hidden"])
+ok("and stays removed when read back", "nav" in homelayout.home_layout()["landscape"]["hidden"])
+ok("reset puts the default back",
+   homelayout.save_home_layout({"action": "reset"})["landscape"]["cards"] == _dflt)
+ok("the route answers", api.handle_get("/api/home", "")[0] == 200)
+ok("and refuses a body that is not a layout", api.handle_post("/api/home", "[1, 2]")[0] == 400)
+api.save_drive_layout({"tiles": ["intake", "coolant"]})
+_mig = [c for c, _ in homelayout.home_layout()["landscape"]["cards"] if c in homelayout.SIGNAL_CARDS]
+ok("the drive screen's tile choice carries over while Home has never been saved",
+   _mig[:2] == ["intake", "coolant"] and len(_mig) == 4)
+for _p in (homelayout.HOME_CFG, api.DRIVE_CFG):
+    if os.path.exists(_p):
+        os.remove(_p)
+
 shutil.rmtree(tmp, ignore_errors=True)
 
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed\n")

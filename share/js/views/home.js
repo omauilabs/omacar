@@ -16,6 +16,7 @@ import { asset } from "../assets.js";
 import { tyreState } from "../systems.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
 import { savedLook, mountLookEffect } from "../looks.js";
+import { startEditing } from "../homeedit.js";
 
 const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
@@ -248,9 +249,35 @@ export default function home(root) {
   const onTurn = () => { if (layout) place(); };
   mq.addEventListener("change", onTurn);
 
+  // ---- customising: the button, or a long press on any card -------------
+  let editor = null;
+  function customise() {
+    if (editor || !layout || !cat) return;
+    editor = startEditing({
+      grid, bar: editBar, cat, layout, orient: orientation, place,
+      save: async (w) => { layout = await api.saveHome(w); return layout; },
+      onEnd: () => { editor = null; },
+    });
+  }
+  custom.hidden = false;
+  custom.addEventListener("click", customise);
+  let press = null;
+  const unpress = () => { if (press) { clearTimeout(press.t); press = null; } };
+  grid.addEventListener("pointerdown", (e) => {
+    if (editor) return;
+    press = { x: e.clientX, y: e.clientY, t: setTimeout(() => { press = null; customise(); }, 600) };
+  });
+  grid.addEventListener("pointermove", (e) => {
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) unpress();
+  });
+  grid.addEventListener("pointerup", unpress);
+  grid.addEventListener("pointercancel", unpress);
+
   (async () => {
     cat = await loadCatalogue();
-    layout = defaultLayout(cat);
+    // The owner's arrangement from the server; the catalogue's default if the
+    // server is older than this screen or unreachable.
+    layout = await api.home().catch(() => null) || defaultLayout(cat);
     if (alive) place();
   })().catch((e) => {
     clear(grid);
@@ -259,6 +286,7 @@ export default function home(root) {
   });
 
   return () => {
+    if (editor) editor.finish(false);
     alive = false;
     offLive();
     offCar();
