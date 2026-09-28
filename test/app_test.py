@@ -142,6 +142,10 @@ window.__st = store;
 # asks for content only a correctly-mounted screen produces -- the headline
 # and one row per system, named -- not just that a container exists.
 VEHICLE_PROBE = r"""
+<script type="module">
+import { ICONS } from "./js/icons.js";
+window.__icons = ICONS;
+</script>
 <script>
 (async () => {
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -158,6 +162,11 @@ VEHICLE_PROBE = r"""
     rows: rows.map((r) => r.textContent.replace(/\s+/g, " ").trim()),
     tone: ico ? ico.dataset.tone : null,
     icon: ico ? [...ico.querySelectorAll("path")].map((p) => p.getAttribute("d")) : [],
+    // Which ICONS entry the headline's glyph is, by its paths.
+    iconKey: ico ? Object.keys(window.__icons).find((k) =>
+      JSON.stringify([].concat(window.__icons[k]))
+      === JSON.stringify([...ico.querySelectorAll("path")].map((p) => p.getAttribute("d")))) || null
+      : null,
     insight: insight && !insight.hidden ? insight.textContent : null,
   };
   // WHAT THE ADVISOR HAS SAID, asked of the server directly, so the check
@@ -847,6 +856,13 @@ def main():
                 for label in ("Engine", "Hybrid system", "Brakes", "Electrical",
                               "All other systems"):
                     check(f"the systems list names {label!r}", label in rows_text)
+                # THE GLYPH SAYS WHAT THE WORDS SAY. A tick beside "4 systems
+                # need attention" was only recoloured, never redrawn.
+                tone, key = v.get("tone"), v.get("iconKey")
+                want = {"ok": "check", "warn": "codes", "bad": "codes"}.get(tone)
+                check(f"the headline's icon matches it ({v.get('headline')!r}, "
+                      f"tone {tone!r}, icon {key!r})",
+                      key == want if want else key not in ("check", "codes"))
                 said = v.get("said")
                 if said:
                     check(f"Vehicle's insight card shows the advisor's last headline "

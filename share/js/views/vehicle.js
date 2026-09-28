@@ -20,6 +20,11 @@ const SYS_ICON = { engine: "gauge", hybrid: "leaf", brakes: "health", electrical
 const LIVE = [["rpm", "Engine speed"], ["coolant", "Coolant"], ["volts", "12V system"], ["charge", "Hybrid pack"]];
 const CALLOUTS = [["engine", "Engine"], ["hybrid", "Hybrid system"], ["brakes", "Brakes"],
                   ["steering", "Steering"], ["tyres", "Tyres"]];
+// THE HEADLINE'S GLYPH SAYS WHAT ITS WORDS SAY. It was built once as a check
+// mark and only recoloured, so "4 systems need attention" sat next to a tick.
+// A warning for anything that needs attention, a check only when every
+// scanned system is normal, and the scan mark while nothing has been scanned.
+const HEAD_ICON = { ok: ICONS.check, warn: ICONS.codes, bad: ICONS.codes, "": ICONS.scan };
 
 function listRows(groups) {
   const by = Object.fromEntries(groups.map((g) => [g.id, g]));
@@ -42,7 +47,8 @@ function sysRow(g) {
 
 export default function vehicle(root) {
   let alive = true;
-  const statusIco = h("span.vh-icon", icon(ICONS.check, 44));
+  const statusIco = h("span.vh-icon");
+  let statusTone = null;
   const title = h("div.vh-title");
   const when = h("div.vh-when");
   const carName = h("div.vh-car"), spec = h("div.vh-spec"), odo = h("div.vh-odo.display-num");
@@ -148,6 +154,11 @@ export default function vehicle(root) {
     const hl = headline(groups);
     text(title, hl.text);
     statusIco.dataset.tone = hl.tone;
+    if (hl.tone !== statusTone) {
+      statusTone = hl.tone;
+      clear(statusIco);
+      statusIco.appendChild(icon(HEAD_ICON[hl.tone] || ICONS.scan, 44));
+    }
     const v = (car && car.vehicle) || {};
     text(when, v.surveyed_at ? `Last scan: ${shortDate(v.surveyed_at)}, ${clockOf(v.surveyed_at)}`
                              : "No full scan has been run on this car yet");
