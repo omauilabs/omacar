@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Screenshots of Home and Vehicle at the tablet's two orientations, for
-setting beside the owner's mockups. Not a test: it passes and fails nothing.
+"""Screenshots of Home, Vehicle and Gauges at the tablet's two orientations,
+for setting beside the owner's mockups. Not a test: it passes and fails
+nothing. Taken with a touch pointer emulated, as the tablet has, because the
+coarse-pointer block in app.css makes the tab bar and chip rows taller there.
 
     tools/shoot.py [OUT_DIR]        default /tmp/omacar-shots
 
-Uses the same server and the same onboarding seed as test/app_test.py, and the
-same outer-window allowance: app.html's inner height comes back 56 px short of
---window-size, so 912 of inner height needs 968 of window.
+Uses the same server and the same onboarding seed as test/app_test.py.
+
+THE WINDOW IS THE VIEWPORT HERE. --screenshot renders at exactly
+--window-size, unlike --dump-dom, whose inner height comes back short of it
+(test/app_test.py's TABLET table). This used to add 56 px for an allowance
+--screenshot never takes, so every shot was 56 px taller than the tablet --
+room in which a screen that overflows on the tablet looked as if it fitted.
+The PNGs are twice these sizes (device scale 2).
 """
 
 import os
@@ -18,13 +25,13 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARE = os.path.join(ROOT, "share")
-SIZES = {"landscape": (1368, 968), "portrait": (912, 1424)}
-VIEWS = ("home", "vehicle")
+SIZES = {"landscape": (1368, 912), "portrait": (912, 1368)}
+VIEWS = ("home", "vehicle", "drive")
 
 # One copy of how a browser, a port and the server's python are found:
 # test/app_test.py's.
 sys.path.insert(0, os.path.join(ROOT, "test"))
-from app_test import browser, free_port, python_for_server  # noqa: E402
+from app_test import COARSE, browser, free_port, python_for_server  # noqa: E402
 
 
 def main(argv):
@@ -48,7 +55,7 @@ def main(argv):
         time.sleep(1.5)
         base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
                 f"--user-data-dir={prof}", "--hide-scrollbars",
-                "--force-device-scale-factor=2"]
+                "--force-device-scale-factor=2", COARSE]
         subprocess.run(base + ["--virtual-time-budget=2000", "--dump-dom",
                                f"http://127.0.0.1:{port}/_seed.html"],
                        capture_output=True, timeout=120)

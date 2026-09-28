@@ -771,10 +771,23 @@ textarea { resize: vertical; min-height: 66px; }
    out -- one tap on Car, or on the Hub chip. Hiding it here would mean adding
    plumbing in order to remove the exit. */
 .drive-stage { padding: 0 !important; overflow: auto; }
+/* SIZED TO ITS STAGE, NOT REBUILT FROM THE VIEWPORT.
+   .drive was min-height: calc(100vh - var(--vbar) - var(--nav)), which is the
+   stage's height only while nothing else shares the column. Gauges moved into
+   Vehicle -> Live, whose segment row sits above the stage, so that sum came
+   out 73 px taller than the stage on the tablet -- and its type, sized in vh,
+   was sized for room it no longer had: 108 px of overflow, with Workshop and
+   Customise below the fold, on the screen the whole drive is spent on.
+   So the wrap is exactly the stage's height and a size container, and every
+   length on this screen that was a slice of the viewport (vh) is now a slice
+   of the room it actually has (cqh). With no container around it, cqh falls
+   back to the viewport, so the gauge rules other screens share with this one
+   size exactly as they did there. */
+.wrap:has(> .drive) { display: block; height: 100%; container-type: size; }
 .drive {
-  min-height: calc(100vh - var(--vbar) - var(--nav));
+  height: 100%;
   display: grid; grid-template-rows: 1fr auto auto auto;
-  gap: clamp(10px, 2vh, 28px); padding: clamp(14px, 3vh, 40px);
+  gap: clamp(10px, 2cqh, 28px); padding: clamp(14px, 3cqh, 40px);
   /* `safe` is the whole fix: centre while the content fits, fall back to
      start-alignment the moment it does not. Plain `center` has no such
      fallback and happily centres content it cannot show, putting the first
@@ -803,13 +816,15 @@ textarea { resize: vertical; min-height: 66px; }
 
 /* LARGER AND CENTRED, which is the cockpit's whole treatment of this row
    (doc/design/cockpit/DESIGN-NOTES.md). It was already centred; what it did not
-   have was the scale. 24vh to 30vh on a 912px-tall tablet is 219px to 274px of
-   number, which is the difference between reading it and glancing at it.
+   have was the scale. 24vh to 30vh on a 912px-tall tablet was 219px to 274px
+   of number, which is the difference between reading it and glancing at it.
+   It is a slice of the screen's own height now (see .drive), and 36cqh of the
+   ~630px Gauges has under the segment row is 227px: the same range.
    The ceiling stays a clamp rather than a fixed size because this screen is
    also opened on a phone. */
 .drive-hero { text-align: center; }
 .drive-speed {
-  font-size: clamp(5rem, 30vh, 17rem); font-weight: 600; line-height: .86;
+  font-size: clamp(5rem, 36cqh, 17rem); font-weight: 600; line-height: .86;
   letter-spacing: -.045em; font-variant-numeric: tabular-nums;
 }
 /* QUIETER, THE SAME WAY THE DOCK'S LABELS GOT QUIETER: by size and tracking,
@@ -818,11 +833,11 @@ textarea { resize: vertical; min-height: 66px; }
    disappears through a windscreen -- and walking it back down here would
    undo that deliberately. */
 .drive-unit {
-  font-size: clamp(.75rem, 2vh, 1.15rem); letter-spacing: .38em;
+  font-size: clamp(.75rem, 2cqh, 1.15rem); letter-spacing: .38em;
   color: var(--faint); text-transform: uppercase; margin-top: .6rem;
 }
 .drive-state {
-  font-size: clamp(.8rem, 2vh, 1.2rem); color: var(--dim); margin-top: .3rem;
+  font-size: clamp(.8rem, 2cqh, 1.2rem); color: var(--dim); margin-top: .3rem;
   min-height: 1.4em;
 }
 .drive[data-state="offline"] .drive-speed { color: var(--faint); }
@@ -841,19 +856,19 @@ textarea { resize: vertical; min-height: 66px; }
    18px so the screen reads as one family. */
 .drive-tile {
   background: var(--panel); border: 1px solid transparent; border-radius: 18px;
-  padding: clamp(10px, 2vh, 22px); text-align: center;
+  padding: clamp(10px, 2cqh, 22px); text-align: center;
 }
 .drive-tile-k {
-  font-size: clamp(.6rem, 1.5vh, .8rem); letter-spacing: .2em; color: var(--faint);
+  font-size: clamp(.6rem, 1.5cqh, .8rem); letter-spacing: .2em; color: var(--faint);
   text-transform: uppercase;
 }
 .drive-tile-v {
-  font-size: clamp(2rem, 7vh, 4.2rem); font-weight: 600; line-height: 1.05;
+  font-size: clamp(2rem, 7cqh, 4.2rem); font-weight: 600; line-height: 1.05;
   font-variant-numeric: tabular-nums; margin-top: .2em;
 }
 .drive-tile-v.warn { color: var(--warn); }
 .drive-tile-v.bad  { color: var(--bad); }
-.drive-tile-n { font-size: clamp(.6rem, 1.5vh, .85rem); color: var(--faint); }
+.drive-tile-n { font-size: clamp(.6rem, 1.5cqh, .85rem); color: var(--faint); }
 
 /* ---- gauges ----
    Instrument faces for the readouts above. Every stroke is a token, so a dial
@@ -869,13 +884,13 @@ textarea { resize: vertical; min-height: 66px; }
    the face fit to the shorter side and left a wide tile a third empty. */
 .g-svg {
   display: block; width: 100%; height: auto; aspect-ratio: 84 / 88;
-  max-height: clamp(70px, 13.5vh, 156px); margin: 0 auto; overflow: visible;
+  max-height: clamp(70px, 13.5cqh, 156px); margin: 0 auto; overflow: visible;
 }
 /* Drive mode has to FIT. A speedometer at 44vh plus two rows of dials pushed
    the exit button off the bottom and gave the one screen you read at seventy
    miles an hour a scrollbar. These caps are what keeps hero + two rows +
    footer + the exit inside one viewport. */
-.drive-hero-slot .g-svg { max-height: clamp(130px, 24vh, 300px); }
+.drive-hero-slot .g-svg { max-height: clamp(130px, 24cqh, 300px); }
 
 .g-track      { stroke: var(--track); stroke-width: 2.6; stroke-linecap: round; }
 .g-arc-track  { stroke: var(--track); stroke-width: 7; stroke-linecap: round; }
@@ -927,11 +942,11 @@ textarea { resize: vertical; min-height: 66px; }
    onto its own line and shoved the meter down out of the tile. */
 .g-bar-head { display: flex; align-items: baseline; gap: .4em; flex-wrap: nowrap; min-width: 0; }
 .g-bar-v {
-  font-size: clamp(1.6rem, 5.2vh, 3rem); font-weight: 600; line-height: 1.05;
+  font-size: clamp(1.6rem, 5.2cqh, 3rem); font-weight: 600; line-height: 1.05;
   font-variant-numeric: tabular-nums;
 }
 .g-bar-n {
-  font-size: clamp(.6rem, 1.5vh, .85rem); color: var(--faint);
+  font-size: clamp(.6rem, 1.5cqh, .85rem); color: var(--faint);
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .g-bar[data-tone="warn"] .g-bar-v { color: var(--warn); }
@@ -959,16 +974,16 @@ textarea { resize: vertical; min-height: 66px; }
 .g-bar[data-tone="bad"]  .g-bar-fill { background: var(--bad); }
 .g-bar-ends {
   display: flex; justify-content: space-between; margin-top: .3em;
-  font-size: clamp(.5rem, 1.2vh, .7rem); color: var(--ghost);
+  font-size: clamp(.5rem, 1.2cqh, .7rem); color: var(--ghost);
   font-variant-numeric: tabular-nums;
 }
 
-.drive-trip { text-align: center; color: var(--dim); font-size: clamp(.75rem, 1.8vh, 1.05rem); }
+.drive-trip { text-align: center; color: var(--dim); font-size: clamp(.75rem, 1.8cqh, 1.05rem); }
 
 /* One target, the width of a thumb and then some. */
 .drive-exit {
   border: 1px solid var(--edge-2); background: var(--panel-2); color: var(--dim);
-  border-radius: 14px; padding: clamp(12px, 2.4vh, 22px); font-size: 1rem;
+  border-radius: 14px; padding: clamp(12px, 2.4cqh, 22px); font-size: 1rem;
   letter-spacing: .1em; cursor: pointer; width: 100%;
 }
 .drive-exit:active { background: var(--raise); }

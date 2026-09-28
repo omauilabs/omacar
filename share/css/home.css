@@ -35,7 +35,19 @@
   grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: minmax(96px, 1fr);
 }
 @media (orientation: portrait) {
-  .home-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  /* ELEVEN ROWS IN PORTRAIT, and on the tablet's touch screen (taller tab bar
+     and chip targets) the stage has room for rows of about 86 px, not 96. At
+     a 96 px floor the grid ran 80 px past its own box and over the provenance
+     line under it -- the one line that says where Home's numbers came from.
+     So in portrait the floor is lower, the gaps and the stage's bottom margin
+     are tighter, and the signal tiles lose 2 px of padding: every row fits,
+     and no tile loses its scale line to overflow:hidden. */
+  .home-grid { grid-template-columns: repeat(6, minmax(0, 1fr));
+               grid-auto-rows: minmax(84px, 1fr); gap: 8px; }
+  .hc.sig { padding: 10px 14px; gap: 4px; }
+  /* Home does not scroll, so it needs none of the stage's 40 px run-out
+     under the last row; the same 22 px as above it. */
+  .stage:has(> .wrap > .home) { padding-bottom: 22px; }
 }
 .hc { position: relative; min-width: 0; min-height: 0; overflow: hidden; margin: 0; padding: 16px; }
 .hc[role="button"] { cursor: pointer; }

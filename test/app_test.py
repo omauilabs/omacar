@@ -229,6 +229,75 @@ window.__rd = READINGS;
 </script>
 """
 
+# THE TWO SCREENS A DRIVE IS SPENT ON, MEASURED AT THE TABLET'S OWN SIZES.
+#
+# Home, then the launcher handing over to Gauges exactly the way launcher.js
+# does it -- a hash write, not a tap -- because that is the path the tablet
+# takes on Wednesday. Gauges moved into Vehicle -> Live, which shows the
+# segment row, and nothing measured it after the move: it came out 73 px
+# taller than its stage, with its bottom buttons below the fold, and the chip
+# row offered "<- Begin", one tap from re-running `omacar begin` (which stops
+# the drive recorder) mid-drive.
+#
+# Run at both orientations with a COARSE pointer emulated, because the tablet
+# is a touch screen and the coarse block in app.css makes the tab bar and the
+# chip rows taller there -- the case with the least room.
+FIT_PROBE = r"""
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const stage = () => {
+    const st = document.getElementById("stage");
+    return { scroll: st.scrollHeight, client: st.clientHeight,
+             bottom: Math.round(st.getBoundingClientRect().bottom) };
+  };
+  const bottom = (sel) => {
+    const el = document.querySelector(sel);
+    return el ? Math.round(el.getBoundingClientRect().bottom) : null;
+  };
+  await wait(3500);
+  const out = { viewport: [innerWidth, innerHeight],
+                coarse: matchMedia("(pointer: coarse)").matches };
+  out.home = stage();
+  out.homeFoot = bottom(".home-foot");
+  // The cards are measured against the footer, not just the stage: the grid
+  // overflowing its own box lands on the footer inside the stage's bottom
+  // padding, where no scroll height ever sees it.
+  const foot = document.querySelector(".home-foot");
+  out.footTop = foot ? Math.round(foot.getBoundingClientRect().top) : null;
+  out.cardsEnd = Math.max(0, ...[...document.querySelectorAll(".home-grid > *")]
+    .map((el) => Math.round(el.getBoundingClientRect().bottom)));
+  // And no card cut short to get there: a tile whose content is taller than
+  // the tile has lost its bottom line to overflow:hidden.
+  out.clipped = [...document.querySelectorAll(".home-grid > *")]
+    .filter((el) => el.scrollHeight > el.clientHeight + 1)
+    .map((el) => `${el.dataset.card} ${el.scrollHeight}/${el.clientHeight}`);
+  location.hash = "#launcher";
+  await wait(1200);
+  location.hash = "#drive";
+  await wait(2000);
+  const lead = document.querySelector(".chip-lead");
+  out.lead = { vis: getComputedStyle(lead).visibility, text: lead.textContent,
+               go: lead.dataset.go || "" };
+  out.seg = !document.getElementById("segbar").hidden;
+  out.drive = stage();
+  out.controls = bottom(".drive-controls");
+  document.title = "FIT " + JSON.stringify(out);
+})();
+</script>
+"""
+
+# Emulates the Surface's touch screen: `pointer: coarse` matches, `hover` does
+# not. Checked on Chromium 151 by reading both media queries back.
+COARSE = ("--blink-settings=primaryPointerType=2,availablePointerTypes=2,"
+          "primaryHoverType=1,availableHoverTypes=1")
+
+# --window-size is the OUTER size; the inner viewport comes back shorter by
+# the headless frame. These give the tablet's CSS viewports on Chromium 151,
+# and the probe reports the viewport it really got, so a drift says so.
+TABLET = {"landscape": ((1368, 912), "--window-size=1368,1055"),
+          "portrait": ((912, 1368), "--window-size=912,1511")}
+
 
 def ok(msg):
     print(f"    ok  {msg}")
@@ -262,6 +331,81 @@ def python_for_server():
     venv = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
                         "venv", "bin", "python")
     return venv if os.path.exists(venv) else sys.executable
+
+
+def run_probe(exe, probe, tag, flags=(), budget=12000):
+    """Serve a copy of share/ with `probe` appended to app.html, from a real
+    OmaCar server, open it once (onboarding already done) and return the JSON
+    the probe put in the title after `tag`, or None."""
+    work = tempfile.mkdtemp()
+    copy = os.path.join(work, "share")
+    shutil.copytree(SHARE, copy)
+    with open(os.path.join(copy, "app.html"), "a", encoding="utf-8") as f:
+        f.write(probe)
+    with open(os.path.join(copy, "_seed.html"), "w", encoding="utf-8") as f:
+        f.write('<script>localStorage.setItem("omacar.onboarded","1")</script>ok')
+    port = free_port()
+    srv = subprocess.Popen(
+        [python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    prof = tempfile.mkdtemp()
+    base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            f"--user-data-dir={prof}", "--hide-scrollbars",
+            "--force-device-scale-factor=1", *flags]
+    try:
+        for _ in range(40):
+            time.sleep(0.25)
+            try:
+                with socket.create_connection(("127.0.0.1", port), 0.25):
+                    break
+            except OSError:
+                continue
+        subprocess.run(base + ["--virtual-time-budget=2000", "--dump-dom",
+                               f"http://127.0.0.1:{port}/_seed.html"],
+                       capture_output=True, timeout=120)
+        r = subprocess.run(base + [f"--virtual-time-budget={budget}", "--dump-dom",
+                                   f"http://127.0.0.1:{port}/app.html"],
+                           capture_output=True, text=True, timeout=180)
+        m = re.search(r"<title>" + tag + r" (\{.*?\})</title>", r.stdout or "", re.S)
+        return json.loads(m.group(1).replace("&quot;", '"')) if m else None
+    finally:
+        srv.terminate()
+        try:
+            srv.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            srv.kill()
+        shutil.rmtree(prof, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def fit_check(exe):
+    """Home and Gauges fit the tablet's screen at both orientations, and the
+    handover from Begin leaves no way back to it on the drive screen."""
+    for orient, (want, size) in TABLET.items():
+        g = run_probe(exe, FIT_PROBE, "FIT", flags=(size, COARSE))
+        if not g:
+            bad(f"{orient}: the fit probe returned nothing")
+            continue
+        check(f"{orient}: the viewport is the tablet's, touch pointer "
+              f"(got {g.get('viewport')}, coarse={g.get('coarse')})",
+              g.get("viewport") == list(want) and g.get("coarse") is True)
+        h, d = g.get("home") or {}, g.get("drive") or {}
+        check(f"{orient}: Home fits its stage without scrolling "
+              f"(content {h.get('scroll')} in {h.get('client')} px, "
+              f"footer ends at {g.get('homeFoot')}, stage at {h.get('bottom')})",
+              h.get("scroll", 1e9) <= h.get("client", 0) + 1
+              and (g.get("homeFoot") or 1e9) <= h.get("bottom", 0))
+        check(f"{orient}: and its cards end above the provenance line "
+              f"(cards end at {g.get('cardsEnd')}, footer starts at {g.get('footTop')})",
+              0 < (g.get("cardsEnd") or 1e9) <= (g.get("footTop") or 0))
+        check(f"{orient}: without cutting any card short (clipped: {g.get('clipped')})",
+              g.get("clipped") == [])
+        check(f"{orient}: Gauges is shown with its segment row", g.get("seg") is True)
+        check(f"{orient}: and fits under it without scrolling "
+              f"(content {d.get('scroll')} in {d.get('client')} px, "
+              f"buttons end at {g.get('controls')}, stage at {d.get('bottom')})",
+              d.get("scroll", 1e9) <= d.get("client", 0) + 1
+              and (g.get("controls") or 1e9) <= d.get("bottom", 0))
 
 
 def lost_server_check(exe):
@@ -657,6 +801,8 @@ def main():
             shutil.rmtree(vprobe, ignore_errors=True)
         # ---- and the server going away after the first paint ------------
         lost_server_check(exe)
+        # ---- and the drive's two screens fit the tablet ------------------
+        fit_check(exe)
     finally:
         server.terminate()
         try:
