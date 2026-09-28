@@ -2854,6 +2854,142 @@ check("nothing rate-limits the restart that keeps it alive",
 check("and the restart itself is still unconditional",
       any(d == "Restart=always" for d in _directives), True)
 
+# --------------------------------------------------------- the parked session
+head("tools/ima-session.sh sends only read-only prospect/listen/mcp calls")
+
+import re as _ima_re              # noqa: E402
+import shutil as _ima_shutil      # noqa: E402
+import subprocess as _ima_sp      # noqa: E402
+import tempfile as _ima_tempfile  # noqa: E402
+
+_IMA_SH = os.path.join(ROOT, "tools", "ima-session.sh")
+_ima_src = open(_IMA_SH, encoding="utf-8").read()
+# Comments say what this must never do, in words -- "the guard checks
+# tools/ima-session.sh reads this file and fails if any of those appear as
+# something it would send" cannot itself be the trigger for its own failure.
+# Only the code, with comment lines stripped, is what could actually run.
+_ima_code = "\n".join(ln for ln in _ima_src.splitlines()
+                      if not ln.strip().startswith("#"))
+
+check("the script exists and is executable",
+      os.access(_IMA_SH, os.X_OK), True)
+check("never runs `omacar write`", "omacar write" in _ima_code, False)
+check("never sends a clear", bool(_ima_re.search(r"clear", _ima_code, _ima_re.I)), False)
+check("never sends ATCSM0", "atcsm0" in _ima_code.lower(), False)
+
+# Every 0x-prefixed service byte named anywhere in the executable text -- in a
+# --service flag, in a raw request string, or in a label a human reads -- has
+# to be one of the two read-only services section 4 uses. Checking the whole
+# text rather than just the --service flags also catches one built by string
+# concatenation instead.
+_FORBIDDEN_SERVICES = {"10", "11", "14", "27", "28", "2E", "2F", "31", "34",
+                       "36", "37", "3E", "85"}
+_ALLOWED_SERVICES = {"21", "22"}
+_services = [m.upper() for m in _ima_re.findall(r"0x([0-9A-Fa-f]{2})\b", _ima_code)]
+check("service bytes were found (the checks below are not vacuous)",
+      len(_services) > 0, True)
+check("every 0x service byte in the script is 0x21 or 0x22",
+      [s for s in _services if s not in _ALLOWED_SERVICES], [])
+check("and none of them is one of the forbidden services",
+      [s for s in _services if s in _FORBIDDEN_SERVICES], [])
+
+# Step 0b's "HEADER:REQUEST" pairs are the one place a raw request hex string
+# is assembled by hand, checked the same way car_request itself would refuse
+# one: by its first byte.
+_pairs = _ima_re.findall(r'"(18DA[0-9A-Fa-f]{2}F1):([0-9A-Fa-f]{4,6})"', _ima_code)
+check("step 0b's requests were found (the check below is not vacuous)",
+      len(_pairs) > 0, True)
+check("every step 0b request's service byte is 0x21 or 0x22",
+      [r for _h, r in _pairs if r[:2].upper() not in _ALLOWED_SERVICES], [])
+
+# Every 8-hex-digit token anywhere in the script -- every place a header could
+# be spelled out, in a --headers flag or a HEADER:REQUEST pair -- has to be a
+# tester address, never a header naming live control traffic.
+_HEADER_RE = _ima_re.compile(r"^(?:18DA|18DB)[0-9A-F]{2}F1$")
+_headers = _ima_re.findall(r"\b([0-9A-Fa-f]{8})\b", _ima_code)
+check("header-shaped tokens were found (the check below is not vacuous)",
+      len(_headers) > 0, True)
+check("every 8-hex-digit token in the script is 18DAxxF1 or 18DBxxF1",
+      [h for h in _headers if not _HEADER_RE.match(h.upper())], [])
+
+# Section 4 built each 0x22 range to stay under 24 ids on purpose:
+# prospect.sweep() abandons a header after 24 consecutive silences, which
+# could understate a wider range on a module that answers nothing for an
+# unmapped DID instead of refusing it.
+_prospect_calls = _ima_re.findall(
+    r'run_prospect\s+"[^"]*"\s+0x([0-9A-Fa-f]{2})\s+"([^"]*)"\s+"([^"]*)"\s+(\d+)',
+    _ima_code)
+check("prospect calls were found (the check below is not vacuous)",
+      len(_prospect_calls) > 0, True)
+for _svc, _hdrs, _rng, _rounds in _prospect_calls:
+    if _svc.upper() == "22":
+        _lo, _hi = _rng.split("-")
+        _span = int(_hi, 16) - int(_lo, 16) + 1
+        check(f"0x22 range {_rng} ({_hdrs}) is 24 ids or fewer", _span <= 24, True)
+
+# A GUARD THAT CANNOT FAIL IS NOT A GUARD. Confirmed by hand: a line
+#   run_prospect "x" 0x2E "18DA03F1" "0000-0000" 1
+# inserted above made "every 0x service byte ... is 0x21 or 0x22" and "none
+# of them is one of the forbidden services" both report FAIL; removing it
+# made every check here pass again. See the commit message for the exact
+# before/after run.
+
+head("`--dry-run` prints the plan and sends nothing")
+
+_ima_bin = _ima_tempfile.mkdtemp()
+_fake_omacar = os.path.join(_ima_bin, "omacar")
+_ima_calls = os.path.join(_ima_bin, "omacar-calls.log")
+with open(_fake_omacar, "w", encoding="utf-8") as f:
+    f.write('#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % _ima_calls)
+os.chmod(_fake_omacar, 0o755)
+
+_ima_state = _ima_tempfile.mkdtemp()
+_ima_env = dict(os.environ)
+_ima_env["PATH"] = _ima_bin + os.pathsep + _ima_env.get("PATH", "")
+_ima_env["XDG_STATE_HOME"] = _ima_state
+
+_ima_proc = _ima_sp.run(["bash", _IMA_SH, "--dry-run"], env=_ima_env,
+                        capture_output=True, text=True, timeout=60)
+
+check("--dry-run exits 0", _ima_proc.returncode, 0)
+check("--dry-run never invokes the real omacar", os.path.exists(_ima_calls), False)
+
+_ima_expected = [
+    "omacar drive off",
+    "omacar listen capture --id 231 --seconds 15 --save --note probe-231",
+    "omacar listen capture --id 307 --seconds 15 --save --note probe-307",
+    "omacar listen capture --id 115 --seconds 15 --save --note probe-115",
+    "omacar listen capture --id 17D --seconds 15 --save --note probe-17D",
+    '"header":"18DA0EF1","request":"222660"',
+    '"header":"18DA03F1","request":"2101"',
+    "omacar prospect --service 0x22 --headers 18DA0EF1,18DA10F1 --range 2610-2616 --parked --rounds 4",
+    "omacar prospect --service 0x22 --headers 18DA0EF1,18DA10F1 --range 2660-2666 --parked --rounds 4",
+    "omacar prospect --service 0x22 --headers 18DA0EF1 --range 2240-2240 --parked --rounds 2",
+    "omacar prospect --service 0x22 --headers 18DA03F1,18DA04F1 --range 2001-2012 --parked --rounds 8",
+    "omacar prospect --service 0x22 --headers 18DA03F1,18DA04F1 --range 2021-202C --parked --rounds 8",
+    "omacar prospect --service 0x22 --headers 18DA03F1,18DA04F1 --range 2222-2222 --parked --rounds 8",
+    "omacar prospect --service 0x21 --headers 18DA03F1,18DA04F1 --range 00-FF --parked --rounds 8",
+    "omacar candlog --profile honda-crz-2015 --once",
+    "omacar drive on",
+]
+_ima_missing = [s for s in _ima_expected if s not in _ima_proc.stdout]
+check("--dry-run's plan names every expected command", _ima_missing, [])
+check("step 5 is not planned without --full", "2000-2FFF" not in _ima_proc.stdout, True)
+
+_ima_proc_full = _ima_sp.run(["bash", _IMA_SH, "--dry-run", "--full"], env=_ima_env,
+                             capture_output=True, text=True, timeout=60)
+check("--dry-run --full exits 0", _ima_proc_full.returncode, 0)
+check("--dry-run --full never invokes the real omacar",
+      os.path.exists(_ima_calls), False)
+check("--dry-run --full also plans the optional block sweep",
+      "omacar discover --headers 18DA03F1,18DA04F1 --service 0x22 --range "
+      "2000-2FFF --budget 45 --once" in _ima_proc_full.stdout, True)
+check("and its status check",
+      "omacar discover status" in _ima_proc_full.stdout, True)
+
+_ima_shutil.rmtree(_ima_bin, ignore_errors=True)
+_ima_shutil.rmtree(_ima_state, ignore_errors=True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
