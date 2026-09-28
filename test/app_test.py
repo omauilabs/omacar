@@ -25,6 +25,7 @@ whatever the owner has -- so a machine without one says so and passes. A test
 that cannot run is not a failure; a test that silently does nothing is.
 """
 
+import atexit
 import json
 import os
 import re
@@ -39,6 +40,41 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARE = os.path.join(ROOT, "share")
 
 fails = 0
+
+# ---- redesign/cameras ---------------------------------------------------------
+# EVERY SERVER THIS FILE STARTS GETS ITS OWN XDG_CONFIG_HOME.
+#
+# Task 4's alertness.js runs on every page load and POSTs /api/audio, which
+# lib/audio.py answers by reading the managed flag out of
+# $XDG_CONFIG_HOME/omarchy/omacar-audio.json -- and, when that flag says
+# managed, by running real wpctl calls against whatever sink is in front of
+# the process. None of the Popen calls below used to pass an `env=`, so every
+# server this suite started inherited the box's REAL XDG_CONFIG_HOME: on the
+# tablet, where `omacar audio on` is actually meant to be run, every headless
+# probe in this file would have ramped the real sink for real.
+#
+# ONLY XDG_CONFIG_HOME IS REDIRECTED, NOT HOME. lib/audio.py's flag_path()
+# reads XDG_CONFIG_HOME exclusively -- an absolute value here means its
+# `~/.config` fallback never runs -- so this alone makes the flag
+# unreachable, which is the whole of what "never touches the real audio
+# config" requires. HOME is left exactly as the real environment provides
+# it: several checks below (the Vehicle screen's headline and system rows,
+# the advisor's insight card, the drive-history readings) read the box's own
+# accumulated vehicle database, which lives under XDG_STATE_HOME's
+# HOME-derived fallback (lib/records.py, lib/garage.py) when XDG_STATE_HOME
+# itself is unset, as it is in this shell. Redirecting HOME too would
+# silently swap every one of those checks from this box's real car to an
+# empty, unseeded one and fail them for a reason that has nothing to do with
+# audio -- a bigger, unrelated regression in the name of fixing a smaller one.
+_SCRATCH_CONFIG = tempfile.mkdtemp(prefix="omacar-app-test-config-")
+atexit.register(shutil.rmtree, _SCRATCH_CONFIG, ignore_errors=True)
+
+
+def _isolated_env():
+    env = dict(os.environ)
+    env["XDG_CONFIG_HOME"] = _SCRATCH_CONFIG
+    return env
+# ---- end redesign/cameras -----------------------------------------------------
 
 # Appended to a COPY of app.html. It drives the store directly rather than
 # faking a feed, because what is being measured is layout under a speed value,
@@ -446,7 +482,7 @@ def run_probe(exe, probe, tag, flags=(), budget=12000):
     port = free_port()
     srv = subprocess.Popen(
         [python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_isolated_env())
     prof = tempfile.mkdtemp()
     base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
             f"--user-data-dir={prof}", "--hide-scrollbars",
@@ -657,7 +693,7 @@ def lost_server_check(exe):
     port = free_port()
     srv = subprocess.Popen(
         [python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_isolated_env())
     killed = []
 
     class Kill(http.server.BaseHTTPRequestHandler):
@@ -760,7 +796,7 @@ def main():
         [python_for_server(), os.path.join(ROOT, "lib", "serve.py"),
          str(port), SHARE],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL)
+        stdin=subprocess.DEVNULL, env=_isolated_env())
     try:
         url = f"http://127.0.0.1:{port}/app.html"
         for _ in range(60):
@@ -934,7 +970,7 @@ def main():
         gsrv = subprocess.Popen(
             [python_for_server(), os.path.join(ROOT, "lib", "serve.py"),
              str(gport), copy],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_isolated_env())
         gprof = tempfile.mkdtemp()
         try:
             for _ in range(40):
@@ -1010,7 +1046,7 @@ def main():
         vsrv = subprocess.Popen(
             [python_for_server(), os.path.join(ROOT, "lib", "serve.py"),
              str(vport), vcopy],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_isolated_env())
         vprof = tempfile.mkdtemp()
         try:
             for _ in range(40):

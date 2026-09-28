@@ -1,5 +1,8 @@
 import { eq, ok } from "./assert.js";
-import { MUSIC_DB, ALERT_MAX_DB, dbToGain, gainToDb, headroomDb, musicIn, alertIn } from "../js/audiobus.js";
+import {
+  MUSIC_DB, ALERT_MAX_DB, dbToGain, gainToDb, headroomDb, musicIn, alertIn,
+  audioContext, schedule,
+} from "../js/audiobus.js";
 import { auxLine } from "../js/audiostate.js";
 
 export default [
@@ -16,4 +19,34 @@ export default [
   ["AUX disconnected only when the port is known to be the speakers", () =>
     eq([auxLine({ aux: false }), auxLine({ aux: true }), auxLine({ aux: null }), auxLine(null)],
        ["AUX disconnected — sound is on the tablet's speakers", "", "", ""])],
+  // Fix round 1: without cancelAndHoldAtTime (Firefox has no such method),
+  // schedule()'s old fallback cancelled the in-flight ramp and rewrote the
+  // gain to its value read right now -- a step of a few dB, on the one bus
+  // this whole file exists to keep stepless. Forcing the fallback here (by
+  // deleting cancelAndHoldAtTime off the real gain param, not a mock) and
+  // spying on every method that could touch the value proves the fix: none
+  // of them run at all, so the bus is left exactly where it was.
+  ["without cancelAndHoldAtTime, schedule() refuses to reschedule rather than stepping the bus", () => {
+    const g = musicIn().gain;
+    const realHold = g.cancelAndHoldAtTime;
+    const realCancel = g.cancelScheduledValues.bind(g);
+    const realSetAt = g.setValueAtTime.bind(g);
+    const realRamp = g.linearRampToValueAtTime.bind(g);
+    let cancelled = false, stepped = false, ramped = false;
+    g.cancelAndHoldAtTime = undefined;   // force the no-cancelAndHoldAtTime path
+    g.cancelScheduledValues = (...a) => { cancelled = true; return realCancel(...a); };
+    g.setValueAtTime = (...a) => { stepped = true; return realSetAt(...a); };
+    g.linearRampToValueAtTime = (...a) => { ramped = true; return realRamp(...a); };
+    try {
+      schedule("music", [[1, -6]], audioContext().currentTime, false);
+    } finally {
+      g.cancelAndHoldAtTime = realHold;
+      g.cancelScheduledValues = realCancel;
+      g.setValueAtTime = realSetAt;
+      g.linearRampToValueAtTime = realRamp;
+    }
+    ok(!cancelled && !stepped && !ramped,
+       `schedule() without cancelAndHoldAtTime must not touch the gain at all `
+       + `(cancelScheduledValues=${cancelled} setValueAtTime=${stepped} linearRampToValueAtTime=${ramped})`);
+  }],
 ];

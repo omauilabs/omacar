@@ -14,7 +14,7 @@
 import { h } from "./core.js";
 // The radio joins the one output stage (audiobus.js): its analyser feeds the
 // music bus, 12 dB below full scale, so every alert has headroom over it.
-import { audioContext, musicIn } from "./audiobus.js";
+import { audioContext, musicIn, dbToGain, MUSIC_DB } from "./audiobus.js";
 
 const STREAM = "https://radio.cliamp.stream/omarchy/stream";
 const STATS = "https://radio.cliamp.stream/statistics";
@@ -239,8 +239,12 @@ function analyserFor(a) {
     analyser.connect(musicIn());
     bins = new Uint8Array(analyser.frequencyBinCount);
   } catch {
-    // Tainted, unsupported, or the element was already taken. The player must
-    // keep working; only the meter is lost.
+    // Tainted, unsupported, or the element was already taken. The player
+    // must keep working, but this is not just the meter going away: the
+    // element never joins the stage at all, so toggle() falls back to a
+    // fixed, conservative volume (-12 dB, matching the stage's own music
+    // level) rather than playing un-staged at whatever the volume slider
+    // happens to hold.
     analyser = null;
   }
   return analyser;
@@ -405,14 +409,33 @@ export const radio = {
       // A live stream that has been paused is stale; reloading rejoins at the
       // live edge instead of resuming minutes behind.
       if (a.currentTime > 0) a.load();
-      try { await a.play(); } catch { /* autoplay policy or offline */ }
-      // Built here, on the click, because an AudioContext created without a
-      // user gesture arrives suspended and stays suspended -- and a suspended
-      // context reports zeros, which is indistinguishable from silence.
-      analyserFor(a);
-      if (actx && actx.state === "suspended") {
+      // JOIN THE STAGE BEFORE PLAYING, in the same tap. Built here, on the
+      // click, because an AudioContext created without a user gesture
+      // arrives suspended and stays suspended -- and a suspended context
+      // reports zeros, which is indistinguishable from silence. But calling
+      // analyserFor() AFTER play() used to mean the first play of a session
+      // sounded at the element's own volume for a moment and then dropped
+      // 12 dB in one step the instant createMediaElementSource() rerouted it
+      // through the stage -- a real step on the car's speakers, even if a
+      // brief downward one. Building and resuming the graph first, before
+      // play() ever runs, means the first sample that reaches the speakers
+      // is already staged.
+      const joined = analyserFor(a);
+      if (joined && actx && actx.state === "suspended") {
         try { await actx.resume(); } catch { /* the meter goes still, not wrong */ }
       }
+      if (!joined) {
+        // The graph could not be built at all (no Web Audio, or the element
+        // was somehow already taken) -- see analyserFor()'s catch. Playing
+        // straight to the device is still better than nothing, but never at
+        // whatever the volume slider happens to hold: that could be
+        // anywhere up to full scale. -12 dB matches the stage's own music
+        // level, so an un-staged radio is at worst as loud as a staged one,
+        // never louder, and never a silent full-level jump waiting to
+        // happen the next time the page reconnects the graph.
+        a.volume = dbToGain(MUSIC_DB);
+      }
+      try { await a.play(); } catch { /* autoplay policy or offline */ }
       startPolling();
     } else {
       a.pause();

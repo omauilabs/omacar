@@ -74,8 +74,24 @@ export function schedule(bus, points, at, append = false) {
   ensure();
   const g = node[bus].gain;
   if (!append) {
-    if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(at);
-    else { g.cancelScheduledValues(at); g.setValueAtTime(g.value, at); }
+    if (g.cancelAndHoldAtTime) {
+      g.cancelAndHoldAtTime(at);
+    } else {
+      // NO FALLBACK. cancelAndHoldAtTime is the only way to ask "what would
+      // this automation's value have been at `at`", and without it there is
+      // no correct way to cancel a ramp that is already in flight:
+      // cancelScheduledValues(at) drops the ramp's end event, so the value
+      // falls back to whatever the PREVIOUS event set until `at`, and
+      // setValueAtTime(g.value, at) then writes g.value read NOW -- not the
+      // value the automation would actually have at `at`. Doing that is two
+      // steps of a few dB each, exactly the kind of jump this stage exists
+      // to prevent, and it gets WORSE the further `at` is in the future.
+      // So a browser without cancelAndHoldAtTime does not reschedule at
+      // all: this call is skipped and the bus is left exactly where its
+      // last scheduled plan already has it, mid-ramp or not, rather than
+      // stepping the level to "fix" it.
+      return;
+    }
   }
   for (const [t, db] of points) g.linearRampToValueAtTime(dbToGain(db), at + t);
 }
