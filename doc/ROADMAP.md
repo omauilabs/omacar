@@ -417,9 +417,9 @@ the one that is wrong.
 | QML — the Quickshell plugin | 6 | 3,135 |
 | Shell — the CLI and the installer | 6 | 1,789 |
 | Tests | 25 | 7,973 |
-| Documentation | 33 | 15,263 |
+| Documentation | 33 | 15,340 |
 | Data — codes, resets, procedures, profiles | 8 | 1,480 |
-| **Tracked in git, all of it** | | **91,006** |
+| **Tracked in git, all of it** | | **91,083** |
 
 **Tests** — 1,222 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -582,7 +582,7 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**The capability map, counted** — `doc/capabilities.json`: 254 capabilities across 23 domains.
+**The capability map, counted** — `doc/capabilities.json`: 255 capabilities across 23 domains.
 
 | Domain | Shipped | Building | Next | Later | Research | All |
 |---|---:|---:|---:|---:|---:|---:|
@@ -593,7 +593,7 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | 12 V electrical and charging | 4 | 0 | 0 | 2 | 1 | 7 |
 | Tyres, brakes and chassis | 1 | 1 | 1 | 5 | 2 | 10 |
 | Fuel economy, trips and costs | 6 | 1 | 0 | 2 | 1 | 10 |
-| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 2 | 4 | 4 | 16 |
+| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 3 | 5 | 3 | 17 |
 | Navigation and location | 0 | 0 | 5 | 4 | 0 | 9 |
 | Phone, media, CarPlay and Android Auto | 2 | 2 | 0 | 2 | 2 | 8 |
 | Body and comfort | 5 | 1 | 0 | 2 | 2 | 10 |
@@ -609,7 +609,7 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | Accessibility | 7 | 0 | 0 | 3 | 0 | 10 |
 | Interface and looks | 10 | 1 | 2 | 0 | 0 | 13 |
 | Omarchy plugins in the car | 0 | 0 | 2 | 4 | 2 | 8 |
-| **All domains** | **116** | **18** | **33** | **66** | **21** | **254** |
+| **All domains** | **116** | **18** | **34** | **67** | **20** | **255** |
 
 *Shipped* means `omacar roadmap --check` found every file the entry
 names tracked by git, and every entry it stands on shipped too. It does
@@ -642,8 +642,9 @@ adapters it has actually met.
 - *Interface and looks* — Five tabs a driver would name (`share/js/main.js`) · Home (`share/js/views/home.js`) · Arrange Home by hand (`lib/homelayout.py`) · The designed palette and type (`share/css/app.css`) · Every screen says where its numbers came from (`share/js/provenance.js`) · The car's own picture, kept out of git (`lib/assets.py`) · Themes I build (`lib/themes.py`) · Effects driven by the car (`share/js/effects.js`) · Drive mode (`share/js/views/drive.js`) · A boot screen that says what it waits for (`share/js/bootscreen.js`).
 - *Omarchy plugins in the car* — nothing yet.
 
-**Shipped** — 220 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
+**Shipped** — 221 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
 
+- `2026-09-28` The toddler stays in view for the whole drive, and a meltdown gets toddler songs
 - `2026-09-28` The back seat: a reminder to check it, a calm word about crying, and screens for the kids
 - `2026-09-28` Every hard stop, jolt or tap becomes one package from all three cameras
 - `2026-09-28` The owner's answers: three refusals, four warnings, resets and recalls in Next
@@ -651,7 +652,6 @@ adapters it has actually met.
 - `2026-09-28` The shipped line says which commits it leaves out, in words that are true
 - `2026-09-28` Every price in the roadmap names the page it came from and the day it was read
 - `2026-09-28` The roadmap refuses a capability it cannot prove, and stops going stale on its own
-- `2026-09-28` The whole car, as a list an agent can read, with the file that proves each item
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
@@ -707,9 +707,15 @@ the prose looking like a measurement.
 - More than 1,000 children have died of vehicular heatstroke in the United States since 1998, by NHTSA's count. **(unverified)**
   <br>Sources: <https://www.nhtsa.gov/campaign/heatstroke>
   <br>*Asserted 2026-09-28. To re-check: NHTSA's page and the National Safety Council's (injuryfacts.nsc.org, hotcars) both refused automated reads on 2026-09-28 with HTTP 403, so the figure was seen only in search results summarising NHTSA. Open NHTSA's heatstroke page in a browser and confirm the count, then mark this verified. It is the reason safe.rear-seat-reminder exists, not a number the app shows.*
-- MediaPipe's Audio Classifier task uses YAMNet as its default model, an audio event classifier trained on AudioSet, and supports Python, the web, Android and iOS. YAMNet's class map includes 'Baby cry, infant cry' (index 20, /t/dd00002).
+- MediaPipe's Audio Classifier task uses YAMNet as its default model, an audio event classifier trained on AudioSet, and supports Python, the web, Android and iOS. YAMNet's 521-class map includes 'Crying, sobbing' (19), 'Baby cry, infant cry' (20), 'Whimper' (21), 'Wail, moan' (22), 'Screaming' (11) and 'Children shouting' (10).
   <br>Sources: <https://developers.google.com/edge/mediapipe/solutions/audio/audio_classifier>, <https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv>
-  <br>*Asserted 2026-09-28. To re-check: Open the task guide and the class map. A class existing is not the classifier working in a car: road noise, music and an older child's shouting all need testing before safe.child-cry says anything.*
+  <br>*Asserted 2026-09-28. To re-check: Open the task guide and the class map. A class existing is not the classifier working in a car: road noise, music and an older child's shouting all need testing before safe.backseat-comfort acts on anything.*
+- California Vehicle Code s27602(a) bars driving while a video screen displaying 'a television broadcast or video signal that produces entertainment or business applications' is forward of the back of the driver's seat or visible to the driver. Its exceptions cover vehicle information, GPS and mapping displays, views 'forward, behind, or to the sides ... for the purpose of maneuvering the vehicle', and screens interlocked or designed so the driver cannot see them. Whether a child-seat camera falls under it is unclear: its feed is arguably neither entertainment nor business, which could put it outside (a), but no exception names it, and it is not a view for maneuvering.
+  <br>Sources: <https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=VEH&sectionNum=27602>
+  <br>*Asserted 2026-09-28. To re-check: The statute's text was read on the Legislature's own site (last amended by Stats. 2010, Ch. 328, effective 2011-01-01). What is verified is the text. The reading of it for a child-seat camera is ours, not a court's or a lawyer's, and no case law was checked. This is not legal advice. The setting says the risk is unclear, and does not say it is permitted.*
+- NHTSA's visual-manual driver distraction guidelines (78 FR 24818, 2013-04-26) are nonbinding and voluntary, and list 'displaying video not related to driving' among the per-se lock-outs, the activities a device should not allow while driving.
+  <br>Sources: <https://www.federalregister.gov/documents/2013/04/26/2013-09883/visual-manual-nhtsa-driver-distraction-guidelines-for-in-vehicle-electronic-devices>
+  <br>*Asserted 2026-09-28. To re-check: The full text was read through the Federal Register's text endpoint (documents/full_text/text/2013/04/26/2013-09883.txt); the human page redirected an automated fetch to a check. The guidelines are written for manufacturers of in-vehicle devices; the owner has decided the toddler camera stays on regardless, and the app states this once.*
 - The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.
   <br>Sources: <https://omarchy.org/manual/shell-plugins/>, <https://omarchyplugins.com>, <https://github.com/omacom/omarchy-plugin-marketplace>
   <br>*Asserted 2026-09-28. To re-check: Open the manual page and the marketplace repository, and count the entries in its registry.json. The compatibility analysis in the capability map starts here and at /usr/share/omarchy/shell/plugins on an Omarchy machine.*
