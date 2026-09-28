@@ -97,6 +97,19 @@ def main():
             print(f"  {DIM}no stored fault codes{RESET}")
         print()
 
+    # The pictures that ship outside git (lib/assets.py). Not the car's
+    # business, but doctor is where "why is Home showing a placeholder" is asked.
+    try:
+        import assets as _assets
+        print(f"  {BOLD}Private assets{RESET}")
+        print()
+        for _name, _s in _assets.status().items():
+            _mark = f"{GREEN}ok{RESET}" if _s["ok"] else f"{RED}{_s['why']}{RESET}"
+            print(f"    {_name:<12} {_mark}")
+        print()
+    except Exception as _why:                                  # noqa: BLE001
+        print(f"  {DIM}private assets not checked ({type(_why).__name__}){RESET}\n")
+
     os.makedirs(connect.STATE, exist_ok=True)
     with open(os.path.join(connect.STATE, "status.json"), "w", encoding="utf-8") as f:
         json.dump({"port": port, "kind": kind, "status": str(status),

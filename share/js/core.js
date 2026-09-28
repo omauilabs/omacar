@@ -47,7 +47,7 @@ export function icon(paths, size = 20) {
   svg.setAttribute("width", size); svg.setAttribute("height", size);
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.7");
+  svg.setAttribute("stroke-width", "1.75");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
@@ -314,6 +314,9 @@ export const api = {
   service: (body) => req("/api/service", { method: "POST", body: JSON.stringify(body) }),
   driveLayout: () => req("/api/drive"),
   saveDriveLayout: (body) => req("/api/drive", { method: "POST", body: JSON.stringify(body) }),
+  home: () => req("/api/home"),
+  saveHome: (body) => req("/api/home", { method: "POST", body: JSON.stringify(body) }),
+  assets: () => req("/api/assets"),
   aiAvailable: () => req("/api/ai/available"),
   aiStart: (body) => req("/api/ai", { method: "POST", body: JSON.stringify(body) }),
   aiPoll: (id) => req("/api/ai?job=" + encodeURIComponent(id)),
@@ -331,9 +334,26 @@ class Store extends EventTarget {
     this.knowledge = null;    // dtc.json
     this.aiOn = false;
     this.nurseryOn = false;
-    this.error = null;
+    this.error = null;        // why the last snapshot failed, or null
+    this.liveError = null;    // why the last live sample failed, or null
+    // BUMPED EVERY TIME dropLive() RUNS. A live request already in flight
+    // when the fast clock stops keeps running and answers anyway; without
+    // this, a late success re-latched the sample on the slower screen it
+    // landed on and a late failure left NO SERVER stuck with nothing to clear
+    // it. refreshLive() captures the generation before it awaits and drops
+    // its own answer, success or failure, if dropLive() moved it on.
+    this.liveGen = 0;
+    // THE LAST THING KNOWN ABOUT MOTION. `state` says "offline" the moment the
+    // adapter stops answering, which is true and says nothing about whether
+    // the car is still rolling -- adapters drop out mid-drive. So whether the
+    // car was moving when last seen is kept here, where every sample passes,
+    // and a screen mounted after the drop still knows it.
+    this.lastMoving = false;
   }
-  emit(what) { this.dispatchEvent(new CustomEvent(what)); }
+  emit(what) {
+    if (this.connected) this.lastMoving = this.state === "driving";
+    this.dispatchEvent(new CustomEvent(what));
+  }
   on(what, fn) { this.addEventListener(what, fn); return () => this.removeEventListener(what, fn); }
 
   async boot() {
@@ -365,13 +385,52 @@ class Store extends EventTarget {
   }
 
   async refreshLive() {
-    try { this.live = await api.live(); } catch { this.live = null; }
+    const gen = this.liveGen;
+    let live = null, err = null;
+    try {
+      live = await api.live();
+    } catch (e) {
+      err = String((e && e.message) || e);
+    }
+    // DISCARDED, NOT WRITTEN BACK, if dropLive() moved the generation on
+    // while this was in flight -- see the note on liveGen above. Neither a
+    // late success nor a late failure is current, so neither is applied and
+    // neither is announced.
+    if (gen !== this.liveGen) return;
+    if (err === null) { this.live = live; this.liveError = null; }
+    else { this.live = null; this.liveError = err; }
     this.emit("live");
   }
 
+  // The fast clock stopped (main.js, on the way to a screen that has none).
+  // Its sample goes with it; a failure it saw does not, because that is still
+  // the last thing known about the server. The snapshot clock owns it from
+  // here, and clears it the next time it gets an answer.
+  dropLive() {
+    this.liveGen++;
+    if (this.liveError) this.error = this.liveError;
+    this.live = null;
+    this.liveError = null;
+  }
+
+  // THE SERVER STOPPED ANSWERING, whether before the first snapshot or long
+  // after it. Only a failure with nothing newer behind it counts: a live
+  // sample in hand means the server is there.
+  get noServer() { return !this.live && !!(this.liveError || this.error); }
+
   // The current sample if the fast poller has one, the snapshot's copy if not,
   // so a view is right the moment it mounts rather than after the first tick.
-  get sample() { return this.live || (this.car && this.car.live) || {}; }
+  //
+  // BUT NOT THE SNAPSHOT'S COPY ONCE THE SERVER HAS GONE. That copy was taken
+  // while the server could still see the car, and it says connected: true for
+  // ever. Handing it on made every tile draw the last numbers the server ever
+  // sent as live, under a badge that said so, for as long as the server stayed
+  // down. With no server there is no current sample at all.
+  get sample() {
+    if (this.live) return this.live;
+    if (this.noServer) return {};
+    return (this.car && this.car.live) || {};
+  }
   get values() { return this.sample.values || {}; }
   get connected() { return !!this.sample.connected; }
   get state() {

@@ -1,0 +1,25 @@
+{
+  "_comment": "Every card Home can hold, and how big each size is: [columns, rows] on the 12-column landscape grid and the 6-column portrait grid, rows 96 px. Read by share/js/homecards.js and by lib/homelayout.py, so the browser and the server can never disagree about what a card is. `default` is the mockups' layout.",
+  "cards": {
+    "dial":     { "label": "Speed",         "sizes": { "m": { "land": [3, 3], "port": [3, 2] }, "l": { "land": [4, 3], "port": [6, 2] } } },
+    "car":      { "label": "Car",           "sizes": { "l": { "land": [5, 3], "port": [6, 3] }, "xl": { "land": [6, 3], "port": [6, 4] } } },
+    "nav":      { "label": "Navigation",    "sizes": { "m": { "land": [4, 3], "port": [3, 2] }, "s": { "land": [4, 2], "port": [6, 1] } } },
+    "coolant":  { "label": "Coolant",       "reading": "coolant",  "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "volts":    { "label": "12V system",    "reading": "volts",    "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "fuel":     { "label": "Fuel",          "reading": "fuel",     "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "charge":   { "label": "Hybrid pack",   "reading": "charge",   "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "intake":   { "label": "Intake air",    "reading": "intake",   "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "econ_now": { "label": "Economy",       "reading": "econ_now", "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "phone":    { "label": "Phone",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
+    "dashcam":  { "label": "Dashcams",      "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
+    "agent":    { "label": "Oma Agent",     "sizes": { "m": { "land": [4, 2], "port": [6, 2] } } }
+  },
+  "default": {
+    "landscape": [["dial", "m"], ["car", "l"], ["nav", "m"],
+                  ["coolant", "s"], ["volts", "s"], ["fuel", "s"], ["charge", "s"],
+                  ["phone", "m"], ["dashcam", "m"], ["agent", "m"]],
+    "portrait":  [["dial", "m"], ["nav", "m"], ["car", "l"],
+                  ["coolant", "s"], ["volts", "s"], ["fuel", "s"], ["charge", "s"],
+                  ["phone", "m"], ["dashcam", "m"], ["agent", "m"]]
+  }
+}

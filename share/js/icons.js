@@ -1,7 +1,7 @@
 // Icon paths, shared.
 //
-// These lived in main.js, which was fine until a second consumer appeared. The
-// hub imports them and main.js imports the hub, so leaving them in main.js
+// These lived in main.js, which was fine until a second consumer appeared.
+// Home imports them and main.js imports Home, so leaving them in main.js
 // would have made the two files import each other -- and an ES module cycle
 // fails at load time as an undefined binding, not as a clear error.
 export const ICONS = {
@@ -50,4 +50,32 @@ export const ICONS = {
         "M4 12.9h6.2v5.6H4z", "M13.8 12.9H20v5.6h-6.2z"],
   drive: ["M4.5 13.5 6.2 8.4A2 2 0 0 1 8.1 7h7.8a2 2 0 0 1 1.9 1.4l1.7 5.1",
           "M4.5 13.5h15v3.8h-3v-1.6h-9v1.6h-3z", "M7.4 15.6h.1", "M16.5 15.6h.1"],
+
+  // ---- the redesign's set, from Lucide (ISC; see ATTRIBUTION.md) ----------
+  home: ["M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8",
+         "M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+  nav: ["M3 11 22 2 13 21 11 13z"],
+  camera: ["m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5",
+           "M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"],
+  vehicle: ["M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2",
+            "M9 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0z", "M9 17h6", "M19 17a2 2 0 1 1-4 0 2 2 0 0 1 4 0z"],
+  agent: ["M2 10v3", "M6 6v11", "M10 3v18", "M14 8v7", "M18 5v13", "M22 10v3"],
+  chevron: ["m9 18 6-6-6-6"],
+  check: ["M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z", "m9 12 2 2 4-4"],
+  layout: ["M4 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z",
+           "M15 3h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z",
+           "M4 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z",
+           "M15 14h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"],
+  phone: ["M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z", "M12 18h.01"],
+  music: ["M9 18V5l12-2v13", "M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0z", "M21 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"],
+  thermo: ["M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0z"],
+  battery: ["M4 7h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z", "M22 11v2"],
+  fuel: ["M3 22h12", "M4 9h10", "M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18",
+         "M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"],
+  leaf: ["M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z",
+         "M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"],
+  gauge: ["m12 14 4-4", "M3.34 19a10 10 0 1 1 17.32 0"],
+  rec: ["M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z", "M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"],
+  plus: ["M5 12h14", "M12 5v14"],
+  x: ["M18 6 6 18", "m6 6 12 12"],
 };

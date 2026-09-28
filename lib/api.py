@@ -30,6 +30,9 @@ what the car said.
     POST /api/vehicle           switch to another car, or name one
     GET  /api/drive             the drive-mode layout
     POST /api/drive             change it
+    GET  /api/home              Home's card layout
+    POST /api/home              change it, or {action: "reset"}
+    GET  /api/assets            the private pictures, when they check out
     POST /api/actuate           command an actuator, or stop one
     POST /api/units             switch between imperial and metric
     POST /api/odometer          set the reading (there is no odometer PID)
@@ -1220,6 +1223,14 @@ def handle_get(path, query):
         }
     if path == "/api/drive":
         return 200, drive_layout()
+    if path == "/api/home":
+        import homelayout
+        return 200, homelayout.home_layout()
+    if path == "/api/assets":
+        # Pictures that ship outside git. A URL only for a file that checks out
+        # against share/assets/manifest.json; see lib/assets.py.
+        import assets
+        return 200, assets.public_view()
     if path == "/api/concerns":
         return 200, {"concerns": concerns.assess()}
     if path == "/api/snapshots":
@@ -1439,6 +1450,12 @@ def handle_post(path, body):
             except ValueError as e:
                 return 400, {"error": str(e)}
         return 200, save_drive_layout(data)
+    if path == "/api/home":
+        import homelayout
+        try:
+            return 200, homelayout.save_home_layout(data)
+        except ValueError as e:
+            return 400, {"error": str(e)}
     if path == "/api/themes":
         what = data.get("action")
         if what == "preview":

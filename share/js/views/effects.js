@@ -2,7 +2,7 @@
 //
 // WHY THEY ARE HERE AND NOT BEHIND A GAUGE.
 //
-// The four effects on the hub are readings rendered as motion: the stars
+// The four effects the hub had were readings rendered as motion: the stars
 // stretch because the car is going faster, the bubbles quicken because the
 // coolant is hotter. They belong behind the numbers they describe.
 //

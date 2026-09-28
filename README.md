@@ -47,23 +47,32 @@ should still be there after a reboot.
     omacar scan          full system scan in the terminal
     omacar ai            the advisor: what is actually wrong with this car
 
-`share/app.html` is a diagnostic platform, not a gauge. Twenty-two screens
-under five tabs:
+`share/app.html` is a diagnostic platform, not a gauge, under five tabs a
+driver would name:
 
-  **Car**     the hub you land on, drive mode, the ambient cluster, the
-              overview, the IMA hybrid screen, your phone, and the garage
-  **Faults**  every code with what it means, this car's own numbers, ranked
-              causes and its freeze frame; the full system scan; and readiness
-              with the reason each monitor is stuck, plus Mode 06
-  **Data**    several channels on one time axis with a cursor and statistics,
-              a scrubber over any recorded drive, and the functional tests
-  **Care**    the service book, resets and procedures, what is trending
-              somewhere it should not, the drive log, and the paperwork
-  **AI**      the advisor — see below
+  **Home**        what the tablet shows when somebody gets in: the speed dial,
+                  the car, four readings that each say where their number came
+                  from, the phone, and the advisor's last answer. Its cards can
+                  be rearranged and resized by hand, while parked.
+  **Navigation**  offline maps and turn-by-turn, still to come (the Surface
+                  has no GPS; it needs a receiver)
+  **Cameras**     front, rear and cabin recording, still to come
+  **Vehicle**     the car system by system on its X-ray, then every workshop
+                  screen in six groups: Overview; Diagnose (every code with
+                  what it means and its freeze frame, the full system scan,
+                  readiness and Mode 06); Live (Gauges, the screen a drive is
+                  spent on, the ambient cluster, several channels on one time
+                  axis, replay of a recorded drive, the functional tests and
+                  writes); Hybrid (the IMA pack); Care (the service book,
+                  resets, what is trending, the drive log, the paperwork); and
+                  Car (every car you own, the summary, the printable report)
+  **Agent**       the advisor — see below — and Work, still to come
 
-Off the navigation but routable: the printable vehicle report, learn mode, and
-the theme editor, each reached from the screen that needs it rather than from a
-tab nobody would look in.
+Off the navigation but routable: the power-on screen with its one Begin button,
+the phone and music screens that Home's phone card opens, learn mode, the theme
+editor and the effects, each reached from the screen that needs it rather than
+from a tab nobody would look in. `#hub`, Home's address for a year, still lands
+on Home.
 
 No build step, no framework, no dependencies: ES modules served straight off
 disk. The thing this replaces is a tablet that stops getting updates when its
@@ -490,15 +499,24 @@ cannot see. Where Vortex is present, `install.sh` does two things and
   and propose; it cannot change the mode, arm a write, or send one — those stay
   at the keyboard.
 
-## Wearing Omarchy's clothes
+## Its own look, or Omarchy's
 
-The palette comes from `~/.local/state/omarchy/current/theme/colors.toml`, not
-from this app. Change the desktop theme and OmaCar changes with it, light
-themes included — the theme supplies the hues and `lib/theme.py` decides the
-roles, so a light theme comes out legible rather than inverted. Every semantic
-colour is checked for contrast against the surface it will actually sit on and
-nudged if it does not clear the floor, because a theme's yellow is chosen to be
-readable in a terminal and that is not the same background.
+OmaCar wears its own look by default: the owner's mockups' palette, called
+OmaCar, with Inter shipped in the app. Every text-on-background pair in it
+clears WCAG AA, and `test/design_test.py` checks that. Settings → Look offers
+six more: Matrix and Aurora (a moving background behind Home, only while parked),
+Daylight for sun on the glass, Night · dim, Night · red, and Omarchy theme. The
+day/night button in the top bar flips between OmaCar and Daylight.
+
+Omarchy theme is the desktop's own palette, from
+`~/.local/state/omarchy/current/theme/colors.toml`. Choose it and OmaCar changes
+whenever the desktop theme does, light themes included, and the day/night
+button flips the desktop theme between its light and dark pair. The theme
+supplies the hues and `lib/theme.py` decides the roles, so a light theme comes
+out legible rather than inverted. Every semantic colour is checked for contrast
+against the surface it will actually sit on and nudged if it does not clear the
+floor, because a theme's yellow is chosen to be readable in a terminal and that
+is not the same background.
 
 It is in the Omarchy menu (OmaCar → scan, advisor, watchdog, simulator), on the
 bar with a badge when the watchdog has raised something, and in the app

@@ -1,0 +1,45 @@
+{
+  "_comment": "Pictures that ship in the app but not in this public repository, because they carry Honda's badge. The files live in share/assets/private/ (git-ignored). `omacar assets status` checks them against this list; `omacar assets pin NAME` records a file's hash; `omacar assets push` copies them to the tablet. Anchors are fractions of the image, [x, y] from the top left.",
+  "assets": {
+    "crz-xray": {
+      "file": "crz-xray.png",
+      "use": "Vehicle: the owner's transparent X-ray render, from the mockup kit (image 1), shipped as-is with its own alpha channel",
+      "sha256": "cf48ffc9276d4a812f5f5614fe7d76adb742a3333c6df293886b00ced035f9cd",
+      "width": 1504,
+      "height": 1046,
+      "anchors": {
+        "engine": [
+          0.3,
+          0.53
+        ],
+        "hybrid": [
+          0.72,
+          0.53
+        ],
+        "brakes": [
+          0.51,
+          0.65
+        ],
+        "steering": [
+          0.57,
+          0.36
+        ],
+        "tyres": [
+          0.76,
+          0.64
+        ]
+      }
+    },
+    "crz-home": {
+      "file": "crz-home.png",
+      "use": "Home: the owner's transparent picture of the car (to come). Until it is installed Home draws a placeholder.",
+      "sha256": null,
+      "anchors": {
+        "tyres": [
+          0.5,
+          0.9
+        ]
+      }
+    }
+  }
+}

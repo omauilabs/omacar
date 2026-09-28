@@ -23,6 +23,13 @@ python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/shaders_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/app_test.py" || fails=$((fails + 1))
 
+# The pure JavaScript, imported into a real browser: there is no node on the
+# box or the tablet, and there is no build step to hang one off.
+python3 "$ROOT/test/js_test.py" || fails=$((fails + 1))
+
+# The palette clears WCAG AA against itself, read out of app.css.
+python3 "$ROOT/test/design_test.py" || fails=$((fails + 1))
+
 # The phone screen's picture: framing, stream and decoder, end to end in a real
 # browser against a recording. Listed here on the day it was written, which is
 # the rule two suites above this one were added for.

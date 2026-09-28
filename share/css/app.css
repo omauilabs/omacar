@@ -18,50 +18,68 @@
    the app rather than a filter over it. It cost an hour. */
 :root {
   color-scheme: dark;
-  --ground:  #070B0D;
-  --panel:   #0D1417;
-  --panel-2: #111A1E;
-  --raise:   #162228;
-  --edge:    #1B282D;
-  --edge-2:  #24343A;
+  /* THE MOCKUP PALETTE, SAMPLED RATHER THAN CHOSEN. Every value below was read
+     off the owner's mockups of 2026-09-27 (doc/design/2026-09-28-foundation.md,
+     "The look"): the median of a 7x7 patch for fills, the brightest or most
+     saturated pixel in the box for text and strokes. Change one and run
+     test/design_test.py, which holds every text colour to WCAG AA. */
+  --ground:  #0A1314;
+  --panel:   #0E1519;
+  --panel-2: #111A1F;
+  --raise:   #16222A;
+  --edge:    #1E2A30;
+  --edge-2:  #27363D;
 
-  --ink:     #E7F0EE;
-  --dim:     #93A6A2;
-  --faint:   #5F726E;
-  --ghost:   #38474A;
+  --ink:     #F6FCFF;
+  --ink-2:   #CAD4DA;
+  --dim:     #BDC7D1;
+  /* Not sampled: the mockups have no text this faint. It is the faintest value
+     that still clears 4.5:1 on a card, because a caption nobody can read in
+     sunlight is not a caption. */
+  --faint:   #7C8B94;
+  --ghost:   #3A4950;
 
-  --ok:      #4ACE8A;
+  --accent:      #22CDEC;
+  --accent-fill: #25B1BF;
+  --on-accent:   #041014;
+  --rec:         #F55240;
+
+  --ok:      #9BDE68;
   --warn:    #E5B457;
   --bad:     #E85D4E;
   --info:    #4FA8E8;
   --ai:      #8B7CF0;
 
-  --ok-bg:   rgba(74, 206, 138, .12);
-  --warn-bg: rgba(229, 180, 87, .13);
-  --bad-bg:  rgba(232, 93, 78, .13);
-  --info-bg: rgba(79, 168, 232, .12);
-  --ai-bg:   rgba(139, 124, 240, .13);
+  --ok-bg:     rgba(155, 222, 104, .12);
+  --warn-bg:   rgba(229, 180, 87, .13);
+  --bad-bg:    rgba(232, 93, 78, .13);
+  --info-bg:   rgba(79, 168, 232, .12);
+  --ai-bg:     rgba(139, 124, 240, .13);
+  --accent-bg: rgba(34, 205, 236, .12);
 
   /* Derived surfaces, so a light theme does not end up with dark hairlines
      baked into a meter track. Everything below is expressed against these. */
   --track:  color-mix(in srgb, var(--ink) 13%, var(--panel));
-  --hair:   color-mix(in srgb, var(--ink) 7%, var(--panel));
+  /* 11%, not 7%: that mix of ink into panel lands exactly on the mockups' card
+     hairline, #272E32. */
+  --hair:   color-mix(in srgb, var(--ink) 11%, var(--panel));
   /* Text printed on a solid semantic fill. The theme computes these by
      luminance, because "the colour, darkened" is unreadable on itself. */
   --on-bad:  #12060A;
   --on-warn: #1A1305;
   --on-ai:   #0B0718;
 
-  /* The hub is designed for direct sunlight, so it uses a harder foreground
-     than the rest of the app. Going through tokens rather than literals is
-     what lets a look change it in ONE place -- the previous version listed
-     every affected selector per look, and every new hub rule silently
-     reintroduced white into the night palettes. */
+  /* The gauges are read at a glance in direct sunlight, so they use a harder
+     foreground than the rest of the app. Going through tokens rather than
+     literals is what lets a look change it in ONE place -- the previous
+     version listed every affected selector per look, and every new hub rule
+     silently reintroduced white into the night palettes. */
   --bright:   #FFFFFF;
-  --bright-2: #C8D4D2;
+  --bright-2: #CAD4DA;
 
   --vbar: 58px;
-  --r: 10px;
+  --r: 14px;
+  --r-lg: 20px;
 
   /* The navigation block, and the floor under every target in it.
      48px is the floor and 56px the default, not 44: 44 is Apple's figure for
@@ -147,8 +165,8 @@ button { font: inherit; color: inherit; }
 .app {
   display: grid; height: 100vh;
   grid-template-columns: 1fr;
-  grid-template-rows: var(--vbar) 1fr var(--nav);
-  grid-template-areas: "vbar" "stage" "navbar";
+  grid-template-rows: var(--vbar) auto 1fr var(--nav);
+  grid-template-areas: "vbar" "segbar" "stage" "navbar";
 }
 /* No fade-in. A diagnostic tool that animates its own arrival looks broken
    for the first fifth of a second, and on a slow first paint it looks broken
@@ -225,7 +243,7 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--edge-2); border-radius: 999px;
   background: transparent; color: var(--dim); font: inherit; font-size: .86rem;
   cursor: pointer; transition: background .12s, color .12s, border-color .12s;
-  /* A short label must not produce a short target: "Hub" is three characters
+  /* A short label must not produce a short target: "Car" is three characters
      and would otherwise be half the width of "Readiness". */
   min-width: 64px; justify-content: center;
   touch-action: manipulation;
@@ -247,14 +265,14 @@ button { font: inherit; color: inherit; }
    A lock that appears would move the chip's right edge and slide the chips
    after it -- which is the very bug this replaced. Reserving the space costs
    about 1.6em on every write-capable chip, permanently, and moves nothing
-   ever. Only the chips that can ever lock carry it, so Hub and Codes are not
+   ever. Only the chips that can ever lock carry it, so Overview and Codes are not
    padded for a state they cannot reach. */
 .chip[data-write]::after {
   content: "\1F512"; display: inline-block; width: 1em; margin-left: 8px;
   font-size: .8em; text-align: center; visibility: hidden;
 }
 .chip[data-write].chip-locked::after { visibility: visible; opacity: .8; }
-/* The left slot: either where you came from, or the offer to open the hub
+/* The left slot: either where you came from, or the offer to open Home
    because the adapter has answered. It is a chip and not a jump -- software
    must not drag somebody off a fault code because the ELM327 re-linked at a
    set of lights. */
@@ -336,6 +354,14 @@ button { font: inherit; color: inherit; }
 .tab[aria-current="page"] .tab-in { background: var(--raise); }
 .tab:active .tab-in { background: var(--hair); }
 
+.tab[aria-current="page"] { color: var(--accent); }
+.tab[aria-current="page"] .tab-in { background: transparent; }
+.tab[aria-current="page"]::before {
+  top: auto; bottom: 6px; left: 32%; right: 32%; height: 3px; border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 /* Badges roll up from the sub-screens to the tab. */
 .tab .pip {
   position: absolute; top: 5px; left: 50%; margin-left: 6px;
@@ -371,22 +397,62 @@ button { font: inherit; color: inherit; }
   outline: 2px solid var(--info); outline-offset: -3px;
 }
 
-/* ------------------------------------------------------- the vehicle bar */
+/* ------------------------------------------------------------ the top bar
+   Three columns, so the clock is centred on the SCREEN rather than on
+   whatever the two sides leave it. */
 .vbar {
-  grid-area: vbar; background: var(--panel); border-bottom: 1px solid var(--edge);
-  display: flex; align-items: center; gap: 18px; padding: 0 20px;
-  position: sticky; top: 0; z-index: 20;
+  grid-area: vbar;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  gap: 16px; padding: 0 20px;
+  background: var(--ground); border-bottom: 1px solid var(--hair);
 }
-.vbar .id { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.vbar .name { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
-.vbar .sub { font-size: .68rem; color: var(--faint); white-space: nowrap;
-             overflow: hidden; text-overflow: ellipsis; }
-.vbar .spacer { margin-left: auto; }
-/* The demo badge earns a border as well as a colour: a pill among pills is
-   easy to stop seeing, and this is the one that must not be. */
-.demo-pill { border: 1px solid var(--warn); font-weight: 600; letter-spacing: .04em; }
-.vbar .stat { display: flex; align-items: center; gap: 7px; font-size: .7rem; color: var(--dim); }
-.vbar .odo { font-size: .82rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tb-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.tb-mark { font-family: var(--display); font-weight: 600; font-size: 1.3rem;
+           letter-spacing: -.01em; color: var(--ink); }
+.tb-div { width: 1px; height: 22px; background: var(--edge-2); }
+.tb-page { font-size: 1.05rem; color: var(--ink-2); white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; }
+.tb-clock { font-size: 1.25rem; font-weight: 500; color: var(--ink); }
+.tb-right { display: flex; align-items: center; justify-content: flex-end;
+            gap: 10px; min-width: 0; }
+.tb-car { font-size: .78rem; color: var(--ink-2); white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; }
+.tb-src { font-size: .68rem; letter-spacing: .12em; color: var(--dim);
+          padding: 4px 8px; border: 1px solid var(--edge-2); border-radius: 6px;
+          white-space: nowrap; }
+.tb-src.ok   { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.tb-src.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.tb-src.bad  { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+
+/* --------------------------------------------------- the segment row */
+.segbar { grid-area: segbar; display: flex; gap: 8px; padding: 8px 20px;
+          overflow-x: auto; background: var(--ground); border-bottom: 1px solid var(--hair); }
+.segbar[hidden] { display: none; }
+.segbar::-webkit-scrollbar { width: 0; height: 0; }
+
+/* Home has no chip row. Decided per tab (main.js), so it never changes
+   under a thumb. */
+.app[data-subbar="0"] { --nav: calc(var(--tabbar) + var(--safe-b)); }
+.app[data-subbar="0"] .subbar { display: none; }
+
+/* ------------------------------------------------------- placeholders */
+.ph-card { max-width: 640px; margin: 8vh auto 0; padding: 40px; text-align: center; }
+.ph-icon { color: var(--accent); }
+.ph-title { font-family: var(--display); font-size: 1.8rem; font-weight: 600;
+            color: var(--ink); margin-top: 12px; }
+.ph-step { font-size: .8rem; letter-spacing: .1em; text-transform: uppercase;
+           color: var(--dim); margin: 6px 0 18px; }
+.ph-line { color: var(--ink-2); line-height: 1.5; margin: 8px 0; }
+
+/* ------------------------------------------------------------- motion
+   State changes fade over 160 ms. Nothing slides or grows: on a screen read
+   at speed, the only things that move are values. */
+.card, .chip, .tab, .btn, .tb-src, .callout {
+  transition: background-color .16s ease, color .16s ease, border-color .16s ease, opacity .16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card, .chip, .tab, .btn, .tb-src, .callout { transition: none; }
+}
 /* The way into the settings sheet, and the only icon-only control in the top
    bar -- so it gets min-WIDTH as well as min-height. Padding would not have
    helped it: there is no text in it to pad. */
@@ -403,7 +469,7 @@ button { font: inherit; color: inherit; }
 }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); flex: none; }
-.dot.ok { background: var(--ok); box-shadow: 0 0 9px rgba(74,206,138,.55); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 9px color-mix(in srgb, var(--ok) 55%, transparent); }
 .dot.warn { background: var(--warn); box-shadow: 0 0 9px rgba(229,180,87,.5); }
 .dot.bad { background: var(--bad); box-shadow: 0 0 9px rgba(232,93,78,.5); }
 .dot.info { background: var(--info); }
@@ -435,7 +501,8 @@ canvas { display: block; width: 100%; }
 
 /* --------------------------------------------------------------- surfaces */
 .card {
-  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--r);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 3%, var(--panel)), var(--panel));
+  border: 1px solid var(--hair); border-radius: var(--r);
   padding: 16px 18px;
 }
 .card.flat { background: transparent; border-color: var(--edge); }
@@ -701,13 +768,26 @@ textarea { resize: vertical; min-height: 66px; }
    the screen is full" were the same bug wearing two hats. */
 /* Drive mode keeps the navigation. It is the one screen where a driver has
    the least attention to spare on finding a way out, and the bar is the way
-   out -- one tap on Car, or on the Hub chip. Hiding it here would mean adding
+   out -- one tap on Home, or on any other tab. Hiding it here would mean adding
    plumbing in order to remove the exit. */
 .drive-stage { padding: 0 !important; overflow: auto; }
+/* SIZED TO ITS STAGE, NOT REBUILT FROM THE VIEWPORT.
+   .drive was min-height: calc(100vh - var(--vbar) - var(--nav)), which is the
+   stage's height only while nothing else shares the column. Gauges moved into
+   Vehicle -> Live, whose segment row sits above the stage, so that sum came
+   out 73 px taller than the stage on the tablet -- and its type, sized in vh,
+   was sized for room it no longer had: 108 px of overflow, with Workshop and
+   Customise below the fold, on the screen the whole drive is spent on.
+   So the wrap is exactly the stage's height and a size container, and every
+   length on this screen that was a slice of the viewport (vh) is now a slice
+   of the room it actually has (cqh). With no container around it, cqh falls
+   back to the viewport, so the gauge rules other screens share with this one
+   size exactly as they did there. */
+.wrap:has(> .drive) { display: block; height: 100%; container-type: size; }
 .drive {
-  min-height: calc(100vh - var(--vbar) - var(--nav));
+  height: 100%;
   display: grid; grid-template-rows: 1fr auto auto auto;
-  gap: clamp(10px, 2vh, 28px); padding: clamp(14px, 3vh, 40px);
+  gap: clamp(10px, 2cqh, 28px); padding: clamp(14px, 3cqh, 40px);
   /* `safe` is the whole fix: centre while the content fits, fall back to
      start-alignment the moment it does not. Plain `center` has no such
      fallback and happily centres content it cannot show, putting the first
@@ -736,13 +816,15 @@ textarea { resize: vertical; min-height: 66px; }
 
 /* LARGER AND CENTRED, which is the cockpit's whole treatment of this row
    (doc/design/cockpit/DESIGN-NOTES.md). It was already centred; what it did not
-   have was the scale. 24vh to 30vh on a 912px-tall tablet is 219px to 274px of
-   number, which is the difference between reading it and glancing at it.
+   have was the scale. 24vh to 30vh on a 912px-tall tablet was 219px to 274px
+   of number, which is the difference between reading it and glancing at it.
+   It is a slice of the screen's own height now (see .drive), and 36cqh of the
+   ~630px Gauges has under the segment row is 227px: the same range.
    The ceiling stays a clamp rather than a fixed size because this screen is
    also opened on a phone. */
 .drive-hero { text-align: center; }
 .drive-speed {
-  font-size: clamp(5rem, 30vh, 17rem); font-weight: 600; line-height: .86;
+  font-size: clamp(5rem, 36cqh, 17rem); font-weight: 600; line-height: .86;
   letter-spacing: -.045em; font-variant-numeric: tabular-nums;
 }
 /* QUIETER, THE SAME WAY THE DOCK'S LABELS GOT QUIETER: by size and tracking,
@@ -751,11 +833,11 @@ textarea { resize: vertical; min-height: 66px; }
    disappears through a windscreen -- and walking it back down here would
    undo that deliberately. */
 .drive-unit {
-  font-size: clamp(.75rem, 2vh, 1.15rem); letter-spacing: .38em;
+  font-size: clamp(.75rem, 2cqh, 1.15rem); letter-spacing: .38em;
   color: var(--faint); text-transform: uppercase; margin-top: .6rem;
 }
 .drive-state {
-  font-size: clamp(.8rem, 2vh, 1.2rem); color: var(--dim); margin-top: .3rem;
+  font-size: clamp(.8rem, 2cqh, 1.2rem); color: var(--dim); margin-top: .3rem;
   min-height: 1.4em;
 }
 .drive[data-state="offline"] .drive-speed { color: var(--faint); }
@@ -774,19 +856,19 @@ textarea { resize: vertical; min-height: 66px; }
    18px so the screen reads as one family. */
 .drive-tile {
   background: var(--panel); border: 1px solid transparent; border-radius: 18px;
-  padding: clamp(10px, 2vh, 22px); text-align: center;
+  padding: clamp(10px, 2cqh, 22px); text-align: center;
 }
 .drive-tile-k {
-  font-size: clamp(.6rem, 1.5vh, .8rem); letter-spacing: .2em; color: var(--faint);
+  font-size: clamp(.6rem, 1.5cqh, .8rem); letter-spacing: .2em; color: var(--faint);
   text-transform: uppercase;
 }
 .drive-tile-v {
-  font-size: clamp(2rem, 7vh, 4.2rem); font-weight: 600; line-height: 1.05;
+  font-size: clamp(2rem, 7cqh, 4.2rem); font-weight: 600; line-height: 1.05;
   font-variant-numeric: tabular-nums; margin-top: .2em;
 }
 .drive-tile-v.warn { color: var(--warn); }
 .drive-tile-v.bad  { color: var(--bad); }
-.drive-tile-n { font-size: clamp(.6rem, 1.5vh, .85rem); color: var(--faint); }
+.drive-tile-n { font-size: clamp(.6rem, 1.5cqh, .85rem); color: var(--faint); }
 
 /* ---- gauges ----
    Instrument faces for the readouts above. Every stroke is a token, so a dial
@@ -802,13 +884,13 @@ textarea { resize: vertical; min-height: 66px; }
    the face fit to the shorter side and left a wide tile a third empty. */
 .g-svg {
   display: block; width: 100%; height: auto; aspect-ratio: 84 / 88;
-  max-height: clamp(70px, 13.5vh, 156px); margin: 0 auto; overflow: visible;
+  max-height: clamp(70px, 13.5cqh, 156px); margin: 0 auto; overflow: visible;
 }
 /* Drive mode has to FIT. A speedometer at 44vh plus two rows of dials pushed
    the exit button off the bottom and gave the one screen you read at seventy
    miles an hour a scrollbar. These caps are what keeps hero + two rows +
    footer + the exit inside one viewport. */
-.drive-hero-slot .g-svg { max-height: clamp(130px, 24vh, 300px); }
+.drive-hero-slot .g-svg { max-height: clamp(130px, 24cqh, 300px); }
 
 .g-track      { stroke: var(--track); stroke-width: 2.6; stroke-linecap: round; }
 .g-arc-track  { stroke: var(--track); stroke-width: 7; stroke-linecap: round; }
@@ -860,11 +942,11 @@ textarea { resize: vertical; min-height: 66px; }
    onto its own line and shoved the meter down out of the tile. */
 .g-bar-head { display: flex; align-items: baseline; gap: .4em; flex-wrap: nowrap; min-width: 0; }
 .g-bar-v {
-  font-size: clamp(1.6rem, 5.2vh, 3rem); font-weight: 600; line-height: 1.05;
+  font-size: clamp(1.6rem, 5.2cqh, 3rem); font-weight: 600; line-height: 1.05;
   font-variant-numeric: tabular-nums;
 }
 .g-bar-n {
-  font-size: clamp(.6rem, 1.5vh, .85rem); color: var(--faint);
+  font-size: clamp(.6rem, 1.5cqh, .85rem); color: var(--faint);
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .g-bar[data-tone="warn"] .g-bar-v { color: var(--warn); }
@@ -892,16 +974,16 @@ textarea { resize: vertical; min-height: 66px; }
 .g-bar[data-tone="bad"]  .g-bar-fill { background: var(--bad); }
 .g-bar-ends {
   display: flex; justify-content: space-between; margin-top: .3em;
-  font-size: clamp(.5rem, 1.2vh, .7rem); color: var(--ghost);
+  font-size: clamp(.5rem, 1.2cqh, .7rem); color: var(--ghost);
   font-variant-numeric: tabular-nums;
 }
 
-.drive-trip { text-align: center; color: var(--dim); font-size: clamp(.75rem, 1.8vh, 1.05rem); }
+.drive-trip { text-align: center; color: var(--dim); font-size: clamp(.75rem, 1.8cqh, 1.05rem); }
 
 /* One target, the width of a thumb and then some. */
 .drive-exit {
   border: 1px solid var(--edge-2); background: var(--panel-2); color: var(--dim);
-  border-radius: 14px; padding: clamp(12px, 2.4vh, 22px); font-size: 1rem;
+  border-radius: 14px; padding: clamp(12px, 2.4cqh, 22px); font-size: 1rem;
   letter-spacing: .1em; cursor: pointer; width: 100%;
 }
 .drive-exit:active { background: var(--raise); }
@@ -1036,125 +1118,6 @@ textarea { resize: vertical; min-height: 66px; }
   .photo figcaption button:hover { background: var(--bad-bg); color: var(--bad); }
 }
 
-/* ============================================================ car hub
-   The in-car layout.
-
-   Every number here is a physical constraint rather than a taste decision.
-   44px is the desk rail; it is fine with a mouse and useless on a touchscreen
-   in a moving car, where the hand is unsteady and the glance is a fraction of
-   a second. 96px minimum on every target, generous gaps so a near-miss is not
-   a wrong tap, and text that stays legible through a windscreen at noon.
-
-   Contrast: pure white on near-black throughout, and nothing on this screen is
-   allowed below var(--bright-2). The workshop palette uses --dim (#93A6A2) and --faint
-   (#5F726E) for hierarchy, which reads beautifully indoors and disappears in
-   direct sun. In here hierarchy comes from SIZE and WEIGHT, not from dimming,
-   because size survives glare and low contrast does not. */
-
-.hub {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 4px 2px 24px;
-  color: var(--bright);
-}
-
-.hub-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.hub-title { font-size: 1.9rem; font-weight: 650; letter-spacing: -.01em; color: var(--bright); }
-.hub-sub { margin-top: 3px; font-size: 1rem; color: var(--bright-2); }
-
-.hub-exit {
-  min-height: 52px; padding: 0 20px;
-  border: 1px solid var(--edge); border-radius: var(--r);
-  background: var(--raise); color: var(--bright);
-  font: inherit; font-size: 1rem; cursor: pointer;
-}
-@media (hover: hover) and (pointer: fine) {
-  .hub-exit:hover { border-color: color-mix(in srgb, var(--bright) 26%, var(--edge)); }
-}
-
-/* ---- vitals strip ---- */
-.hub-vitals {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
-}
-.hub-vital {
-  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--r);
-  padding: 12px 14px; min-width: 0;
-}
-.hub-vital-v {
-  font-family: var(--mono);
-  font-size: clamp(1.6rem, 4.6vw, 2.5rem);
-  font-weight: 600; line-height: 1.05; color: var(--bright);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hub-vital-u { font-size: .46em; margin-left: .35em; color: var(--bright-2); }
-.hub-vital-k { margin-top: 4px; font-size: .88rem; color: var(--bright-2); }
-
-/* ---- primary tiles ---- */
-.hub-grid {
-  display: grid; gap: 12px;
-  /* auto-fit rather than a fixed column count: this same screen has to work on
-     a 15" laptop lid, a 9" dash tablet in portrait, and a phone. */
-  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
-}
-.hub-tile {
-  position: relative;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  min-height: 128px; padding: 16px 16px 14px;
-  border: 1px solid var(--edge); border-radius: 14px;
-  background: var(--panel); color: var(--bright);
-  font: inherit; text-align: left; cursor: pointer;
-  transition: border-color .12s ease, transform .06s ease, background .12s ease;
-}
-@media (hover: hover) and (pointer: fine) {
-  .hub-tile:hover { background: var(--raise); border-color: color-mix(in srgb, var(--bright) 24%, var(--edge)); }
-}
-/* Pressed state matters more here than hover: on a touchscreen there is no
-   hover, and a tap with no feedback gets tapped again. */
-.hub-tile:active { transform: scale(.985); }
-.hub-tile:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
-
-.hub-ico { color: var(--bright); opacity: .95; margin-bottom: 6px; }
-.hub-label { font-size: 1.28rem; font-weight: 620; color: var(--bright); }
-.hub-hint { font-size: .92rem; color: var(--bright-2); }
-
-.hub-badge {
-  position: absolute; top: 13px; right: 13px;
-  padding: 4px 10px; border-radius: 999px;
-  font-size: .84rem; font-weight: 600; white-space: nowrap;
-}
-.hub-badge.tone-ok   { background: var(--ok-bg);   color: var(--ok);   border: 1px solid var(--ok); }
-.hub-badge.tone-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); }
-.hub-badge.tone-bad  { background: var(--bad-bg);  color: var(--bad);  border: 1px solid var(--bad); }
-
-/* ---- secondary row ---- */
-.hub-more { display: flex; flex-wrap: wrap; gap: 10px; }
-.hub-chip {
-  min-height: 52px; padding: 0 20px;
-  border: 1px solid var(--edge); border-radius: 999px;
-  background: var(--panel); color: var(--bright);
-  font: inherit; font-size: 1.02rem; cursor: pointer;
-}
-@media (hover: hover) and (pointer: fine) {
-  .hub-chip:hover { background: var(--raise); border-color: color-mix(in srgb, var(--bright) 24%, var(--edge)); }
-}
-.hub-chip:active { transform: scale(.985); }
-
-/* Narrow / portrait dash tablet: two vitals per row rather than four squeezed. */
-@media (max-width: 560px) {
-  .hub-vitals { grid-template-columns: repeat(2, 1fr); }
-  .hub-title { font-size: 1.6rem; }
-}
-
-/* Short and wide -- a laptop lid on a stand. Trim vertical padding so the
-   secondary row stays above the fold instead of needing a scroll at a red
-   light. */
-@media (max-height: 620px) {
-  .hub { gap: 12px; }
-  .hub-tile { min-height: 104px; padding: 12px 14px; }
-  .hub-vital { padding: 9px 12px; }
-}
-
 /* ---- learn mode ----
    Deliberately quiet. An explanation that shouts is an explanation that annoys
    the second time you see it, and this text appears on screens people use every
@@ -1170,8 +1133,6 @@ textarea { resize: vertical; min-height: 66px; }
 .learn-title { font-weight: 640; font-size: .96rem; color: var(--ink); margin-bottom: 4px; }
 .learn-body { margin: 0; font-size: .93rem; line-height: 1.55; color: var(--dim); }
 .learn-extra { margin-top: 7px; color: var(--faint); }
-/* In the car the aside has to survive sunlight like everything else. */
-.hub .learn-body, .hub .learn-title { color: var(--bright); }
 
 /* ---- onboarding ---- */
 .ob-scrim {
@@ -1354,16 +1315,12 @@ ul.tight li { margin-bottom: 5px; }
 .radio-count { margin-left: 10px; color: var(--faint); }
 
 /* ---- background effects ----
-   Behind everything, non-interactive, and clipped to the view. The stage is
-   the positioning context, so the canvas cannot spill over the bars. */
-.fx-host {
-  position: absolute; inset: 0; z-index: 0;
-  pointer-events: none; overflow: hidden; border-radius: var(--r);
-}
+   A look's animated background (effects.js) is a canvas that fills whatever
+   host it is mounted in: on Home, .home-fx (home.css), behind the grid and
+   only while parked. */
 .fx-canvas { position: absolute; inset: 0; display: block; }
-/* Content sits above it. Without this the tiles are painted under the canvas
-   and the whole screen becomes decoration. */
-.hub { position: relative; z-index: 1; }
+/* The stage is the positioning context for anything a view places
+   absolutely, so nothing positioned inside a view can spill over the bars. */
 .stage { position: relative; }
 
 /* ---- themes ----
@@ -1487,34 +1444,43 @@ ul.tight li { margin-bottom: 5px; }
    status colours below are LIGHTNESS variants of red rather than hues --
    severity is carried by brightness, the one channel still available. */
 
-/* !important throughout, and it is not laziness.
-   applyTheme() writes the live Omarchy palette as INLINE custom properties on
-   documentElement, and an inline declaration outranks every author rule -- so
-   without this a look could only change the handful of tokens theme.py does
-   not emit. The visible cost was that Night · red left the navigation looking
-   exactly as it did in the normal look, because the active tab's three signals
-   are --raise, --ink and the focus ring's --info, all of which theme.py emits.
-   The same trap is already worked around twice in this tree: the print block
-   in app.html and the chart palette in charts-d3.js. */
+/* NO !important HERE, THOUGH THERE USED TO BE.
+   It earned its keep once, when applyTheme() wrote the live Omarchy palette as
+   INLINE custom properties on documentElement -- an inline declaration
+   outranks every author rule, so only !important let a look override it. That
+   is no longer how the theme arrives (see main.js's "APPLIED AS A
+   STYLESHEET" note): applyTheme() now applies it only when the look IS
+   "omarchy", as an appended <style> sheet, at :root's own specificity. Plain
+   specificity already does the job -- :root[data-look="..."] is (0,2,0),
+   which beats a bare :root's (0,1,0) with or without !important -- so the
+   suffix was pure liability: test/design_test.py reads these tokens out of
+   this file's text with a regex that cannot see through an "!important"
+   suffix, so every token below was invisible to the contrast check that
+   exists to catch exactly this palette going wrong. The print block in
+   app.html and the chart palette in charts-d3.js solve the INLINE-property
+   problem the same old way; they are a different cascade layer and untouched
+   here. */
 :root[data-look="green"] {
-  --ground: #000806!important;  --panel: #02120C!important;  --raise: #051E14!important;
-  --edge: #0B3222!important;  --hair: #071E14!important;
-  --ink: #7CFFB0!important;  --dim: #46D189!important;  --faint: #2A8A58!important;  --ghost: #1A5237!important;
-  --ok: #4AFF9A!important;  --warn: #B6FF6A!important;  --bad: #FF8A5A!important;  --info: #5AFFD0!important;
-  --ok-bg: rgba(74,255,154,.12)!important;
-  --warn-bg: rgba(182,255,106,.12)!important;
-  --bad-bg: rgba(255,138,90,.13)!important;
-  --info-bg: rgba(90,255,208,.12)!important;
-  --track: #0E3A26!important;
-  --bright: #9CFFC4!important;   /* no white anywhere in this look */
-  --bright-2: #46D189!important;
+  --ground: #000806;  --panel: #02120C;  --raise: #051E14;
+  --edge: #0B3222;  --hair: #071E14;
+  --ink: #7CFFB0;  --dim: #46D189;  --faint: #2A8A58;  --ghost: #1A5237;
+  --ok: #4AFF9A;  --warn: #B6FF6A;  --bad: #FF8A5A;  --info: #5AFFD0;
+  --ok-bg: rgba(74,255,154,.12);
+  --warn-bg: rgba(182,255,106,.12);
+  --bad-bg: rgba(255,138,90,.13);
+  --info-bg: rgba(90,255,208,.12);
+  --track: #0E3A26;
+  --bright: #9CFFC4;   /* no white anywhere in this look */
+  --bright-2: #46D189;
   /* The tokens the desktop theme also emits. Without these a look overrode
      half the palette and inherited the other half, which reads as a bug. */
-  --panel-2: #04170F!important;  --edge-2: #14472F!important;
-  --accent: #4AFF9A!important;
-  --ai: #5AFFD0!important;  --ai-bg: rgba(90,255,208,.12)!important;
-  --on-ok: #001008!important;  --on-warn: #0A1000!important; --on-bad: #180600!important;
-  --on-info: #001410!important;  --on-ai: #001410!important;
+  --panel-2: #04170F;  --edge-2: #14472F;
+  --accent: #4AFF9A;
+  --ai: #5AFFD0;  --ai-bg: rgba(90,255,208,.12);
+  --on-ok: #001008;  --on-warn: #0A1000; --on-bad: #180600;
+  --on-info: #001410;  --on-ai: #001410;
+  --ink-2: #7FD99A; --accent: #3BEA7A; --accent-fill: #1F9E50;
+  --on-accent: #02140A; --rec: #F55240; --accent-bg: rgba(59, 234, 122, .12);
 }
 
 :root[data-look="day"] {
@@ -1526,102 +1492,89 @@ ul.tight li { margin-bottom: 5px; }
      The rule that makes this legible is not the palette, it is the contrast
      direction. Everything here is near-black ink on near-white ground, the
      semantic colours are the PRINT values app.html already declares for paper
-     -- chosen against white and already checked -- and --bright, which the hub
-     uses to punch through glare on a dark ground, inverts to the darkest ink
+     -- chosen against white and already checked -- and --bright, which the
+     gauges use to punch through glare on a dark ground, inverts to the darkest ink
      in the set rather than staying white, because on this ground white is the
      glare.
 
-     Deliberately not derived from the Omarchy theme. Every other look here
+     Deliberately not derived from the Omarchy theme. Only the Omarchy look
      follows the desktop; this one is a physical override for a condition the
      desktop knows nothing about, and a light theme's own palette is chosen for
      a room rather than for a windscreen at noon. */
-  --ground: #F2F4F3!important;  --panel: #FFFFFF!important;  --raise: #E8EDEB!important;
-  --edge: #CFD8D5!important;    --hair: #DFE6E4!important;
-  --ink: #0B1214!important;     --dim: #3C4B4E!important;
-  --faint: #61706F!important;   --ghost: #9AA8A6!important;
-  --ok: #1B7A4B!important;      --warn: #8A5A05!important;
-  --bad: #A32A1B!important;     --info: #17558F!important;
-  --ok-bg: rgba(27,122,75,.11)!important;
-  --warn-bg: rgba(138,90,5,.12)!important;
-  --bad-bg: rgba(163,42,27,.11)!important;
-  --info-bg: rgba(23,85,143,.11)!important;
-  --track: #D3DCD9!important;
+  --ground: #F2F4F3;  --panel: #FFFFFF;  --raise: #E8EDEB;
+  --edge: #CFD8D5;    --hair: #DFE6E4;
+  --ink: #0B1214;     --dim: #3C4B4E;
+  --faint: #61706F;   --ghost: #9AA8A6;
+  --ok: #1B7A4B;      --warn: #8A5A05;
+  --bad: #A32A1B;     --info: #17558F;
+  --ok-bg: rgba(27,122,75,.11);
+  --warn-bg: rgba(138,90,5,.12);
+  --bad-bg: rgba(163,42,27,.11);
+  --info-bg: rgba(23,85,143,.11);
+  --track: #D3DCD9;
   /* Inverted on purpose: --bright is "punch through the glare", and on a white
      ground the thing that punches through is black. */
-  --bright: #000000!important;
-  --bright-2: #2A3A3C!important;
-  --panel-2: #F7F9F8!important;  --edge-2: #BCC8C5!important;
-  --accent: #17558F!important;
-  --ai: #4B3FA8!important;  --ai-bg: rgba(75,63,168,.11)!important;
+  --bright: #000000;
+  --bright-2: #2A3A3C;
+  --panel-2: #F7F9F8;  --edge-2: #BCC8C5;
+  --accent: #17558F;
+  --ai: #4B3FA8;  --ai-bg: rgba(75,63,168,.11);
   /* Ink ON a solid semantic fill. White here, because these five are dark
      enough to carry it -- the opposite of every other look in this file. */
-  --on-ok: #FFFFFF!important;  --on-warn: #FFFFFF!important; --on-bad: #FFFFFF!important;
-  --on-info: #FFFFFF!important;  --on-ai: #FFFFFF!important;
+  --on-ok: #FFFFFF;  --on-warn: #FFFFFF; --on-bad: #FFFFFF;
+  --on-info: #FFFFFF;  --on-ai: #FFFFFF;
+  --ink-2: #33424B; --accent: #00708A; --accent-fill: #007C95;
+  --on-accent: #FFFFFF; --rec: #B8321F; --accent-bg: rgba(0, 112, 138, .10);
 }
 
 :root[data-look="dim"] {
   /* Same hues as the default, pulled well down. For a lit cabin at night where
      full brightness is a mirror in the windscreen. */
-  --ground: #040708!important;  --panel: #070B0D!important;  --raise: #0C1417!important;
-  --edge: #101A1E!important;  --hair: #0A1215!important;
-  --ink: #93A6A2!important;  --dim: #6A7C78!important;  --faint: #4A5A57!important;  --ghost: #2A3639!important;
-  --ok: #2F8A5C!important;  --warn: #997640!important;  --bad: #9A4038!important;  --info: #35708F!important;
-  --ok-bg: rgba(47,138,92,.10)!important;
-  --warn-bg: rgba(153,118,64,.10)!important;
-  --bad-bg: rgba(154,64,56,.10)!important;
-  --info-bg: rgba(53,112,143,.10)!important;
-  --track: #162126!important;
-  --bright: #A8B8B4!important;
-  --bright-2: #6A7C78!important;
-  --panel-2: #0A1114!important;  --edge-2: #16232A!important;
-  --accent: #35708F!important;
-  --ai: #5B4F9A!important;  --ai-bg: rgba(91,79,154,.10)!important;
-  --on-ok: #05100A!important;  --on-warn: #100C05!important; --on-bad: #100504!important;
-  --on-info: #040C10!important;  --on-ai: #08060F!important;
+  --ground: #040708;  --panel: #070B0D;  --raise: #0C1417;
+  --edge: #101A1E;  --hair: #0A1215;
+  --ink: #93A6A2;  --dim: #6A7C78;  --faint: #4A5A57;  --ghost: #2A3639;
+  --ok: #2F8A5C;  --warn: #997640;  --bad: #9A4038;  --info: #35708F;
+  --ok-bg: rgba(47,138,92,.10);
+  --warn-bg: rgba(153,118,64,.10);
+  --bad-bg: rgba(154,64,56,.10);
+  --info-bg: rgba(53,112,143,.10);
+  --track: #162126;
+  --bright: #A8B8B4;
+  --bright-2: #6A7C78;
+  --panel-2: #0A1114;  --edge-2: #16232A;
+  --accent: #35708F;
+  --ai: #5B4F9A;  --ai-bg: rgba(91,79,154,.10);
+  --on-ok: #05100A;  --on-warn: #100C05; --on-bad: #100504;
+  --on-info: #040C10;  --on-ai: #08060F;
+  --ink-2: #9AA6AE; --accent: #1A9FB8; --accent-fill: #177E8A;
+  --on-accent: #E6F6F9; --rec: #C2473A; --accent-bg: rgba(26, 159, 184, .12);
 }
 
 :root[data-look="red"] {
-  --ground:  #070101!important;  --panel:  #130303!important;  --raise: #200707!important;
-  --edge:    #3A1210!important;  --hair:   #1C0605!important;
-  --ink:     #FF7F68!important;  --dim:    #C95644!important;  --faint: #8E3A2E!important;  --ghost: #5A241C!important;
+  --ground:  #070101;  --panel:  #130303;  --raise: #200707;
+  --edge:    #3A1210;  --hair:   #1C0605;
+  --ink:     #FF7F68;  --dim:    #C95644;  --faint: #8E3A2E;  --ghost: #5A241C;
   /* Severity by lightness, not hue -- see the note above. */
-  --ok: #B85A48!important;  --warn: #FF7A4A!important;  --bad: #FF3B22!important;  --info: #D06452!important;
-  --ok-bg: rgba(184,90,72,.12)!important;
-  --warn-bg: rgba(255,122,74,.13)!important;
-  --bad-bg: rgba(255,59,34,.15)!important;
-  --info-bg: rgba(208,100,82,.12)!important;
-  --track: #34100E!important;
-  --on-bad: #1A0402!important; --on-warn: #1A0703!important; --on-ai: #16040A!important;
-  --bright: #FF9E88!important;   /* red-only: nothing here may be white */
-  --bright-2: #C95644!important;
+  --ok: #B85A48;  --warn: #FF7A4A;  --bad: #FF3B22;  --info: #D06452;
+  --ok-bg: rgba(184,90,72,.12);
+  --warn-bg: rgba(255,122,74,.13);
+  --bad-bg: rgba(255,59,34,.15);
+  --info-bg: rgba(208,100,82,.12);
+  --track: #34100E;
+  --on-bad: #1A0402; --on-warn: #1A0703; --on-ai: #16040A;
+  --bright: #FF9E88;   /* red-only: nothing here may be white */
+  --bright-2: #C95644;
   /* Red-only means red-only. --accent and --ai were inherited from the desktop
      theme, so a blue focus ring and a purple AI badge survived on the one
      screen whose entire purpose is that nothing short-wavelength reaches the
      eye. */
-  --panel-2: #1A0505!important;  --edge-2: #4A1815!important;
-  --accent: #FF7F68!important;
-  --ai: #C95644!important;  --ai-bg: rgba(201,86,68,.12)!important;
-  --on-ok: #150402!important;  --on-info: #150402!important;
+  --panel-2: #1A0505;  --edge-2: #4A1815;
+  --accent: #FF7F68;
+  --ai: #C95644;  --ai-bg: rgba(201,86,68,.12);
+  --on-ok: #150402;  --on-info: #150402;
+  --ink-2: #C2453D; --accent: #E0493F; --accent-fill: #8E2A24;
+  --on-accent: #FFD9D6; --rec: #FF5A48; --accent-bg: rgba(224, 73, 63, .14);
 }
-.radio-meta { flex: 1 1 auto; min-width: 0; }
-.radio-name, .radio-status {
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.radio-count { margin-left: 10px; color: var(--faint); }
-
-/* ---- background effects ----
-   Behind everything, non-interactive, and clipped to the view. The stage is
-   the positioning context, so the canvas cannot spill over the rail or bar. */
-.fx-host {
-  position: absolute; inset: 0; z-index: 0;
-  pointer-events: none; overflow: hidden; border-radius: var(--r);
-}
-.fx-canvas { position: absolute; inset: 0; display: block; }
-/* Content sits above it. Without this the tiles are painted under the canvas
-   and the whole screen becomes decoration. */
-.hub { position: relative; z-index: 1; }
-.stage { position: relative; }
-
 /* ---- replay ---- */
 .replay { display: grid; gap: 14px; }
 .rp-spans { display: grid; gap: 8px; margin-top: 12px;
@@ -1855,18 +1808,12 @@ ul.tight li { margin-bottom: 5px; }
    The canvas is UNDER the text and the text is what the card is for. Nothing
    here raises its own contrast; if a choice ever comes down to the effect
    reading better or the number reading better, it is not a choice. */
-.hub-vital.has-fx { position: relative; overflow: hidden; isolation: isolate; }
 .card-fx {
   position: absolute; inset: 0; z-index: 0; pointer-events: none;
   /* Low enough that it never competes with the reading, high enough to be seen
      from across a cabin rather than only when looked for. */
   opacity: .85;
 }
-.hub-vital.has-fx > .hub-vital-v,
-.hub-vital.has-fx > .hub-vital-k { position: relative; z-index: 1; }
-/* The number sits over moving pixels now, so it gets its own ground back --
-   a thin shadow in the card's own surface colour, not a box. */
-.hub-vital.has-fx > .hub-vital-v { text-shadow: 0 1px 10px var(--panel); }
 
 /* The radio, on the Music page. It sits over the shader rather than beside it:
    this view's whole premise is that the car stays readable underneath, and a
@@ -1935,18 +1882,20 @@ ul.tight li { margin-bottom: 5px; }
 
    AND IT LIVES AT THE END OF THIS FILE ON PURPOSE. Every rule here overrides
    one defined earlier, at the same specificity -- so placed anywhere but last
-   it silently loses. It was written two hundred lines up first, and .hub-vitals
-   went on drawing four across in portrait because its own rule came later. */
+   it silently loses. It was written two hundred lines up first, and the
+   hub's old vitals strip went on drawing four across in portrait because its
+   own rule came later. That strip is gone with the hub (Home's grid takes its
+   span from the layout instead), but the ordering rule is the same one the
+   guard below still enforces. */
 @media (orientation: portrait) {
   .drive { grid-template-rows: auto auto auto auto; }
   /* Four tiles across 912px is 228px each and legible, but two rows of two is
      easier to take in at a glance, and glancing is the whole job. */
   .drive-row { --cols-eff: 2; }
-  .hub-vitals { grid-template-columns: repeat(2, 1fr); }
-  /* The vehicle bar wraps its own text at this width; giving it the room
-     stops the odometer and the protocol breaking across two lines each. */
+  /* The top bar wraps its own text at this width; the tighter gap and
+     padding give the page title, the car's name and the source badge the
+     room to stay on one line each. */
   .vbar { gap: 12px; padding: 0 12px; }
-  .hub-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* Taller than it is wide: the stage takes the extra height rather than
      leaving the card stranded at the bottom of it. */
   .show-stage { min-height: 52vh; }

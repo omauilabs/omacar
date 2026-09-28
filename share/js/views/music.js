@@ -480,7 +480,7 @@ export default function music(root) {
   const shaderBtn = h("button.btn.music-btn", SHADERS[shader].name);
   const srcPill = h("span.pill.music-src", "car");
   const dock = h("div.music-dock",
-    h("button.btn.music-btn", { onclick: () => { location.hash = "#hub"; } }, "Workshop"),
+    h("button.btn.music-btn", { onclick: () => { location.hash = "#home"; } }, "Home"),
     cell("speed", "speed"),
     cell("rpm", "engine"),
     cell("soc", "charge"),

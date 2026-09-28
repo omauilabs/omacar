@@ -2214,8 +2214,13 @@ check("econ and normal keep the cockpit's own accents",
 # It is always a word. looks.js ships a night palette in which every hue
 # collapses to a lightness, and three tints two hours into the dark is not a
 # distinction anybody should be asked to make.
+#
+# THE CHIP MOVED. It used to be painted in main.js's top bar; it now sits on
+# Home's speed dial (share/js/views/home.js), so that is what this guard reads.
+_home_dial = open(os.path.join(ROOT, "share", "js", "views", "home.js"),
+                  encoding="utf-8").read()
 check("and the chip always carries the word",
-      "textContent = String(mode).toUpperCase()" in _main, True)
+      "String(m).toUpperCase()" in _home_dial, True)
 
 # ------------------------------------------------------------------- the dock
 head("the dock got bigger without getting quieter where it matters")
@@ -2359,9 +2364,14 @@ _port = _css2.index("@media (orientation: portrait)")
 # CASCADE ORDER IS THE WHOLE MECHANISM. Every rule in that block overrides one
 # defined earlier at the same specificity, so anywhere but last it silently
 # loses -- which is exactly what happened: written two hundred lines up, and
-# .hub-vitals went on drawing four across in portrait because its own rule came
-# after it.
-for _sel in (".hub-vitals {", ".drive-row {", ".vbar {", ".hub-grid {"):
+# the hub's old vitals strip went on drawing four across in portrait because
+# its own rule came after it.
+#
+# .hub-vitals and .hub-grid dropped out of this tuple with the hub itself:
+# those selectors no longer exist in app.css at all, so checking
+# their order would only ever fail. .drive-row and .vbar still live in the
+# same portrait block and still have to come last, so they stay.
+for _sel in (".drive-row {", ".vbar {"):
     check(f"portrait overrides {_sel.strip(' {')} after it is defined",
           _css2.index(_sel) < _port, True)
 
@@ -2655,6 +2665,176 @@ check("every colour survives the round trip", _lost, [])
 check("the night palette is the cockpit's own background",
       _ported["cockpit-night"]["background"], "#111416")
 check("and the day one is a light mode", _ported["cockpit-day"]["mode"], "light")
+
+# ----------------------------------------------------- the navigation redesign
+head("The five new tabs lost no screen")
+import re as _re_nav  # noqa: E402
+_main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+_ids = set(_re_nav.findall(r'\bid:\s*"([a-z0-9-]+)"', _main))
+_alias_src = _main.split("const ALIASES", 1)[1].split("};", 1)[0] if "const ALIASES" in _main else ""
+_alias = dict(_re_nav.findall(r'^\s*([a-z0-9]+):\s*"([a-z0-9-]+)"', _alias_src, _re_nav.M))
+# Every view id the five old tabs and OFF_NAV had on 2026-09-17 (a623a17).
+_OLD = ["hub", "drive", "live", "ima", "launcher", "omaplay", "music", "effects",
+        "dash", "garage", "codes", "scan", "health", "data", "replay", "tests",
+        "write", "service", "resets", "concerns", "history", "documents",
+        "nursery", "advisor", "report", "learn", "themes"]
+check("every old view still routes, itself or through an alias",
+      [v for v in _OLD if v not in _ids and _alias.get(v) not in _ids], [])
+check("the tabs are the mockups' five, in their order",
+      _re_nav.findall(r'^  \{ id: "([a-z]+)", label: "[A-Za-z]+", icon:', _main, _re_nav.M),
+      ["home", "navigation", "cameras", "vehicle", "agent"])
+# `=(?!=)`: an assignment, not the `===` comparisons in goto() and honourAsk().
+# One writer today (a623a17: goto()), and it must stay one.
+check("nothing but a tap writes the hash: goto() is the only writer in main.js",
+      len(_re_nav.findall(r"location\.hash\s*=(?!=)", _main)), 1)
+
+# ------------------------------------------------------------ private assets
+head("Honda-badged pictures ship in the app and never in the repo")
+import json as _json_a  # noqa: E402
+import shutil as _sh_a  # noqa: E402
+import subprocess as _sp_a  # noqa: E402
+import tempfile as _tf_a  # noqa: E402
+import assets as _as  # noqa: E402
+
+_gi = open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read().splitlines()
+check("the private folder is ignored", "share/assets/private/" in _gi, True)
+_tracked = _sp_a.run(["git", "-C", ROOT, "ls-files", "share/assets/private"],
+                     capture_output=True, text=True)
+if _tracked.returncode == 0:
+    check("and nothing under it is tracked", _tracked.stdout.split(), [])
+else:
+    ok("(not a git checkout: the tracked-files check is skipped)")
+
+_d = _tf_a.mkdtemp()
+_png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (640).to_bytes(4, "big") + (480).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00"
+with open(os.path.join(_d, "a.png"), "wb") as _f:
+    _f.write(_png)
+_m = {"assets": {
+    "here": {"file": "a.png", "sha256": None, "anchors": {"engine": [0.3, 0.5]}},
+    "gone": {"file": "missing.png", "sha256": None},
+    "altered": {"file": "a.png", "sha256": "0" * 64},
+}}
+_st = _as.status(_m, _d)
+check("a present, unpinned file is usable", (_st["here"]["ok"], _st["here"]["why"]), (True, "not pinned"))
+check("a missing file says so", (_st["gone"]["ok"], _st["gone"]["why"]), (False, "not installed"))
+check("a file that does not match its pin is refused",
+      (_st["altered"]["ok"], _st["altered"]["why"]), (False, "does not match the manifest"))
+_pv = _as.public_view(_m, _d)
+check("the browser gets a URL only for a file that checks out",
+      [_pv["here"]["url"], _pv["gone"]["url"], _pv["altered"]["url"]],
+      ["assets/private/a.png", None, None])
+check("and the callout anchors ride along", _pv["here"]["anchors"], {"engine": [0.3, 0.5]})
+check("a PNG's size is read from its header", _as.png_size(os.path.join(_d, "a.png")), (640, 480))
+_mf = os.path.join(_d, "manifest.json")
+with open(_mf, "w", encoding="utf-8") as _f:
+    _json_a.dump({"assets": {"here": {"file": "a.png", "sha256": None}}}, _f)
+_as.pin("here", _mf, _d)
+_pinned = _json_a.load(open(_mf, encoding="utf-8"))["assets"]["here"]
+check("pin records the hash and the size",
+      (_pinned["sha256"] == _as.sha256(os.path.join(_d, "a.png")), _pinned["width"], _pinned["height"]),
+      (True, 640, 480))
+_sh_a.rmtree(_d)
+check("the shipped manifest parses and names both car pictures",
+      sorted(_as.load_manifest()["assets"]), ["crz-home", "crz-xray"])
+
+# ------------------------------------------------------------- the advisor
+head("The advisor asks Opus 5.5, and a cached answer names the model that gave it")
+check("reasoning kinds ask Opus 5.5",
+      sorted({ai.MODEL_FOR[k] for k in ("triage", "code", "ask", "predict", "symptom", "recording")}),
+      ["claude-opus-5-5"])
+check("the plain-language rewrite stays on the fast model", ai.MODEL_FOR["owner"], "claude-haiku-4-5")
+check("the default is Opus 5.5", ai.DEFAULT_MODEL, "claude-opus-5-5")
+_b = {"faults": {"P0135": {}}}
+check("the same evidence asked of two models is two cache entries",
+      ai.cache_key("triage", "t", _b, "claude-opus-5-5") != ai.cache_key("triage", "t", _b, "claude-sonnet-5"),
+      True)
+
+# THE RECORD THE AGENT CARDS READ. ask() is driven for real here, with only
+# the CLI, the evidence bundle, the cache directory and the database write
+# stood in for. Home's Oma Agent card and Vehicle's insight card read
+# payload.headline (share/js/advice.js, pinned by test/js/advice.test.js);
+# they used to read payload.data.headline, which this writer never wrote.
+import tempfile as _tf_ai  # noqa: E402
+import shutil as _sh_ai  # noqa: E402
+
+_ai_tmp = _tf_ai.mkdtemp()
+_ai_was = (ai.bundle, ai.available, ai.run_claude, ai.cache_path, ai.records.write_record)
+_ai_rec = []
+
+
+def _fake_claude(envelope):
+    def run(prompt, model, extra):
+        return (_json.dumps({"headline": "Front O2 heater", "hypotheses": []}), 0.1,
+                dict(envelope, _asked=model))
+    return run
+
+
+try:
+    ai.bundle = lambda kind="triage", code=None, span=None: {"faults": {}}
+    ai.available = lambda: True
+    ai.cache_path = lambda key: os.path.join(_ai_tmp, key + ".json")
+    ai.records.write_record = lambda kind, label, payload: _ai_rec.append((kind, label, payload))
+    ai.run_claude = _fake_claude({"modelUsage": {"claude-opus-5-5": {"outputTokens": 900}}})
+    ai.ask("symptom", question="It stalls when cold", refresh=True)
+    check("the advisor writes one record per answer, headline on the payload",
+          _ai_rec, [("ai", "symptom: It stalls when cold",
+                     {"kind": "symptom", "headline": "Front O2 heater"})])
+
+    # THE LABEL NAMES THE MODEL THAT WAS ASKED, not the caller's override.
+    # _answering_model() was handed `model` -- None unless a caller forced one
+    # -- instead of `use`, so the preference for the model we asked for never
+    # applied, and the fallback called a plain-language (Haiku) answer Opus.
+    ai.run_claude = _fake_claude({})
+    check("an envelope with no usage names the model asked for, not the default",
+          ai.ask("owner", refresh=True)["model"], "claude-haiku-4-5")
+    ai.run_claude = _fake_claude({"modelUsage": {
+        "claude-haiku-4-5-20251001": {"outputTokens": 300},
+        "claude-opus-5-5": {"outputTokens": 900}}})
+    check("and one that billed two models names the one asked for",
+          ai.ask("owner", refresh=True)["model"], "claude-haiku-4-5-20251001")
+finally:
+    (ai.bundle, ai.available, ai.run_claude, ai.cache_path, ai.records.write_record) = _ai_was
+    _sh_ai.rmtree(_ai_tmp, ignore_errors=True)
+
+# THE CLI WHERE ITS INSTALLER PUTS IT. On the tablet `claude` lives only in
+# ~/.local/bin, and the server runs under systemd, whose PATH does not have
+# it -- so shutil.which() said no, and the advisor said it was not installed.
+# A scratch HOME with a fake CLI in ~/.local/bin, and a PATH that holds
+# nothing: it must be found, and it must be what run_claude() runs.
+_cl_home = _tf_ai.mkdtemp()
+_cl_env = {k: os.environ.get(k) for k in ("HOME", "PATH")}
+_cl_run = ai.subprocess.run
+_cl_cmd = []
+try:
+    os.makedirs(os.path.join(_cl_home, ".local", "bin"))
+    _cl_fake = os.path.join(_cl_home, ".local", "bin", "claude")
+    with open(_cl_fake, "w") as _f:
+        _f.write("#!/bin/sh\nexit 0\n")
+    os.chmod(_cl_fake, 0o755)
+    os.environ["HOME"] = _cl_home
+    os.environ["PATH"] = os.path.join(_cl_home, "empty")
+    check("claude in ~/.local/bin only, off PATH, is found", ai.claude_bin(), _cl_fake)
+    check("and the advisor is available", ai.available(), True)
+
+    class _Done:
+        returncode, stdout, stderr = 0, _json.dumps({"result": "{}"}), ""
+
+    def _capture(cmd, **kw):
+        _cl_cmd.append(cmd)
+        return _Done()
+    ai.subprocess.run = _capture
+    ai.run_claude("p", "claude-opus-5-5", "x")
+    check("and that path is the one it runs", (_cl_cmd[0] or [None])[0], _cl_fake)
+    os.remove(_cl_fake)
+    check("with it gone, the advisor says it is not there", ai.available(), False)
+finally:
+    ai.subprocess.run = _cl_run
+    for _k, _v in _cl_env.items():
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
+    _sh_ai.rmtree(_cl_home, ignore_errors=True)
 
 # ----------------------------------------------------------------------- done
 print()

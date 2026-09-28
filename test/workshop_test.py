@@ -1096,7 +1096,9 @@ ok("the aurora renders into a small buffer, not the full canvas",
 head("Gauges")
 
 _gauges = (_share / "js" / "gauges.js").read_text(encoding="utf-8")
-_drive = (_share / "js" / "views" / "drive.js").read_text(encoding="utf-8")
+# The catalogue these checks read (scale, read, the fuel-trim bands) moved out
+# of drive.js and into readings.js so Home and Vehicle can share it too.
+_drive = (_share / "js" / "readings.js").read_text(encoding="utf-8")
 api_src = (pathlib.Path(__file__).resolve().parent.parent / "lib" / "api.py"
            ).read_text(encoding="utf-8")
 
@@ -1216,8 +1218,10 @@ ok("and it says DEMO when it is showing one",
    is not None)
 ok("one button moves both surfaces together",
    "function toggleDemo" in _panelsrc and "omacar demo start" in _panelsrc)
+# The badge moved from main.js's "DEMO · not your car" pill to provenance.js's
+# badge() in the frame redesign, and the word changed to SIMULATED with it.
 ok("the browser app badges a simulated car too",
-   "DEMO · not your car" in (_share / "js" / "main.js").read_text(encoding="utf-8"))
+   "SIMULATED" in (_share / "js" / "provenance.js").read_text(encoding="utf-8"))
 
 head("The logger that waits")
 
@@ -1271,15 +1275,16 @@ else:
        _seen["last"] is not None and _seen["last"] <= dtclog.IDLE_POLL < 300.0)
     ok("but it does not give up and exit", _seen["sleeps"] >= 20)
 
-head("The hub")
+head("Home, built once")
 
 # The hub used to rebuild its entire DOM -- title, vitals, the radio transport,
 # six tiles and every SVG icon in them -- inside a listener on `live`, which
 # fires every 250ms. Four times a second the whole screen was destroyed and
 # made again: that is what the blinking was, and it also meant the volume
 # slider could not be dragged, because the element under your finger stopped
-# existing.
-_hub = (_share / "js" / "views" / "hub.js").read_text(encoding="utf-8")
+# existing. The hub is gone, replaced by Home; the build-once rules it was
+# written to protect moved onto Home, so this reads home.js now.
+_hub = (_share / "js" / "views" / "home.js").read_text(encoding="utf-8")
 # These asserted one implementation's identifiers -- `update`, `remountRadio`,
 # the literal "!== text" -- and so they failed the moment a different build-once
 # hub won a merge, while every property they were written to protect still held.
@@ -1294,7 +1299,8 @@ ok("the hub is never cleared wholesale on a sample",
 # not be dragged: the element under your finger stopped existing.
 _removes = re.findall(r"^(.*\.remove\(\).*)$", _hub, re.M)
 ok("anything that removes a child does so from a key reconciler",
-   all("have.values()" in ln or "fxHost" in ln for ln in _removes))
+   all("have.values()" in ln or "fxHost" in ln or "want.includes(n)" in ln
+       for ln in _removes))
 ok("a value is only written when it changed",
    re.search(r"textContent\s*!==\s*\w+", _hub) is not None)
 # THE RADIO MOVED TO THE MUSIC PAGE, and the property moved with it rather
@@ -1539,9 +1545,10 @@ for _sel, _body in _display_rules:
            "tabular-nums" in _body)
 
 # And the small figures app.css left without it, now that --mono is no longer
-# guaranteed to be a monospace once somebody picks a stack.
-for _cls in (".vbar .odo", ".tbl .num", ".rp-time", ".rp-v", ".svc-when",
-             ".hub-vital-v", ".learn-stat-n", ".g-num"):
+# guaranteed to be a monospace once somebody picks a stack. (".vbar .odo" left
+# this list with the odometer, which the top bar no longer carries.)
+for _cls in (".tbl .num", ".rp-time", ".rp-v", ".svc-when",
+             ".sig-v", ".learn-stat-n", ".g-num"):
     ok(f"{_cls} is pinned to tabular figures",
        re.search(re.escape(_cls) + r"[^{}]*\{[^{}]*tabular-nums", _fcss, re.S)
        is not None
@@ -1661,6 +1668,40 @@ ok("a malformed profile does not stop the daemon polling",
 _bare = _prof.normalize({"car": {"slug": "x"}, "pid": []})
 ok("a profile with no capability sections gains none",
    "module" not in _bare and "poll" not in _bare and "screens" not in _bare)
+
+# ---- Home's layout ------------------------------------------------------------
+head("Home's layout")
+import homelayout  # noqa: E402
+
+for _p in (homelayout.HOME_CFG, api.DRIVE_CFG):
+    if os.path.exists(_p):
+        os.remove(_p)
+_cat = homelayout.catalogue()
+_dflt = [list(x) for x in _cat["default"]["landscape"]]
+_first = homelayout.home_layout()
+ok("with no file, Home is the catalogue's default", _first["landscape"]["cards"] == _dflt)
+ok("and nothing starts hidden", _first["landscape"]["hidden"] == [] and _first["portrait"]["hidden"] == [])
+_saved = homelayout.save_home_layout({
+    "landscape": {"cards": [["car", "xl"], ["nope", "m"], ["car", "l"], ["dial", "huge"]], "hidden": []},
+    "portrait": _first["portrait"]})
+_land = _saved["landscape"]
+ok("an unknown card is dropped", all(c != "nope" for c, _ in _land["cards"]))
+ok("a card placed twice is kept once", [c for c, _ in _land["cards"]].count("car") == 1)
+ok("a size the card does not have becomes its first size",
+   ["dial", list(_cat["cards"]["dial"]["sizes"])[0]] in _land["cards"])
+ok("a default card that was left out is remembered as removed", "nav" in _land["hidden"])
+ok("and stays removed when read back", "nav" in homelayout.home_layout()["landscape"]["hidden"])
+ok("reset puts the default back",
+   homelayout.save_home_layout({"action": "reset"})["landscape"]["cards"] == _dflt)
+ok("the route answers", api.handle_get("/api/home", "")[0] == 200)
+ok("and refuses a body that is not a layout", api.handle_post("/api/home", "[1, 2]")[0] == 400)
+api.save_drive_layout({"tiles": ["intake", "coolant"]})
+_mig = [c for c, _ in homelayout.home_layout()["landscape"]["cards"] if c in homelayout.SIGNAL_CARDS]
+ok("the drive screen's tile choice carries over while Home has never been saved",
+   _mig[:2] == ["intake", "coolant"] and len(_mig) == 4)
+for _p in (homelayout.HOME_CFG, api.DRIVE_CFG):
+    if os.path.exists(_p):
+        os.remove(_p)
 
 shutil.rmtree(tmp, ignore_errors=True)
 

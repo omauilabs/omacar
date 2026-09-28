@@ -6,15 +6,15 @@
 // then separately remember to turn the animation off. The combinations that
 // make sense are few, and each has a name and an occasion.
 //
-// So: one control, five looks, each coherent.
+// So: one control, and every look in it coherent.
 
 import { mountEffect } from "./effects.js";
 
 const KEY = "omacar.look";
 
 export const LOOKS = [
-  { id: "normal", label: "Normal", effect: "off",
-    note: "Default palette, no background." },
+  { id: "normal", label: "OmaCar", effect: "off",
+    note: "The mockups' palette. No background." },
   { id: "green", label: "Matrix", effect: "matrix",
     note: "Green palette with the rain behind it." },
   { id: "aurora", label: "Aurora", effect: "aurora",
@@ -28,6 +28,11 @@ export const LOOKS = [
     note: "Everything pulled down. For a lit cabin after dark." },
   { id: "red", label: "Night · red", effect: "off",
     note: "Red only, to protect dark adaptation on a long drive." },
+  // The desktop's theme, mapped onto OmaCar's tokens by lib/theme.py. It used
+  // to be the default; the owner's mockups are a designed palette now, and
+  // this is how to wear the desktop's instead.
+  { id: "omarchy", label: "Omarchy theme", effect: "off",
+    note: "Your desktop theme's colours, mapped onto OmaCar's." },
 ];
 
 export function savedLook() {
@@ -50,7 +55,7 @@ export function lookById(id) {
 // A look has to survive navigation -- the whole point of night red is that it
 // stays red while you move between screens -- so it is set once, at the top,
 // and never touched by a view mount. Only the background canvas, which is
-// genuinely per-view, is mounted and torn down with the hub.
+// genuinely per-view, is mounted and torn down with Home.
 export function applyLook(id) {
   // documentElement, not #app. html and body read --ground from :root, so a
   // look set on #app left the page behind the app unthemed, and anything
@@ -59,6 +64,8 @@ export function applyLook(id) {
   const look = lookById(id);
   if (look.id === "normal") root.removeAttribute("data-look");
   else root.setAttribute("data-look", look.id);
+  // main.js applies or removes the desktop theme when this changes.
+  document.dispatchEvent(new CustomEvent("omacar:look", { detail: look.id }));
 }
 
 export function nextLook(id) {
@@ -66,7 +73,7 @@ export function nextLook(id) {
   return LOOKS[(i + 1) % LOOKS.length].id;
 }
 
-// Effect lifecycle, kept here so the hub does not have to know which looks
+// Effect lifecycle, kept here so Home does not have to know which looks
 // carry an animation and which do not.
 export function mountLookEffect(host, id) {
   return mountEffect(host, lookById(id).effect);

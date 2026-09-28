@@ -1,0 +1,174 @@
+/* Home: cards on a grid the layout arranges. 12 columns landscape, 6 portrait,
+   96 px rows; each card's span comes from share/data/home-cards.json.
+
+   FILLS THE STAGE, the way the mockups draw it. .stage (app.css) is the 1fr
+   row of a viewport-height grid, so it already has a definite height; .wrap
+   (app.css) is `display: grid` with exactly one child here (.home), and an
+   "auto" grid row does not stretch to fill leftover space on its own, so
+   without the rules below the grid used to end ~150px short of the tab bar
+   with nothing but empty stage under it.
+
+   HEIGHT, NOT MIN-HEIGHT. A `min-height: 100%` chain here (.wrap -> .home)
+   looked right, and was, for landscape's six rows. Portrait's default layout
+   needs eleven, whose 96px floors alone (1176px) already exceed what the
+   stage has to give on the reference tablet (~1151px) -- and asking a
+   min-height-only box to size itself from a 1fr grid whose OWN minimum
+   already exceeds that floor sent Chromium's layout into measuring the grid
+   at roughly 2.3x the screen's height, scrolling the stage through the tab
+   bar, rather than the clean overflow a fixed box gives instead. `height:
+   100%` has nothing to feed back into: the box is exactly the stage's
+   height, full stop, and eleven rows that do not fit simply overflow it by
+   the small remainder -- which .stage's own scroller (app.css) already
+   exists to absorb. */
+.wrap:has(> .home) { max-width: none; display: block; height: 100%; }
+.home {
+  display: flex; flex-direction: column; gap: 12px; height: 100%;
+  /* position + isolation: the look's animated background (.home-fx, below)
+     is the one thing on this screen that should sit behind everything else
+     drawn here, and isolating the stacking context keeps that negative
+     z-index from reaching outside .home -- it never has to reason about
+     what else on the page might also use z-index. */
+  position: relative; isolation: isolate;
+}
+.home-grid {
+  display: grid; gap: 12px; grid-auto-flow: row dense; flex: 1; min-height: 0;
+  grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: minmax(96px, 1fr);
+}
+@media (orientation: portrait) {
+  /* ELEVEN ROWS IN PORTRAIT, and on the tablet's touch screen (taller tab bar
+     and chip targets) the stage has room for rows of about 86 px, not 96. At
+     a 96 px floor the grid ran 80 px past its own box and over the provenance
+     line under it -- the one line that says where Home's numbers came from.
+     So in portrait the floor is lower, the gaps and the stage's bottom margin
+     are tighter, and the signal tiles lose 2 px of padding: every row fits,
+     and no tile loses its scale line to overflow:hidden. */
+  .home-grid { grid-template-columns: repeat(6, minmax(0, 1fr));
+               grid-auto-rows: minmax(84px, 1fr); gap: 8px; }
+  .hc.sig { padding: 10px 14px; gap: 4px; }
+  /* Home does not scroll, so it needs none of the stage's 40 px run-out
+     under the last row; the same 22 px as above it. */
+  .stage:has(> .wrap > .home) { padding-bottom: 22px; }
+}
+.hc { position: relative; min-width: 0; min-height: 0; overflow: hidden; margin: 0; padding: 16px; }
+.hc[role="button"] { cursor: pointer; }
+.home-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+             font-size: .75rem; color: var(--dim); }
+.home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap);
+               padding: 0 12px; background: none; border: 0; color: var(--ink-2); font: inherit; }
+/* Greyed while driving, never hidden: the same treatment as a locked chip. */
+.home-custom:disabled { opacity: .45; cursor: default; }
+/* A long press on a card opens the editor (home.js). Nothing else a long press
+   can start on a touch screen -- a text selection, the callout -- should. */
+.home-grid { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+/* The look's animated background (Matrix/Aurora), mounted by home.js only
+   while parked. Negative z-index, inside .home's own isolated stacking
+   context (above), so it paints behind .home's other children -- which are
+   all plain in-flow boxes and so paint above ANY positioned descendant of
+   theirs regardless of z-index value, negative or not. */
+.home-fx {
+  position: absolute; inset: 0; z-index: -1;
+  pointer-events: none; overflow: hidden; border-radius: var(--r);
+}
+
+/* speed */
+.hc-dial { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+/* The gauge gives way first: Begin's slot below is always reserved (home.js
+   hides it with visibility, so it never moves the dial), and on a short card
+   the arc shrinks rather than pushing the words out of the bottom. */
+.hc-dial .g-svg { width: 100%; max-height: 72%; flex: 0 1 auto; min-height: 0; }
+.dial-words { display: flex; flex-direction: column; align-items: center; }
+/* In portrait a dial card is wide and short ([3,2], or [6,2] large), so the
+   words and Begin's reserved slot sit beside the arc instead of under it: the
+   arc gets the card's whole height rather than what the slot leaves over. */
+@media (orientation: portrait) {
+  .hc-dial { flex-direction: row; gap: 20px; }
+  .hc-dial .g-svg { width: auto; height: 100%; max-height: 100%; }
+}
+.dial-rpm { font-size: .95rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.dial-mode { margin-top: 6px; }
+.dial-begin { margin-top: 8px; }
+
+/* the car */
+.hc-car { padding: 0;
+  background: radial-gradient(ellipse at 50% 62%, color-mix(in srgb, var(--ink) 6%, var(--panel)), var(--panel) 72%); }
+.car-stage { position: absolute; inset: 0; }
+.car-img { position: absolute; inset: 6% 4%; width: 92%; height: 88%; object-fit: contain; }
+.car-slot { position: absolute; inset: 14% 10%; display: grid; place-items: center;
+            border: 1.5px dashed var(--edge-2); border-radius: var(--r); color: var(--faint); font-size: .8rem; }
+.callout { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 6px;
+           padding: 4px 10px; background: color-mix(in srgb, var(--ground) 72%, transparent);
+           border: 1px solid var(--hair); border-radius: 999px; font-size: .75rem; white-space: nowrap; }
+.co-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.callout[data-tone="warn"] .co-dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+.callout[data-tone="bad"] .co-dot { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.callout[data-tone=""] .co-dot, .callout[data-tone="unknown"] .co-dot { background: var(--faint); box-shadow: none; }
+.co-k { color: var(--ink-2); }
+.co-v { color: var(--ink); font-weight: 500; }
+
+/* coming-soon cards */
+.hc-ph { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.hc-ph svg { color: var(--accent); }
+.hc-ph-t { font-size: 1.05rem; color: var(--ink); }
+.hc-ph-s { font-size: .8rem; color: var(--dim); line-height: 1.4; }
+
+/* phone and agent */
+.hc-title { display: flex; align-items: center; gap: 8px; font-size: .95rem; color: var(--ink); margin-bottom: 10px; }
+.hc-title .chev { margin-left: auto; color: var(--dim); }
+.hc-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: var(--tap);
+          padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--hair);
+          border-radius: 12px; color: var(--ink); font: inherit; text-align: left; }
+.hc-row svg:first-child { color: var(--accent); }
+.hc-row .sub { display: block; font-size: .72rem; color: var(--dim); }
+.hc-row .chev { margin-left: auto; color: var(--dim); }
+.hc-chips { display: flex; gap: 8px; margin-top: 10px; }
+.hc-chip { min-height: var(--tap); padding: 0 16px; border-radius: 999px; background: var(--panel-2);
+           border: 1px solid var(--hair); color: var(--ink-2); font: inherit; }
+.ag-q { margin-left: auto; width: fit-content; max-width: 90%; background: var(--panel-2); border: 1px solid var(--hair);
+        border-radius: 10px; padding: 8px 12px; font-size: .85rem; color: var(--ink); }
+.ag-a { margin-top: 10px; font-size: .85rem; color: var(--ink-2); line-height: 1.4;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* signal tiles: Home and Vehicle. A container, so a tile is right at whatever
+   width the layout gives it: the sparkline goes before the number does. */
+.sig { display: grid; grid-template-rows: auto 1fr; gap: 6px; container-type: inline-size; }
+@container (max-width: 190px) {
+  .sig-spark { display: none; }
+}
+.hc.sig { padding: 12px 14px; }
+.sig-head { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--ink-2); }
+.sig-body { display: flex; align-items: flex-end; gap: 12px; min-width: 0; }
+.sig-val { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.sig-v { font-size: 1.85rem; line-height: 1; color: var(--ink); }
+.sig-u { font-size: .85rem; color: var(--ink-2); }
+.sig-note { font-size: .78rem; color: var(--dim); }
+.sig-spark { flex: 1; min-width: 60px; }
+.sig-spark svg { width: 100%; height: 28px; display: block; }
+.sig-spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.sig[data-reading="charge"] .sig-spark path { stroke: var(--ok); }
+.sig-scale { display: flex; justify-content: space-between; font-size: .62rem; color: var(--faint);
+             font-variant-numeric: tabular-nums; }
+.sig[data-tone="warn"] .sig-v { color: var(--warn); }
+.sig[data-tone="bad"] .sig-v { color: var(--bad); }
+/* A tile that is absent or waiting has no scale and no trail (sigtile.js
+   clears both), so an empty sparkline slot would otherwise draw as a flat
+   line at nothing -- which reads as "the reading is zero", not "there is no
+   reading". Hidden rather than removed, so the slot keeps its width and nothing
+   else in the tile reflows when a value arrives. */
+.sig:not([data-state="live"]) .sig-spark { visibility: hidden; }
+
+/* ---- edit mode ---------------------------------------------------------- */
+.home-editbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.home-editbar[hidden] { display: none; }
+.he-note { margin-right: auto; font-size: .8rem; color: var(--ink-2); }
+.btn-primary { background: var(--accent-fill); color: var(--on-accent); border-color: transparent; }
+.home-grid.editing > [data-card] { outline: 1.5px dashed var(--edge-2); outline-offset: -1px;
+  touch-action: none; cursor: grab; animation: he-wiggle .9s ease-in-out infinite alternate; }
+.home-grid.editing > .dragging { z-index: 5; cursor: grabbing; animation: none; opacity: .95;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, .45); }
+@keyframes he-wiggle { from { rotate: -.25deg; } to { rotate: .25deg; } }
+@media (prefers-reduced-motion: reduce) { .home-grid.editing > [data-card] { animation: none; } }
+.he-ctl { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 2; }
+.he-size, .he-rm { min-width: var(--tap); min-height: var(--tap); border-radius: 12px;
+  background: var(--raise); border: 1px solid var(--edge-2); color: var(--ink);
+  font: inherit; font-size: .75rem; display: grid; place-items: center; }

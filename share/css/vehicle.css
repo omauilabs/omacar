@@ -1,0 +1,50 @@
+/* Vehicle: headline, X-ray, systems, live signals, actions, codes. */
+.wrap:has(> .veh) { max-width: none; }
+.veh { display: grid; gap: 12px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.veh > * { grid-column: span 12; min-width: 0; }
+.vh-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.vh-status { display: flex; align-items: center; gap: 14px; }
+.vh-icon { color: var(--ok); display: grid; }
+.vh-icon[data-tone="warn"] { color: var(--warn); }
+.vh-icon[data-tone="bad"] { color: var(--bad); }
+.vh-icon[data-tone=""] { color: var(--faint); }
+.vh-title { font-family: var(--display); font-size: 1.9rem; font-weight: 600; color: var(--ink); }
+.vh-when { font-size: .9rem; color: var(--ink-2); }
+.vh-id { text-align: right; }
+.vh-car { font-size: 1.15rem; color: var(--ink); }
+.vh-spec { font-size: .85rem; color: var(--ink-2); }
+.vh-odo { font-size: 1rem; color: var(--ink); }
+.vh-hero { grid-column: span 7; position: relative; min-height: 340px; padding: 0;
+  background: radial-gradient(ellipse at 50% 60%, color-mix(in srgb, var(--accent) 5%, var(--panel)), var(--panel) 70%); }
+.vh-systems { grid-column: span 5; }
+.vh-sys-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: var(--tap-lg);
+  padding: 8px 12px; margin-top: 8px; background: var(--panel-2); border: 1px solid var(--hair);
+  border-radius: 12px; color: var(--ink); font: inherit; text-align: left; }
+.vh-sys-row .sub { display: block; font-size: .72rem; color: var(--dim); }
+.vh-sys-row .chev { color: var(--dim); }
+.vh-sys-st { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: .85rem; }
+.vh-sys-st[data-tone="ok"] { color: var(--ok); }
+.vh-sys-st[data-tone="warn"] { color: var(--warn); }
+.vh-sys-st[data-tone="bad"] { color: var(--bad); }
+.vh-sys-st[data-tone="unknown"] { color: var(--faint); }
+.vh-live { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.vh-live .sig { min-height: 110px; padding: 12px 14px; }
+.vh-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.vh-actions .btn { min-height: var(--tap); display: inline-flex; align-items: center; gap: 8px; }
+.vh-gap { flex: 1; }
+.vh-src { display: flex; align-items: center; gap: 8px; }
+.vh-src[hidden] { display: none; }
+.vh-src-k { font-size: .8rem; color: var(--ink-2); }
+.vh-src .chip[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+.vh-codes, .vh-insight { grid-column: span 6; }
+.vh-none { display: flex; align-items: center; gap: 12px; color: var(--ok); font-size: 1rem; }
+.vh-code { display: flex; gap: 12px; align-items: baseline; margin-top: 6px; color: var(--ink-2); font-size: .85rem; }
+.vh-code-c { color: var(--warn); font-size: 1rem; }
+.vh-more { margin-top: 6px; font-size: .8rem; color: var(--dim); }
+.vh-insight-t { color: var(--ink); font-size: .95rem; line-height: 1.4; }
+@media (orientation: portrait) {
+  .vh-hero, .vh-systems, .vh-codes, .vh-insight { grid-column: span 12; }
+  .vh-live { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vh-head { flex-direction: column; align-items: flex-start; }
+  .vh-id { text-align: left; }
+}

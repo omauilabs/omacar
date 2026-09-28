@@ -57,3 +57,14 @@ is not ours to ship.
 coverage can be built in the open, by people who own the cars. Taking it from
 somebody who paid engineers to build it would be both wrong and beside the
 point.
+
+## Bundled with the app
+
+Two things ARE in this repository, both under licences that allow it:
+
+- **Inter** (`share/fonts/InterVariable.ttf`), by Rasmus Andersson — SIL Open
+  Font License 1.1, full text in `share/fonts/OFL.txt`. Copied from Arch's
+  `inter-font` 4.1 package. The tablet has only Adwaita installed, and the
+  mockups are set in Inter.
+- **Icon paths** in `share/js/icons.js` marked "Lucide" — ISC License,
+  © Lucide Contributors (https://lucide.dev). Paths only; no Lucide code.
