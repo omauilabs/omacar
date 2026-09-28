@@ -103,6 +103,7 @@
     "tpms-tool": {"title": "TPMS trigger and programming tool", "notes": "A 125 kHz trigger that wakes and programs direct TPMS sensors. Out of reach of a USB radio, which can only listen."},
     "internet": {"title": "An internet connection", "notes": "A phone hotspot in the car. Everything marked with it degrades to saying so when offline, and nothing else needs it."},
     "home-machine": {"title": "An always-on Omarchy machine at home, on the same tailnet", "notes": "Pushes documents to the car, relays Work sessions, and is where a backup would live. No cloud host."},
+    "child-camera": {"title": "A small camera facing the child seat", "notes": "A fourth camera. At night it has to be infrared: 940 nm IR with an IR-cut filter, like the ELP recommended for the cabin. Not yet bought."},
     "car-network": {"title": "A network in the car: the tablet's own hotspot, or a travel router", "notes": "What rear-seat tablets join. The phone's hotspot would do for internet, but the car's own devices should reach each other without it."},
     "claude": {"title": "A Claude subscription, logged in through Claude Code", "notes": "The advisor and Work run on the owner's own subscription through the local `claude` CLI. Not hardware, and listed here because it is a thing you must have."}
   },
@@ -1370,17 +1371,30 @@
       "notes": "Stage 2 of Check the back seat. It needs the tablet to stay awake on its own battery after the car is off, and a connection to send from. Messages use the owner's standing consent, set up in advance, as safe.crash does. Detection only: nothing is recorded. False alarms and missed children are both costly, which is why this is research and stage 1 is not."
     },
     {
-      "id": "safe.child-cry",
+      "id": "safe.backseat-comfort",
       "domain": "safety",
-      "title": "Crying in the back seat",
-      "user": "If the baby has been crying for a while, tell me calmly, and tell me where I can stop.",
-      "agent": "Recognises crying on the device, gives one calm notice such as 'The baby has been crying for 5 minutes', and names the next safe place to stop once navigation exists.",
-      "status": "research",
+      "title": "Tantrum comfort",
+      "user": "When my toddler melts down while I am driving, the car calms things down for me, so I can keep my attention on the road.",
+      "agent": "Recognises a sustained meltdown on the device, crossfades to the parent's toddler playlist, can greet the child by name, and tells the driver once, calmly, what it did.",
+      "status": "next",
       "tier": "none",
       "needs": ["usb-camera"],
-      "depends": ["safe.alert-audio", "safe.dashcam"],
+      "depends": ["safe.alert-audio"],
       "evidence": [],
-      "notes": "Opt-in. Detects only and records nothing; see the Penal Code s632 note on safe.cabin-sound. It does not alarm. A rear-facing baby camera, an optional fourth camera, shows its picture only when the car is stopped, never while moving, the rule plat.nursery already follows. Candidate classifier: MediaPipe's Audio Classifier, whose default model is YAMNet, trained on AudioSet; YAMNet's class map includes 'Baby cry, infant cry' (both checked 2026-09-28, sources in doc/roadmap.json). Runs in the page, like drowsy mode's face tracker."
+      "notes": "Decided with the owner on 2026-09-28, in his words: a loud tantrum or meltdown 'can cause anxiety for the parent/driver', and the tablet should 'automatically change music to toddler music and do whatever it can to entertain the toddler to calm down'. Next, after the event package and stage 1 of Check the back seat. Detection: an on-device classifier, MediaPipe's Audio Classifier with YAMNet, watching the AudioSet classes 'Crying, sobbing', 'Baby cry, infant cry', 'Whimper', 'Wail, moan', 'Screaming' and 'Children shouting' (names checked in YAMNet's class map, 2026-09-28). It must hold for about 20 to 30 seconds, so a single yelp or a burst of laughter does not trigger it. Detects only and records nothing; see the Penal Code s632 note on safe.cabin-sound. Automatic by the owner's choice, with 'ask first' as a setting. It crossfades the music through the shared audio stage, never a jump, to a playlist from the parent's own files, so it works offline. It can greet the child by name with a friendly line, shows calming visuals on a back-seat screen if media.rear-screens exists, and uses safe.child-cam's picture if there is one; neither is required. It tells the driver once, for example 'I've put on the toddler songs', and keeps the calm crying notice ('The baby has been crying for 5 minutes', with the next safe place to stop once navigation exists). One tap or a spoken 'stop' restores the previous music. Parent setup: the playlist, the child's name, sensitivity, and automatic or ask first."
+    },
+    {
+      "id": "safe.child-cam",
+      "domain": "safety",
+      "title": "The toddler, in view for the whole drive",
+      "user": "See my toddler the whole time I drive, the way parents already use a baby mirror.",
+      "agent": "Keeps a small, fixed picture of the child seat on screen while driving, and enlarges it only when parked.",
+      "status": "later",
+      "tier": "none",
+      "needs": ["child-camera"],
+      "depends": ["safe.dashcam"],
+      "evidence": [],
+      "notes": "The owner's decision, 2026-09-28: 'The camera pointed at my toddler will need to be on the entire duration while driving so as to maintain visibility and awareness. This is well established with parents.' Under the governing principle the app states the risk once, in the setting, and does not refuse. The picture is a small tile in the same place every time, glanced at like a mirror: low motion, nothing to tap or scroll while moving, never full screen while moving, and enlarged only when parked. Opt-in. The risk it states: NHTSA's visual-manual guidelines (78 FR 24818) list 'displaying video not related to driving' as a per-se lock-out while driving, though they are voluntary and written for manufacturers; and California Vehicle Code s27602 bars a video display visible to the driver while driving, with exceptions that do not clearly cover a child-seat camera (the claim in doc/roadmap.json says exactly how far that goes). plat.nursery, the baby at home, keeps its own no-video-while-moving rule unless the owner says otherwise. A fourth USB camera adds to the bandwidth question already open for three on one hub (the cameras design, open question 2)."
     },
     {
       "id": "safe.awake",

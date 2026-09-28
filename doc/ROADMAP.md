@@ -277,8 +277,9 @@ underneath it, and several were learned by breaking something.
 9. **Glanceable while moving.** Whatever is on screen while the car moves,
    ours or a plugin's, follows one set of rules by default: few numbers, big
    targets, no text entry and nothing new in motion. The owner can accept a
-   warning to relax those. Writes stay greyed out with the reason, and that
-   cannot be relaxed.
+   warning to relax those, and has already made one such choice: the toddler
+   camera stays in view for the whole drive (2026-09-28). Writes stay greyed
+   out with the reason, and that cannot be relaxed.
 10. **No server of ours.** Sharing is a git repository, sync is between the
     owner's own machines over their own tailnet, and Work relays through the
     owner's own box. This follows the owner's decision of 2026-09-28 against
@@ -827,7 +828,8 @@ the file that will prove it landed.
 
 In this order, which is the owner's, with one exception. The event package
 starts as soon as the cameras work lands, whatever else is under way, because
-it is the other half of the cameras, and "Check the back seat" follows it.
+it is the other half of the cameras. "Check the back seat" follows it, then
+"Tantrum comfort".
 
 **The event package** (`own.incident-kit`, decided 2026-09-28). In the owner's
 words: "if the car suddenly brakes or stops or there's an accident … the
@@ -851,6 +853,28 @@ NHTSA counts more than a thousand US children dead of vehicular heatstroke
 since 1998. That figure is in the claims list, marked unverified, because
 NHTSA's page refused an automated read. Stage 2, noticing a child left behind
 after the car is off, is research.
+
+**Tantrum comfort** (`safe.backseat-comfort`, decided 2026-09-28). In the
+owner's words, a toddler's loud tantrum or meltdown "can cause anxiety for the
+parent/driver. Our tablet will need to automatically change music to toddler
+music and do whatever it can to entertain the toddler to calm down."
+
+- **Detection.** An on-device classifier (MediaPipe's Audio Classifier with
+  YAMNet) listens for YAMNet's crying, whimpering, wailing, screaming and
+  children-shouting classes. The sound has to be sustained for about 20 to 30
+  seconds, so one yelp or a burst of laughter does not set it off. It detects
+  and records nothing.
+- **What it does.** It is automatic by the owner's choice, with "ask first"
+  as a setting. It crossfades the music to the parent's own toddler playlist
+  through the shared audio stage, never a jump, so it works offline. It can
+  greet the child by name with a friendly line, and it shows calming visuals
+  on a back-seat screen if there is one. It tells the driver once, calmly,
+  for example "I've put on the toddler songs", and keeps the calm notice that
+  the baby has been crying, with the next safe place to stop once navigation
+  exists.
+- **Stopping it.** One tap or a spoken "stop" puts the previous music back.
+- **Setup.** The parent chooses the playlist, the child's name, the
+  sensitivity, and automatic or ask first.
 
 **1. IMA and Honda data: the 2026-09-29 discovery drives.** Asymmetry 3
 claims that coverage is expensive per vendor and nearly free per community.
@@ -977,6 +1001,25 @@ The larger pieces are:
   and voice-only while driving. It comes after the Next items, then OmaMenu
   (decided 2026-09-28).
 - **OmaMenu**, a system-wide replacement for the Omarchy menu.
+- **The toddler, in view for the whole drive** (`safe.child-cam`). In the
+  owner's words: "The camera pointed at my toddler will need to be on the
+  entire duration while driving so as to maintain visibility and awareness.
+  This is well established with parents." That is the owner's decision
+  (2026-09-28). The app states the risk once, in the setting, and does not
+  refuse.
+  - **Hardware.** A small fourth camera faces the child seat. At night it
+    must be infrared: 940 nm with an IR-cut filter.
+  - **On screen.** The picture is a small tile, fixed in the same place every
+    time, glanced at like a mirror. There is nothing to tap and no full
+    screen while moving; it is enlarged only when parked.
+  - **The risk it states.** NHTSA's voluntary guidelines for manufacturers
+    list displaying video not related to driving as a lock-out while
+    driving. California Vehicle Code §27602 bars a video display visible to
+    the driver, and whether a child-seat camera falls under it or its
+    exceptions is unclear. The claims list says exactly how far that goes.
+  - **Other rules.** The nursery screen keeps its own no-video-while-moving
+    rule unless the owner says otherwise. A fourth USB camera adds to the
+    bandwidth question already open for three.
 - **Screens for the back seat** (`media.rear-screens`, and the owner can move
   it up). Kids' tablets join the car's network through the read-only cockpit
   mode with a family profile: games and kids' plugins, films from a local
@@ -1025,16 +1068,10 @@ turns it on with that warning shown. That is a warning, not a refusal.
 **The back seat.** In the owner's words, parents should be able to "have or
 control screens from the back seat for family entertainment or games", and "if
 a baby is crying in the back seat and I'm driving, there's some safety
-implications there that we could potentially address". Both pieces here are
-opt-in, as is the rear-screen work in Later.
+implications there that we could potentially address". Crying is now handled
+by Tantrum comfort in Next. What remains in research is opt-in, as are the
+rear screens and the toddler camera in Later.
 
-- **Crying in the back seat** (`safe.child-cry`, research). An on-device
-  classifier recognises crying. It detects and records nothing. The candidate
-  is MediaPipe's Audio Classifier with YAMNet, whose AudioSet classes include
-  "Baby cry, infant cry". It does not alarm. It gives one calm notice, such as
-  "The baby has been crying for 5 minutes", with the next safe place to stop
-  once navigation exists. A rear-facing baby camera shows its picture only
-  when the car is stopped, the rule the nursery screen already follows.
 - **A child left behind** (`safe.rear-seat-watch`, research, stage 2 of Check
   the back seat). After the ignition is off, the cabin camera and microphone
   would look for motion or crying and message the owner's phone under the
