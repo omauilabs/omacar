@@ -197,29 +197,34 @@ export default function home(root) {
   // ---- the look's background, behind the grid, while parked -----------------
   //
   // The design says nothing moves while the car moves except values, so the
-  // animated look stops the instant the car starts rolling and resumes the
-  // instant it is not. Decided on a TRANSITION only -- never torn down and
-  // rebuilt on every live sample, which is exactly the mistake the hub's own
-  // comments warn against for everything else on this screen.
+  // animated look runs ONLY IN THE AFFIRMATIVE PARKED STATE: connected, and
+  // neither moving nor idling. "Not driving" was the old test, and it let an
+  // adapter that dropped out mid-drive -- store.state "offline", the case the
+  // drive-day fixes exist for -- start Matrix behind Home while the car was
+  // still rolling. Offline and idling are both states in which the car may be
+  // moving or about to, so neither starts it.
+  //
+  // Decided on a TRANSITION only -- never torn down and rebuilt on every live
+  // sample, which is exactly the mistake the rest of this screen avoids.
   let fxStop = null;
   // null until the first check decides it, so that first check always runs
-  // even if the car happens to already be moving when Home mounts.
-  let driving = null;
+  // whatever state the car is in when Home mounts.
+  let parked = null;
 
   function fxOn() { if (!fxStop) fxStop = mountLookEffect(fx, savedLook()); }
   function fxOff() { if (fxStop) { fxStop(); fxStop = null; } }
 
   function syncFx() {
-    const now = store.state === "driving";
-    if (now === driving) return;
-    driving = now;
-    if (driving) fxOff(); else fxOn();
+    const now = store.state === "parked";
+    if (now === parked) return;
+    parked = now;
+    if (parked) fxOn(); else fxOff();
   }
 
   // THE LOOK ITSELF CHANGED (Settings -> Look), which is a different question
-  // from whether the car is moving. Remount with whatever is current now,
+  // from whether the car is parked. Remount with whatever is current now,
   // but only if something should be showing at all.
-  const onLook = () => { fxOff(); if (!driving) fxOn(); };
+  const onLook = () => { fxOff(); if (parked) fxOn(); };
   document.addEventListener("omacar:look", onLook);
   syncFx();
 
