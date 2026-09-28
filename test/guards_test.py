@@ -1183,6 +1183,60 @@ for junk in ("STOPPED", "BUFFER FULL", "CAN ERROR", "?", "", "7E8 06 41 0C 1A F"
              "NODATA", "7E8"):
     check(f"{junk!r} is not a frame", listen.parse(junk), None)
 
+# ATCAF1's OTHER CENSORSHIP: A LINE ENDING " <DATA ERROR" STILL CARRIES THE
+# REAL FRAME. Measured on a real drive: 818 of 3,554 lines, 23% of everything
+# the adapter sent, and every one carried the full, correct bytes ahead of the
+# suffix -- gear frame 0x191 (0x01 = P, 0x08 = D) vanished from every moving
+# capture this way, because D is 0x08, exactly the byte this suffix marks.
+check("a DATA ERROR line recovers its full frame (0x1AA)",
+      listen.parse("1AA 7F FF 00 00 00 00 68 2F <DATA ERROR"),
+      ("1AA", [0x7F, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x68, 0x2F]))
+check("and a second one, 8 bytes, not truncated",
+      listen.parse("097 80 00 07 E6 0B 00 00 0A <DATA ERROR"),
+      ("097", [0x80, 0x00, 0x07, 0xE6, 0x0B, 0x00, 0x00, 0x0A]))
+check("a line that is only the suffix is still not a frame",
+      listen.parse("<DATA ERROR"), None)
+check("nor is a line of only words with the suffix stuck on",
+      listen.parse("SEARCHING... <DATA ERROR"), None)
+check("a run-together line still falls back to a width, unaffected",
+      listen.parse("7E80641", 3), ("7E8", [6, 65]))
+
+_recov = listen.Capture()
+check("recovering a frame still adds it to the capture",
+      _recov.add_line("1AA 7F FF 00 00 00 00 68 2F <DATA ERROR"), True)
+check("counted as recovered, not rejected",
+      (_recov.recovered, _recov.rejected), (1, 0))
+check("and carried in asdict, so a capture from before this existed and one "
+      "from after can be compared honestly",
+      _recov.asdict()["recovered"], 1)
+_recov.add_line("17C 00 12 34")
+check("an ordinary frame added afterwards leaves the count where it was",
+      _recov.recovered, 1)
+
+# ADAPTER_SAID'S TEN SLOTS ARE FOR THE ADAPTER'S WORDS, NOT ITS PUNCTUATION.
+# Before parse() recovered DATA ERROR lines, distinct truncations of that one
+# censorship filled every slot on seven captures in a row, and BUFFER FULL and
+# STOPPED -- the words overflowed() exists to find -- never got recorded. This
+# guards both halves: no "<...>" annotation may take a slot, ever, and the
+# overflow words are kept beyond the cap even when ten other words got there
+# first.
+_ov = listen.Capture()
+for _i in range(15):
+    check(f"garbled data-error noise {_i} is not a frame",
+          _ov.add_line(f"NOISE {_i} <DATA ERROR"), False)
+check("none of the 15 distinct DATA ERROR lines took a slot",
+      _ov.adapter_said, [])
+for _i in range(12):
+    _ov.add_line(f"CHATTER {_i}")
+check("the cap holds at ten for ordinary words",
+      len(_ov.adapter_said), 10)
+_ov.add_line("BUFFER FULL")
+_ov.add_line("STOPPED")
+check("BUFFER FULL and STOPPED are both kept, past the cap",
+      sorted(_ov.overflowed()), ["BUFFER FULL", "STOPPED"])
+check("...twelve slots now, not stuck at ten",
+      len(_ov.adapter_said), 12)
+
 # The monitor primitive is behind the same AT guard raw() is, because it writes
 # to the port directly and would otherwise be the hole raw() was closed to stop.
 class _Port:
@@ -2553,6 +2607,78 @@ if _keep_env is None:
     os.environ.pop("OMACAR_FASTBAUD", None)
 else:
     os.environ["OMACAR_FASTBAUD"] = _keep_env
+
+# ------------------------------------------------ full-bus formatting, opt-in
+head("ATCAF0 is asked for only when OMACAR_CAF0 says so, and ATCAF1 always comes back")
+
+
+class _CafElm:
+    """Records every raw() command; monitor() answers with lines keyed to
+    whatever ATSP was sent most recently, the way a real probe depends on it."""
+
+    def __init__(self, hits=None):
+        self.sent = []
+        self.hits = hits or {}
+        self._proto = None
+
+    def raw(self, cmd):
+        self.sent.append(str(cmd).upper())
+        if str(cmd).upper().startswith("ATSP"):
+            self._proto = str(cmd).upper()[4:]
+        return ["OK"]
+
+    def monitor(self, command="ATMA", seconds=2.0, on_line=None, limit=200000,
+                should_stop=None):
+        lines = self.hits.get(self._proto, [])
+        for ln in lines:
+            if on_line:
+                on_line(ln)
+        return len(lines)
+
+
+_keep_caf0 = os.environ.get("OMACAR_CAF0")
+os.environ.pop("OMACAR_CAF0", None)
+
+# TEN-PLUS FRAMES ON THE FIRST PROTOCOL TRIED, SO THE PROBE STOPS THERE. That
+# is what makes the counts below exact: one pass through the per-protocol try
+# block, then the one final settle onto whichever protocol won.
+_heard = ["17C 00 12 34 00 00 00 00 00"] * 12
+_el_off = _CafElm(hits={"6": _heard})
+_chosen = listen._pick_monitor_protocol(_el_off, probe=0.01)
+check("a protocol is still chosen with the env var unset", _chosen, "6")
+check("and no ATCAF0 is sent without it",
+      any(c.startswith("ATCAF0") for c in _el_off.sent), False)
+
+os.environ["OMACAR_CAF0"] = "1"
+_el_on = _CafElm(hits={"6": _heard})
+listen._pick_monitor_protocol(_el_on, probe=0.01)
+# BOTH PLACES: the per-protocol probe has to run under the same formatting the
+# real capture will use, or a protocol that only works with ATCAF0 on could
+# lose to one that does not need it -- and the final settle onto the winner
+# has to leave the adapter in that state for the capture that follows.
+check("ATCAF0 is sent once per protocol probed and once on the final settle",
+      _el_on.sent.count("ATCAF0"), 2)
+
+# _restore_protocol() SENDS ATCAF1 UNCONDITIONALLY, EVEN WHEN THE PROBE FOUND
+# NOTHING. python-obd's PID parsing depends on ATCAF1's formatted replies, so
+# skipping it because no monitor protocol was found -- exactly the run whose
+# very next event is handing the port back to the daemon -- would break
+# ordinary telemetry for a reason nobody watching the dashboard could see.
+_el_restore = _CafElm()
+listen._restore_protocol(_el_restore, "7")
+check("ATCAF1 is sent on restore", "ATCAF1" in _el_restore.sent, True)
+
+_el_norestore = _CafElm()
+listen._restore_protocol(_el_norestore, None)
+check("...and also when no protocol was found to restore",
+      "ATCAF1" in _el_norestore.sent, True)
+check("with nothing else sent in that case (there is nothing to restore to)",
+      _el_norestore.sent, ["ATCAF1"])
+
+if _keep_caf0 is None:
+    os.environ.pop("OMACAR_CAF0", None)
+else:
+    os.environ["OMACAR_CAF0"] = _keep_caf0
 
 # ---------------------------------------------------- history rows are objects
 head("a chart reads history rows by name, because that is what they are")
