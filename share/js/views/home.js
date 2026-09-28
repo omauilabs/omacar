@@ -189,7 +189,8 @@ function makeCard(id, cat) {
   const c = cat.cards[id];
   if (!c) return null;
   if (c.reading) {
-    const t = makeSignalTile(c.reading, { label: c.label });
+    // Named by the readings catalogue, as Vehicle and Gauges name it.
+    const t = makeSignalTile(c.reading);
     t.node.classList.add("card", "hc");
     return { node: t.node, paint: () => t.paint(store.car, store.sample) };
   }

@@ -89,7 +89,7 @@ const TILES = {
   },
   volts: {
     pid: "CONTROL_MODULE_VOLTAGE",
-    label: "Battery",
+    label: "12V system",
     get: (v) => {
       const running = (v.RPM || 0) > 200;
       return { v: num(v.CONTROL_MODULE_VOLTAGE, (x) => x.toFixed(1)), n: "V",
@@ -113,7 +113,8 @@ const TILES = {
   // CONTROL_MODULE_VOLTAGE -- the 12V system the adapter itself sits on -- and
   // reading it as the traction battery is the single easiest mistake to make
   // on a car like this. They are labelled so the difference is on the screen:
-  // "Battery, 12V" against "IMA charge".
+  // "12V system" against "Hybrid pack", on every screen that shows either,
+  // because every screen takes its names from here.
   //
   // The daemon has stored HYBRID_BATTERY_REMAINING into samples.soc since the
   // column was added, and on 16 September it filled 4,330 rows across 126 km.
@@ -122,7 +123,7 @@ const TILES = {
     pid: "HYBRID_BATTERY_REMAINING",
     // PID 0x5B: the pack's remaining life, which is not the manufacturer's
     // state of charge -- see the note on the dial in views/ima.js.
-    label: "IMA pack",
+    label: "Hybrid pack",
     get: (v) => {
       const soc = v.HYBRID_BATTERY_REMAINING;
       return { v: num(soc, (x) => Math.round(x)), n: "%",

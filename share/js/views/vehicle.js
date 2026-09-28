@@ -17,7 +17,8 @@ const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 const go = (id) => { location.hash = "#" + id; };   // taps only
 const WORD = { ok: "Normal", warn: "Check", bad: "Fault", unknown: "Not scanned" };
 const SYS_ICON = { engine: "gauge", hybrid: "leaf", brakes: "health", electrical: "battery", other: "dash" };
-const LIVE = [["rpm", "Engine speed"], ["coolant", "Coolant"], ["volts", "12V system"], ["charge", "Hybrid pack"]];
+// Named by the readings catalogue, as Home and Gauges name them.
+const LIVE = ["rpm", "coolant", "volts", "charge"];
 const CALLOUTS = [["engine", "Engine"], ["hybrid", "Hybrid system"], ["brakes", "Brakes"],
                   ["steering", "Steering"], ["tyres", "Tyres"]];
 // THE HEADLINE'S GLYPH SAYS WHAT ITS WORDS SAY. It was built once as a check
@@ -83,7 +84,7 @@ export default function vehicle(root) {
     tiles = list;
     for (const t of tiles) { t.node.classList.add("card"); liveRow.appendChild(t.node); }
   }
-  useTiles(LIVE.map(([id, label]) => makeSignalTile(id, { label })));
+  useTiles(LIVE.map((id) => makeSignalTile(id)));
 
   // OBD-II AND HONDA ENHANCED, ONLY WHEN THERE IS SOMETHING ENHANCED TO SHOW:
   // a signal the profile has validated. The mockup's switch is not drawn over
@@ -93,7 +94,7 @@ export default function vehicle(root) {
   const srcRow = h("div.vh-src", { hidden: true }, h("span.vh-src-k", "Data source"), obdChip, hondaChip);
   obdChip.onclick = () => {
     obdChip.setAttribute("aria-pressed", "true"); hondaChip.setAttribute("aria-pressed", "false");
-    useTiles(LIVE.map(([id, label]) => makeSignalTile(id, { label })));
+    useTiles(LIVE.map((id) => makeSignalTile(id)));
     paint();
   };
   hondaChip.onclick = () => {
