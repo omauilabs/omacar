@@ -17,8 +17,13 @@ async function call(path, opts) {
 }
 
 export const getJSON = (path) => call(path);
-export const postJSON = (path, data) => call(path, {
+// `opts` (signal, etc.) is merged in on top of the JSON POST defaults, so a
+// caller that needs an abortable request -- audiostate.js's applyAudio(),
+// so a stuck /api/audio can never pile up behind Chromium's 6-connection
+// limit -- can pass one without every other postJSON caller knowing it
+// exists.
+export const postJSON = (path, data, opts) => call(path, Object.assign({
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data || {}),
-});
+}, opts || {}));
 export const liveUrl = (role) => withToken(`/api/cams/${role}/live${STILL ? "?frames=1" : ""}`);
 export const clipUrl = (role, file) => withToken(`/api/cams/clip/${role}/${file}`);
