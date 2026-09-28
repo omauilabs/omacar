@@ -2678,6 +2678,55 @@ check("the tabs are the mockups' five, in their order",
 check("nothing but a tap writes the hash: goto() is the only writer in main.js",
       len(_re_nav.findall(r"location\.hash\s*=(?!=)", _main)), 1)
 
+# ------------------------------------------------------------ private assets
+head("Honda-badged pictures ship in the app and never in the repo")
+import json as _json_a  # noqa: E402
+import shutil as _sh_a  # noqa: E402
+import subprocess as _sp_a  # noqa: E402
+import tempfile as _tf_a  # noqa: E402
+import assets as _as  # noqa: E402
+
+_gi = open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read().splitlines()
+check("the private folder is ignored", "share/assets/private/" in _gi, True)
+_tracked = _sp_a.run(["git", "-C", ROOT, "ls-files", "share/assets/private"],
+                     capture_output=True, text=True)
+if _tracked.returncode == 0:
+    check("and nothing under it is tracked", _tracked.stdout.split(), [])
+else:
+    ok("(not a git checkout: the tracked-files check is skipped)")
+
+_d = _tf_a.mkdtemp()
+_png = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (640).to_bytes(4, "big") + (480).to_bytes(4, "big") + b"\x08\x06\x00\x00\x00"
+with open(os.path.join(_d, "a.png"), "wb") as _f:
+    _f.write(_png)
+_m = {"assets": {
+    "here": {"file": "a.png", "sha256": None, "anchors": {"engine": [0.3, 0.5]}},
+    "gone": {"file": "missing.png", "sha256": None},
+    "altered": {"file": "a.png", "sha256": "0" * 64},
+}}
+_st = _as.status(_m, _d)
+check("a present, unpinned file is usable", (_st["here"]["ok"], _st["here"]["why"]), (True, "not pinned"))
+check("a missing file says so", (_st["gone"]["ok"], _st["gone"]["why"]), (False, "not installed"))
+check("a file that does not match its pin is refused",
+      (_st["altered"]["ok"], _st["altered"]["why"]), (False, "does not match the manifest"))
+_pv = _as.public_view(_m, _d)
+check("the browser gets a URL only for a file that checks out",
+      [_pv["here"]["url"], _pv["gone"]["url"], _pv["altered"]["url"]],
+      ["assets/private/a.png", None, None])
+check("and the callout anchors ride along", _pv["here"]["anchors"], {"engine": [0.3, 0.5]})
+check("a PNG's size is read from its header", _as.png_size(os.path.join(_d, "a.png")), (640, 480))
+_mf = os.path.join(_d, "manifest.json")
+with open(_mf, "w", encoding="utf-8") as _f:
+    _json_a.dump({"assets": {"here": {"file": "a.png", "sha256": None}}}, _f)
+_as.pin("here", _mf, _d)
+_pinned = _json_a.load(open(_mf, encoding="utf-8"))["assets"]["here"]
+check("pin records the hash and the size",
+      (_pinned["sha256"] == _as.sha256(os.path.join(_d, "a.png")), _pinned["width"], _pinned["height"]),
+      (True, 640, 480))
+_sh_a.rmtree(_d)
+check("the shipped manifest parses and names both car pictures",
+      sorted(_as.load_manifest()["assets"]), ["crz-home", "crz-xray"])
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

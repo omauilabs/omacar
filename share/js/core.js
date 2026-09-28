@@ -314,6 +314,7 @@ export const api = {
   service: (body) => req("/api/service", { method: "POST", body: JSON.stringify(body) }),
   driveLayout: () => req("/api/drive"),
   saveDriveLayout: (body) => req("/api/drive", { method: "POST", body: JSON.stringify(body) }),
+  assets: () => req("/api/assets"),
   aiAvailable: () => req("/api/ai/available"),
   aiStart: (body) => req("/api/ai", { method: "POST", body: JSON.stringify(body) }),
   aiPoll: (id) => req("/api/ai?job=" + encodeURIComponent(id)),

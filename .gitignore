@@ -20,3 +20,8 @@ doc/film.md
 
 # Owner mockups for screenshot comparison; not published (doc/design/2026-09-28-foundation.md, open question 4).
 doc/design/mockups/
+
+# Pictures that carry Honda's badge: shipped to the tablet by
+# `omacar assets push`, never committed (the repo is public). See
+# share/assets/manifest.json and lib/assets.py.
+share/assets/private/

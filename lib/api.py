@@ -30,6 +30,7 @@ what the car said.
     POST /api/vehicle           switch to another car, or name one
     GET  /api/drive             the drive-mode layout
     POST /api/drive             change it
+    GET  /api/assets            the private pictures, when they check out
     POST /api/actuate           command an actuator, or stop one
     POST /api/units             switch between imperial and metric
     POST /api/odometer          set the reading (there is no odometer PID)
@@ -1220,6 +1221,11 @@ def handle_get(path, query):
         }
     if path == "/api/drive":
         return 200, drive_layout()
+    if path == "/api/assets":
+        # Pictures that ship outside git. A URL only for a file that checks out
+        # against share/assets/manifest.json; see lib/assets.py.
+        import assets
+        return 200, assets.public_view()
     if path == "/api/concerns":
         return 200, {"concerns": concerns.assess()}
     if path == "/api/snapshots":
