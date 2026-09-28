@@ -279,9 +279,30 @@ def main():
         #    advance. One that says "live" carries data-src (sim, bench, obd,
         #    recorded); no other state may. Home is the arrival screen, so
         #    this reads what it painted.
+        #
+        #    A COUNT ALONE CANNOT CATCH LOSING THE DIAL'S OWN MARKING. If
+        #    share/js/views/home.js stopped setting g.el/rpm's data-state --
+        #    a plain revert, no new card involved -- the sig tiles alone would
+        #    still clear any floor this used to check against, silently
+        #    reproducing the exact defect this section exists for. So the
+        #    dial's two elements are named and required by what identifies
+        #    them in home.js (the arc gauge's own SVG class, the RPM div's
+        #    own class), not just counted, and the total is exact against
+        #    that breakdown rather than a floor that stops meaning anything
+        #    once the healthy number changes.
         tiles = re.findall(r'<[^>]*\bdata-state="[a-z]+"[^>]*>', dom)
-        check(f"Home drew readings that name their state (found {len(tiles)})",
-              len(tiles) >= 4)
+        sig_tiles = [t for t in tiles if re.search(r'class="sig(?=[\s"])', t)]
+        dial_speed = [t for t in tiles if 'class="g-svg g-arc' in t]
+        dial_rpm = [t for t in tiles if 'class="dial-rpm' in t]
+        check(f"Home drew readings that name their state (found {len(tiles)}: "
+              f"{len(sig_tiles)} sig tiles, {len(dial_speed)} dial speed, "
+              f"{len(dial_rpm)} dial rpm)",
+              len(sig_tiles) >= 4
+              and len(tiles) == len(sig_tiles) + len(dial_speed) + len(dial_rpm))
+        check("the dial's speed gauge is among the readings checked",
+              len(dial_speed) == 1)
+        check("and so is its RPM figure",
+              len(dial_rpm) == 1)
         live_tiles = [t for t in tiles if 'data-state="live"' in t]
         check("every reading drawing a number names its source",
               all(re.search(r'data-src="[a-z]+"', t) for t in live_tiles))
