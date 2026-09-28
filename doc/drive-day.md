@@ -149,7 +149,10 @@ one port. Then, in order:
    runs until the 60,000-line cap — at the measured ~1,900 frames/s that is
    about 60000 / 1900 ≈ 31s — then the same 90s gap: **about 31s of the full
    bus every 2 minutes** (31 + 90 ≈ 122s), instead of 75ms every 3.5 minutes.
-   Roughly 25× the bus time, recorded uncensored, for the same drive.
+   That is about a quarter of all bus time instead of under a
+   thousandth of it (31/122 ≈ 25%, against 0.075/210 ≈ 0.04%): some
+   seven hundred times as much of the bus, recorded uncensored, for the
+   same drive.
 
 ## On the road — the recorder
 
