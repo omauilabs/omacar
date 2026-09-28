@@ -15,6 +15,7 @@ import { savedLook, saveLook, applyLook, nextLook, lookById } from "./looks.js";
 import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
+import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
 import replayView from "./views/replay.js";
@@ -182,7 +183,7 @@ const TABS = [
   { id: "vehicle", label: "Vehicle", icon: ICONS.vehicle,
     groups: [
       { id: "overview", label: "Overview", views: [
-        { id: "vehicle", label: "Overview", title: "Vehicle diagnostics", mount: dash, fast: true },
+        { id: "vehicle", label: "Overview", title: "Vehicle diagnostics", mount: vehicleView, fast: true },
       ] },
       { id: "diagnose", label: "Diagnose", views: [
         { id: "codes",  label: "Codes",     title: "Trouble codes",                mount: codes, fast: true },

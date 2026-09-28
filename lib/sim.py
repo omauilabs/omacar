@@ -803,6 +803,10 @@ def seed(verbose=True):
     meta["odometer_km"] = round(ODO_NOW, 1)
     meta["fuel_price"] = FUEL_PRICE
     meta["seeded_at"] = int(time.time())
+    # The modules above stand for a full scan, so the record says when it
+    # happened -- the Vehicle screen shows "Last scan" from this, the same key
+    # lib/survey.py's real scans are read back through (lib/api.py).
+    meta["surveyed_at"] = int(time.time())
     for k, v in meta.items():
         db.execute("INSERT OR REPLACE INTO vehicle VALUES (?,?)",
                    (k, json.dumps(v)))
