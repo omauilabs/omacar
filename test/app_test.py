@@ -341,6 +341,27 @@ window.__st = store;
 </script>
 """
 
+# THE X-RAY'S CALLOUTS, which are only drawn when the private render is
+# installed (share/assets/private/, never in git). In portrait the stage is
+# wider and shorter, and "Hybrid system" sat on top of "Tyres".
+CALLOUT_PROBE = r"""
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  await wait(3000);
+  location.hash = "#vehicle";
+  await wait(2500);
+  const out = {};
+  for (const c of document.querySelectorAll(".vh-hero .callout")) {
+    if (c.hidden) continue;
+    const r = c.getBoundingClientRect();
+    out[c.dataset.sys] = [r.left, r.top, r.right, r.bottom].map(Math.round);
+  }
+  document.title = "CALLOUTS " + JSON.stringify(out);
+})();
+</script>
+"""
+
 # Emulates the Surface's touch screen: `pointer: coarse` matches, `hover` does
 # not. Checked on Chromium 151 by reading both media queries back.
 COARSE = ("--blink-settings=primaryPointerType=2,availablePointerTypes=2,"
@@ -471,6 +492,25 @@ def fit_check(exe):
               lead.get("go") != "launcher" and "Begin" not in (lead.get("text") or ""))
         check(f"{orient}: nor any lead chip at all -- Gauges is a car screen",
               lead.get("vis") == "hidden")
+
+
+def callout_check(exe):
+    """No two X-ray callouts overlap, at either orientation."""
+    for orient, (_, size) in TABLET.items():
+        got = run_probe(exe, CALLOUT_PROBE, "CALLOUTS", flags=(size, COARSE))
+        if got is None:
+            bad(f"{orient}: the callout probe returned nothing")
+            continue
+        if not got:
+            ok(f"({orient}: the X-ray render is not installed here, so it draws no "
+               "callouts to check -- `omacar assets status`)")
+            continue
+        ids = sorted(got)
+        hit = [f"{a}/{b}" for i, a in enumerate(ids) for b in ids[i + 1:]
+               if got[a][0] < got[b][2] and got[b][0] < got[a][2]
+               and got[a][1] < got[b][3] and got[b][1] < got[a][3]]
+        check(f"{orient}: no two X-ray callouts overlap ({len(ids)} drawn; "
+              f"overlapping: {hit})", len(ids) == 5 and hit == [])
 
 
 def lost_server_check(exe):
@@ -886,6 +926,8 @@ def main():
         lost_server_check(exe)
         # ---- and the drive's two screens fit the tablet ------------------
         fit_check(exe)
+        # ---- and the X-ray's labels stay apart --------------------------
+        callout_check(exe)
     finally:
         server.terminate()
         try:
