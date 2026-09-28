@@ -85,7 +85,11 @@ rm -rf "$SCRATCH_HOME"
 #            undiscovered quantity never renders as a number
 #   sitrep   redaction, which is the promise that nothing leaving this
 #            machine says whose car it is
-for suite in ima sitrep; do
+#   roadmap  the capability map and the claims: shipped means tracked by
+#            git, a write names its gate, and regenerating the roadmap is
+#            not counted as shipping. It never renders the whole block,
+#            because rendering runs this script.
+for suite in ima sitrep roadmap; do
   if [[ -x "$VENV/bin/python" ]]; then
     "$VENV/bin/python" "$ROOT/test/${suite}_test.py" || fails=$((fails + 1))
   else

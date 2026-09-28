@@ -12,6 +12,8 @@
     "            is tracked and marks the item landed or not. Nobody has to",
     "            remember to move a line, which is the usual way an in-flight",
     "            list ends up describing work that shipped a month ago.",
+    "            `branch` names where the work is happening. Remove an item once",
+    "            it has landed; doc/capabilities.json records what shipped.",
     "",
     "  claims    assertions made in the prose that nothing here can check --",
     "            a price comparison, a piece of arithmetic, a negative result.",
@@ -19,6 +21,12 @@
     "            `how`. The generator NEVER executes `how`. A JSON file in a",
     "            public repository that a maintenance command shells out to is",
     "            a remote code execution waiting for whoever pulls a branch.",
+    "",
+    "            A claim that came from outside carries `sources`, the https",
+    "            addresses it came from, and `verified`: true when the number",
+    "            was seen on that page, false when it was not. `omacar roadmap",
+    "            --check` refuses a claim missing its date or its `how`, and a",
+    "            sourced claim that does not say whether it was verified.",
     "",
     "  field     the car and the world: drives, demos, the things that happened",
     "            away from the keyboard. Append a dated line; do not rewrite",
@@ -31,43 +39,210 @@
 
   "inflight": [
     {
-      "title": "Typography, with a picker",
-      "evidence": ["lib/fonts.py", "share/css/fonts.css"],
-      "note": "The first direct answer to the polish feedback: the app currently inherits whatever the desktop is wearing, which is fine on a laptop and wrong at arm's length in a car."
+      "title": "The foundation redesign: Vehicle, the looks, and review screenshots",
+      "branch": "redesign/foundation",
+      "evidence": ["share/js/views/vehicle.js", "share/css/vehicle.css", "tools/shoot.py"],
+      "note": "The frame, Home, private assets and the layout editor have landed. Left: Vehicle (task 8), the advisor on Opus 5.5 (task 9, inside lib/ai.py) and the looks (task 10, inside existing files), then the screenshot tool that sets the screens beside the mockups. See doc/design/2026-09-28-foundation-plan.md."
     },
     {
-      "title": "Bottom navigation tabs",
-      "evidence": ["share/css/nav.css"],
-      "note": "A thumb reaches the bottom of a screen mounted in a dash. It does not reach the top."
+      "title": "Cameras and drowsy mode, for the 2026-09-30 drive",
+      "branch": "redesign/cameras",
+      "evidence": ["lib/cams.py", "share/js/drowsy.js", "share/js/audiobus.js", "share/systemd/omacar-cams.service"],
+      "note": "Three wired cameras recorded on the tablet, hard-braking locks, the Cameras tab from mockup 6, and a drowsy mode that watches the driver's eyes and escalates through three ramped alerts, always 12 dB over the music. Designed in doc/design/2026-09-28-cameras-drowsy.md on that branch."
     },
     {
-      "title": "A three-button bar panel",
+      "title": "Drive-day hardening: the recorder outlives a vanishing adapter",
+      "branch": "drive-day/hardening",
       "evidence": [],
-      "note": "Lands inside plugin/Panel.qml, which already exists, so git cannot tell you whether it is done. Confirm by opening the panel."
-    },
-    {
-      "title": "Replay with scrubbing graphs",
-      "evidence": ["share/css/replay.css"],
-      "note": "Replay itself shipped; this is reading a channel by dragging along it rather than by scrubbing to an instant and looking at a number."
-    },
-    {
-      "title": "The hybrid section — what 2.6 has actually found, on screen",
-      "evidence": ["lib/ima.py", "share/js/views/ima.js", "test/ima_test.py"],
-      "note": "The 0x19 catalogues, presented as a map of what each hybrid module measures, with the 0x40 not-run caveat leading rather than footnoted, and a frank panel naming what still cannot be seen."
-    },
-    {
-      "title": "A 3D car viewer",
-      "evidence": ["share/js/car3d.js", "share/css/car3d.css", "doc/car3d.md"],
-      "note": "Where a fault is, shown on the car, rather than named in a list."
+      "note": "Lands inside lib/drivelog.py, lib/preflight.py, share/systemd/omacar-drivelog.service, doc/drive-day.md and test/guards_test.py, all of which exist, so git cannot tell you whether it is done. Confirm with `git log --oneline -- lib/drivelog.py` showing 'The recorder loses a leg to a vanishing adapter now, not the whole day'."
     }
   ],
 
   "claims": [
     {
-      "text": "Flagship scan tools run from the low thousands to well over ten thousand dollars, plus an annual subscription. Indicative, not quoted from a price list.",
-      "asserted": "2026-09-02",
+      "text": "Snap-on's flagship ZEUS+ (EEMS348) lists at $11,792 and its entry MT2600 at $1,895, US MSRP. Keeping a ZEUS current costs $1,235 a year on subscription.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://www.snapon.com/EN/US/Diagnostics/Products/ZEUS-Plus",
+        "https://www.snapon.com/EN/US/Diagnostics/Products/MT2600",
+        "https://www.snapon.com/Files/Diagnostics-US-2020/Info-Page/SOFTWARE/25/Pocket-Guides/Snap-on-Pocket-Guide-25.4---US.pdf"
+      ],
+      "how": "Open the two product pages, and the newest pocket guide for the subscription. The 25.4 guide (dated 2025-09-29) was still the newest published on 2026-09-28; look for a 26.x one first. Nobody pays MSRP on hardware, so this is the ceiling, not the typical price."
+    },
+    {
+      "text": "Autel's own store sells the MaxiSYS Ultra S2 at $6,499 and the MS906 Pro at $1,569 (regularly $1,599). Launch's X431 PAD VII Elite is $2,499 from the Launch store on Amazon. A reseller lists a year of Ultra updates at $899.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://store.autel.com/products/maxisys-ultra-s2",
+        "https://store.autel.com/products/autel-maxisys-ms906-pro-diagnostic-tablet-full-obd2-scanner",
+        "https://www.amazon.com/dp/B0B1HT1J23",
+        "https://www.autelshop.us/products/autel-maxisys-ultra-one-year-update-service"
+      ],
+      "how": "Open each page. Autel's own store sells no update renewal, so the $899 is a reseller's figure; treat it as indicative. Store prices move with sales."
+    },
+    {
+      "text": "A shop charges $125 to $183 in labour to diagnose a check engine light (RepairPal's national range, page dated 2026-09-03), and O'Reilly says a shop charges around $100 just to read the codes. AutoZone and O'Reilly read codes for free.",
+      "asserted": "2026-09-28",
       "recheck_days": 365,
-      "how": "Check a current dealer or distributor price for a Zeus- or Apollo-class tablet and its renewal. The argument depends on the ratio, not the figure, so a wrong number is embarrassing rather than load-bearing -- but it should still be right."
+      "verified": true,
+      "sources": [
+        "https://repairpal.com/estimator/check-engine-light-diagnosis-testing-cost",
+        "https://www.oreillyauto.com/store-services/free-check-engine-light-diagnostic-testing",
+        "https://www.autozone.com/lp/fix-finder"
+      ],
+      "how": "Open the RepairPal estimator and the two parts-store pages. RepairPal's range excludes taxes, fees and location; a free parts-store read gives the code, not the diagnosis, which is the gap this project fills."
+    },
+    {
+      "text": "OBDLink's MX+ costs $139.95 and its EX $69.95 from OBDLink; the wired SX this project was developed on is $49.95 and was out of stock. A basic handheld code reader (ANCEL AD310) is $23.99.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://www.obdlink.com/products/",
+        "https://www.obdlink.com/products/obdlink-sx/",
+        "https://www.amazon.com/dp/B01G5EA74I"
+      ],
+      "how": "Open the pages. These are the adapter prices the hardware guide quotes."
+    },
+    {
+      "text": "Generic ELM327 Bluetooth clones sell for roughly $6 to $17.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": false,
+      "sources": [],
+      "how": "Seen in an Amazon search on 2026-09-28 by the research pass, including sponsored listings; a search page is not a stable citation and could not be re-fetched. Search a marketplace for 'ELM327 Bluetooth' and read the first page."
+    },
+    {
+      "text": "Cheap ELM327 clones typically copy the old v1.4 firmware, bugs included, and report a version they are not, such as v1.5 or v2.1.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://en.wikipedia.org/wiki/ELM327"
+      ],
+      "how": "The Wikipedia article's section on clones. A better source is a first-hand test: `omacar doctor` against a clone, recording what it claims and what it does."
+    },
+    {
+      "text": "rtl_433 has no decoder for Tymate tyre sensors: the name appears nowhere in its device list, sources or configs as of commit 02cd4b6 (2026-09-26).",
+      "asserted": "2026-09-28",
+      "recheck_days": 90,
+      "verified": true,
+      "sources": [
+        "https://github.com/merbanan/rtl_433"
+      ],
+      "how": "Search the repository for 'Tymate'. Then settle it properly, as decided on 2026-09-28: once the RTL-SDR arrives, record the owner's TM2 sensors at 433.92 MHz for about an hour with rtl_433's generic and flex decoders. A recording that decodes makes this claim irrelevant; buying sensors rtl_433 already supports is the fallback only if it does not."
+    },
+    {
+      "text": "The RTL-SDR Blog V4 reached end of line in May 2026; its replacement, the V4L, is $37.95. The u-blox NEO-M9V does both untethered and automotive dead reckoning, and a module with a pin header sells for about EUR 70.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://www.rtl-sdr.com/product/rtl-sdr-blog-v4l-lite-r828s-rtl2832u-1ppm-tcxo-sma-software-defined-radio-dongle-only/",
+        "https://www.u-blox.com/en/product/neo-m9v-module",
+        "https://gnss.store/products/elt0165"
+      ],
+      "how": "Open the pages. The rtl-sdr.com blog also warns of fake V4s on marketplaces, which the hardware guide should repeat."
+    },
+    {
+      "text": "OBDb, the community signal-set project lib/knowledge.py reads, had 746 public repositories on 2026-09-28, under CC BY-SA 4.0.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://github.com/OBDb"
+      ],
+      "how": "The organisation page, or the GitHub API's public_repos count for the OBDb org."
+    },
+    {
+      "text": "Piper's active repository, OHF-Voice/piper1-gpl, is GPL-3.0; the MIT-licensed rhasspy/piper is archived and says development has moved. OmaCar therefore does not bundle Piper: it is installed as a system package and run as its own program, and the voice clips it renders are ordinary audio files.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://github.com/OHF-Voice/piper1-gpl",
+        "https://github.com/rhasspy/piper"
+      ],
+      "how": "Open both repositories and read their licence files. If the licence of the maintained version changes, the reason for not bundling it goes away; the decision of 2026-09-28 still stands until the owner revisits it."
+    },
+    {
+      "text": "The Surface Pro 7+'s accelerometer is reachable on Linux: the Intel ISH presents it as the HID sensor accel_3d, an IIO device with raw x, y and z channels, sampled at 10 Hz by default. iio-sensor-proxy's D-Bus interface exposes only orientation and tilt, not acceleration, so impact detection has to read IIO directly.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://hadess.pages.freedesktop.org/iio-sensor-proxy/gdbus-net.hadess.SensorProxy.html",
+        "https://docs.kernel.org/hid/hid-sensor.html",
+        "https://github.com/linux-surface/linux-surface/wiki/Supported-Devices-and-Features"
+      ],
+      "how": "Read on the owner's tablet on 2026-09-28 (Surface Pro 7+, kernel 7.2.5-3-omarchy): /sys/bus/iio/devices/iio:device2 is accel_3d, driven by hid_sensor_accel_3d over intel_ish_ipc, with in_accel_x_raw, in_accel_y_raw, in_accel_z_raw, a scale of 0.000009806 and a sampling frequency of 10. The sources describe the general mechanism and the proxy's interface; the device read is the evidence for this tablet. Re-check with `cat /sys/bus/iio/devices/iio:device*/name` on the tablet."
+    },
+    {
+      "text": "California Penal Code s632 makes it an offence to record a confidential communication without the consent of all parties to it; a conversation is not confidential where the parties can reasonably expect to be overheard or recorded.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=PEN&sectionNum=632"
+      ],
+      "how": "Read the section on the Legislature's own site. This is why cabin audio is never recorded by default and why turning it on shows that warning; it is not legal advice, and other states differ."
+    },
+    {
+      "text": "More than 1,000 children have died of vehicular heatstroke in the United States since 1998, by NHTSA's count.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": false,
+      "sources": [
+        "https://www.nhtsa.gov/campaign/heatstroke"
+      ],
+      "how": "NHTSA's page and the National Safety Council's (injuryfacts.nsc.org, hotcars) both refused automated reads on 2026-09-28 with HTTP 403, so the figure was seen only in search results summarising NHTSA. Open NHTSA's heatstroke page in a browser and confirm the count, then mark this verified. It is the reason safe.rear-seat-reminder exists, not a number the app shows."
+    },
+    {
+      "text": "MediaPipe's Audio Classifier task uses YAMNet as its default model, an audio event classifier trained on AudioSet, and supports Python, the web, Android and iOS. YAMNet's 521-class map includes 'Crying, sobbing' (19), 'Baby cry, infant cry' (20), 'Whimper' (21), 'Wail, moan' (22), 'Screaming' (11) and 'Children shouting' (10).",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://developers.google.com/edge/mediapipe/solutions/audio/audio_classifier",
+        "https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv"
+      ],
+      "how": "Open the task guide and the class map. A class existing is not the classifier working in a car: road noise, music and an older child's shouting all need testing before safe.backseat-comfort acts on anything."
+    },
+    {
+      "text": "California Vehicle Code s27602(a) bars driving while a video screen displaying 'a television broadcast or video signal that produces entertainment or business applications' is forward of the back of the driver's seat or visible to the driver. Its exceptions cover vehicle information, GPS and mapping displays, views 'forward, behind, or to the sides ... for the purpose of maneuvering the vehicle', and screens interlocked or designed so the driver cannot see them. Whether a child-seat camera falls under it is unclear: its feed is arguably neither entertainment nor business, which could put it outside (a), but no exception names it, and it is not a view for maneuvering.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=VEH&sectionNum=27602"
+      ],
+      "how": "The statute's text was read on the Legislature's own site (last amended by Stats. 2010, Ch. 328, effective 2011-01-01). What is verified is the text. The reading of it for a child-seat camera is ours, not a court's or a lawyer's, and no case law was checked. This is not legal advice. The setting says the risk is unclear, and does not say it is permitted."
+    },
+    {
+      "text": "NHTSA's visual-manual driver distraction guidelines (78 FR 24818, 2013-04-26) are nonbinding and voluntary, and list 'displaying video not related to driving' among the per-se lock-outs, the activities a device should not allow while driving.",
+      "asserted": "2026-09-28",
+      "recheck_days": 365,
+      "verified": true,
+      "sources": [
+        "https://www.federalregister.gov/documents/2013/04/26/2013-09883/visual-manual-nhtsa-driver-distraction-guidelines-for-in-vehicle-electronic-devices"
+      ],
+      "how": "The full text was read through the Federal Register's text endpoint (documents/full_text/text/2013/04/26/2013-09883.txt); the human page redirected an automated fetch to a check. The guidelines are written for manufacturers of in-vehicle devices; the owner has decided the toddler camera stays on regardless, and the app states this once."
+    },
+    {
+      "text": "The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.",
+      "asserted": "2026-09-28",
+      "recheck_days": 90,
+      "verified": true,
+      "sources": [
+        "https://omarchy.org/manual/shell-plugins/",
+        "https://omarchyplugins.com",
+        "https://github.com/omacom/omarchy-plugin-marketplace"
+      ],
+      "how": "Open the manual page and the marketplace repository, and count the entries in its registry.json. The compatibility analysis in the capability map starts here and at /usr/share/omarchy/shell/plugins on an Omarchy machine."
     },
     {
       "text": "A full sweep of the manufacturer identifier range is about seventy minutes per module.",
