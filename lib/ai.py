@@ -50,19 +50,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import records  # noqa: E402
 
 CACHE_DIR = os.path.join(records.STATE, "ai")
-DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = "claude-opus-5-5"
 TIMEOUT = 240
 
 # Diagnosis is worth thinking about; a plain-language rewrite is not. Kinds
 # that reason get the better model, the rest get the fast one.
 MODEL_FOR = {
-    "triage": "claude-sonnet-5",
-    "code": "claude-sonnet-5",
-    "ask": "claude-sonnet-5",
-    "predict": "claude-sonnet-5",
+    "triage": "claude-opus-5-5",
+    "code": "claude-opus-5-5",
+    "ask": "claude-opus-5-5",
+    "predict": "claude-opus-5-5",
     "owner": "claude-haiku-4-5",
-    "symptom": "claude-sonnet-5",
-    "recording": "claude-sonnet-5",
+    "symptom": "claude-opus-5-5",
+    "recording": "claude-opus-5-5",
 }
 
 SYSTEM = """\
@@ -435,11 +435,15 @@ def cache_path(key):
     return os.path.join(CACHE_DIR, key + ".json")
 
 
-def cache_key(kind, prompt, b):
+def cache_key(kind, prompt, b, model):
+    # THE MODEL IS PART OF THE QUESTION. Without it, moving the advisor from
+    # Sonnet to Opus served every old Sonnet answer as if Opus had just given
+    # it, cached=True and all -- the cache was keyed by evidence alone.
     h = hashlib.sha256()
     h.update(kind.encode())
     h.update(prompt.encode())
     h.update(json.dumps(b, sort_keys=True, default=str).encode())
+    h.update(model.encode())
     return h.hexdigest()[:24]
 
 
@@ -568,7 +572,8 @@ def ask(kind="triage", question=None, code=None, model=None, refresh=False,
         f"EVIDENCE BUNDLE for this vehicle:\n"
         f"```json\n{json.dumps(b, indent=1, default=str)}\n```\n"
     )
-    key = cache_key(kind, task, b)
+    use = model or MODEL_FOR.get(kind, DEFAULT_MODEL)
+    key = cache_key(kind, task, b, use)
     path = cache_path(key)
     if not refresh and os.path.exists(path):
         try:
@@ -587,8 +592,7 @@ def ask(kind="triage", question=None, code=None, model=None, refresh=False,
     extra = ("Cite evidence using the bundle's own keys, e.g. \"faults.P0135\", "
              "\"mode06.0x39\", \"perf.month\", \"service.items\". Do not cite a "
              "key that is not in the bundle.")
-    text, took, envelope = run_claude(prompt, model or MODEL_FOR.get(kind, DEFAULT_MODEL),
-                                      extra)
+    text, took, envelope = run_claude(prompt, use, extra)
     data = extract_json(text)
     if data is None:
         raise RuntimeError("the advisor did not return usable JSON")

@@ -147,7 +147,7 @@ Follows mockup 5.
 
 ### Opus 5.5
 
-`lib/ai.py` moves every kind that uses `claude-sonnet-5` to `claude-opus-5-5`. The `owner` kind stays on `claude-haiku-4-5`, where speed matters more than depth. The advisor keeps its contract: every finding cites evidence keys and the answer is JSON. The existing cache is keyed by model, so old answers are not served as new ones.
+`lib/ai.py` moves every kind that uses `claude-sonnet-5` to `claude-opus-5-5`. The `owner` kind stays on `claude-haiku-4-5`, where speed matters more than depth. The advisor keeps its contract: every finding cites evidence keys and the answer is JSON. The cache key gains the model. Before this change it hashed only the kind, the prompt and the evidence, so switching models would have served every old Sonnet answer as a fresh Opus one.
 
 ## Rollout
 

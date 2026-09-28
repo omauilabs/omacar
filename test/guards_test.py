@@ -2738,6 +2738,18 @@ _sh_a.rmtree(_d)
 check("the shipped manifest parses and names both car pictures",
       sorted(_as.load_manifest()["assets"]), ["crz-home", "crz-xray"])
 
+# ------------------------------------------------------------- the advisor
+head("The advisor asks Opus 5.5, and a cached answer names the model that gave it")
+check("reasoning kinds ask Opus 5.5",
+      sorted({ai.MODEL_FOR[k] for k in ("triage", "code", "ask", "predict", "symptom", "recording")}),
+      ["claude-opus-5-5"])
+check("the plain-language rewrite stays on the fast model", ai.MODEL_FOR["owner"], "claude-haiku-4-5")
+check("the default is Opus 5.5", ai.DEFAULT_MODEL, "claude-opus-5-5")
+_b = {"faults": {"P0135": {}}}
+check("the same evidence asked of two models is two cache entries",
+      ai.cache_key("triage", "t", _b, "claude-opus-5-5") != ai.cache_key("triage", "t", _b, "claude-sonnet-5"),
+      True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
