@@ -18,6 +18,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import time
 from collections import deque
 from contextlib import contextmanager
@@ -171,22 +172,78 @@ def usage(root=None):
     return {"used": sum(by_role.values()), "by_role": by_role, "clips": count}
 
 
+def _safe_clip(p, root_real):
+    """`p` if it is a regular file, never a symlink, whose resolved path
+    stays under `root_real` -- or None.
+
+    CLIP_RE already stops `name` (the only part of the path a request
+    controls) from carrying '..', a separator or an absolute path, so what is
+    left is a symlink planted in the store under a name that merely looks
+    like a clip -- something no amount of checking `name` alone can catch.
+    `os.path.islink` refuses it outright, whichever way it points: a link
+    that happens to resolve back inside the store is refused exactly like one
+    that does not, because trusting "resolves inside" would still trust
+    whatever swaps the link's target later, and a clip is never supposed to
+    be a link at all."""
+    if os.path.islink(p) or not os.path.isfile(p):
+        return None
+    try:
+        real = os.path.realpath(p)
+        common = os.path.commonpath([root_real, real])
+    except (OSError, ValueError):
+        return None
+    return p if common == root_real else None
+
+
 def clip_path(role, name, root=None):
     """The file behind /api/cams/clip/<role>/<name>, in the loop or in any
     locked event, or None. The name must look like a clip, so a request can
-    never climb out of the folder."""
+    never climb out of the folder, and a symlink under that name is refused
+    outright (see _safe_clip), whether it leads out of the store or merely to
+    another clip inside it.
+
+    This is the first of two checks. It only says a path is worth opening;
+    the actual read (lib/serve.py's _ranged, through open_clip() below) opens
+    with O_NOFOLLOW and checks again after the open, so a symlink swapped in
+    between this call and the read is never followed either."""
     if role not in ROLES or not CLIP_RE.match(name or ""):
         return None
     root = root or videos()
-    p = os.path.join(root, role, name)
-    if os.path.isfile(p):
+    root_real = os.path.realpath(root)
+    p = _safe_clip(os.path.join(root, role, name), root_real)
+    if p:
         return p
     ldir = os.path.join(root, "locked")
     for ev in _ls(ldir):
-        p = os.path.join(ldir, ev, role, name)
-        if os.path.isfile(p):
+        p = _safe_clip(os.path.join(ldir, ev, role, name), root_real)
+        if p:
             return p
     return None
+
+
+def open_clip(path):
+    """Open a path clip_path() returned, for lib/serve.py's _ranged() to read
+    from -- refusing to follow a symlink swapped in between clip_path()'s own
+    check and this call (a TOCTOU window: settle() and the janitor both move
+    and remove files while the server runs).
+
+    O_NOFOLLOW makes the open itself fail on a symlink, so there is no gap
+    between checking and opening for one to be swapped into; the fstat catches
+    anything that is not a plain regular file even where O_NOFOLLOW is not
+    available. Returns an open binary file positioned at 0, or None."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return None
+    except OSError:
+        os.close(fd)
+        return None
+    return os.fdopen(fd, "rb")
 
 
 # ---- the loop ----------------------------------------------------------------

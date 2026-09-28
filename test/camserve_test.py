@@ -8,6 +8,8 @@ import http.client
 import json
 import os
 import shutil
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -72,6 +74,22 @@ def req(method, path, body=None, headers=None):
     return r.status, {k.lower(): v for k, v in r.getheaders()}, data
 
 
+def server_threads():
+    """The server subprocess's own thread count (Linux's /proc), or None
+    where /proc does not exist. ThreadingHTTPServer gives every connection
+    its own thread, so this is the most direct proof there is that a
+    connection's handler actually ended, rather than an abandoned client
+    merely going quiet while a write loop somewhere spins on."""
+    try:
+        with open(f"/proc/{SRV.pid}/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("Thread"):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 try:
     head("a clip, whole and in ranges")
     T = time.time() - 120
@@ -103,6 +121,56 @@ try:
     check("a path that climbs out of the folder is refused",
           req("GET", "/api/cams/clip/front/..%2F..%2Fevents.json")[0], 404)
     check("a role that does not exist is refused", req("GET", f"/api/cams/clip/boot/{NAME}")[0], 404)
+
+    head("a clip name can never be a path")
+    # An UNENCODED '..': the route regex only matches a single path segment
+    # of digits, dashes and one '.mp4', so a literal '..' segment never
+    # reaches camstore.clip_path() at all -- this is the same defense as the
+    # encoded case above, checked against the raw string a lazier client
+    # might send.
+    check("a bare .. is refused, not just an encoded one",
+          req("GET", "/api/cams/clip/front/../../events.json")[0] in (400, 404), True)
+    # An ABSOLUTE PATH in the name position, with its leading '/' escaped so
+    # it arrives as literal text rather than starting a new path segment.
+    check("an absolute path in the name position is refused",
+          req("GET", "/api/cams/clip/front/%2Fetc%2Fpasswd")[0] in (400, 404), True)
+    # clip_path() itself, directly: the route regex already stops a name
+    # like this from reaching it over HTTP, but clip_path() is meant to
+    # refuse it on its own account too, not merely be lucky that nothing
+    # upstream ever passes it one.
+    check("clip_path() refuses .. in the name on its own",
+          camstore.clip_path("front", "../../etc/passwd"), None)
+    check("clip_path() refuses an absolute path in the name on its own",
+          camstore.clip_path("front", "/etc/passwd"), None)
+
+    head("a symlink is refused, whichever way it points")
+    FRONT_DIR = os.path.join(ENV["OMACAR_VIDEOS"], "front")
+    OUTSIDE = os.path.join(SCRATCH, "outside-secret.mp4")
+    with open(OUTSIDE, "wb") as f:
+        f.write(b"not a clip; not yours")
+    OUT_NAME = camstore.clip_name(T - 200)
+    OUT_LINK = os.path.join(FRONT_DIR, OUT_NAME)
+    os.symlink(OUTSIDE, OUT_LINK)
+    try:
+        check("a symlink leading out of the clip store is refused",
+              req("GET", f"/api/cams/clip/front/{OUT_NAME}")[0], 404)
+        check("and clip_path() itself never hands the link back",
+              camstore.clip_path("front", OUT_NAME), None)
+    finally:
+        os.remove(OUT_LINK)
+    IN_NAME = camstore.clip_name(T - 300)
+    IN_LINK = os.path.join(FRONT_DIR, IN_NAME)
+    os.symlink(os.path.join(FRONT_DIR, NAME), IN_LINK)          # points INSIDE the store
+    try:
+        check("a symlink to a clip inside the store is refused too -- "
+              "a clip is never a link at all",
+              req("GET", f"/api/cams/clip/front/{IN_NAME}")[0], 404)
+        check("and clip_path() refuses that one too",
+              camstore.clip_path("front", IN_NAME), None)
+    finally:
+        os.remove(IN_LINK)
+    check("a normal clip still streams with Range, after all of that",
+          req("GET", URL, headers={"Range": "bytes=0-9"})[2], DATA[:10])
 
     head("the JSON routes")
     st, _, body = req("GET", "/api/cams")
@@ -161,6 +229,70 @@ try:
           (body.count(b"--omacarframe\r\n"), body.count(b"Content-Length: ")), (2, 2))
     check("in the order they were written", body.index(J1) < body.index(J2), True)
     check("a camera that does not exist is a 404", req("GET", "/api/cams/boot/live")[0], 404)
+
+    head("the live route ends when the client disconnects")
+    # A dropped tab or a phone that lost signal never sends a clean close --
+    # it just stops reading, and its OS eventually tears the connection down
+    # from underneath. cams.stream_live() only finds that out the next time
+    # it tries to WRITE a frame, so this feeds it fresh ones after the drop
+    # and asks whether the handler actually went away, rather than trusting
+    # that a quiet client means a quiet server.
+    #
+    # A raw socket, not http.client: this needs SO_LINGER(0) for an ABORTIVE
+    # close (a real RST, the way a lost link or a killed app looks, not a
+    # polite FIN), and http.client gives no way to set that. A plain close()
+    # was tried first and is exactly the flaky half-measure this avoids: on
+    # loopback the write immediately after a graceful FIN often still
+    # succeeds silently (the RST from the far side has not arrived yet), so
+    # a test that writes exactly one frame and closes politely can pass or
+    # fail depending on scheduling, not on whether the server actually
+    # noticed. SO_LINGER(0) plus feeding several frames while polling closes
+    # both gaps at once.
+    with open(cams.live_path("rear"), "wb") as f:
+        f.write(J1)
+    before = server_threads()
+    s = socket.create_connection(("127.0.0.1", PORT), timeout=20)
+    s.sendall(b"GET /api/cams/rear/live HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+    buf = b""
+    while J1 not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        buf += chunk
+    during = server_threads()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    s.close()
+
+    def _new_frame(n):
+        with open(cams.live_path("rear") + ".tmp", "wb") as f:
+            f.write(J1 if n % 2 else J2)
+        os.replace(cams.live_path("rear") + ".tmp", cams.live_path("rear"))
+
+    if before is not None and during is not None:
+        check("the connection got its own thread while it was live",
+              during > before, True)
+        deadline = time.time() + 5           # well under cams.LIVE_GIVE_UP (10 s):
+        ended = False                        # this has to be the WRITE failing,
+        n = 0                                # not the give-up timer catching up
+        while time.time() < deadline:
+            if server_threads() <= before:
+                ended = True
+                break
+            _new_frame(n)
+            n += 1
+            time.sleep(0.3)
+        check(f"and its thread exits within a few seconds of the drop, well "
+              f"before the {cams.LIVE_GIVE_UP} s give-up timer would "
+              f"(threads: before {before}, live {during})", ended, True)
+    else:
+        ok("no /proc here to count threads (not Linux); falling back to a "
+           "responsiveness check below")
+        for n in range(3):
+            _new_frame(n)
+            time.sleep(0.3)
+    st3, _, _ = req("GET", "/api/cams")
+    check("and the server answers everyone else right away, nothing wedged",
+          st3, 200)
 finally:
     SRV.terminate()
     try:

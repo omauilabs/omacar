@@ -141,43 +141,49 @@ class Handler(SimpleHTTPRequestHandler):
     def _json(self, payload, status=200):
         self._send(json.dumps(payload, default=str).encode(), status=status)
 
-    def _ranged(self, real, ctype):
+    def _ranged(self, f, ctype):
         """A file with HTTP Range, which a <video> needs before it can seek.
 
         SimpleHTTPRequestHandler has none: it answers every request with the
         whole file and a 200. Chromium plays that but cannot seek in it, so
-        back 10 s and a tap on the timeline would do nothing."""
+        back 10 s and a tap on the timeline would do nothing.
+
+        `f` arrives already open (camstore.open_clip): opened with O_NOFOLLOW
+        and fstat-checked as a regular file, so nothing swapped into the path
+        between clip_path()'s check and this call is ever read from -- the
+        close of that TOCTOU window lives there, not here."""
         import camstore
-        size = os.path.getsize(real)
-        rng = camstore.parse_range(self.headers.get("Range"), size)
-        if rng == "unsatisfiable":
-            self.send_response(416)
-            self.send_header("Content-Range", f"bytes */{size}")
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
-        start, end = rng if rng else (0, size - 1)
-        length = max(0, end - start + 1)
-        self.send_response(206 if rng else 200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(length))
-        if rng:
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
         try:
-            with open(real, "rb") as f:
-                f.seek(start)
-                left = length
-                while left > 0:
-                    chunk = f.read(min(1 << 18, left))
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-                    left -= len(chunk)
+            size = os.fstat(f.fileno()).st_size
+            rng = camstore.parse_range(self.headers.get("Range"), size)
+            if rng == "unsatisfiable":
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            start, end = rng if rng else (0, size - 1)
+            length = max(0, end - start + 1)
+            self.send_response(206 if rng else 200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(length))
+            if rng:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            f.seek(start)
+            left = length
+            while left > 0:
+                chunk = f.read(min(1 << 18, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            f.close()
 
     def _mjpeg(self, role, query):
         """A camera's live picture, as MJPEG an <img> shows with no decoder.
@@ -489,9 +495,10 @@ class Handler(SimpleHTTPRequestHandler):
             if m:
                 import camstore
                 real = camstore.clip_path(m.group(1), m.group(2))
-                if real is None:
+                f = camstore.open_clip(real) if real is not None else None
+                if f is None:
                     return self._json({"error": "no such clip"}, 404)
-                return self._ranged(real, "video/mp4")
+                return self._ranged(f, "video/mp4")
         if path.startswith("/api/"):
             out = api.handle_get(path, query)
             if out is None:
