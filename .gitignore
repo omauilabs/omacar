@@ -17,3 +17,6 @@ elm.log
 # cannot put it back. test/calendar_test.py finds it via OMACAR_CALENDAR.
 launch/
 doc/film.md
+
+# Owner mockups for screenshot comparison; not published (doc/design/2026-09-28-foundation.md, open question 4).
+doc/design/mockups/
