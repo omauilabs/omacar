@@ -954,7 +954,7 @@ def render(cfg):
     s = shipped()
     if s["count"]:
         add(f"**Shipped** — {s['count']} commits on `{s['branch']}`, not "
-            "counting the ones that only regenerate this file. The most "
+            "counting commits that change nothing but this file. The most "
             "recent, unedited:")
         add("")
         for date, subject in s["rows"]:
