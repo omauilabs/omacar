@@ -406,6 +406,12 @@ def fit_check(exe):
               f"buttons end at {g.get('controls')}, stage at {d.get('bottom')})",
               d.get("scroll", 1e9) <= d.get("client", 0) + 1
               and (g.get("controls") or 1e9) <= d.get("bottom", 0))
+        lead = g.get("lead") or {}
+        check(f"{orient}: after Begin hands over, Gauges offers no way back to "
+              f"Begin (lead chip {lead})",
+              lead.get("go") != "launcher" and "Begin" not in (lead.get("text") or ""))
+        check(f"{orient}: nor any lead chip at all -- Gauges is a car screen",
+              lead.get("vis") == "hidden")
 
 
 def lost_server_check(exe):

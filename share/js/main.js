@@ -363,7 +363,11 @@ function go() {
   const view = route();
   const from = current;
   if (from) noteManualNav(from.id, view.id);
-  cameFrom = (!barTap && from && tabOf(from) !== tabOf(view)) ? from : null;
+  // NEVER BACK TO A DESTINATION. A hidden view is somewhere the tablet is
+  // pointed, not somewhere to return to: the launcher hands over to Gauges
+  // for the whole drive, and a "← Begin" chip there was one tap from
+  // re-running `omacar begin` mid-drive -- which stops the drive recorder.
+  cameFrom = (!barTap && from && !from.hidden && tabOf(from) !== tabOf(view)) ? from : null;
   barTap = false;
 
   const stage = document.getElementById("stage");
@@ -616,9 +620,12 @@ function paintLead() {
   // The adapter answering is news, not an instruction. It used to move the
   // user; now it offers, and the offer stops as soon as they are on a car
   // screen or have said with a tap that they would rather be elsewhere.
+  // Gauges counts as a car screen here exactly as it does in noteManualNav():
+  // it sits in the Vehicle tab now, and offering "open Home" on the screen a
+  // drive is spent on is the offer this rule exists to stop.
   const want = auto.mode === "connect" ? store.connected
     : auto.mode === "moving" ? (store.values.SPEED || 0) > 3 : false;
-  const show = want && tabOf(current) !== "home" && !overridden;
+  const show = want && !carScreen(current && current.id) && !overridden;
   lead.style.visibility = show ? "visible" : "hidden";
   if (show) {
     lead.dataset.go = HOME;
@@ -1040,15 +1047,19 @@ function autoDrive() {
   paintNavState();
 }
 
+// The two screens a drive is spent on. One definition, used by the override
+// below and by the offer in paintLead(), so the two can never disagree about
+// which screens need no offer to go to Home.
+const carScreen = (id) => id === HOME || id === "drive";
+
 // Leaving car mode by hand while the car is still connected is a decision,
 // and it sticks. Arriving there by hand is not an override.
 function noteManualNav(fromId, toId) {
-  // Moving BETWEEN the hub and the gauges is not leaving car mode -- both are
+  // Moving BETWEEN Home and the gauges is not leaving car mode -- both are
   // car screens, and treating a tap on "Gauges" as an override would stop the
   // app ever offering to bring you back.
-  const carScreens = (id) => id === HOME || id === "drive";
-  if (carScreens(fromId) && !carScreens(toId) && store.connected) overridden = true;
-  if (carScreens(toId)) overridden = false;
+  if (carScreen(fromId) && !carScreen(toId) && store.connected) overridden = true;
+  if (carScreen(toId)) overridden = false;
 }
 
 // Arriving with a view already named in the URL is somebody asking for that
