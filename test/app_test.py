@@ -130,6 +130,36 @@ window.__st = store;
 </script>
 """
 
+# Appended to a second COPY of app.html, in its own run. This suite's own
+# opening check loads app.html with no hash, and main.js's arrival screen is
+# Home -- so until this probe existed, nothing in this file (or any other
+# suite) had ever mounted share/js/views/vehicle.js. A renamed export, a
+# selector that no longer matches a class the CSS still carries, any of the
+# ordinary ways a view goes wrong on its way to the screen would have passed
+# every check above: main.js's own try/catch around view.mount() turns a
+# throwing view into a "That view failed to draw" card, not a blank page, and
+# nothing here had ever looked. So this navigates to #vehicle for real and
+# asks for content only a correctly-mounted screen produces -- the headline
+# and one row per system, named -- not just that a container exists.
+VEHICLE_PROBE = r"""
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  await wait(3500);
+  location.hash = "#vehicle";
+  await wait(2000);
+  const titleEl = document.querySelector(".vh-title");
+  const rows = [...document.querySelectorAll(".vh-sys-row")];
+  const out = {
+    headline: titleEl ? titleEl.textContent : null,
+    rowCount: rows.length,
+    rows: rows.map((r) => r.textContent.replace(/\s+/g, " ").trim()),
+  };
+  document.title = "VEHICLE " + JSON.stringify(out);
+})();
+</script>
+"""
+
 
 def ok(msg):
     print(f"    ok  {msg}")
@@ -371,6 +401,52 @@ def main():
                 gsrv.kill()
             shutil.rmtree(gprof, ignore_errors=True)
             shutil.rmtree(probe, ignore_errors=True)
+        # ---- and the Vehicle screen actually mounts -------------------
+        vprobe = tempfile.mkdtemp()
+        vcopy = os.path.join(vprobe, "share")
+        shutil.copytree(SHARE, vcopy)
+        with open(os.path.join(vcopy, "app.html"), "a", encoding="utf-8") as f:
+            f.write(VEHICLE_PROBE)
+        vport = free_port()
+        vsrv = subprocess.Popen(
+            [python_for_server(), os.path.join(ROOT, "lib", "serve.py"),
+             str(vport), vcopy],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        vprof = tempfile.mkdtemp()
+        try:
+            for _ in range(40):
+                time.sleep(0.25)
+                try:
+                    with socket.create_connection(("127.0.0.1", vport), 0.25):
+                        break
+                except OSError:
+                    continue
+            rv = subprocess.run(
+                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                 f"--user-data-dir={vprof}", "--virtual-time-budget=9000",
+                 "--dump-dom", f"http://127.0.0.1:{vport}/app.html"],
+                capture_output=True, text=True, timeout=120)
+            mv = re.search(r"<title>VEHICLE (\{.*?\})</title>", rv.stdout, re.S)
+            if not mv:
+                bad("the vehicle probe returned nothing")
+            else:
+                v = json.loads(mv.group(1).replace("&quot;", '"'))
+                check(f"the Vehicle screen draws a headline (got {v.get('headline')!r})",
+                      bool((v.get("headline") or "").strip()))
+                check(f"and one row per system (got {v.get('rowCount')})",
+                      v.get("rowCount") == 5)
+                rows_text = " | ".join(v.get("rows") or [])
+                for label in ("Engine", "Hybrid system", "Brakes", "Electrical",
+                              "All other systems"):
+                    check(f"the systems list names {label!r}", label in rows_text)
+        finally:
+            vsrv.terminate()
+            try:
+                vsrv.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                vsrv.kill()
+            shutil.rmtree(vprof, ignore_errors=True)
+            shutil.rmtree(vprobe, ignore_errors=True)
     finally:
         server.terminate()
         try:

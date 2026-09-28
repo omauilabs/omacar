@@ -97,9 +97,11 @@ export default function vehicle(root) {
     paint();
   };
 
-  const codesCard = h("div.card.vh-codes", { role: "button", tabindex: "0", onclick: () => go("codes") });
+  const codesCard = h("div.card.vh-codes", { role: "button", tabindex: "0", onclick: () => go("codes"),
+                                             onkeydown: (e) => { if (e.key === "Enter") go("codes"); } });
   const insight = h("div.card.vh-insight", { hidden: true, role: "button", tabindex: "0",
-                                             onclick: () => go("advisor") });
+                                             onclick: () => go("advisor"),
+                                             onkeydown: (e) => { if (e.key === "Enter") go("advisor"); } });
   const actions = h("div.vh-actions",
     srcRow,
     h("span.vh-gap"),
