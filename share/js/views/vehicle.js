@@ -11,6 +11,7 @@ import { groupSystems, headline, worstOf } from "../systems.js";
 import { makeSignalTile } from "../sigtile.js";
 import { learnedFor } from "../readings.js";
 import { asset } from "../assets.js";
+import { latestAdvice } from "../advice.js";
 
 const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 const go = (id) => { location.hash = "#" + id; };   // taps only
@@ -173,12 +174,12 @@ export default function vehicle(root) {
   }
 
   api.aiHistory().then((d) => {
-    const r = ((d && d.records) || []).find((x) => x.payload && x.payload.data && x.payload.data.headline);
-    if (!r || !alive) return;
+    const said = latestAdvice(d && d.records);
+    if (!said || !alive) return;
     clear(insight);
     insight.append(h("div.hc-title", icon(ICONS.agent, 18), "Oma Agent insight",
                      h("span.chev", icon(ICONS.chevron, 18))),
-                   h("div.vh-insight-t", r.payload.data.headline));
+                   h("div.vh-insight-t", said.headline));
     insight.hidden = false;
   }).catch(() => {});
 

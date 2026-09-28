@@ -150,11 +150,29 @@ VEHICLE_PROBE = r"""
   await wait(2000);
   const titleEl = document.querySelector(".vh-title");
   const rows = [...document.querySelectorAll(".vh-sys-row")];
+  const ico = document.querySelector(".vh-icon");
+  const insight = document.querySelector(".vh-insight");
   const out = {
     headline: titleEl ? titleEl.textContent : null,
     rowCount: rows.length,
     rows: rows.map((r) => r.textContent.replace(/\s+/g, " ").trim()),
+    tone: ico ? ico.dataset.tone : null,
+    icon: ico ? [...ico.querySelectorAll("path")].map((p) => p.getAttribute("d")) : [],
+    insight: insight && !insight.hidden ? insight.textContent : null,
   };
+  // WHAT THE ADVISOR HAS SAID, asked of the server directly, so the check
+  // below knows whether the two agent cards have anything to show on this
+  // machine rather than assuming either way.
+  try {
+    const r = await fetch("/api/ai/history", { cache: "no-store" });
+    const recs = ((await r.json()) || {}).records || [];
+    const first = recs.find((x) => x.payload && x.payload.headline);
+    out.said = first ? first.payload.headline : null;
+  } catch { out.said = null; }
+  location.hash = "#home";
+  await wait(2000);
+  const agent = document.querySelector(".hc-agent .ag-a");
+  out.homeAgent = agent && !agent.hidden ? agent.textContent : null;
   document.title = "VEHICLE " + JSON.stringify(out);
 })();
 </script>
@@ -781,7 +799,7 @@ def main():
                     continue
             rv = subprocess.run(
                 [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
-                 f"--user-data-dir={vprof}", "--virtual-time-budget=9000",
+                 f"--user-data-dir={vprof}", "--virtual-time-budget=12000",
                  "--dump-dom", f"http://127.0.0.1:{vport}/app.html"],
                 capture_output=True, text=True, timeout=120)
             mv = re.search(r"<title>VEHICLE (\{.*?\})</title>", rv.stdout, re.S)
@@ -797,6 +815,17 @@ def main():
                 for label in ("Engine", "Hybrid system", "Brakes", "Electrical",
                               "All other systems"):
                     check(f"the systems list names {label!r}", label in rows_text)
+                said = v.get("said")
+                if said:
+                    check(f"Vehicle's insight card shows the advisor's last headline "
+                          f"(got {v.get('insight')!r})", said in (v.get("insight") or ""))
+                    check(f"and so does Home's Oma Agent card (got {v.get('homeAgent')!r})",
+                          v.get("homeAgent") == said)
+                else:
+                    ok("(the advisor has said nothing on this machine: the agent "
+                       "cards' reading is covered by test/js/advice.test.js)")
+                    check("and with nothing said, Vehicle draws no insight card",
+                          v.get("insight") is None)
         finally:
             vsrv.terminate()
             try:

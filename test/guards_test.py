@@ -2750,6 +2750,40 @@ check("the same evidence asked of two models is two cache entries",
       ai.cache_key("triage", "t", _b, "claude-opus-5-5") != ai.cache_key("triage", "t", _b, "claude-sonnet-5"),
       True)
 
+# THE RECORD THE AGENT CARDS READ. ask() is driven for real here, with only
+# the CLI, the evidence bundle, the cache directory and the database write
+# stood in for. Home's Oma Agent card and Vehicle's insight card read
+# payload.headline (share/js/advice.js, pinned by test/js/advice.test.js);
+# they used to read payload.data.headline, which this writer never wrote.
+import tempfile as _tf_ai  # noqa: E402
+import shutil as _sh_ai  # noqa: E402
+
+_ai_tmp = _tf_ai.mkdtemp()
+_ai_was = (ai.bundle, ai.available, ai.run_claude, ai.cache_path, ai.records.write_record)
+_ai_rec = []
+
+
+def _fake_claude(envelope):
+    def run(prompt, model, extra):
+        return (_json.dumps({"headline": "Front O2 heater", "hypotheses": []}), 0.1,
+                dict(envelope, _asked=model))
+    return run
+
+
+try:
+    ai.bundle = lambda kind="triage", code=None, span=None: {"faults": {}}
+    ai.available = lambda: True
+    ai.cache_path = lambda key: os.path.join(_ai_tmp, key + ".json")
+    ai.records.write_record = lambda kind, label, payload: _ai_rec.append((kind, label, payload))
+    ai.run_claude = _fake_claude({"modelUsage": {"claude-opus-5-5": {"outputTokens": 900}}})
+    ai.ask("symptom", question="It stalls when cold", refresh=True)
+    check("the advisor writes one record per answer, headline on the payload",
+          _ai_rec, [("ai", "symptom: It stalls when cold",
+                     {"kind": "symptom", "headline": "Front O2 heater"})])
+finally:
+    (ai.bundle, ai.available, ai.run_claude, ai.cache_path, ai.records.write_record) = _ai_was
+    _sh_ai.rmtree(_ai_tmp, ignore_errors=True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

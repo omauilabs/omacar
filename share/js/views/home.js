@@ -17,6 +17,7 @@ import { tyreState } from "../systems.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
 import { savedLook, mountLookEffect } from "../looks.js";
 import { startEditing } from "../homeedit.js";
+import { latestAdvice } from "../advice.js";
 
 const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
@@ -145,14 +146,13 @@ function agentCard() {
       if (Date.now() - asked < 60000) return;
       asked = Date.now();
       api.aiHistory().then((d) => {
-        const r = ((d && d.records) || [])[0];
-        const p = r && r.payload;
-        const said = p && p.data && (p.data.headline || p.data.answer || p.data.summary);
-        q.hidden = a.hidden = !said;
+        const said = latestAdvice(d && d.records);
+        a.hidden = !said;
+        q.hidden = !(said && said.question);
         empty.hidden = !!said;
         if (said) {
-          text(q, p.question || p.code || (r.label || "").replace(/^[a-z]+:\s*/, ""));
-          text(a, said);
+          text(q, said.question);
+          text(a, said.headline);
         }
       }).catch(() => { q.hidden = a.hidden = true; empty.hidden = false; });
     },
