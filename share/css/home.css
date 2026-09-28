@@ -68,7 +68,10 @@
 
 /* speed */
 .hc-dial { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.hc-dial .g-svg { width: 100%; max-height: 72%; }
+/* The gauge gives way first: Begin's slot below is always reserved (home.js
+   hides it with visibility, so it never moves the dial), and on a short card
+   the arc shrinks rather than pushing the words out of the bottom. */
+.hc-dial .g-svg { width: 100%; max-height: 72%; flex: 0 1 auto; min-height: 0; }
 .dial-rpm { font-size: .95rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .dial-mode { margin-top: 6px; }
 .dial-begin { margin-top: 8px; }

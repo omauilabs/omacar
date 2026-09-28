@@ -261,6 +261,10 @@ window.__rd = READINGS;
 # is a touch screen and the coarse block in app.css makes the tab bar and the
 # chip rows taller there -- the case with the least room.
 FIT_PROBE = r"""
+<script type="module">
+import { store } from "./js/core.js";
+window.__st = store;
+</script>
 <script>
 (async () => {
   const wait = (ms) => new Promise(r => setTimeout(r, ms));
@@ -290,6 +294,29 @@ FIT_PROBE = r"""
   out.clipped = [...document.querySelectorAll(".home-grid > *")]
     .filter((el) => el.scrollHeight > el.clientHeight + 1)
     .map((el) => `${el.dataset.card} ${el.scrollHeight}/${el.clientHeight}`);
+  // THE DIAL WITH BEGIN OFFERED: the adapter gone, the car last seen still.
+  // Begin's slot is always reserved, so offering it must neither move the
+  // gauge nor push anything out of the bottom of the card.
+  const s = window.__st, poll = s.refreshLive;
+  const dialCard = document.querySelector(".hc-dial");
+  const gaugeTop = () => Math.round(document.querySelector(".hc-dial .g-svg").getBoundingClientRect().top);
+  const top0 = gaugeTop();
+  // Silenced, then a beat for a poll already in flight to land, or it lands
+  // after the injected sample and puts "connected" back.
+  s.refreshLive = async () => {};
+  await wait(600);
+  // Seen stopped first (the simulator may be mid-drive), then gone.
+  s.live = { connected: true, values: { SPEED: 0, RPM: 0 } };
+  s.emit("live");
+  await wait(200);
+  s.live = { connected: false, values: {} };
+  s.emit("live");
+  await wait(400);
+  out.dial = { top0, top1: gaugeTop(),
+               begin: getComputedStyle(document.querySelector(".dial-begin")).visibility,
+               clipped: dialCard.scrollHeight > dialCard.clientHeight + 1 };
+  s.refreshLive = poll;
+  await wait(800);
   location.hash = "#launcher";
   await wait(1200);
   location.hash = "#drive";
@@ -418,6 +445,11 @@ def fit_check(exe):
               0 < (g.get("cardsEnd") or 1e9) <= (g.get("footTop") or 0))
         check(f"{orient}: without cutting any card short (clipped: {g.get('clipped')})",
               g.get("clipped") == [])
+        dial = g.get("dial") or {}
+        check(f"{orient}: with the adapter gone, the dial offers Begin without "
+              f"moving the gauge or clipping the card ({dial})",
+              dial.get("begin") == "visible" and dial.get("top0") == dial.get("top1")
+              and dial.get("clipped") is False)
         check(f"{orient}: Gauges is shown with its segment row", g.get("seg") is True)
         check(f"{orient}: and fits under it without scrolling "
               f"(content {d.get('scroll')} in {d.get('client')} px, "

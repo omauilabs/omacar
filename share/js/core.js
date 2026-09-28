@@ -336,8 +336,17 @@ class Store extends EventTarget {
     this.nurseryOn = false;
     this.error = null;        // why the last snapshot failed, or null
     this.liveError = null;    // why the last live sample failed, or null
+    // THE LAST THING KNOWN ABOUT MOTION. `state` says "offline" the moment the
+    // adapter stops answering, which is true and says nothing about whether
+    // the car is still rolling -- adapters drop out mid-drive. So whether the
+    // car was moving when last seen is kept here, where every sample passes,
+    // and a screen mounted after the drop still knows it.
+    this.lastMoving = false;
   }
-  emit(what) { this.dispatchEvent(new CustomEvent(what)); }
+  emit(what) {
+    if (this.connected) this.lastMoving = this.state === "driving";
+    this.dispatchEvent(new CustomEvent(what));
+  }
   on(what, fn) { this.addEventListener(what, fn); return () => this.removeEventListener(what, fn); }
 
   async boot() {

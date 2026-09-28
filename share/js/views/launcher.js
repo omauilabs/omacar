@@ -107,7 +107,24 @@ export default function launcher(root) {
     sub.textContent = "The car is already answering";
   }
 
+  // NOT WHILE MOVING. Begin stops omacar-drivelog.service and restarts the
+  // daemon (lib/begin.py), so pressed mid-drive it ends the very recording it
+  // exists to start. Nothing on a drive screen leads here, and the button
+  // itself also greys out with the reason, as every write screen's chip does,
+  // while the car is moving or was last seen moving before the adapter dropped.
+  function paintLock() {
+    if (started) return;
+    const moving = store.state === "driving" || (!store.connected && store.lastMoving);
+    btn.disabled = moving;
+    btn.title = moving ? "Available when you stop" : "";
+  }
+  const offLive = store.on("live", paintLock);
+  const offCar = store.on("car", paintLock);
+  paintLock();
+
   return () => {
+    offLive();
+    offCar();
     if (timer) clearInterval(timer);
     if (handover) clearTimeout(handover);
   };

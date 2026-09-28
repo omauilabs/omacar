@@ -42,7 +42,9 @@ function dialCard() {
   // the one the driver last marked on the drive screen, and it says so.
   const mode = h("span.pill.dial-mode.mode-pill", { hidden: true,
     title: "The drive mode you last marked. OmaCar cannot read it from the car." });
-  const begin = h("button.btn.dial-begin", { type: "button", hidden: true,
+  // Its space is always reserved (visibility, never `hidden`), so offering it
+  // or taking it away never moves the dial above it.
+  const begin = h("button.btn.dial-begin", { type: "button", style: { visibility: "hidden" },
     onclick: (e) => { e.stopPropagation(); go("launcher"); } }, "Begin");
   const node = tappable(h("div.card.hc.hc-dial", g.el, rpm, mode, begin), "drive");
   const paintMode = (m) => {
@@ -77,9 +79,18 @@ function dialCard() {
       // car would send somebody to the OBD cable when the fix is
       // `omacar server status`.
       const noServer = store.noServer;
+      //
+      // AND SAY ONLY WHAT IS KNOWN ABOUT THE CAR. An adapter that has not
+      // answered is "No data" -- not "Car off", which the app cannot know and
+      // which is false in exactly the case adapters are known for: dropping
+      // out mid-drive.
       text(rpm, noServer ? "No server"
-        : store.connected ? `${rpmReading.get(v, s, car).v} rpm` : "Car off");
-      begin.hidden = store.connected || noServer;
+        : store.connected ? `${rpmReading.get(v, s, car).v} rpm` : "No data");
+      // Begin is for a car that is off and still. Not while the adapter
+      // answers, not with no server, and not while the car was last seen
+      // moving: Begin restarts the daemon and stops the drive recorder.
+      const offer = !store.connected && !noServer && !store.lastMoving;
+      begin.style.visibility = offer ? "" : "hidden";
       if (Date.now() - asked > 30000) {
         asked = Date.now();
         api.driveMode().then((d) => paintMode(d && d.mode)).catch(() => {});

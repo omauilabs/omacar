@@ -83,6 +83,36 @@ export default [
       ok(!running(root), "no sample, no background");
     })],
 
+  // ---- the dial when the adapter drops ------------------------------------
+  ["a dropped adapter is 'No data', never 'Car off', and Begin is offered once stopped", () =>
+    withHome("normal", PARKED, async (root) => {
+      const rpm = root.querySelector(".dial-rpm"), begin = root.querySelector(".dial-begin");
+      DROPPED();
+      eq(rpm.textContent, "No data", "the dial's words");
+      eq(begin.hidden, false, "Begin keeps its space: never display:none");
+      eq(begin.style.visibility, "", "last seen stopped, so Begin is offered");
+    })],
+
+  ["but not while the car was last seen moving, and it never shifts the dial", () =>
+    withHome("normal", DRIVING, async (root) => {
+      const begin = root.querySelector(".dial-begin");
+      const gauge = root.querySelector(".hc-dial .g-svg");
+      const top = gauge.getBoundingClientRect().top;
+      DROPPED();
+      eq(root.querySelector(".dial-rpm").textContent, "No data", "the dial's words");
+      eq(begin.style.visibility, "hidden", "no Begin while last seen moving");
+      eq(begin.hidden, false, "and its space is still reserved");
+      eq(gauge.getBoundingClientRect().top, top, "the gauge did not move");
+    })],
+
+  ["a Home opened after the drop still knows the car was moving", async () => {
+    DRIVING();
+    await withHome("normal", DROPPED, async (root) => {
+      eq(root.querySelector(".dial-begin").style.visibility, "hidden", "no Begin on a fresh Home");
+    });
+    PARKED(); store.live = null;
+  }],
+
   ["leaving Home stops it", async () => {
     let kept = null;
     await withHome("green", PARKED, async (root) => { kept = root; ok(running(root), "running"); });
