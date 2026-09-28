@@ -739,7 +739,11 @@ async function loadThemeModes() {
   }
 }
 
-function paintDayNight(mode) {
+// `mode` is the desktop theme's own light/dark, and it only matters inside the
+// Omarchy look. With none given it is the mode the applied theme set, never a
+// guess: a missing mode read as "dark" offered the day palette on a desktop
+// that was already in its light theme.
+function paintDayNight(mode = document.documentElement.dataset.mode) {
   if (!els.daynight) return;
   // A TOGGLE WITH NOWHERE TO GO DOES NOT APPEAR. If this machine has only dark
   // themes built, a button that shrugs is worse than no button — that is the
@@ -1162,7 +1166,9 @@ async function boot() {
   // Before the first paint. A night-red look that arrives a beat late is a
   // flash of full-brightness white at the exact moment it matters most.
   applyLook(savedLook());
-  document.addEventListener("omacar:look", () => { applyTheme(); paintDayNight(); });
+  // The button is painted once the theme has been applied, not before: the
+  // mode it shows comes from the theme, which is only known after it loads.
+  document.addEventListener("omacar:look", async () => { await applyTheme(); paintDayNight(); });
 
   await Promise.all([store.boot(), applyTheme(), loadAuto()]);
   document.getElementById("app").dataset.booting = "0";

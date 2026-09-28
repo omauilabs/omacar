@@ -550,6 +550,50 @@ window.fetch = (u, o) => String(u).includes("/api/ai/available")
 """
 
 
+# A LIGHT DESKTOP THEME, then the Omarchy look chosen after boot. The theme
+# routes are answered here, ahead of main.js, because the box's own desktop
+# theme is whatever it is today. The day/night button was painted before the
+# theme had loaded, with no mode, so it offered "day" on a desktop already in
+# its light theme.
+LIGHT_DESKTOP = r"""
+<script>
+const __f1 = window.fetch;
+const __json = (o) => Promise.resolve(new Response(JSON.stringify(o),
+  { headers: { "Content-Type": "application/json" } }));
+window.fetch = (u, o) => {
+  const p = String(u);
+  if (p.includes("/api/themes")) return __json({ active: "paper", themes: [
+    { id: "paper", mode: "light" }, { id: "ink", mode: "dark" }] });
+  if (p.includes("/api/theme")) return __json({ stamp: 7, vars: { mode: "light" } });
+  return __f1(u, o);
+};
+</script>
+<script type="module">
+import { saveLook, applyLook } from "./js/looks.js";
+setTimeout(() => { saveLook("omarchy"); applyLook("omarchy"); }, 3500);
+</script>
+<script>
+setTimeout(() => {
+  const b = document.getElementById("btn-daynight");
+  document.title = "DAYNIGHT " + JSON.stringify({ title: b ? b.title : null,
+    hidden: b ? b.hidden : null, mode: document.documentElement.dataset.mode || null,
+    look: document.documentElement.getAttribute("data-look") });
+}, 6000);
+</script>
+"""
+
+def daynight_check(exe):
+    """The day/night button after choosing the Omarchy look on a light desktop."""
+    g = run_probe(exe, LIGHT_DESKTOP, "DAYNIGHT")
+    if not g:
+        bad("the day/night probe returned nothing")
+    else:
+        check(f"switching into the Omarchy look on a light desktop theme, the "
+              f"day/night button offers night ({g})",
+              g.get("look") == "omarchy" and g.get("hidden") is False
+              and g.get("title") == "Switch to the night palette")
+
+
 def agent_check(exe):
     """The Agent tab opens a screen it lists, and says so when AI is not set up."""
     for label, prefix in (("as this server reports it", ""), ("with no AI", NO_AI)):
@@ -983,6 +1027,8 @@ def main():
         callout_check(exe)
         # ---- and the Agent tab with or without AI -----------------------
         agent_check(exe)
+        # ---- and the day/night button on a light desktop theme ----------
+        daynight_check(exe)
     finally:
         server.terminate()
         try:
