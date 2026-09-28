@@ -87,9 +87,12 @@ function dialCard() {
       text(rpm, noServer ? "No server"
         : store.connected ? `${rpmReading.get(v, s, car).v} rpm` : "No data");
       // Begin is for a car that is off and still. Not while the adapter
-      // answers, not with no server, and not while the car was last seen
-      // moving: Begin restarts the daemon and stops the drive recorder.
-      const offer = !store.connected && !noServer && !store.lastMoving;
+      // answers, not with no server, not while the car was last seen moving,
+      // and not during a hand-off: the daemon reports connected: false for
+      // ten to twenty seconds every few minutes while it lends the adapter to
+      // the DTC sweep, and that is not the car going off -- Begin restarts
+      // the daemon and stops the drive recorder, and the sweep runs mid-drive.
+      const offer = !store.connected && !noServer && !store.lastMoving && !store.sample.handover;
       begin.style.visibility = offer ? "" : "hidden";
       if (Date.now() - asked > 30000) {
         asked = Date.now();

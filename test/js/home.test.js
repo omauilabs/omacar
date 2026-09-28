@@ -10,14 +10,17 @@ import { store } from "../js/core.js";
 const LOOK = "omacar.look";
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function sample(values, connected = true) {
-  store.live = { connected, values, supported: Object.keys(values) };
+function sample(values, connected = true, extra) {
+  store.live = Object.assign({ connected, values, supported: Object.keys(values) }, extra);
   store.emit("live");
 }
 const PARKED = () => sample({ SPEED: 0, RPM: 0 });
 const IDLING = () => sample({ SPEED: 0, RPM: 800 });
 const DRIVING = () => sample({ SPEED: 50, RPM: 2200 });
 const DROPPED = () => sample({}, false);
+// The daemon lending the adapter to the DTC sweep: connected reads false for
+// ten to twenty seconds, same as a drop, but records.live() marks it.
+const HANDOVER = () => sample({}, false, { handover: true, status: "yielded" });
 
 function ensureHosts() {
   for (const id of ["toasts", "modal-host"]) {
@@ -103,6 +106,17 @@ export default [
       eq(begin.style.visibility, "hidden", "no Begin while last seen moving");
       eq(begin.hidden, false, "and its space is still reserved");
       eq(gauge.getBoundingClientRect().top, top, "the gauge did not move");
+    })],
+
+  ["Begin is never offered during a DTC-sweep hand-off, even though the car was last seen stopped", () =>
+    withHome("normal", PARKED, async (root) => {
+      const begin = root.querySelector(".dial-begin");
+      HANDOVER();
+      eq(root.querySelector(".dial-rpm").textContent, "No data", "the dial's words during the hand-off");
+      eq(begin.style.visibility, "hidden",
+         "connected reads false and the car was last stopped, but this is a hand-off, not the car going off");
+      DROPPED();
+      eq(begin.style.visibility, "", "once the sweep ends without the handover flag, Begin is offered again");
     })],
 
   ["a Home opened after the drop still knows the car was moving", async () => {

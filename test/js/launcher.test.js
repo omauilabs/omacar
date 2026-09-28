@@ -14,7 +14,10 @@ function mount(before) {
   return { root, btn: root.querySelector(".launch-go"),
            done: () => { un(); root.remove(); store.live = null; store.emit("live"); } };
 }
-const live = (values, connected = true) => { store.live = { connected, values }; store.emit("live"); };
+const live = (values, connected = true, extra) => {
+  store.live = Object.assign({ connected, values }, extra);
+  store.emit("live");
+};
 
 export default [
   ["parked, Begin can be pressed", () => {
@@ -32,6 +35,19 @@ export default [
       eq(m.btn.disabled, true, "disabled after the drop");
       live({ SPEED: 0, RPM: 0 });
       eq(m.btn.disabled, false, "and free again once the car is seen stopped");
+    } finally { m.done(); }
+  }],
+
+  ["and locks during a DTC-sweep hand-off, even though the car was last seen stopped", () => {
+    const m = mount(() => live({ SPEED: 0, RPM: 0 }));
+    try {
+      // records.live() marks the daemon's routine hand-off this way: connected
+      // reads false, same as a drop, but it is not the car going off.
+      live({}, false, { handover: true, status: "yielded" });
+      eq([m.btn.disabled, m.btn.title], [true, "Available when you stop"],
+         "locked for the hand-off, not just for a real drop while last seen moving");
+      live({ SPEED: 0, RPM: 0 });
+      eq(m.btn.disabled, false, "free again once the sweep ends and the car answers as stopped");
     } finally { m.done(); }
   }],
 ];

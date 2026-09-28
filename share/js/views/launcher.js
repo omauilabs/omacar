@@ -107,14 +107,20 @@ export default function launcher(root) {
     sub.textContent = "The car is already answering";
   }
 
-  // NOT WHILE MOVING. Begin stops omacar-drivelog.service and restarts the
-  // daemon (lib/begin.py), so pressed mid-drive it ends the very recording it
-  // exists to start. Nothing on a drive screen leads here, and the button
-  // itself also greys out with the reason, as every write screen's chip does,
-  // while the car is moving or was last seen moving before the adapter dropped.
+  // NOT WHILE MOVING, AND NOT DURING A HAND-OFF. Begin stops
+  // omacar-drivelog.service and restarts the daemon (lib/begin.py), so pressed
+  // mid-drive it ends the very recording it exists to start. Nothing on a
+  // drive screen leads here, and the button itself also greys out with the
+  // reason, as every write screen's chip does, while the car is moving or was
+  // last seen moving before the adapter dropped. The daemon also reports
+  // connected: false, handover: true for ten to twenty seconds every few
+  // minutes while it lends the adapter to the DTC sweep -- that can start
+  // while stopped, when lastMoving is still false, so the lock has to know
+  // about the hand-off by name rather than inferring it from motion.
   function paintLock() {
     if (started) return;
-    const moving = store.state === "driving" || (!store.connected && store.lastMoving);
+    const moving = store.state === "driving" || (!store.connected && store.lastMoving)
+                   || !!store.sample.handover;
     btn.disabled = moving;
     btn.title = moving ? "Available when you stop" : "";
   }
