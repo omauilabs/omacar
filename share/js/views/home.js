@@ -46,7 +46,7 @@ function dialCard() {
   // or taking it away never moves the dial above it.
   const begin = h("button.btn.dial-begin", { type: "button", style: { visibility: "hidden" },
     onclick: (e) => { e.stopPropagation(); go("launcher"); } }, "Begin");
-  const node = tappable(h("div.card.hc.hc-dial", g.el, rpm, mode, begin), "drive");
+  const node = tappable(h("div.card.hc.hc-dial", g.el, h("div.dial-words", rpm, mode, begin)), "drive");
   const paintMode = (m) => {
     mode.hidden = !m;
     if (m) { text(mode, String(m).toUpperCase()); mode.dataset.mode = m; }
