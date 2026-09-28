@@ -63,9 +63,17 @@
   /* 11%, not 7%: that mix of ink into panel lands exactly on the mockups' card
      hairline, #272E32. */
   --hair:   color-mix(in srgb, var(--ink) 11%, var(--panel));
+  /* Text printed on a solid semantic fill. The theme computes these by
+     luminance, because "the colour, darkened" is unreadable on itself. */
   --on-bad:  #12060A;
   --on-warn: #1A1305;
   --on-ai:   #0B0718;
+
+  /* The hub is designed for direct sunlight, so it uses a harder foreground
+     than the rest of the app. Going through tokens rather than literals is
+     what lets a look change it in ONE place -- the previous version listed
+     every affected selector per look, and every new hub rule silently
+     reintroduced white into the night palettes. */
   --bright:   #FFFFFF;
   --bright-2: #CAD4DA;
 
