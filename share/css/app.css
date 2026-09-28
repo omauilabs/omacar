@@ -165,8 +165,8 @@ button { font: inherit; color: inherit; }
 .app {
   display: grid; height: 100vh;
   grid-template-columns: 1fr;
-  grid-template-rows: var(--vbar) 1fr var(--nav);
-  grid-template-areas: "vbar" "stage" "navbar";
+  grid-template-rows: var(--vbar) auto 1fr var(--nav);
+  grid-template-areas: "vbar" "segbar" "stage" "navbar";
 }
 /* No fade-in. A diagnostic tool that animates its own arrival looks broken
    for the first fifth of a second, and on a slow first paint it looks broken
@@ -354,6 +354,14 @@ button { font: inherit; color: inherit; }
 .tab[aria-current="page"] .tab-in { background: var(--raise); }
 .tab:active .tab-in { background: var(--hair); }
 
+.tab[aria-current="page"] { color: var(--accent); }
+.tab[aria-current="page"] .tab-in { background: transparent; }
+.tab[aria-current="page"]::before {
+  top: auto; bottom: 6px; left: 32%; right: 32%; height: 3px; border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 /* Badges roll up from the sub-screens to the tab. */
 .tab .pip {
   position: absolute; top: 5px; left: 50%; margin-left: 6px;
@@ -389,22 +397,62 @@ button { font: inherit; color: inherit; }
   outline: 2px solid var(--info); outline-offset: -3px;
 }
 
-/* ------------------------------------------------------- the vehicle bar */
+/* ------------------------------------------------------------ the top bar
+   Three columns, so the clock is centred on the SCREEN rather than on
+   whatever the two sides leave it. */
 .vbar {
-  grid-area: vbar; background: var(--panel); border-bottom: 1px solid var(--edge);
-  display: flex; align-items: center; gap: 18px; padding: 0 20px;
-  position: sticky; top: 0; z-index: 20;
+  grid-area: vbar;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  gap: 16px; padding: 0 20px;
+  background: var(--ground); border-bottom: 1px solid var(--hair);
 }
-.vbar .id { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.vbar .name { font-size: 1rem; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
-.vbar .sub { font-size: .68rem; color: var(--faint); white-space: nowrap;
-             overflow: hidden; text-overflow: ellipsis; }
-.vbar .spacer { margin-left: auto; }
-/* The demo badge earns a border as well as a colour: a pill among pills is
-   easy to stop seeing, and this is the one that must not be. */
-.demo-pill { border: 1px solid var(--warn); font-weight: 600; letter-spacing: .04em; }
-.vbar .stat { display: flex; align-items: center; gap: 7px; font-size: .7rem; color: var(--dim); }
-.vbar .odo { font-size: .82rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tb-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.tb-mark { font-family: var(--display); font-weight: 600; font-size: 1.3rem;
+           letter-spacing: -.01em; color: var(--ink); }
+.tb-div { width: 1px; height: 22px; background: var(--edge-2); }
+.tb-page { font-size: 1.05rem; color: var(--ink-2); white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; }
+.tb-clock { font-size: 1.25rem; font-weight: 500; color: var(--ink); }
+.tb-right { display: flex; align-items: center; justify-content: flex-end;
+            gap: 10px; min-width: 0; }
+.tb-car { font-size: .78rem; color: var(--ink-2); white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; }
+.tb-src { font-size: .68rem; letter-spacing: .12em; color: var(--dim);
+          padding: 4px 8px; border: 1px solid var(--edge-2); border-radius: 6px;
+          white-space: nowrap; }
+.tb-src.ok   { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.tb-src.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.tb-src.bad  { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+
+/* --------------------------------------------------- the segment row */
+.segbar { grid-area: segbar; display: flex; gap: 8px; padding: 8px 20px;
+          overflow-x: auto; background: var(--ground); border-bottom: 1px solid var(--hair); }
+.segbar[hidden] { display: none; }
+.segbar::-webkit-scrollbar { width: 0; height: 0; }
+
+/* Home has no chip row. Decided per tab (main.js), so it never changes
+   under a thumb. */
+.app[data-subbar="0"] { --nav: calc(var(--tabbar) + var(--safe-b)); }
+.app[data-subbar="0"] .subbar { display: none; }
+
+/* ------------------------------------------------------- placeholders */
+.ph-card { max-width: 640px; margin: 8vh auto 0; padding: 40px; text-align: center; }
+.ph-icon { color: var(--accent); }
+.ph-title { font-family: var(--display); font-size: 1.8rem; font-weight: 600;
+            color: var(--ink); margin-top: 12px; }
+.ph-step { font-size: .8rem; letter-spacing: .1em; text-transform: uppercase;
+           color: var(--dim); margin: 6px 0 18px; }
+.ph-line { color: var(--ink-2); line-height: 1.5; margin: 8px 0; }
+
+/* ------------------------------------------------------------- motion
+   State changes fade over 160 ms. Nothing slides or grows: on a screen read
+   at speed, the only things that move are values. */
+.card, .chip, .tab, .btn, .tb-src, .callout {
+  transition: background-color .16s ease, color .16s ease, border-color .16s ease, opacity .16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card, .chip, .tab, .btn, .tb-src, .callout { transition: none; }
+}
 /* The way into the settings sheet, and the only icon-only control in the top
    bar -- so it gets min-WIDTH as well as min-height. Padding would not have
    helped it: there is no text in it to pad. */

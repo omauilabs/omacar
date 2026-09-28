@@ -81,10 +81,10 @@ const CARDS = [
   {
     title: "Two layouts, automatic",
     body: [
-      "Plugged into the car, OmaCar switches to the car hub: big touch targets, "
+      "Plugged into the car, OmaCar switches to Home: big touch targets, "
       + "high contrast for sunlight, and a badge on every tile so you can see "
       + "what needs attention without opening it.",
-      "Unplugged, it stays exactly where it is and offers you the hub rather "
+      "Unplugged, it stays exactly where it is and offers you Home rather "
       + "than taking you there.",
       "Navigate away by hand and it stays where you put it. Software that drags "
       + "you back to a screen you just left is software you end up fighting.",

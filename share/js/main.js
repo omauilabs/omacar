@@ -6,13 +6,13 @@
 // on screen. A diagnostic tool that hammers the daemon while you read a
 // service schedule is a tool that gets in the way of the thing it is watching.
 
-import { h, clear, icon, store, U, api, toast, confirmDialog, dist, grouped, since, withToken } from "./core.js";
+import { h, clear, icon, store, U, api, toast, confirmDialog, grouped, since, withToken } from "./core.js";
 import { record } from "./trail.js";
 
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
 import { savedLook, applyLook } from "./looks.js";
-import { privacy, vinShort as maskVinShort, person, odo as maskOdo } from "./privacy.js";
+import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import hub from "./views/hub.js";
 import documentsView from "./views/documents.js";
@@ -135,6 +135,10 @@ import report from "./views/report.js";
 import drive from "./views/drive.js";
 import concernsView from "./views/concerns.js";
 import live from "./views/live.js";
+import navigationView from "./views/navigation.js";
+import camerasView from "./views/cameras.js";
+import workView from "./views/work.js";
+import { badge } from "./provenance.js";
 
 
 // ---------------------------------------------------------- the navigation
@@ -160,113 +164,112 @@ import live from "./views/live.js";
 // The first view in a tab is that tab's root: tapping the tab always goes
 // there, including when you are already inside the tab. One entry, not a
 // stack — see the back chip below for the only history this app keeps.
+// Vehicle groups its screens (Overview · Diagnose · Live · Hybrid · Care ·
+// Car); every other tab lists them.
 const TABS = [
-  {
-    id: "car", label: "Car", icon: ICONS.hub,
+  { id: "home", label: "Home", icon: ICONS.home,
     views: [
-      { id: "hub",    label: "Hub",      title: "Car hub",              mount: hub,        fast: true },
-      { id: "drive",  label: "Gauges",   title: "Drive mode",           mount: drive,      fast: true },
-      { id: "live",   label: "Cluster",  title: "Cluster",              mount: live,       fast: true },
-      // The hybrid screen reads files already on disk and opens no serial port,
-      // so it draws with the car unplugged -- which is most of the time anybody
-      // wants to look at it.
-      // NOT BEHIND A TIER. "How is my battery" is an owner's question, not a
-      // technician's, and on a 190,000-mile hybrid it is the most expensive
-      // one they have. Hiding it until somebody finds the mode switch is the
-      // wrong default for the car this was built for.
-      { id: "ima",    label: "Battery",  title: "Battery, motor and regen", mount: imaView },
-      // The power-on screen. `hidden` because it is a destination the tablet
-      // is pointed at, not somewhere to browse to mid-drive.
-      { id: "launcher", label: "Begin", title: "Ready to drive", mount: launcherView, hidden: true },
-      { id: "omaplay", label: "Phone",   title: "Your phone, and the car", mount: omaplayView, fast: true },
-      // Fullscreen audio-reactive shaders off the microphone, with the car
-      // still readable underneath. `fast` because the dock shows live numbers.
-      { id: "music",  label: "Music",    title: "Music",                mount: musicView,  fast: true },
-      // A destination somebody opens on purpose, while parked, to look at.
-      // The hub's four effects are readings rendered as motion and belong
-      // behind their numbers; these two are not that, and putting them behind
-      // a gauge would be decoration pretending to be instrumentation.
-      { id: "effects", label: "Effects", title: "Scanner and Leviathan", mount: effectsView },
-      { id: "dash",   label: "Overview", title: "Overview",             mount: dash,       fast: true },
-      { id: "garage", label: "Profile",  title: "Every car you own",    mount: garageView },
-    ],
-  },
-  {
-    id: "faults", label: "Faults", icon: ICONS.codes,
+      { id: "home", label: "Home", title: "Home", mount: hub, fast: true },
+    ] },
+  { id: "navigation", label: "Navigation", icon: ICONS.nav,
     views: [
-      { id: "codes",  label: "Codes",     title: "Trouble codes",                 mount: codes, fast: true },
-      { id: "scan",   label: "Scan",      title: "Full system scan",              mount: scan },
-      { id: "health", label: "Readiness", title: "Readiness and on-board tests",  mount: health },
-    ],
-  },
-  {
-    id: "data", label: "Data", icon: ICONS.data,
+      { id: "navigation", label: "Navigation", title: "Navigation", mount: navigationView },
+    ] },
+  { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [
-      { id: "data",   label: "Live lab", title: "Data lab",                 mount: data,       fast: true },
-      { id: "replay", label: "Replay",   title: "Replay a recorded drive",  mount: replayView, tier: "power" },
-      // Actuator commands. Two taps from the bar, never one, and the chip
-      // greys out with the reason on it while the car is moving.
-      { id: "tests",  label: "Tests",    title: "Functional tests",         mount: tests, fast: true, write: true, tier: "technician" },
-      // The one thing god mode adds. Two steps, read-back first, deny-list on
-      // the screen with its caveat.
-      { id: "write",  label: "Identifiers", title: "Write by identifier",     mount: writeView, write: true, tier: "god" },
-    ],
-  },
-  {
-    id: "care", label: "Care", icon: ICONS.service,
+      { id: "cameras", label: "Cameras", title: "Cameras", mount: camerasView },
+    ] },
+  { id: "vehicle", label: "Vehicle", icon: ICONS.vehicle,
+    groups: [
+      { id: "overview", label: "Overview", views: [
+        { id: "vehicle", label: "Overview", title: "Vehicle diagnostics", mount: dash, fast: true },
+      ] },
+      { id: "diagnose", label: "Diagnose", views: [
+        { id: "codes",  label: "Codes",     title: "Trouble codes",                mount: codes, fast: true },
+        { id: "scan",   label: "Scan",      title: "Full system scan",             mount: scan },
+        { id: "health", label: "Readiness", title: "Readiness and on-board tests", mount: health },
+      ] },
+      { id: "live", label: "Live", views: [
+        { id: "drive",  label: "Gauges",   title: "Drive mode",              mount: drive,      fast: true },
+        { id: "live",   label: "Cluster",  title: "Cluster",                 mount: live,       fast: true },
+        { id: "data",   label: "Live lab", title: "Data lab",                mount: data,       fast: true },
+        { id: "replay", label: "Replay",   title: "Replay a recorded drive", mount: replayView, tier: "power" },
+        // Actuator commands. Two taps from the bar, never one, and the chip
+        // greys out with the reason on it while the car is moving.
+        { id: "tests",  label: "Tests",    title: "Functional tests",        mount: tests, fast: true, write: true, tier: "technician" },
+        { id: "write",  label: "Identifiers", title: "Write by identifier",  mount: writeView, write: true, tier: "god" },
+      ] },
+      // NOT BEHIND A TIER. "How is my battery" is an owner's question.
+      { id: "hybrid", label: "Hybrid", views: [
+        { id: "ima", label: "Battery", title: "Battery, motor and regen", mount: imaView },
+      ] },
+      { id: "care", label: "Care", views: [
+        { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
+        { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
+        { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
+        { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
+        { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },
+      ] },
+      { id: "car", label: "Car", views: [
+        { id: "garage", label: "Profile", title: "Every car you own", mount: garageView },
+        { id: "dash",   label: "Summary", title: "Overview",          mount: dash, fast: true },
+        { id: "report", label: "Report",  title: "Vehicle report",    mount: report },
+      ] },
+    ] },
+  { id: "agent", label: "Agent", icon: ICONS.agent,
     views: [
-      { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
-      { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
-      // fast, though it shows no gauge: its lock is a question about speed,
-      // and a screen that gates on a value has to be watching that value.
-      { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
-      { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
-      { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },
-      // NOT ABOUT THE CAR, and the only screen here that is not. It earns its
-      // place on a tool that lives in a car doing long night drives: the
-      // question "is he asleep" is asked from the road, and the alternative is
-      // picking up a phone at seventy miles an hour. `nursery: true` keeps it
-      // off every machine that has never been sent a document, the same way
-      // `ai` keeps the advisor off a machine with no key. `fast` because its
-      // camera block answers to the road speed.
-      { id: "nursery", label: "Nursery", title: "The baby, from the road", mount: nurseryView, nursery: true, fast: true },
-    ],
-  },
-  {
-    id: "ai", label: "AI", icon: ICONS.advisor,
-    views: [
-      { id: "advisor", label: "Advisor", title: "Advisor", mount: advisor, ai: true },
-    ],
-  },
+      { id: "advisor", label: "Car",  title: "Oma Agent", mount: advisor, ai: true },
+      { id: "work",    label: "Work", title: "Work",      mount: workView },
+    ] },
 ];
+
+// One shape downstream: a tab that lists its views is a tab with one group.
+for (const t of TABS) {
+  t.grouped = !!t.groups;
+  if (!t.groups) t.groups = [{ id: t.id, label: t.label, views: t.views }];
+  t.views = t.groups.flatMap((g) => g.views.map((v) => Object.assign(v, { tab: t.id, group: g.id })));
+}
 
 // OFF THE NAVIGATION, ON PURPOSE — but still routable.
 //
-// `report` is an output pretending to be a place: there is not one link to
-// #report anywhere in share/js, because what people actually want is to print
-// the thing, not to visit it. `learn` is a mode more than a screen; its
-// topics open from the Settings sheet, which is where the mode's own switch
-// now lives too. Both keep working URLs so a bookmark, a dock card or an old
-// deep link still lands somewhere rather than on a fallback.
+// `learn` is a mode more than a screen; its topics open from the Settings
+// sheet, which is where the mode's own switch now lives too. Every entry here
+// keeps a working URL so a bookmark, a dock card or an old deep link still
+// lands somewhere rather than on a fallback.
 //
-// A view here declares `off` with the reason. Anything reachable only from
-// inside another screen belongs in this list and nowhere else.
+// A view here declares `off` with the reason. `askable` marks the ones the
+// voice assistant may still open (see `screens()`). Anything reachable only
+// from inside another screen belongs in this list and nowhere else.
 const OFF_NAV = [
-  { id: "report", label: "Report", title: "Vehicle report",
-    mount: report,    off: "printed from Faults and from Care · Log" },
   { id: "learn",  label: "Learn",  title: "Learn the car, and the app",
     mount: learnView, off: "opened from Settings" },
-  // A palette is a preference, not a destination -- the same argument that put
-  // learn here. It is reached from the Settings sheet, and keeps a working URL.
   { id: "themes", label: "Themes", title: "Build a palette of your own",
     mount: themesView, off: "opened from Settings" },
+  { id: "effects", label: "Effects", title: "Scanner and Leviathan",
+    mount: effectsView, off: "opened from Settings", askable: true },
+  // The power-on screen: a destination the tablet is pointed at, and Home's
+  // "Begin" button when the car is off. Never something to browse to mid-drive.
+  { id: "launcher", label: "Begin", title: "Ready to drive",
+    mount: launcherView, off: "opened from Home when the car is off", hidden: true },
+  { id: "omaplay", label: "Phone", title: "Your phone, and the car",
+    mount: omaplayView, fast: true, off: "opened from Home's phone card", askable: true },
+  { id: "music",  label: "Music", title: "Music",
+    mount: musicView, fast: true, off: "opened from Home's phone card", askable: true },
+  { id: "nursery", label: "Nursery", title: "The baby, from the road",
+    mount: nurseryView, nursery: true, fast: true, off: "opened from Home's phone card", askable: true },
 ];
+
+// Old addresses that still have to land somewhere: a bookmark, the dock card,
+// the board. #hub was the home screen for a year.
+const ALIASES = {
+  hub: "home",
+};
 
 // Tab membership is stamped onto the view objects themselves rather than kept
 // in a parallel lookup, so there is exactly one copy of the fact and a view
 // found by the router already knows where it lives.
 const VIEWS = [
-  ...TABS.flatMap((t) => t.views.map((v) => Object.assign(v, { tab: t.id }))),
+  ...TABS.flatMap((t) => t.views),
   ...OFF_NAV,
 ];
 
@@ -283,7 +286,7 @@ const VIEWS = [
 // This is the rule, and it is the thing most likely to be re-broken by a
 // well-meaning later change: after the first paint, nothing in this file may
 // write location.hash except in direct response to a tap or a keypress.
-const HOME = "hub";
+const HOME = "home";
 
 // THE MODE, WHICH THE SERVER DECIDES AND THIS FILE ONLY REFLECTS.
 //
@@ -319,7 +322,8 @@ let unmount = null;
 let fastTimer = null;
 
 function route() {
-  const id = (location.hash || "#" + HOME).slice(1).split("/")[0];
+  const asked = (location.hash || "#" + HOME).slice(1).split("/")[0];
+  const id = ALIASES[asked] || asked;
   return VIEWS.find((v) => v.id === id) || VIEWS.find((v) => v.id === HOME);
 }
 
@@ -367,6 +371,7 @@ function go() {
   clear(stage);
   current = view;
   paintNavState();
+  paintBar();
 
   const wrap = h("div.wrap");
   stage.appendChild(wrap);
@@ -453,6 +458,7 @@ function buildNav() {
   els.chips = document.getElementById("subbar-chips");
   els.here = h("span.subbar-here", { hidden: true });
   els.chips.appendChild(els.here);
+  els.seg = document.getElementById("segbar");
 }
 
 // Badges roll up from the sub-screens to the tab, and only where there is
@@ -462,14 +468,11 @@ function buildNav() {
 // carry none until the store grows the fact.
 function tabBadge(id) {
   const car = store.car || {};
-  if (id === "car") return store.connected ? { text: "", tone: "ok" } : null;
-  if (id === "faults") {
+  if (id === "home") return store.connected ? { text: "", tone: "ok" } : null;
+  if (id === "vehicle") {
     const n = (car.active_faults || []).length;
     if (n) return { text: String(n), tone: "bad" };
     if (car.readiness && !car.readiness.ready) return { text: "!", tone: "warn" };
-    return null;
-  }
-  if (id === "care") {
     const due = car.service && car.service.due ? car.service.due : 0;
     return due ? { text: String(due), tone: "warn" } : null;
   }
@@ -477,7 +480,34 @@ function tabBadge(id) {
 }
 
 let chipsFor = null;
+let segFor = null;
 let scrolledChip = null;
+
+// What the chip row offers for a tab: its groups (by their first visible
+// screen), or its screens when it has no groups and more than one of them.
+function chipItems(t) {
+  if (!t) return [];
+  if (t.grouped) {
+    return t.groups
+      .map((g) => ({ key: "g:" + g.id, label: g.label,
+                     target: g.views.find((v) => !hiddenView(v)), write: false }))
+      .filter((c) => c.target);
+  }
+  const vis = t.views.filter((v) => !hiddenView(v));
+  return vis.length > 1
+    ? vis.map((v) => ({ key: "v:" + v.id, label: v.label, target: v, write: !!v.write }))
+    : [];
+}
+
+function chipButton(key, label, target, write) {
+  // data-write marks the chips that can ever lock, so the stylesheet reserves
+  // the lock glyph's space on those and only those.
+  return h("button.chip", {
+    type: "button",
+    data: write ? { key, view: target.id, write: "1" } : { key, view: target.id },
+    onclick: () => goto(target.id),
+  }, label);
+}
 
 function paintNavState() {
   buildNav();
@@ -499,65 +529,54 @@ function paintNavState() {
     }
   }
 
-  // The chips are rebuilt when the tab changes and not otherwise: inside a
-  // tab only their state moves, and replacing a row of buttons under a
-  // travelling thumb is the bug described above.
+  // THE CHIP ROW SHOWS A TAB'S GROUPS WHEN IT HAS THEM, AND ITS VIEWS WHEN IT
+  // DOES NOT. Vehicle has six groups; Agent has two views; a tab with one view
+  // has nothing to choose between and no row. Rebuilt when the TAB changes and
+  // never otherwise, for the reason at the top of this section.
   if (chipsFor !== tab) {
     chipsFor = tab;
-    for (const old of els.chips.querySelectorAll(".chip[data-view]")) old.remove();
+    for (const old of els.chips.querySelectorAll(".chip[data-key]")) old.remove();
     const t = TABS.find((x) => x.id === tab);
-    for (const v of (t ? t.views : [])) {
-      if (hiddenView(v)) continue;
-      els.chips.appendChild(h("button.chip", {
-        type: "button",
-        // data-write marks the chips that can ever lock, so the stylesheet
-        // reserves the lock glyph's space on those and only those. A chip
-        // that cannot lock is not padded for a state it will never reach.
-        data: v.write ? { view: v.id, write: "1" } : { view: v.id },
-        onclick: () => goto(v.id),
-      }, v.label));
-    }
+    for (const c of chipItems(t)) els.chips.appendChild(chipButton(c.key, c.label, c.target, c.write));
+    // Home has no row at all, decided per TAB so it can only change with a tab
+    // tap. Every other tab keeps the row, because the lead chip ("Car connected
+    // -- open Home") can appear there at any moment and must not move anything.
+    document.getElementById("app").dataset.subbar = (tab === "home" && !cameFrom) ? "0" : "1";
   }
 
-  // A screen that is off the navigation names itself here instead of lighting
-  // a tab it does not belong to. Pretending the vehicle report is "in" Faults
-  // would put the app back in the business of showing you a position it made
-  // up, which is what the rail did.
+  // THE SEGMENT ROW: the screens inside the current group, when there is more
+  // than one. Rebuilt when the GROUP changes.
+  const t = TABS.find((x) => x.id === tab);
+  const group = t && t.grouped && here ? here.group : null;
+  if (segFor !== group) {
+    segFor = group;
+    clear(els.seg);
+    const g = group ? t.groups.find((x) => x.id === group) : null;
+    const vis = g ? g.views.filter((v) => !hiddenView(v)) : [];
+    els.seg.hidden = vis.length < 2;
+    if (vis.length > 1) for (const v of vis) els.seg.appendChild(chipButton("v:" + v.id, v.label, v, !!v.write));
+  }
+
   els.here.hidden = !(here && here.off);
   if (here && here.off) els.here.textContent = here.title;
 
   const driving = store.state === "driving";
-  for (const c of els.chips.querySelectorAll(".chip[data-view]")) {
-    const v = VIEWS.find((x) => x.id === c.dataset.view);
-    if (here && here.id === v.id) c.setAttribute("aria-current", "page");
+  for (const c of [...els.chips.querySelectorAll(".chip[data-key]"),
+                   ...els.seg.querySelectorAll(".chip[data-key]")]) {
+    const key = c.dataset.key;
+    const isGroup = key.startsWith("g:");
+    const cur = here && (isGroup ? here.group === key.slice(2) : here.id === key.slice(2));
+    if (cur) c.setAttribute("aria-current", "page");
     else c.removeAttribute("aria-current");
     // Write-capable screens grey out while the car is moving; they never
-    // vanish. A control that disappears is a control somebody hunts for at
-    // 60 mph, which is worse than a control they cannot press.
-    //
-    // THE LABEL DOES NOT CHANGE, and that is the whole point of the lock
-    // glyph. Appending " · stopped only" took "Resets" from six characters to
-    // twenty-one -- about 124px -- so the three chips after it slid sideways
-    // the instant SPEED crossed 3 and slid back when it dropped. Speed is
-    // noisy at walking pace, so that fires exactly at the traffic light where
-    // somebody is reaching for a chip. A box that changes size under a thumb
-    // is the same defect as a button rebuilt under a thumb. The reason lives
-    // in the title and in aria-disabled, where it can be read at a stop
-    // without moving anything.
-    const block = !!v.write && driving;
+    // vanish, and THE LABEL DOES NOT CHANGE (see the history of this loop).
+    const v = VIEWS.find((x) => x.id === c.dataset.view);
+    const block = !isGroup && !!(v && v.write) && driving;
     c.disabled = block;
     c.classList.toggle("chip-locked", block);
     c.setAttribute("aria-disabled", block ? "true" : "false");
-    if (c.title !== (block ? "Available when you stop" : "")) {
-      c.title = block ? "Available when you stop" : "";
-    }
-    // Guarded: this runs four times a second, and replacing a text node that
-    // has not changed is how the chip row stops accepting a fling.
-    if (c.firstChild && c.firstChild.nodeValue !== v.label) {
-      c.firstChild.nodeValue = v.label;
-    } else if (!c.firstChild) {
-      c.textContent = v.label;
-    }
+    const why = block ? "Available when you stop" : "";
+    if (c.title !== why) c.title = why;
   }
   // Only when the current chip actually changed. This runs four times a
   // second while the car is connected, and scrolling a container under a
@@ -597,111 +616,51 @@ function paintLead() {
   // screen or have said with a tap that they would rather be elsewhere.
   const want = auto.mode === "connect" ? store.connected
     : auto.mode === "moving" ? (store.values.SPEED || 0) > 3 : false;
-  const show = want && tabOf(current) !== "car" && !overridden;
+  const show = want && tabOf(current) !== "home" && !overridden;
   lead.style.visibility = show ? "visible" : "hidden";
   if (show) {
     lead.dataset.go = HOME;
-    lead.textContent = auto.mode === "moving" ? "Car moving — open the hub"
-                                              : "Car connected — open the hub";
+    lead.textContent = auto.mode === "moving" ? "Car moving — open Home"
+                                              : "Car connected — open Home";
     lead.classList.add("chip-link");
   }
 }
 
-// ------------------------------------------------------- the vehicle bar
+// ------------------------------------------------------------- the top bar
 //
-// The vehicle identity never leaves the screen: every scan tool that has ever
-// shown somebody the wrong car's data got there by letting it.
+// OmaCar | the page on the left, the clock in the middle, and on the right the
+// car and where its numbers came from. The badge never leaves the screen: the
+// failure that matters is reading the simulator's numbers as your own car's.
+//
+// THE CAR IS ALWAYS NAMED. On Home it is the page title ("OmaCar | CR-Z", as
+// the mockups have it); everywhere else it sits at the right. Every scan tool
+// that has shown somebody the wrong car's data got there by letting it slip.
 function buildBar() {
-  if (els.name) return;
+  if (els.page) return;
   const bar = document.getElementById("vbar");
-  els.name = h("div.name", "OmaCar");
-  els.sub = h("div.sub", "connecting…");
-  bar.appendChild(h("div.id", els.name, els.sub));
-  bar.appendChild(h("div.spacer"));
+  els.page = h("span.tb-page");
+  bar.appendChild(h("div.tb-left", h("span.tb-mark", "OmaCar"),
+                    h("span.tb-div", { "aria-hidden": "true" }), els.page));
+  els.clock = h("div.tb-clock.display-num");
+  bar.appendChild(els.clock);
 
-  // WHICH MODE THE CAR IS IN, KEPT IN FRAME.
-  //
-  // The cockpit design carries the selected mode in its header and tints the
-  // interface with it: ECON green, NORMAL blue, SPORT red. The first two port
-  // straight across. The third does not, and this is a deliberate divergence
-  // rather than a miss.
-  //
-  // In this app red is the fault colour. It is what an active DTC wears, what
-  // a coolant temperature over 105 wears, and what the launcher marks a failed
-  // step with. A red chip in the one bar that is never off the screen reads as
-  // something being WRONG with the car, and SPORT is not a fault -- it is a
-  // switch position somebody chose. So SPORT takes amber, which carries
-  // "sharper, working harder" without borrowing the word this palette already
-  // uses for trouble.
-  //
-  // It is also always a WORD, never a bare colour: looks.js ships a night
-  // palette in which every hue collapses to a lightness, and a driver two
-  // hours into the dark should not have to distinguish three tints.
-  els.mode = h("span.pill.mode-pill", { hidden: true,
-    title: "The drive mode you last marked. OmaCar cannot read it from the "
-         + "car — no identifier reports it — so this is what you wrote down." });
-  bar.appendChild(els.mode);
-  refreshDriveMode();
-  // The drive screen is where it gets marked; this is how the bar hears about
-  // it without either file importing the other.
-  document.addEventListener("omacar:drivemode", (e) => {
-    paintDriveMode((e && e.detail) || null);
-  });
-
+  const right = h("div.tb-right");
+  els.name = h("span.tb-car");
+  els.src = h("span.tb-src");
   // Visible, not subtle. The failure that matters is thinking you are private
-  // when you are not, and this is the one place always in frame.
+  // when you are not.
   els.priv = h("button.pill.info.privacy-pill", {
     type: "button", hidden: true,
     title: "Identifying details are hidden. Tap to show them again.",
     onclick: () => { privacy.on = false; paintBar(); go(); },
   }, "VIN hidden");
-  bar.appendChild(els.priv);
+  right.append(els.name, els.src, els.priv);
 
-  // Amber and explicit, not a quiet blue "simulated". This bar is the one thing
-  // always on screen, and the failure that matters is reading invented numbers
-  // as your own car's -- the same reason the bar widget wears a stripe.
-  els.sim = h("span.pill.warn.demo-pill", { hidden: true }, "DEMO · not your car");
-  bar.appendChild(els.sim);
-
-  els.odo = h("span.odo");
-  els.odoWrap = h("div.stat", { hidden: true }, h("span.muted", "ODOMETER"), els.odo);
-  bar.appendChild(els.odoWrap);
-
-  els.dot = h("span.dot");
-  els.stateTxt = h("span");
-  bar.appendChild(h("div.stat", els.dot, els.stateTxt));
-
-  els.proto = h("span.muted");
-  bar.appendChild(h("div.stat", els.proto));
-
-  // THE ASSISTANT, REACHABLE BY HAND. Vortex is summoned by holding SUPER+M,
-  // which on a tablet bolted to a dashboard means never. Every other piece of
-  // the integration already worked -- the orb layers correctly over a
-  // fullscreen kiosk, the context provider tells it what car is plugged in,
-  // and the car's own tools are lent to the voice loop -- and the whole thing
-  // was unreachable for want of something to touch.
-  //
-  // Hidden until asked: a button for software you have not installed is a
-  // worse greeting than no button, and `present` summons nothing to find out.
-  // ---- day and night -----------------------------------------------------
-  //
-  // THERE WAS NO SUCH CONTROL, AND SOMEBODY WENT LOOKING FOR IT. The theme
-  // system has had a light/dark mode per theme from the start, and the only
-  // way to change it was the Themes screen. Next to it in this bar sits the
-  // assistant, whose glyph is a disc with rays -- so the thing that looks
-  // most like a brightness control was the one that opens the advisor, and
-  // "the light/dark toggle in the header does not work" is a fair description
-  // of a button that was never that.
-  //
-  // It switches between the light theme and the dark one and REMEMBERS the
-  // pair, so going back returns to the dark theme you were actually wearing
-  // rather than whichever dark one sorts first. In a car this is the day/night
-  // switch, which is a thing you reach for while moving.
   els.daynight = h("button.vbar-btn", {
     type: "button", id: "btn-daynight", hidden: true,
     onclick: () => toggleDayNight(),
   }, icon(ICONS.moon, 20));
-  bar.appendChild(els.daynight);
+  right.appendChild(els.daynight);
   loadThemeModes();
 
   els.orb = h("button.vbar-btn", {
@@ -714,16 +673,27 @@ function buildBar() {
       } catch (e) { toast(String((e && e.message) || e), "bad"); }
     },
   }, icon(ICONS.advisor, 20));
-  bar.appendChild(els.orb);
+  right.appendChild(els.orb);
   api.assistant("present").then((r) => {
     if (r && r.present) els.orb.hidden = false;
   }).catch(() => { /* an older server, or none: no button */ });
 
-  bar.appendChild(h("button.vbar-btn", {
+  right.appendChild(h("button.vbar-btn", {
     type: "button", id: "btn-settings",
-    "aria-label": "Settings", title: "Units, privacy, learn mode",
+    "aria-label": "Settings", title: "Units, privacy, looks, learn mode",
     onclick: openSettings,
   }, icon(GEAR, 20)));
+  bar.appendChild(right);
+
+  tickClock();
+  setInterval(tickClock, 15000);
+}
+
+// 9:41, not 9:41 AM: the mockups' clock, and the one a dashboard shows.
+function tickClock() {
+  const s = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    .replace(/\s?[AP]M$/i, "");
+  if (els.clock.textContent !== s) els.clock.textContent = s;
 }
 
 // What the two sides of the toggle are, learned from the server once.
@@ -779,59 +749,23 @@ async function toggleDayNight() {
   }
 }
 
-function paintDriveMode(mode) {
-  if (!els.mode) return;
-  if (!mode) { els.mode.hidden = true; return; }
-  els.mode.hidden = false;
-  els.mode.textContent = String(mode).toUpperCase();
-  els.mode.dataset.mode = mode;
-}
-
-function refreshDriveMode() {
-  api.driveMode().then((d) => paintDriveMode(d && d.mode))
-    .catch(() => { /* an older server: no chip, which is the honest default */ });
-}
-
-
 function paintBar() {
   buildBar();
   const car = store.car;
-  if (!car) {
-    els.name.textContent = "OmaCar";
-    // TWO DIFFERENT NOTHINGS, AND THEY HAVE DIFFERENT FIXES.
-    //
-    // "connecting…" forever is what this said when the app could not reach its
-    // OWN SERVER, which reads as a car that has not answered yet. One of those
-    // is solved by checking a cable in a footwell and the other by starting a
-    // daemon, and sending somebody to the wrong one in a car park at night is
-    // the kind of small lie this tool exists not to tell.
-    els.sub.textContent = store.error
-      ? "cannot reach the OmaCar server — omacar server status"
-      : "connecting…";
-    return;
-  }
-  els.name.textContent = car.name || "Unknown vehicle";
-  els.sub.textContent = [car.vehicle && car.vehicle.trim, car.vehicle && car.vehicle.engine,
-                         maskVinShort(car.vehicle && car.vehicle.vin)].filter(Boolean).join("  ·  ");
+  const b = badge(car, store.live, store.error);
+  if (els.src.textContent !== b.text) els.src.textContent = b.text;
+  const cls = "tb-src" + (b.tone ? " " + b.tone : "");
+  if (els.src.className !== cls) els.src.className = cls;
+  els.src.title = b.title;
 
+  const onHome = current && current.id === HOME;
+  const model = car ? ((car.vehicle && car.vehicle.model) || car.title || "") : "";
+  const page = onHome ? (model || "Home") : (current ? current.title : "");
+  if (els.page.textContent !== page) els.page.textContent = page;
+  const who = car ? (car.title || car.name || "") : "";
+  els.name.hidden = onHome || !who;
+  if (els.name.textContent !== who) els.name.textContent = who;
   els.priv.hidden = !privacy.on;
-  // Two kinds of not-a-car, both named before their numbers. The simulator
-  // says so in its own record; the bench is a real adapter path talking to an
-  // emulator on a pseudo-terminal, which the daemon reports as the port kind.
-  const bench = !car.simulated && !!(store.live && store.live.kind === "bench");
-  els.sim.textContent = bench ? "BENCH · emulator, not a car" : "DEMO · not your car";
-  els.sim.hidden = !(car.simulated || bench);
-  els.odoWrap.hidden = !car.odometer;
-  if (car.odometer) els.odo.textContent = dist(car.odometer);
-
-  const state = store.state;
-  const tone = state === "driving" ? "ok" : state === "idling" ? "warn"
-    : state === "parked" ? "info" : "";
-  els.dot.className = "dot" + (tone ? " " + tone : "") + (state === "driving" ? " live" : "");
-  els.stateTxt.textContent = state === "driving"
-    ? `${Math.round((store.values.SPEED || 0) * U.units.km)} ${U.units.speed}`
-    : state;
-  els.proto.textContent = car.live && car.live.protocol ? car.live.protocol : "no link";
 }
 
 // ------------------------------------------------------- the settings sheet
@@ -987,6 +921,9 @@ function openSettings() {
     rows.appendChild(row("Learn the car, and the app", "The topics, in one place",
       "Open", () => { close(); goto("learn"); }));
 
+    rows.appendChild(row("Effects", "Scanner and Leviathan, full screen",
+      "Open", () => { close(); goto("effects"); }));
+
     rows.appendChild(row("Vehicle report", "The page you print for somebody else",
       "Open", () => { close(); goto("report"); }));
 
@@ -1032,7 +969,7 @@ let overridden = false;
 // What this app has, told to the server, so nothing else keeps a second copy
 // of a registry that lives here and grows with whatever plugins are installed.
 function screens() {
-  const list = VIEWS.filter((v) => !v.off && !hiddenView(v))
+  const list = VIEWS.filter((v) => (!v.off || v.askable) && !hiddenView(v))
     .map((v) => ({ id: v.id, label: v.label, title: v.title, tab: v.tab }));
   fetch(withToken("/api/screen"), {
     method: "POST", headers: { "Content-Type": "application/json" },

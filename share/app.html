@@ -99,6 +99,10 @@
 <div id="app" class="app" data-booting="1">
   <header class="vbar" id="vbar"></header>
 
+  <!-- The screens inside a Vehicle group (Diagnose: Codes, Scan, Readiness).
+       Built by main.js, hidden whenever the group has only one screen. -->
+  <div class="segbar" id="segbar" hidden></div>
+
   <main class="stage" id="stage" tabindex="-1"></main>
 
   <!-- THE NAVIGATION COMES AFTER THE STAGE, AND THAT IS DELIBERATE.

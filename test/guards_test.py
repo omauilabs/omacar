@@ -2656,6 +2656,28 @@ check("the night palette is the cockpit's own background",
       _ported["cockpit-night"]["background"], "#111416")
 check("and the day one is a light mode", _ported["cockpit-day"]["mode"], "light")
 
+# ----------------------------------------------------- the navigation redesign
+head("The five new tabs lost no screen")
+import re as _re_nav  # noqa: E402
+_main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
+_ids = set(_re_nav.findall(r'\bid:\s*"([a-z0-9-]+)"', _main))
+_alias_src = _main.split("const ALIASES", 1)[1].split("};", 1)[0] if "const ALIASES" in _main else ""
+_alias = dict(_re_nav.findall(r'^\s*([a-z0-9]+):\s*"([a-z0-9-]+)"', _alias_src, _re_nav.M))
+# Every view id the five old tabs and OFF_NAV had on 2026-09-17 (a623a17).
+_OLD = ["hub", "drive", "live", "ima", "launcher", "omaplay", "music", "effects",
+        "dash", "garage", "codes", "scan", "health", "data", "replay", "tests",
+        "write", "service", "resets", "concerns", "history", "documents",
+        "nursery", "advisor", "report", "learn", "themes"]
+check("every old view still routes, itself or through an alias",
+      [v for v in _OLD if v not in _ids and _alias.get(v) not in _ids], [])
+check("the tabs are the mockups' five, in their order",
+      _re_nav.findall(r'^  \{ id: "([a-z]+)", label: "[A-Za-z]+", icon:', _main, _re_nav.M),
+      ["home", "navigation", "cameras", "vehicle", "agent"])
+# `=(?!=)`: an assignment, not the `===` comparisons in goto() and honourAsk().
+# One writer today (a623a17: goto()), and it must stay one.
+check("nothing but a tap writes the hash: goto() is the only writer in main.js",
+      len(_re_nav.findall(r"location\.hash\s*=(?!=)", _main)), 1)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
