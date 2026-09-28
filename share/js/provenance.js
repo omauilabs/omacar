@@ -5,8 +5,11 @@
 // matters is reading invented numbers as your own car's, so the simulator and
 // the bench are named before anything else.
 
+// serverError is store.noServer: true whenever the server has stopped
+// answering, including long after the first snapshot. A snapshot still in
+// hand is not a reason to say anything else -- it is exactly what goes stale.
 export function badge(car, live, serverError) {
-  if (serverError && !car) {
+  if (serverError) {
     return { text: "NO SERVER", tone: "bad",
              title: "cannot reach the OmaCar server — omacar server status" };
   }

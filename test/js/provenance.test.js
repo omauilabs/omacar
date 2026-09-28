@@ -3,6 +3,10 @@ import { badge, footerLine, sourceKey } from "../js/provenance.js";
 
 export default [
   ["no server says so, not 'no car'", () => eq(badge(null, null, "404").text, "NO SERVER")],
+  // The server went away after the first snapshot. The snapshot is still in
+  // hand and still says connected; it is not current any more.
+  ["losing the server after boot is still no server", () =>
+    eq(badge({ live: { connected: true } }, null, true).text, "NO SERVER")],
   ["before the first snapshot it is starting", () => eq(badge(null, null, null).text, "STARTING")],
   ["the simulator is named before its numbers", () =>
     eq(badge({ simulated: true }, { connected: true }).text, "SIMULATED")],

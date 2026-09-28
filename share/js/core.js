@@ -334,7 +334,8 @@ class Store extends EventTarget {
     this.knowledge = null;    // dtc.json
     this.aiOn = false;
     this.nurseryOn = false;
-    this.error = null;
+    this.error = null;        // why the last snapshot failed, or null
+    this.liveError = null;    // why the last live sample failed, or null
   }
   emit(what) { this.dispatchEvent(new CustomEvent(what)); }
   on(what, fn) { this.addEventListener(what, fn); return () => this.removeEventListener(what, fn); }
@@ -368,13 +369,44 @@ class Store extends EventTarget {
   }
 
   async refreshLive() {
-    try { this.live = await api.live(); } catch { this.live = null; }
+    try {
+      this.live = await api.live();
+      this.liveError = null;
+    } catch (e) {
+      this.live = null;
+      this.liveError = String((e && e.message) || e);
+    }
     this.emit("live");
   }
 
+  // The fast clock stopped (main.js, on the way to a screen that has none).
+  // Its sample goes with it; a failure it saw does not, because that is still
+  // the last thing known about the server. The snapshot clock owns it from
+  // here, and clears it the next time it gets an answer.
+  dropLive() {
+    if (this.liveError) this.error = this.liveError;
+    this.live = null;
+    this.liveError = null;
+  }
+
+  // THE SERVER STOPPED ANSWERING, whether before the first snapshot or long
+  // after it. Only a failure with nothing newer behind it counts: a live
+  // sample in hand means the server is there.
+  get noServer() { return !this.live && !!(this.liveError || this.error); }
+
   // The current sample if the fast poller has one, the snapshot's copy if not,
   // so a view is right the moment it mounts rather than after the first tick.
-  get sample() { return this.live || (this.car && this.car.live) || {}; }
+  //
+  // BUT NOT THE SNAPSHOT'S COPY ONCE THE SERVER HAS GONE. That copy was taken
+  // while the server could still see the car, and it says connected: true for
+  // ever. Handing it on made every tile draw the last numbers the server ever
+  // sent as live, under a badge that said so, for as long as the server stayed
+  // down. With no server there is no current sample at all.
+  get sample() {
+    if (this.live) return this.live;
+    if (this.noServer) return {};
+    return (this.car && this.car.live) || {};
+  }
   get values() { return this.sample.values || {}; }
   get connected() { return !!this.sample.connected; }
   get state() {

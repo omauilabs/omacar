@@ -161,6 +161,75 @@ VEHICLE_PROBE = r"""
 """
 
 
+# Appended to a third COPY of app.html, served by a real OmaCar server that the
+# test STOPS partway through. The dead-server check below only ever covered a
+# server that was absent from the start; this is the other half. The snapshot
+# has arrived and says the car is connected, then every request starts
+# failing -- and the app used to go on drawing that snapshot's numbers as live,
+# under a badge that said LIVE (or SIMULATED), for as long as the server stayed
+# down.
+#
+# The snapshot's own copy of the sample is marked connected before the server
+# goes, so the check means the same thing on a machine with no car behind its
+# server: that copy is exactly what the app fell back to.
+#
+# %(kill)d is the port of a one-request helper in this file that terminates
+# the server process and only then answers, so by the time the page moves on
+# the server really is gone.
+LOST_PROBE = r"""
+<script type="module">
+import { store } from "./js/core.js";
+import { READINGS } from "./js/readings.js";
+window.__st = store;
+window.__rd = READINGS;
+</script>
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const txt = (sel) => { const el = document.querySelector(sel); return el ? el.textContent : null; };
+  const read = () => ({
+    badge: txt(".tb-src"),
+    // [state, src, whether it reads a PID]. A reading with no PID (economy
+    // today, from the snapshot's own record) may go on drawing that record;
+    // one that reads a PID is only ever the current sample.
+    readings: [...document.querySelectorAll(".home [data-state]")].map((el) => {
+      const id = el.dataset.reading
+        || (el.classList.contains("dial-rpm") ? "rpm" : "speed");
+      return [el.dataset.state, el.dataset.src || "",
+              !!(window.__rd[id] && window.__rd[id].pid)];
+    }),
+    rpm: txt(".dial-rpm"),
+    foot: txt(".home-prov"),
+  });
+  await wait(3500);
+  const s = window.__st;
+  s.car.live = Object.assign({}, s.car.live || {}, {
+    connected: true, supported: ["SPEED", "RPM", "COOLANT_TEMP"],
+    values: Object.assign({}, (s.car.live && s.car.live.values) || {},
+                          { SPEED: 0, RPM: 800, COOLANT_TEMP: 90 }) });
+  s.emit("car");
+  await wait(400);
+  const out = { before: read() };
+  await fetch("http://127.0.0.1:%(kill)d/kill", { mode: "no-cors" }).catch(() => {});
+  await wait(2500);
+  out.home = read();
+  // GAUGES, the screen the launcher hands over to for the whole drive.
+  location.hash = "#drive";
+  await wait(1500);
+  out.gauges = { badge: txt(".tb-src"), state: (document.querySelector(".drive") || {}).dataset
+                   ? document.querySelector(".drive").dataset.state : null,
+                 speed: txt(".drive-speed") };
+  // A SCREEN WITH NO FAST CLOCK. Only the twenty-second snapshot poll runs
+  // here, so what was already learned must not be forgotten on the way in.
+  location.hash = "#service";
+  await wait(1500);
+  out.service = { badge: txt(".tb-src") };
+  document.title = "LOST " + JSON.stringify(out);
+})();
+</script>
+"""
+
+
 def ok(msg):
     print(f"    ok  {msg}")
 
@@ -193,6 +262,97 @@ def python_for_server():
     venv = os.path.join(os.path.expanduser("~"), ".local", "share", "omacar",
                         "venv", "bin", "python")
     return venv if os.path.exists(venv) else sys.executable
+
+
+def lost_server_check(exe):
+    """Stop the OmaCar server mid-run and read what the app then claims."""
+    import http.server
+    import threading
+
+    work = tempfile.mkdtemp()
+    copy = os.path.join(work, "share")
+    shutil.copytree(SHARE, copy)
+    kport = free_port()
+    with open(os.path.join(copy, "app.html"), "a", encoding="utf-8") as f:
+        f.write(LOST_PROBE % {"kill": kport})
+    port = free_port()
+    srv = subprocess.Popen(
+        [python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    killed = []
+
+    class Kill(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if not killed:
+                srv.terminate()
+                try:
+                    srv.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    srv.kill()
+                    srv.wait(timeout=5)
+                killed.append(srv.returncode)
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    helper = http.server.ThreadingHTTPServer(("127.0.0.1", kport), Kill)
+    threading.Thread(target=helper.serve_forever, daemon=True).start()
+    prof = tempfile.mkdtemp()
+    try:
+        for _ in range(40):
+            time.sleep(0.25)
+            try:
+                with socket.create_connection(("127.0.0.1", port), 0.25):
+                    break
+            except OSError:
+                continue
+        r = subprocess.run(
+            [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+             f"--user-data-dir={prof}", "--virtual-time-budget=15000",
+             "--dump-dom", f"http://127.0.0.1:{port}/app.html"],
+            capture_output=True, text=True, timeout=180)
+        m = re.search(r"<title>LOST (\{.*?\})</title>", r.stdout or "", re.S)
+        check("the server really was stopped partway through the run", bool(killed))
+        if not m:
+            bad("the lost-server probe returned nothing")
+            return
+        g = json.loads(m.group(1).replace("&quot;", '"'))
+        before, home = g.get("before") or {}, g.get("home") or {}
+        check(f"before it went, Home had painted its readings "
+              f"(badge {before.get('badge')!r}, readings {before.get('readings')})",
+              any(pid for _, _, pid in before.get("readings") or [])
+              and before.get("badge") != "NO SERVER")
+        check(f"once it has gone, the badge says NO SERVER (got {home.get('badge')!r})",
+              home.get("badge") == "NO SERVER")
+        rd = home.get("readings") or []
+        check(f"and no reading of the car stays live on Home (got {rd})",
+              any(pid for _, _, pid in rd)
+              and not any(st == "live" for st, _, pid in rd if pid))
+        check("while one drawn from a record says it is recorded or simulated, "
+              "never OBD",
+              all(src in ("recorded", "sim") for st, src, pid in rd
+                  if st == "live" and not pid))
+        check(f"the dial names the server (got {home.get('rpm')!r})",
+              home.get("rpm") == "No server")
+        check(f"and so does Home's footer (got {home.get('foot')!r})",
+              "cannot reach its own server" in (home.get("foot") or ""))
+        gg = g.get("gauges") or {}
+        check(f"Gauges follows the same rule: NO SERVER, no link, no speed "
+              f"(got {gg})",
+              gg.get("badge") == "NO SERVER" and gg.get("state") == "offline"
+              and not re.search(r"\d", gg.get("speed") or ""))
+        check(f"and a screen with no fast clock still knows "
+              f"(got {(g.get('service') or {}).get('badge')!r})",
+              (g.get("service") or {}).get("badge") == "NO SERVER")
+    finally:
+        helper.shutdown()
+        if srv.poll() is None:
+            srv.kill()
+        shutil.rmtree(prof, ignore_errors=True)
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def main():
@@ -495,6 +655,8 @@ def main():
                 vsrv.kill()
             shutil.rmtree(vprof, ignore_errors=True)
             shutil.rmtree(vprobe, ignore_errors=True)
+        # ---- and the server going away after the first paint ------------
+        lost_server_check(exe)
     finally:
         server.terminate()
         try:

@@ -70,11 +70,12 @@ function dialCard() {
       rpm.dataset.state = rpmState;
       if (rpmState === "live") rpm.dataset.src = sourceKey(car, s);
       else delete rpm.dataset.src;
-      // NAME THE SERVER, NEVER THE CAR. store.error && !store.car means
-      // OmaCar cannot reach its own daemon -- nothing below this line knows
-      // anything about a vehicle, so "Car off" would send somebody to the
-      // OBD cable when the fix is `omacar server status`.
-      const noServer = store.error && !store.car;
+      // NAME THE SERVER, NEVER THE CAR. store.noServer means OmaCar cannot
+      // reach its own server, at boot or at any point after it -- nothing
+      // below this line knows anything about a vehicle, so a word about the
+      // car would send somebody to the OBD cable when the fix is
+      // `omacar server status`.
+      const noServer = store.noServer;
       text(rpm, noServer ? "No server"
         : store.connected ? `${rpmReading.get(v, s, car).v} rpm` : "Car off");
       begin.hidden = store.connected || noServer;
@@ -253,7 +254,7 @@ export default function home(root) {
     for (const c of made.values()) if (c.node.isConnected) c.paint();
     // NAME THE SERVER, NEVER THE CAR (see dialCard()). footerLine() describes
     // a vehicle's data; with no server there is no vehicle to describe.
-    const noServer = store.error && !store.car;
+    const noServer = store.noServer;
     text(prov, noServer ? "OmaCar cannot reach its own server — omacar server status"
                         : footerLine(store.car, store.live));
   }

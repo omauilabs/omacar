@@ -409,14 +409,15 @@ function go() {
   // screen stayed locked and a service reset could not be run at all; or stop
   // at a light, open Resets, pull away, and it stayed unlocked at 30 mph.
   // Clearing it makes the fallback the twenty-second snapshot, which is old
-  // but honest about being old.
+  // but honest about being old -- and, if the server was found gone while the
+  // fast clock ran, still gone (see dropLive()).
   clearInterval(fastTimer);
   fastTimer = null;
   if (view.fast) {
     store.refreshLive();
     fastTimer = setInterval(() => store.refreshLive(), 250);
   } else {
-    store.live = null;
+    store.dropLive();
   }
   document.title = `OmaCar — ${view.title}`;
 }
@@ -768,7 +769,7 @@ async function toggleDayNight() {
 function paintBar() {
   buildBar();
   const car = store.car;
-  const b = badge(car, store.live, store.error);
+  const b = badge(car, store.live, store.noServer);
   if (els.src.textContent !== b.text) els.src.textContent = b.text;
   const cls = "tb-src" + (b.tone ? " " + b.tone : "");
   if (els.src.className !== cls) els.src.className = cls;
