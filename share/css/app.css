@@ -1432,34 +1432,43 @@ ul.tight li { margin-bottom: 5px; }
    status colours below are LIGHTNESS variants of red rather than hues --
    severity is carried by brightness, the one channel still available. */
 
-/* !important throughout, and it is not laziness.
-   applyTheme() writes the live Omarchy palette as INLINE custom properties on
-   documentElement, and an inline declaration outranks every author rule -- so
-   without this a look could only change the handful of tokens theme.py does
-   not emit. The visible cost was that Night · red left the navigation looking
-   exactly as it did in the normal look, because the active tab's three signals
-   are --raise, --ink and the focus ring's --info, all of which theme.py emits.
-   The same trap is already worked around twice in this tree: the print block
-   in app.html and the chart palette in charts-d3.js. */
+/* NO !important HERE. Task 10 took it back out.
+   It earned its keep once, when applyTheme() wrote the live Omarchy palette as
+   INLINE custom properties on documentElement -- an inline declaration
+   outranks every author rule, so only !important let a look override it. That
+   is no longer how the theme arrives (see main.js's "APPLIED AS A
+   STYLESHEET" note): applyTheme() now applies it only when the look IS
+   "omarchy", as an appended <style> sheet, at :root's own specificity. Plain
+   specificity already does the job -- :root[data-look="..."] is (0,2,0),
+   which beats a bare :root's (0,1,0) with or without !important -- so the
+   suffix was pure liability: test/design_test.py reads these tokens out of
+   this file's text with a regex that cannot see through an "!important"
+   suffix, so every token below was invisible to the contrast check that
+   exists to catch exactly this palette going wrong. The print block in
+   app.html and the chart palette in charts-d3.js solve the INLINE-property
+   problem the same old way; they are a different cascade layer and untouched
+   here. */
 :root[data-look="green"] {
-  --ground: #000806!important;  --panel: #02120C!important;  --raise: #051E14!important;
-  --edge: #0B3222!important;  --hair: #071E14!important;
-  --ink: #7CFFB0!important;  --dim: #46D189!important;  --faint: #2A8A58!important;  --ghost: #1A5237!important;
-  --ok: #4AFF9A!important;  --warn: #B6FF6A!important;  --bad: #FF8A5A!important;  --info: #5AFFD0!important;
-  --ok-bg: rgba(74,255,154,.12)!important;
-  --warn-bg: rgba(182,255,106,.12)!important;
-  --bad-bg: rgba(255,138,90,.13)!important;
-  --info-bg: rgba(90,255,208,.12)!important;
-  --track: #0E3A26!important;
-  --bright: #9CFFC4!important;   /* no white anywhere in this look */
-  --bright-2: #46D189!important;
+  --ground: #000806;  --panel: #02120C;  --raise: #051E14;
+  --edge: #0B3222;  --hair: #071E14;
+  --ink: #7CFFB0;  --dim: #46D189;  --faint: #2A8A58;  --ghost: #1A5237;
+  --ok: #4AFF9A;  --warn: #B6FF6A;  --bad: #FF8A5A;  --info: #5AFFD0;
+  --ok-bg: rgba(74,255,154,.12);
+  --warn-bg: rgba(182,255,106,.12);
+  --bad-bg: rgba(255,138,90,.13);
+  --info-bg: rgba(90,255,208,.12);
+  --track: #0E3A26;
+  --bright: #9CFFC4;   /* no white anywhere in this look */
+  --bright-2: #46D189;
   /* The tokens the desktop theme also emits. Without these a look overrode
      half the palette and inherited the other half, which reads as a bug. */
-  --panel-2: #04170F!important;  --edge-2: #14472F!important;
-  --accent: #4AFF9A!important;
-  --ai: #5AFFD0!important;  --ai-bg: rgba(90,255,208,.12)!important;
-  --on-ok: #001008!important;  --on-warn: #0A1000!important; --on-bad: #180600!important;
-  --on-info: #001410!important;  --on-ai: #001410!important;
+  --panel-2: #04170F;  --edge-2: #14472F;
+  --accent: #4AFF9A;
+  --ai: #5AFFD0;  --ai-bg: rgba(90,255,208,.12);
+  --on-ok: #001008;  --on-warn: #0A1000; --on-bad: #180600;
+  --on-info: #001410;  --on-ai: #001410;
+  --ink-2: #7FD99A; --accent: #3BEA7A; --accent-fill: #1F9E50;
+  --on-accent: #02140A; --rec: #F55240; --accent-bg: rgba(59, 234, 122, .12);
 }
 
 :root[data-look="day"] {
@@ -1480,73 +1489,79 @@ ul.tight li { margin-bottom: 5px; }
      follows the desktop; this one is a physical override for a condition the
      desktop knows nothing about, and a light theme's own palette is chosen for
      a room rather than for a windscreen at noon. */
-  --ground: #F2F4F3!important;  --panel: #FFFFFF!important;  --raise: #E8EDEB!important;
-  --edge: #CFD8D5!important;    --hair: #DFE6E4!important;
-  --ink: #0B1214!important;     --dim: #3C4B4E!important;
-  --faint: #61706F!important;   --ghost: #9AA8A6!important;
-  --ok: #1B7A4B!important;      --warn: #8A5A05!important;
-  --bad: #A32A1B!important;     --info: #17558F!important;
-  --ok-bg: rgba(27,122,75,.11)!important;
-  --warn-bg: rgba(138,90,5,.12)!important;
-  --bad-bg: rgba(163,42,27,.11)!important;
-  --info-bg: rgba(23,85,143,.11)!important;
-  --track: #D3DCD9!important;
+  --ground: #F2F4F3;  --panel: #FFFFFF;  --raise: #E8EDEB;
+  --edge: #CFD8D5;    --hair: #DFE6E4;
+  --ink: #0B1214;     --dim: #3C4B4E;
+  --faint: #61706F;   --ghost: #9AA8A6;
+  --ok: #1B7A4B;      --warn: #8A5A05;
+  --bad: #A32A1B;     --info: #17558F;
+  --ok-bg: rgba(27,122,75,.11);
+  --warn-bg: rgba(138,90,5,.12);
+  --bad-bg: rgba(163,42,27,.11);
+  --info-bg: rgba(23,85,143,.11);
+  --track: #D3DCD9;
   /* Inverted on purpose: --bright is "punch through the glare", and on a white
      ground the thing that punches through is black. */
-  --bright: #000000!important;
-  --bright-2: #2A3A3C!important;
-  --panel-2: #F7F9F8!important;  --edge-2: #BCC8C5!important;
-  --accent: #17558F!important;
-  --ai: #4B3FA8!important;  --ai-bg: rgba(75,63,168,.11)!important;
+  --bright: #000000;
+  --bright-2: #2A3A3C;
+  --panel-2: #F7F9F8;  --edge-2: #BCC8C5;
+  --accent: #17558F;
+  --ai: #4B3FA8;  --ai-bg: rgba(75,63,168,.11);
   /* Ink ON a solid semantic fill. White here, because these five are dark
      enough to carry it -- the opposite of every other look in this file. */
-  --on-ok: #FFFFFF!important;  --on-warn: #FFFFFF!important; --on-bad: #FFFFFF!important;
-  --on-info: #FFFFFF!important;  --on-ai: #FFFFFF!important;
+  --on-ok: #FFFFFF;  --on-warn: #FFFFFF; --on-bad: #FFFFFF;
+  --on-info: #FFFFFF;  --on-ai: #FFFFFF;
+  --ink-2: #33424B; --accent: #00708A; --accent-fill: #007C95;
+  --on-accent: #FFFFFF; --rec: #B8321F; --accent-bg: rgba(0, 112, 138, .10);
 }
 
 :root[data-look="dim"] {
   /* Same hues as the default, pulled well down. For a lit cabin at night where
      full brightness is a mirror in the windscreen. */
-  --ground: #040708!important;  --panel: #070B0D!important;  --raise: #0C1417!important;
-  --edge: #101A1E!important;  --hair: #0A1215!important;
-  --ink: #93A6A2!important;  --dim: #6A7C78!important;  --faint: #4A5A57!important;  --ghost: #2A3639!important;
-  --ok: #2F8A5C!important;  --warn: #997640!important;  --bad: #9A4038!important;  --info: #35708F!important;
-  --ok-bg: rgba(47,138,92,.10)!important;
-  --warn-bg: rgba(153,118,64,.10)!important;
-  --bad-bg: rgba(154,64,56,.10)!important;
-  --info-bg: rgba(53,112,143,.10)!important;
-  --track: #162126!important;
-  --bright: #A8B8B4!important;
-  --bright-2: #6A7C78!important;
-  --panel-2: #0A1114!important;  --edge-2: #16232A!important;
-  --accent: #35708F!important;
-  --ai: #5B4F9A!important;  --ai-bg: rgba(91,79,154,.10)!important;
-  --on-ok: #05100A!important;  --on-warn: #100C05!important; --on-bad: #100504!important;
-  --on-info: #040C10!important;  --on-ai: #08060F!important;
+  --ground: #040708;  --panel: #070B0D;  --raise: #0C1417;
+  --edge: #101A1E;  --hair: #0A1215;
+  --ink: #93A6A2;  --dim: #6A7C78;  --faint: #4A5A57;  --ghost: #2A3639;
+  --ok: #2F8A5C;  --warn: #997640;  --bad: #9A4038;  --info: #35708F;
+  --ok-bg: rgba(47,138,92,.10);
+  --warn-bg: rgba(153,118,64,.10);
+  --bad-bg: rgba(154,64,56,.10);
+  --info-bg: rgba(53,112,143,.10);
+  --track: #162126;
+  --bright: #A8B8B4;
+  --bright-2: #6A7C78;
+  --panel-2: #0A1114;  --edge-2: #16232A;
+  --accent: #35708F;
+  --ai: #5B4F9A;  --ai-bg: rgba(91,79,154,.10);
+  --on-ok: #05100A;  --on-warn: #100C05; --on-bad: #100504;
+  --on-info: #040C10;  --on-ai: #08060F;
+  --ink-2: #9AA6AE; --accent: #1A9FB8; --accent-fill: #177E8A;
+  --on-accent: #E6F6F9; --rec: #C2473A; --accent-bg: rgba(26, 159, 184, .12);
 }
 
 :root[data-look="red"] {
-  --ground:  #070101!important;  --panel:  #130303!important;  --raise: #200707!important;
-  --edge:    #3A1210!important;  --hair:   #1C0605!important;
-  --ink:     #FF7F68!important;  --dim:    #C95644!important;  --faint: #8E3A2E!important;  --ghost: #5A241C!important;
+  --ground:  #070101;  --panel:  #130303;  --raise: #200707;
+  --edge:    #3A1210;  --hair:   #1C0605;
+  --ink:     #FF7F68;  --dim:    #C95644;  --faint: #8E3A2E;  --ghost: #5A241C;
   /* Severity by lightness, not hue -- see the note above. */
-  --ok: #B85A48!important;  --warn: #FF7A4A!important;  --bad: #FF3B22!important;  --info: #D06452!important;
-  --ok-bg: rgba(184,90,72,.12)!important;
-  --warn-bg: rgba(255,122,74,.13)!important;
-  --bad-bg: rgba(255,59,34,.15)!important;
-  --info-bg: rgba(208,100,82,.12)!important;
-  --track: #34100E!important;
-  --on-bad: #1A0402!important; --on-warn: #1A0703!important; --on-ai: #16040A!important;
-  --bright: #FF9E88!important;   /* red-only: nothing here may be white */
-  --bright-2: #C95644!important;
+  --ok: #B85A48;  --warn: #FF7A4A;  --bad: #FF3B22;  --info: #D06452;
+  --ok-bg: rgba(184,90,72,.12);
+  --warn-bg: rgba(255,122,74,.13);
+  --bad-bg: rgba(255,59,34,.15);
+  --info-bg: rgba(208,100,82,.12);
+  --track: #34100E;
+  --on-bad: #1A0402; --on-warn: #1A0703; --on-ai: #16040A;
+  --bright: #FF9E88;   /* red-only: nothing here may be white */
+  --bright-2: #C95644;
   /* Red-only means red-only. --accent and --ai were inherited from the desktop
      theme, so a blue focus ring and a purple AI badge survived on the one
      screen whose entire purpose is that nothing short-wavelength reaches the
      eye. */
-  --panel-2: #1A0505!important;  --edge-2: #4A1815!important;
-  --accent: #FF7F68!important;
-  --ai: #C95644!important;  --ai-bg: rgba(201,86,68,.12)!important;
-  --on-ok: #150402!important;  --on-info: #150402!important;
+  --panel-2: #1A0505;  --edge-2: #4A1815;
+  --accent: #FF7F68;
+  --ai: #C95644;  --ai-bg: rgba(201,86,68,.12);
+  --on-ok: #150402;  --on-info: #150402;
+  --ink-2: #C2453D; --accent: #E0493F; --accent-fill: #8E2A24;
+  --on-accent: #FFD9D6; --rec: #FF5A48; --accent-bg: rgba(224, 73, 63, .14);
 }
 .radio-meta { flex: 1 1 auto; min-width: 0; }
 .radio-name, .radio-status {

@@ -723,11 +723,12 @@ function paintDayNight(mode) {
   // themes built, a button that shrugs is worse than no button — that is the
   // complaint this control exists to answer, and repeating it in a new place
   // would be its own joke.
-  const usable = !!(themeModes.light && themeModes.dark
-                    && themeModes.light !== themeModes.dark);
+  const desktop = savedLook() === "omarchy";
+  const usable = !desktop || !!(themeModes.light && themeModes.dark
+                                && themeModes.light !== themeModes.dark);
   els.daynight.hidden = !usable;
   if (!usable) return;
-  const dark = mode !== "light";
+  const dark = desktop ? mode !== "light" : savedLook() !== "day";
   clear(els.daynight);
   els.daynight.appendChild(icon(dark ? ICONS.sun : ICONS.moon, 20));
   els.daynight.title = dark ? "Switch to the day palette"
@@ -736,6 +737,12 @@ function paintDayNight(mode) {
 }
 
 async function toggleDayNight() {
+  if (savedLook() !== "omarchy") {
+    const next = savedLook() === "day" ? "normal" : "day";
+    saveLook(next);
+    applyLook(next);
+    return;
+  }
   const goingLight = !document.documentElement.dataset.mode
     ? true
     : document.documentElement.dataset.mode !== "light";
@@ -878,10 +885,6 @@ function openSettings() {
         const next = nextLook(savedLook());
         saveLook(next);
         applyLook(next);
-        // TASK 10 MOVES THIS DISPATCH INTO applyLook() ITSELF. Until then,
-        // Home is the only screen with a background to remount, and it can
-        // only hear about the change if this row says so.
-        document.dispatchEvent(new CustomEvent("omacar:look", { detail: next }));
         redraw();
       }));
 
@@ -1085,6 +1088,13 @@ let themeSheet = null;
 // so an untouched app follows the desktop, and choosing a look overrides it
 // deliberately, which is the whole reason a look exists.
 async function applyTheme() {
+  // THE DESKTOP THEME IS A LOOK NOW, NOT THE DEFAULT. Removed the moment
+  // another look is chosen, so the stylesheet's own palette is what shows.
+  if (savedLook() !== "omarchy") {
+    if (themeSheet) { themeSheet.remove(); themeSheet = null; }
+    themeStamp = -1;
+    return;
+  }
   try {
     const { stamp, vars } = await api.theme();
     if (stamp === themeStamp) return;
@@ -1126,6 +1136,7 @@ async function boot() {
   // Before the first paint. A night-red look that arrives a beat late is a
   // flash of full-brightness white at the exact moment it matters most.
   applyLook(savedLook());
+  document.addEventListener("omacar:look", () => { applyTheme(); paintDayNight(); });
 
   await Promise.all([store.boot(), applyTheme(), loadAuto()]);
   document.getElementById("app").dataset.booting = "0";

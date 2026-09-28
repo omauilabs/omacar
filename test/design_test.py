@@ -76,6 +76,12 @@ def main():
     base = block(css, ":root")
     run("The default palette", base)
     print()
+
+    day = dict(base)
+    day.update(block(css, ':root[data-look="day"]'))
+    run("The Daylight look", day)
+    print()
+
     if fails:
         print(f"  {fails} failed\n")
         return 1
