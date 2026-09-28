@@ -201,7 +201,7 @@ export default function home(root) {
   const grid = h("div.home-grid");
   const editBar = h("div.home-editbar", { hidden: true });
   const prov = h("span.home-prov");
-  const custom = h("button.home-custom", { type: "button", hidden: true },
+  const custom = h("button.home-custom", { type: "button" },
     icon(ICONS.layout, 18), "Customize layout");
   root.appendChild(h("div.home", fx, editBar, grid, h("div.home-foot", prov, custom)));
 
@@ -266,6 +266,15 @@ export default function home(root) {
 
   function paint() {
     syncFx();
+    // GREYED WHILE DRIVING, NEVER HIDDEN, the rule every write screen's chip
+    // keeps: a control that vanishes is one somebody hunts for at 60 mph.
+    // startEditing() refuses while driving too; this says so before the tap.
+    const moving = store.state === "driving";
+    if (custom.disabled !== moving) {
+      custom.disabled = moving;
+      custom.title = moving ? "Available when you stop" : "";
+      custom.setAttribute("aria-disabled", moving ? "true" : "false");
+    }
     if (!alive || !layout) return;
     for (const c of made.values()) if (c.node.isConnected) c.paint();
     // NAME THE SERVER, NEVER THE CAR (see dialCard()). footerLine() describes
@@ -291,13 +300,24 @@ export default function home(root) {
       onEnd: () => { editor = null; },
     });
   }
-  custom.hidden = false;
   custom.addEventListener("click", customise);
   let press = null;
   const unpress = () => { if (press) { clearTimeout(press.t); press = null; } };
   grid.addEventListener("pointerdown", (e) => {
-    if (editor) return;
+    if (editor || e.button !== 0) return;
     press = { x: e.clientX, y: e.clientY, t: setTimeout(() => { press = null; customise(); }, 600) };
+  });
+  // THE BROWSER'S OWN LONG PRESS COMES FIRST ON A TOUCH SCREEN. Chromium
+  // raises a context menu after about 500 ms of a still finger -- before the
+  // 600 ms timer above -- and can cancel the pointer as it does. So its
+  // contextmenu event is always refused here (no native menu over Home), and
+  // when one of our presses is pending it IS the long press: the editor opens
+  // then, whatever the pointer does next. Text selection and the touch
+  // callout are off on the grid in home.css, the other two things a long
+  // press can start.
+  grid.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (press) { unpress(); customise(); }
   });
   grid.addEventListener("pointermove", (e) => {
     if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) unpress();

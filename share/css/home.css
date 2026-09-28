@@ -55,6 +55,11 @@
              font-size: .75rem; color: var(--dim); }
 .home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap);
                padding: 0 12px; background: none; border: 0; color: var(--ink-2); font: inherit; }
+/* Greyed while driving, never hidden: the same treatment as a locked chip. */
+.home-custom:disabled { opacity: .45; cursor: default; }
+/* A long press on a card opens the editor (home.js). Nothing else a long press
+   can start on a touch screen -- a text selection, the callout -- should. */
+.home-grid { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
 /* The look's animated background (Matrix/Aurora), mounted by home.js only
    while parked. Negative z-index, inside .home's own isolated stacking

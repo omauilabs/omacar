@@ -113,6 +113,38 @@ export default [
     PARKED(); store.live = null;
   }],
 
+  // ---- Customize layout while driving, and the long press on a touch screen
+  ["Customize layout greys out while driving, with the reason, and never vanishes", () =>
+    withHome("normal", PARKED, async (root) => {
+      const btn = root.querySelector(".home-custom");
+      eq([btn.disabled, btn.hidden, btn.title], [false, false, ""], "parked");
+      DRIVING();
+      eq([btn.disabled, btn.hidden, btn.title, btn.isConnected],
+         [true, false, "Available when you stop", true], "driving");
+      PARKED();
+      eq(btn.disabled, false, "free again once stopped");
+    })],
+
+  ["the browser's own long-press menu never opens over Home", () =>
+    withHome("normal", PARKED, async (root) => {
+      const grid = root.querySelector(".home-grid");
+      const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      grid.firstElementChild.dispatchEvent(ev);
+      eq(ev.defaultPrevented, true, "contextmenu refused on the grid");
+    })],
+
+  ["and when it fires before our 600 ms timer, it is taken as the long press", () =>
+    withHome("normal", PARKED, async (root) => {
+      const grid = root.querySelector(".home-grid");
+      const card = grid.firstElementChild;
+      card.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, button: 0, pointerType: "touch", pointerId: 3, clientX: 10, clientY: 10 }));
+      card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      // A pointercancel is what Chromium sends when its own gesture wins.
+      card.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true, pointerId: 3 }));
+      ok(grid.classList.contains("editing"), "the editor opened");
+    })],
+
   ["leaving Home stops it", async () => {
     let kept = null;
     await withHome("green", PARKED, async (root) => { kept = root; ok(running(root), "running"); });
