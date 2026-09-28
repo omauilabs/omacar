@@ -63,6 +63,28 @@ This exercises almost everything that cannot be tested without a car.
 If step 1 never leaves `waiting`, the engine gate is not seeing RPM. If it says
 `not running`, the unit did not enable and the whole trip is gauges only.
 
+## If nobody can drive this remotely: the parked IMA session
+
+If the tablet has no connection for anyone to run this from outside the car,
+one command runs the whole parked, read-only IMA hunt (the leads writeup is
+`2026-09-28-ima-findings.md`, section 4, in the notes repo) — the passive
+probes, the negative-response learning, the 0x2xxx positive control, the
+HV-battery DIDs, and the 0x21 sweep, each already built with the safety gates
+that section calls for:
+
+```
+~/Projects/omacar/tools/ima-session.sh
+```
+
+Have the engine running, the car in P, and the handbrake on before you start
+it — it checks for an adapter, asks you to confirm you are parked, checks
+road speed and battery voltage, and only then sends anything. It stands the
+recorder down first and always brings it back, prints each step as it goes,
+time-boxes itself to 25 minutes of sending, and saves everything under
+`~/.local/state/omacar/ima-sessions/`. Add `--full` to also run the optional
+block sweep (section 4 step 5); add `--dry-run` first to see every command it
+would run without sending anything.
+
 ## Then, if there's time: the full-bus driveway check
 
 Two more opt-ins exist, each one line in the environment, both off by default,
