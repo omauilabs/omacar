@@ -604,8 +604,9 @@ def ask(kind="triage", question=None, code=None, model=None, refresh=False,
         "code": code,
         "at": int(time.time()),
         "took_s": round(took, 1),
-        "model": _answering_model(envelope, model)
-                 or (model or DEFAULT_MODEL),
+        # `use`, not `model`: the caller's override is usually None, and the
+        # model this answer was asked of is the one to prefer and fall back to.
+        "model": _answering_model(envelope, use) or use,
         "data": data,
         "dropped": dropped,
         "evidence_keys": sorted(evidence_keys(b)),

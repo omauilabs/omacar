@@ -2780,6 +2780,19 @@ try:
     check("the advisor writes one record per answer, headline on the payload",
           _ai_rec, [("ai", "symptom: It stalls when cold",
                      {"kind": "symptom", "headline": "Front O2 heater"})])
+
+    # THE LABEL NAMES THE MODEL THAT WAS ASKED, not the caller's override.
+    # _answering_model() was handed `model` -- None unless a caller forced one
+    # -- instead of `use`, so the preference for the model we asked for never
+    # applied, and the fallback called a plain-language (Haiku) answer Opus.
+    ai.run_claude = _fake_claude({})
+    check("an envelope with no usage names the model asked for, not the default",
+          ai.ask("owner", refresh=True)["model"], "claude-haiku-4-5")
+    ai.run_claude = _fake_claude({"modelUsage": {
+        "claude-haiku-4-5-20251001": {"outputTokens": 300},
+        "claude-opus-5-5": {"outputTokens": 900}}})
+    check("and one that billed two models names the one asked for",
+          ai.ask("owner", refresh=True)["model"], "claude-haiku-4-5-20251001")
 finally:
     (ai.bundle, ai.available, ai.run_claude, ai.cache_path, ai.records.write_record) = _ai_was
     _sh_ai.rmtree(_ai_tmp, ignore_errors=True)
