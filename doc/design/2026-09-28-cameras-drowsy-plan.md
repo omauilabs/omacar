@@ -2,24 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Record the front, rear and cabin cameras on the tablet, show them in the Cameras tab and on Home, and watch the driver's eyes with alerts that ramp up and down, as specified in `doc/design/2026-09-28-cameras-drowsy.md`. It must be buildable by Tuesday evening, 2026-09-29, for the drive on Wednesday.
+**Goal:** Record the front, rear and cabin cameras on the tablet, show them in the Cameras tab (and on Home, deferrable), and watch the driver's eyes with alerts that ramp up and down, as specified in `doc/design/2026-09-28-cameras-drowsy.md`. It must be buildable by Tuesday evening, 2026-09-29, for the drive on Wednesday.
 
 **Architecture:**
-- **A recorder service** owns every camera. `lib/cams.py` runs `omacar-cams.service`: one ffmpeg per camera, recording one-minute clips on the GPU and writing a 10 fps JPEG live picture to a file. `lib/camstore.py` holds the clips, the loop, the locks and the events.
+- **A recorder service** owns every camera. `lib/cams.py` runs `omacar-cams.service`: one ffmpeg per camera, recording one-minute clips on the GPU and writing a 10 fps JPEG live picture to a file, with a watchdog that restarts a camera whose picture stops. `lib/camstore.py` holds the clips, the loop, the locks, the events and the camera config.
 - **The server reads what the recorder writes.** The JSON routes are in `lib/camroutes.py`, reached through one block at the end of `lib/api.py`. The two streaming routes are in `lib/serve.py`.
-- **Drowsy mode runs in the page.** The cabin's live picture goes through MediaPipe's Face Landmarker (vendored), into pure measures (`drowsy.js`) and a pure ladder (`ladder.js`).
-- **Everything the app plays goes through one output stage** (`audiobus.js`), with pure ramp plans (`ramps.js`).
-- **New files, not edits.** The foundation plan is still running on `redesign/foundation`. This branch touches each file that plan also edits at exactly one delimited insertion point (see "Merging with the foundation branch").
+- **Drowsy mode runs in the page.** The cabin's live picture goes through MediaPipe's Face Landmarker, fetched once at install and never committed, into pure measures (`drowsy.js`) and a pure ladder (`ladder.js`).
+- **Everything the app plays goes through one output stage** (`audiobus.js`). Every sound carries its own envelope from silence and back (`ramps.js`, `sounds.js`), and one alert player (`alertplayer.js`) schedules them all, behind an alert bus that is open only while something sounds.
+- **New files, not edits.** The branch sits on `redesign/foundation` and touches each file foundation also owns at exactly one delimited insertion point (see "Merging with the foundation branch").
 
-**Tech stack:** vanilla JS (ES modules), Python 3 stdlib, ffmpeg with VA-API (`h264_vaapi`), `v4l2-ctl`, PipeWire (`wpctl`, `pactl`), MediaPipe tasks-vision 1.0.1 (vendored), Web Audio, headless Chromium for tests. Piper TTS runs once, off the tablet, to render the voice clips.
+**Tech stack:** vanilla JS (ES modules), Python 3 stdlib, ffmpeg with VA-API (`h264_vaapi`), `v4l2-ctl`, PipeWire (`wpctl`, `pactl`), MediaPipe tasks-vision 1.0.1 (fetched at install, pinned by SHA-256), Web Audio, headless Chromium for tests. Piper TTS, a system package on the box, renders the voice clips once (deferrable).
 
 ## Global constraints
 
-Every task's requirements include this section. Values are the spec's, verbatim where the spec gives them.
+Every task's requirements include this section. Values are the spec's, verbatim where the spec gives them, and the pre-flight rulings of 2026-09-28 where it did not.
 
-- **No build step.** ES modules load from disk, and Python is stdlib only. The tablet runs nothing else new. Two tools run once, off the tablet: curl (to vendor MediaPipe) and Piper (to render the voice).
-- **Nothing is fetched on the road.** `@mediapipe/tasks-vision` 1.0.1 (Apache-2.0) and `face_landmarker.task` live in `share/js/vendor/mediapipe/`.
-- **Camera roles and default patterns.** Overridable in `~/.config/omarchy/omacar-cameras.json`. Matched on `/dev/v4l/by-id` names, never on `/dev/videoN` (the IPU6 driver claims `video0`–`video63`).
+- **No build step.** ES modules load from disk, and Python is stdlib only. The tablet runs nothing else new.
+- **Nothing is fetched on the road, and nothing binary is committed.**
+  - `@mediapipe/tasks-vision` 1.0.1 (Apache-2.0, the SIMD `wasm/` pair only) and `face_landmarker.task` are listed with their URLs, sizes and SHA-256 pins under `fetch` in `share/assets/manifest.json`.
+  - `omacar assets fetch` (`lib/assets.py`) downloads them once, at install, into `share/js/vendor/mediapipe/`, which is git-ignored, and refuses anything that does not match its pin.
+  - The page never fetches them from anywhere else. If the owner rules for committing them instead (option A), delete the `.gitignore` block and add the files; the fetch then finds nothing to do.
+- **Camera roles and default patterns.** Overridable in `~/.config/omarchy/omacar-cameras.json`, where a pattern of `""` or `null` turns a role off. Matched on `/dev/v4l/by-id` names, never on `/dev/videoN`.
 
   | Role | Pattern |
   |---|---|
@@ -27,26 +30,28 @@ Every task's requirements include this section. Values are the spec's, verbatim 
   | rear | `Insta360\|Ace` |
   | cabin | `C920\|Logitech\|ELP` |
 
-- **Mode.** The recorder takes the best mode at or under 1080p30, preferring MJPEG, then H.264, then YUYV, from `v4l2-ctl --list-formats-ext`. The cabin records at low resolution (640×480).
+- **The IPU6 floor.** `find_cameras()` refuses every node below `/dev/video64` on a machine whose sysfs names IPU6 capture nodes (the tablet), whatever the config says, and also when sysfs cannot be read. On a machine with no IPU (the box, whose C920 is `video0`) there is no floor.
+- **Mode.** The recorder takes the best mode at or under the role's cap, preferring MJPEG, then H.264, then YUYV, from `v4l2-ctl --list-formats-ext`. The caps default to 1920×1080@30 for front and rear and 640×480@30 for the cabin. `caps` in `omacar-cameras.json` lowers any of them, for example `{"caps": {"rear": [1280, 720, 30]}}`.
 - **Recording.**
   - Encoding: `-vaapi_device /dev/dri/renderD128`, `format=nv12,hwupload`, `h264_vaapi`.
   - Bitrate: 6 Mbit/s front and rear, 1 Mbit/s cabin.
   - `-fps_mode passthrough`, and keyframes forced at every clip boundary.
   - Clips: one-minute fragmented MP4 in `~/Videos/OmaCar/<role>/YYYYmmdd-HHMMSS.mp4`.
+- **Stall watchdog.** A role whose live frame is more than 10 s old while its ffmpeg is still alive, after a 15 s start grace, is killed and restarted at once. Its status reads `stalled`, with the error "stalled: no picture for N s", and never REC.
 - **Live picture.** 640 px wide, 10 fps, JPEG. Written atomically to `$XDG_RUNTIME_DIR/omacar-cams/<role>.jpg`.
 - **Storage.**
   - The budget defaults to 40 GB.
   - The oldest unlocked clips go first.
   - Locked clips are moved to `~/Videos/OmaCar/locked/<event-id>/` and are never deleted by the loop.
 - **Events.**
-  - Hard braking is a drop of 16 km/h or more within one second (about 0.45 g), in `values.SPEED` (km/h) from live.json.
+  - Hard braking is a drop of 16 km/h or more within one second (about 0.45 g), in `values.SPEED` (km/h) from live.json. Simulated samples (`"simulated": true`, from `lib/sim.py`) never count.
   - A hard stop locks the clips covering 30 s before to 30 s after, on every recording camera. Mark event and Save clip lock the same window.
   - Events are written to `~/Videos/OmaCar/events.json` with time, kind, speed and the locked files.
 - **Routes:**
 
   | Route | Returns | Served by |
   |---|---|---|
-  | `GET /api/cams` | per role: device, mode, recording, real fps, clip count, storage used and budget, last error | `lib/camroutes.py` |
+  | `GET /api/cams` | per role: device, mode, recording, stalled, real fps, clip count, storage used and budget, last error | `lib/camroutes.py` |
   | `GET /api/cams/<role>/live` | `multipart/x-mixed-replace` MJPEG from the latest-frame file at 10 fps | `lib/serve.py` |
   | `GET /api/cams/clips?role=&from=&to=` | the clip list (and events) for the timeline | `lib/camroutes.py` |
   | `GET /api/cams/clip/<role>/<file>` | the clip, with HTTP Range | `lib/serve.py` |
@@ -56,6 +61,8 @@ Every task's requirements include this section. Values are the spec's, verbatim 
   | `GET /api/drowsy`, `POST /api/drowsy`, `POST /api/drowsy/event`, `POST /api/drowsy/log` | drowsy settings, events, measures | `lib/camroutes.py` |
 
 - **Service.** `omacar-cams.service` is a user unit: `Restart=always`, no start limit (`StartLimitIntervalSec=0`), `Nice=10`. The CLI is `omacar cams status|on|off|sim`.
+  - The recorder's loop wraps each chore, so one failing chore cannot take it down and cut every clip short.
+  - A pid in the status file counts as a running recorder only if `/proc/<pid>/cmdline` is `cams.py run` or `cams.py sim`.
 - **Simulation.** `sim` stands up `lavfi testsrc2` for every role with no camera. Anything from `sim` is labelled `SIMULATED`.
 - **Cameras tab.**
   - The badge reads `LIVE · 3 cameras`, or `SIMULATED` when any role comes from `sim`.
@@ -68,37 +75,65 @@ Every task's requirements include this section. Values are the spec's, verbatim 
   - A yawn is `jawOpen` > 0.6 held 1.5 s or more.
   - A nod is head pitch more than 15° below the baseline for 0.5 s or more, then recovering.
   - No face for more than 5 s is "Can't see you", which never alerts on its own.
+  - New settings keep the baseline and the windows: `setConfig`, never a new instance.
 - **Camera-free signals.** A stop is speed 0 for 5 minutes or more. Night hours are 02:00–06:00. These raise Level 1 only.
-- **The gate.** Drowsy mode is active only above 30 mph (48.28 km/h), while the car is connected and moving. It is never active while parked.
-- **The ladder.** Defaults are in `share/data/drowsy.json`, overrides in `~/.config/omarchy/omacar-drowsy.json`. Sensitive lowers every threshold by 20%.
+- **The gate.**
+  - A new alert may start only above 30 mph (48.28 km/h), while the car is connected and moving. Drowsy mode never starts one while parked.
+  - An alert already sounding carries on, with its repeats, below 30 mph, until "I'm awake" or the car is stopped. This is one named setting, `alert_continues_below_gate` in `share/data/drowsy.json`, default `true`, awaiting the owner's ruling; `false` stops repeats below the gate.
+  - Simulated samples never open the gate, and the chip reads `Off` while they are all there is.
+  - Crossing the gate never raises or escalates without new evidence. Evidence is armed on its rising edge and used up by a raise.
+- **The ladder.** Defaults are in `share/data/drowsy.json`, overrides in `~/.config/omarchy/omacar-drowsy.json`.
+  - Sensitive lowers every threshold by 20%. That covers the closed-eye margin and cap, the jaw and yawn hold, the nod angle and hold, and the PERCLOS levels. It covers the yawn and nod counts, rounded and at least 1, and the closure times. It covers the time since a stop and the Level 2 count, which stays at least 2.
+  - Windows, the baseline minute, the release time and the hourly limit are not thresholds.
 
   | Level | Trigger | What happens |
   |---|---|---|
   | 1 · Notice | PERCLOS ≥ 15%, or 3 yawns in 5 min, or 3 nods in 5 min, or 2 h since a stop, or night hours (once an hour) | a soft two-note chime; the voice says "James, you seem tired. Plan a break soon."; the radio rises +6 dB over 10 s, then settles back over 30 s; a card on screen |
   | 2 · Wake | eyes closed ≥ 1.0 s, or PERCLOS ≥ 25% | music ducks −12 dB over 0.5 s; an alert rises over 1.5 s, rotating bark, voice ("James, are you with me?") and a two-tone alarm (500–1500 Hz); full-screen card with a large "I'm awake" |
-  | 3 · Pull over | eyes closed ≥ 2.0 s, or two Level 2 alerts within 5 min | a continuous alarm rises to full over 3 s; the voice says "Pull over now."; a full-screen card stays up |
+  | 3 · Pull over | eyes closed ≥ 2.0 s, or two Level 2 alerts within 5 min | a continuous alarm rises to full over 3 s, with no time cap while moving; the voice says "Pull over now."; a full-screen card stays up |
 
 - **Release.**
-  - A level clears on a tap of "I'm awake", or when the eyes stay open for 5 s with PERCLOS falling. Sound fades out over 3 s.
+  - Every level clears on a tap of "I'm awake", or once the car is stopped (connected, speed 0).
+  - Levels 1 and 2 also clear when the eyes stay open for 5 s with PERCLOS not rising (the owner has been told "not rising" is what can be seen within 5 s).
+  - Level 3 clears only on the tap or a stopped car.
+  - A dropped link is not a stop.
+  - Sound fades out over 3 s, and the alert bus then returns to silence.
+  - A settings save while an alert sounds is cleared through the same path as "I'm awake" first. Nothing it started can go on sounding with no card to stop it.
   - After Level 3, a "Stop at the next safe place" banner stays until the car has been stopped for 2 minutes.
   - Every event goes to the records book as `kind=drowsy`, with time, level, trigger, speed and the measures.
 - **Audio.**
   - There is one output stage (`share/js/audiobus.js`). Music sits at −12 dBFS and alerts may use 0 dBFS, which leaves 12 dB of headroom.
-  - Ramps use `linearRampToValueAtTime`, with no step larger than 3 dB per 100 ms. The shapes come from a pure `rampPlan(level, from, to)`.
+  - **Every onset ramps at the sound's own gain, not only the bus's.** That covers every chime note, bark call, voice line and alarm: the first alert of a drive, every repeat, and every escalation from Level 1 to 2 to 3.
+    - Each sound starts at `SILENCE_DB` = −48 dBFS and rises to its target over `RISE_SECS` = 1.5 s (Levels 1 and 2) or 3 s (Level 3).
+    - It falls back to −48 dBFS over `RELEASE_SECS` = 3 s.
+    - Targets: Level 1 −6, Level 2 −3, Level 3 0 dBFS; each chime note −9.
+  - No step is larger than 3 dB in any 100 ms. The tests check each sound's own envelope with `worstStep`, and the first-sample gain for a first alert, a repeat and an escalation.
+  - The alert bus is a gate (`gateAlerts`). It opens at an onset, which is itself at silence, and closes after the last release, so the next onset starts from silence.
+  - A bark's calls and a chime's partials are timbre inside the sound's envelope. The envelope sets the level.
   - `lib/audio.py` pins the Surface's volume to 100% (wpctl). It is exposed at `GET /api/audio` and applied at app start. Home shows "AUX disconnected" when the port is the speakers.
-- **Voice.**
-  - Piper renders the clips once, into `share/assets/private/voice/*.ogg`, and they are listed in `share/assets/manifest.json`.
+- **Test the alerts** runs only while the car is connected and stopped, and never on simulated numbers. It shows a card with Stop, and stops by itself if the car moves or the link drops.
+- **Voice (deferrable, Task 12).**
+  - Piper is never bundled. It is a system package on the box (`piper-tts` from the AUR), run once as its own program.
+  - The clips go to `share/assets/private/voice/*.ogg` and are listed in `share/assets/manifest.json`.
   - The phrases are "James, you seem tired. Plan a break soon.", "James, are you with me?" and "Pull over now."
   - The owner's name is "James".
+  - Without the clips, `"voice"` leaves the Level 2 rotation and voice cues are skipped.
 - **Chip text.** Exactly `Watching`, `Can't see you`, `Paused · parked`, `Off`.
 - **Copy.**
   - Alerts buy minutes; stopping to rest (a 20-minute nap or caffeine) is the fix (NHTSA, AAA Foundation).
   - The car radio must stay on AUX. Begin and drowsy mode's settings say so, and Begin plays a short chime.
+- **Deferrable tasks.** Task 11 (Home's Dashcams card) and Task 12 (the voice) come after everything that is required, and nothing depends on them. Skipping either breaks no test and no other task.
 - **Tests.**
   - Every new test file goes into `test/all.sh` the same day, inside the `redesign/cameras` block at its end.
+  - `test/all.sh` refuses to run, with a clear message, while a recorder runs on the machine (`omacar-cams` active, or `lib/cams.py run|sim` in the process list). A running recorder makes Home open a stream that never ends, which would hang headless Chromium.
   - JavaScript tests are `test/js/*.test.js`: each default-exports `[name, fn]` pairs and imports app modules as `../js/x.js`. `assert.js` has `eq` and `ok`.
   - A test that reads `share/data/*.json` does it with `await fetch("../data/<file>")`.
-- **BOXTEST expects `omacar-cams` stopped on the box.** A running recorder makes Home open a stream that never ends, and headless Chromium's virtual time does not advance while a request is open.
+  - Waiting is polling with a deadline, never a bare sleep that assumes how fast the box is. The one server wait is `wait_for_port` in `test/app_test.py`.
+  - Nothing this branch draws on Home carries a `data-state` attribute. Foundation's `app_test.py` counts every `data-state` on Home exactly.
+- **Scratch recorders and screenshots.**
+  - `tools/sim-cams.sh CMD…` runs `CMD` beside a `sim` recorder on scratch `OMACAR_VIDEOS`, `XDG_RUNTIME_DIR`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME`, so nothing reads the box's real `live.json`, settings or videos.
+  - It stops the recorder by its recorded pid, never with `pkill`.
+  - Screenshots go through `tools/shoot.py` (foundation's, extended in Task 3).
 - **Commits.**
   - The subject is one plain sentence, in the style of the log (for example "Home can be rearranged by hand, while parked, and a hand-edited file cannot break it").
   - The body says why.
@@ -115,59 +150,77 @@ Every task's requirements include this section. Values are the spec's, verbatim 
 rsync -a --delete --exclude .git --exclude share/assets/private/ /Users/jmyers/omgarchy/omacar-cameras/ jmyers@omarchy:Projects/.omacar-test/cameras/ && ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && test/all.sh'
 ```
 
-A single suite runs as, for example, `ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && python3 test/cams_test.py'` after the same rsync.
+A single suite runs as, for example, `ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && python3 test/cams_test.py'` after the same rsync. The rsync also carries the fetched MediaPipe files (Task 8): `.gitignore` does not affect it.
 
 ## Merging with the foundation branch
 
-`redesign/cameras` branched from `redesign/foundation` at 3835841. Foundation has since landed Task 7 (25b8f1a) and still has Tasks 8–12 to run. This branch touches each file those tasks share at one delimited insertion point, marked `redesign/cameras`:
+`redesign/cameras` was rebased onto `redesign/foundation` at 1cda3bb, foundation's Task 11. The branch is 1cda3bb, then the spec (d4eec2e), then this plan. Foundation's Tasks 7–11 have all landed underneath it, including `tools/shoot.py`, which Task 3 extends. Foundation's Task 12 pushes the branch and changes no files. The PR's base is `redesign/foundation`, pushed first by that task.
 
-| Shared file | This branch's one insertion | Foundation's edits there | Expected at merge |
-|---|---|---|---|
-| `share/js/main.js` | one row in `openSettings()`, just before the "Learn mode" row (Task 11) | Task 8: imports and `TABS`; Task 10: `applyTheme`, `paintDayNight`, `toggleDayNight`, `boot()` | clean |
-| `share/app.html` | one block after the last `<script>` (Tasks 3, 5, 8) | Task 8: a `vehicle.css` link after `home.css` | clean |
-| `share/js/views/home.js` | the `dashcam:` line in `MAKERS` (Task 4) | Task 7 (landed): imports, loader, editing, cleanup | clean (dry-run checked in Task 12) |
-| `lib/api.py` | one block at the end of the file (Task 2) | Task 7 (landed): `/api/home` in the docstring and both handlers | clean |
-| `test/guards_test.py` | one changed line: the manifest check names only `crz-` assets (Task 9) | Task 9: a new section appended just after that line, before the done block | **may conflict** (adjacent hunks). Keep both sides. |
-| `share/css/*` | none (new `cameras.css` and `drowsy.css` only) | Tasks 8 and 10: `app.css`, `vehicle.css` | clean |
-| `share/js/core.js`, `share/js/icons.js`, `test/app_test.py` | none | Tasks 7, 11 | clean |
+After the rebase, foundation's final review added two commits:
+- c471ae7 changes `share/js/views/home.js` (`dialCard`'s imports and `paint`);
+- 90c9cf6 changes `test/app_test.py` (§4 of `main()`, the exact `data-state` count).
 
-Task 12 runs `git merge-tree` against the then-current `redesign/foundation` and records the result in the PR.
+Neither touches a line this branch changes. Task 13, Step 3 rebases onto whatever foundation is then, before the PR.
+
+This branch touches each file foundation owns at one insertion point, marked `redesign/cameras` where the file takes comments. `lib/assets.py`, whose foundation work is finished, takes a few small ones:
+
+| Shared file | This branch's one insertion | Task |
+|---|---|---|
+| `share/js/main.js` | one row in `openSettings()`, just before the "Learn mode" row | 10 |
+| `share/app.html` | one block after the last `<script>`, which Tasks 4 and 7 extend | 3, 4, 7 |
+| `share/js/views/home.js` | the `dashcam:` line in `MAKERS` | 11 (deferrable) |
+| `lib/api.py` | one block at the end of the file | 2 |
+| `test/app_test.py` | one helper, `wait_for_port`, after `python_for_server()` | 2 |
+| `tools/shoot.py` | replaced whole: `served()`, `shoot()` and targets, with foundation's default run unchanged | 3 |
+| `test/all.sh` | the recorder guard near the top, and the `redesign/cameras` block at the end | 1 (then each task adds its suites to the block) |
+| `lib/assets.py` | two docstring lines, the `fetch` section after `pin()`, and in `main()` the `fetch` branch and three status lines | 8 |
+| `share/assets/manifest.json` | the `fetch` list and a sentence in `_comment` (Task 8); five voice entries in `assets` (Task 12) | 8, 12 |
+| `.gitignore` | one block: `share/js/vendor/mediapipe/` | 8 |
+| `ATTRIBUTION.md` | appended paragraphs: MediaPipe (Task 8), the voice (Task 12) | 8, 12 |
+| `test/guards_test.py` | one changed line: the manifest check names only `crz-` assets | 12 (deferrable) |
+| `share/css/*` | none: new `cameras.css` and `drowsy.css` only | — |
+
+No conflicts are expected.
 
 ## File map
 
 | File | Responsibility | Task |
 |---|---|---|
-| `lib/camstore.py` | clip names, listing, the loop's janitor, hard braking, events and locks, Range parsing, camera config | 1 |
-| `lib/cams.py` | roles from by-id names, modes from v4l2-ctl, the ffmpeg command, the recorder, live frames, status, the CLI | 1 |
+| `lib/camstore.py` | clip names, listing, the loop's janitor, hard braking, events and locks, Range parsing, camera config (patterns, caps, roles off) | 1 |
+| `lib/cams.py` | roles from by-id names above the IPU6 floor, modes from v4l2-ctl, the ffmpeg command, the recorder and its stall watchdog, live frames, status, the CLI | 1 |
 | `share/systemd/omacar-cams.service` | the recorder as a user unit | 1 |
-| `lib/camroutes.py` | every JSON route this branch adds | 2, 5, 10 |
+| `test/all.sh` | the recorder guard, and the cameras block | 1 |
+| `lib/camroutes.py` | every JSON route this branch adds | 2, 4, 9 |
 | `lib/serve.py` | the live MJPEG route and the clip route with Range | 2 |
+| `test/app_test.py` | `wait_for_port`, the one server wait | 2 |
 | `share/js/camapi.js` | fetch helpers for the new routes; `?still=1` | 3 |
-| `share/js/camlogic.js` | pure: badge, captions, timeline, clip stepping, Home card state | 3, 4 |
+| `share/js/camlogic.js` | pure: badge, captions, timeline, clip stepping, Home card state | 3, 11 |
 | `share/js/views/cameras.js` | the Cameras tab (replaces the placeholder) | 3 |
-| `share/css/cameras.css` | the tab and the Home card | 3, 4 |
-| `tools/camshot.py` | screenshots with the first-run tour seen and one frame per feed | 3 |
-| `share/js/dashcard.js` | Home's Dashcams card | 4, 11 |
-| `lib/audio.py` | the Surface's volume and port (wpctl, pactl) | 5 |
-| `share/js/audiobus.js` | the one output stage | 5 |
-| `share/js/audiostate.js` | the audio path as the page knows it | 5 |
-| `share/js/alertness.js` | started beside the app: audio pin, drowsy mode | 5, 11 |
-| `share/data/drowsy.json` | drowsy defaults, the spec's numbers | 6 |
-| `share/js/drowsy.js` | pure measures, and MediaPipe results into frames | 6 |
-| `share/js/ladder.js` | pure level state machine and stop clock | 7 |
-| `share/js/ramps.js` | pure `rampPlan` | 8 |
-| `share/js/sounds.js` | chime, alarm, bark (synthesized) and voice playback | 8 |
-| `share/css/drowsy.css` | drowsy UI, Begin's AUX line | 8, 11 |
-| `share/js/vendor/mediapipe/*` | vendored tasks-vision 1.0.1 and the model | 9 |
-| `tools/render_voice.py` | renders the voice clips with Piper | 9 |
-| `lib/drowsycfg.py` | drowsy settings, event and measure logs | 10 |
-| `share/js/mjpeg.js` | pure multipart MJPEG parser | 10 |
-| `share/js/facewatch.js` | cabin frames through the Face Landmarker | 10 |
-| `share/js/drowsyrun.js` | the running engine: gate, measures, ladder, logs | 10 |
-| `tools/drowsy_check.py` | MediaPipe loads and runs on the real cabin camera | 10 |
-| `share/js/alertplayer.js` | ladder cues to ramps and sounds | 11 |
-| `share/js/drowsyui.js` | chip, alert cards, banner, settings sheet | 11 |
-| `tools/cams_e2e.py` | end to end on the box | 12 |
+| `share/css/cameras.css` | the tab and the Home card | 3, 11 |
+| `tools/shoot.py` | foundation's screenshots, extended: `served()`, any target and size | 3 |
+| `tools/sim-cams.sh` | a command beside a scratch `sim` recorder | 3 |
+| `lib/audio.py` | the Surface's volume and port (wpctl, pactl) | 4 |
+| `share/js/audiobus.js` | the one output stage; the alert bus as a gate | 4 |
+| `share/js/audiostate.js` | the audio path as the page knows it | 4 |
+| `share/js/alertness.js` | started beside the app: audio pin, drowsy mode | 4, 10 |
+| `share/data/drowsy.json` | drowsy defaults, the spec's numbers, `alert_continues_below_gate` | 5 |
+| `share/js/drowsy.js` | pure measures, and MediaPipe results into frames | 5 |
+| `share/js/ladder.js` | pure level state machine, armed evidence, Sensitive, and the stop clock | 6 |
+| `share/js/ramps.js` | pure ramp and envelope plans, `worstStep` | 7 |
+| `share/js/sounds.js` | chime, alarm, bark (synthesized) and voice playback, each with its envelope | 7 |
+| `share/js/alertplayer.js` | the one player: cues to enveloped sounds, the gate, the fade | 7 |
+| `share/css/drowsy.css` | drowsy UI, Begin's AUX line | 7, 10 |
+| `lib/assets.py` | `omacar assets fetch`: download once, check against pins | 8 |
+| `share/js/vendor/mediapipe/*` | fetched tasks-vision 1.0.1 and the model; git-ignored | 8 |
+| `lib/drowsycfg.py` | drowsy settings, event and measure logs | 9 |
+| `share/js/mjpeg.js` | pure multipart MJPEG parser | 9 |
+| `share/js/facewatch.js` | cabin frames through the Face Landmarker | 9 |
+| `share/js/drowsyrun.js` | the running engine: gate, measures, ladder, test mode, logs | 9 |
+| `tools/drowsy_check.py` | MediaPipe loads and runs on the real cabin camera, through `serve.py` | 9 |
+| `share/js/drowsyui.js` | chip, alert cards, banner, test card, settings sheet | 10 |
+| `share/js/dashcard.js` | Home's Dashcams card, with the drowsy chip and the AUX line | 11 (deferrable) |
+| `tools/render_voice.py` | runs Piper, a system package, to render the voice clips | 12 (deferrable) |
+| `tools/cams_e2e.py` | end to end on the box | 13 |
 
 ---
 
@@ -175,17 +228,17 @@ Task 12 runs `git merge-tree` against the then-current `redesign/foundation` and
 
 **Files:**
 - Create: `lib/camstore.py`, `lib/cams.py`, `share/systemd/omacar-cams.service`, `test/cams_test.py`
-- Modify: `bin/omacar` (usage lines and the `cams)` case), `test/all.sh` (the `redesign/cameras` block)
+- Modify: `bin/omacar` (usage lines and the `cams)` case), `test/all.sh` (a guard near the top, and the `redesign/cameras` block at the end)
 
 **Interfaces:**
 - Produces:
-  - `camstore`: `ROLES`, `CLIP_SECS`, `DEFAULT_PATTERNS`, `videos()`, `config_path()`, `load_config(path=None) → {patterns, budget_gb}`, `budget_bytes(cfg=None)`.
+  - `camstore`: `ROLES`, `CLIP_SECS`, `DEFAULT_PATTERNS`, `DEFAULT_CAPS`, `videos()`, `config_path()`, `load_config(path=None) → {patterns, budget_gb, caps}`, `budget_bytes(cfg=None)`. A pattern of `""` or `null` turns a role off; `caps[role]` is `(w, h, fps)`.
   - `camstore` clips and the loop: `clip_start(name)`, `clip_name(t)`, `scan(root=None) → [{role, file, path, start, end, size, locked}]`, `list_clips(role=None, t0=None, t1=None, root=None)`, `usage(root=None) → {used, by_role, clips}`, `clip_path(role, name, root=None)`, `plan_janitor(clips, budget)`, `janitor(budget=None, root=None)`.
   - `camstore` events: `BrakeWatch().feed(t, kph) → bool` (with `.peak`), `load_events(root=None)`, `list_events(t0=None, t1=None, root=None)`, `mark(kind, t=None, speed_kph=None, root=None, now=None) → event`, `settle(root=None, now=None)`, `parse_range(header, size) → (start, end) | None | "unsatisfiable"`.
   - An event is `{id, kind, t, t0, t1, speed_kph, state: "pending"|"locked", files: ["role/file", …]}`. Kinds are `hard-braking`, `marked` and `saved`.
-  - `cams` constants and paths: `ROLES`, `VAAPI`, `CAPS`, `SIM_MODE`, `LIVE_FPS`, `LIVE_GIVE_UP`, `BOUNDARY = "omacarframe"`, `run_dir()`, `live_path(role)`, `status_path()`.
-  - `cams` discovery and the command: `match_roles(names, patterns)`, `find_cameras(cfg=None)`, `parse_formats(text)`, `choose_mode(modes, cap)`, `ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=60, duration=None)`, `split_jpegs(buf)`.
-  - `cams` runtime: `FpsMeter`, `Recorder(sim).run()`, `overview()`, `stream_live(out, role, frames=None, give_up=LIVE_GIVE_UP, clock=time.time, sleep=time.sleep) → frames sent`.
+  - `cams` constants and paths: `ROLES`, `VAAPI`, `CAPS` (the defaults), `SIM_MODE`, `LIVE_FPS`, `LIVE_GIVE_UP`, `STALL_SECS = 10`, `START_GRACE = 15`, `MIN_USB_NODE = 64`, `BOUNDARY = "omacarframe"`, `run_dir()`, `live_path(role)`, `status_path()`.
+  - `cams` discovery and the command: `match_roles(names, patterns)`, `usb_floor(sysfs=SYSFS)`, `find_cameras(cfg=None, by_id=BY_ID, sysfs=SYSFS)`, `parse_formats(text)`, `choose_mode(modes, cap)`, `ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=60, duration=None)`, `split_jpegs(buf)`.
+  - `cams` runtime: `FpsMeter` (`fps(now=None)` is None once it has gone quiet), `Camera` (`stalled(now=None)`, `kill()`), `Recorder(sim)` (`run()`, `check_stalls()`), `running(status)`, `overview()`, `stream_live(out, role, frames=None, give_up=LIVE_GIVE_UP, clock=time.time, sleep=time.sleep) → frames sent`. A role's status carries `stalled`.
   - A mode is `{fmt: "MJPG"|"H264"|"YUYV"|"SIM", w, h, fps}`.
   - `OMACAR_VIDEOS` moves `~/Videos/OmaCar`; `XDG_RUNTIME_DIR` and `XDG_CONFIG_HOME` move the rest.
 
@@ -284,6 +337,45 @@ check("the config file's pattern wins, and an unknown role is ignored",
 check("and so does its budget", camstore.budget_bytes(_cfg), 12 * 10**9)
 os.remove(camstore.config_path())
 check("with no file, the budget is 40 GB", camstore.budget_bytes(), 40 * 10**9)
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"patterns": {"rear": ""}, "caps": {"rear": [1280, 720, 30], "front": "big"}}, f)
+_cfg = camstore.load_config()
+check("an empty pattern turns a role off", "rear" in cams.match_roles(NAMES, _cfg["patterns"]), False)
+check("a role's resolution cap comes from the file", _cfg["caps"]["rear"], (1280, 720, 30))
+check("and a cap that is not three numbers is ignored", _cfg["caps"]["front"], (1920, 1080, 30))
+os.remove(camstore.config_path())
+
+# ------------------------------------------------------------ the IPU6 floor
+head("nothing below video64 is opened where the IPU6 owns those nodes")
+
+_fake = os.path.join(SCRATCH, "fake")
+
+
+def fake_machine(ipu):
+    """A by-id folder, device nodes and a sysfs: the tablet's shape, or the box's."""
+    shutil.rmtree(_fake, ignore_errors=True)
+    for d in ("by-id", "dev", "sysfs"):
+        os.makedirs(os.path.join(_fake, d))
+    low = "Intel IPU6 ISYS Capture 3" if ipu else "USB2.0 Camera"
+    for node, name, link in ((3, low, "usb-Sneaky_Cam-video-index0"), (70, "HD Pro Webcam C920", C920)):
+        open(os.path.join(_fake, "dev", f"video{node}"), "w").close()
+        os.symlink(os.path.join(_fake, "dev", f"video{node}"), os.path.join(_fake, "by-id", link))
+        os.makedirs(os.path.join(_fake, "sysfs", f"video{node}"))
+        with open(os.path.join(_fake, "sysfs", f"video{node}", "name"), "w") as fh:
+            fh.write(name + "\n")
+    return os.path.join(_fake, "by-id"), os.path.join(_fake, "sysfs")
+
+
+_pats = {"patterns": {"front": "Sneaky", "rear": "Nothing", "cabin": "C920"}}
+_by, _sys = fake_machine(ipu=True)
+check("on the tablet the floor is video64", cams.usb_floor(_sys), 64)
+check("and a pattern that matches video3 is refused, whatever the config says",
+      sorted(cams.find_cameras(_pats, by_id=_by, sysfs=_sys)), ["cabin"])
+_by, _sys = fake_machine(ipu=False)
+check("on the box, with no IPU, a low node is a camera like any other",
+      sorted(cams.find_cameras(_pats, by_id=_by, sysfs=_sys)), ["cabin", "front"])
+check("a machine whose sysfs cannot be read is treated as the tablet",
+      cams.usb_floor(os.path.join(SCRATCH, "nowhere")), 64)
 
 # ------------------------------------------------------------ the mode
 head("the best mode at or under 1080p30, MJPEG first")
@@ -375,6 +467,49 @@ for _i in range(11):
 check("real fps over the last five seconds", _m.fps(), 10.0)
 _m.add(111, 105)
 check("and it follows a camera that slows in the dark", _m.fps() < 10.0, True)
+check("a meter that has heard nothing for five seconds has no rate", _m.fps(now=117), None)
+
+
+class FakeProc:
+    """ffmpeg, alive until it is killed."""
+
+    def __init__(self):
+        self.code, self.signals = None, []
+
+    def poll(self):
+        return self.code
+
+    def send_signal(self, sig):
+        self.signals.append(sig)
+
+    def kill(self):
+        self.signals.append("KILL")
+        self.code = -9
+
+    def wait(self, timeout=None):
+        return self.code
+
+
+head("a camera that stops sending pictures is stalled, not REC, and restarted")
+_now = time.time()
+_cam = cams.Camera("front", "/dev/v4l/by-id/x", {"fmt": "MJPG", "w": 1920, "h": 1080, "fps": 30.0})
+_cam.proc, _cam.started, _cam.last_frame = FakeProc(), _now - 60, _now - 11
+_st = _cam.status()
+check("ffmpeg alive with no picture for 11 s is stalled, and says so",
+      (_st["recording"], _st["stalled"], _st["live"], _st["error"].startswith("stalled")),
+      (False, True, False, True))
+_cam.last_frame = _now - 1
+check("a fresh picture is recording", (_cam.status()["recording"], _cam.status()["stalled"]), (True, False))
+_cam.last_frame, _cam.started = None, _now - 10
+check("a camera still starting has fifteen seconds' grace", _cam.stalled(), False)
+_cam.started = _now - 16
+check("and then it is stalled too", _cam.stalled(), True)
+_rec = cams.Recorder()
+_rec.cams["front"] = _cam
+_rec.check_stalls()
+check("the watchdog kills it, and it restarts on the next pass",
+      ("KILL" in _cam.proc.signals, _rec.retry_at["front"], _rec.notes["front"].startswith("stalled")),
+      (True, 0, True))
 
 
 class Sink:
@@ -498,21 +633,61 @@ check("and the event locks when the window closes",
       [e for e in camstore.load_events()["events"] if e["kind"] == "hard-braking"][0]["state"],
       "locked")
 
+# ------------------------------------------------------------ simulated speed
+head("the simulator's speed is never hard braking")
+
+_real_live = cams._live
+_feed = []
+cams._live = lambda: _feed[-1] if _feed else None
+
+
+def _drive(samples):
+    r = cams.Recorder()
+    for s in samples:
+        _feed.append(s)
+        r.watch_braking()
+
+
+def _stop(sim):
+    return [{"connected": True, "simulated": sim, "t": 1000 + i / 5,
+             "values": {"SPEED": 100.0 if i < 10 else 70.0}} for i in range(12)]
+
+
+_before = len(camstore.load_events()["events"])
+_drive(_stop(True))
+check("a hard stop in simulated numbers locks nothing", len(camstore.load_events()["events"]), _before)
+_drive(_stop(False))
+check("the same stop from the car does", len(camstore.load_events()["events"]), _before + 1)
+cams._live = _real_live
+
 # ------------------------------------------------------------ the API's view
 head("the recorder's own report, as the API reads it")
 
+
+def _status(pid):
+    with open(cams.status_path(), "w", encoding="utf-8") as f:
+        json.dump({"pid": pid, "t": time.time(), "sim": True, "roles": {
+            "front": {"device": None, "mode": cams.SIM_MODE["front"], "sim": True, "recording": True,
+                      "live": True, "stalled": False, "fps": 29.9, "error": None}}}, f)
+
+
 check("with no recorder running, it says off", cams.overview()["running"], False)
-with open(cams.status_path(), "w", encoding="utf-8") as f:
-    json.dump({"pid": os.getpid(), "t": time.time(), "sim": True, "roles": {
-        "front": {"device": None, "mode": cams.SIM_MODE["front"], "sim": True,
-                  "recording": True, "live": True, "fps": 29.9, "error": None}}}, f)
-_ov = cams.overview()
-check("with one, it says so, and which role is simulated",
-      (_ov["running"], _ov["sim"], _ov["roles"]["front"]["sim"], _ov["roles"]["front"]["fps"]),
-      (True, True, True, 29.9))
-check("every role is reported, with its clips counted",
-      (sorted(_ov["roles"]), _ov["roles"]["rear"]["clips"]), (["cabin", "front", "rear"], 4))
-check("storage used, of the budget", _ov["storage"]["budget"], 40 * 10**9)
+_status(os.getpid())
+check("a fresh status file whose pid is not a recorder is not a running recorder",
+      cams.overview()["running"], False)
+_fake_rec = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "lib/cams.py", "run"])
+try:
+    _status(_fake_rec.pid)
+    _ov = cams.overview()
+    check("with one, it says so, and which role is simulated",
+          (_ov["running"], _ov["sim"], _ov["roles"]["front"]["sim"], _ov["roles"]["front"]["fps"]),
+          (True, True, True, 29.9))
+    check("every role is reported, with its clips counted",
+          (sorted(_ov["roles"]), _ov["roles"]["rear"]["clips"]), (["cabin", "front", "rear"], 4))
+    check("storage used, of the budget", _ov["storage"]["budget"], 40 * 10**9)
+finally:
+    _fake_rec.kill()
+    _fake_rec.wait()
 os.remove(cams.status_path())
 
 # ------------------------------------------------------------ the real command
@@ -567,6 +742,21 @@ python3 "$ROOT/test/cams_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 ```
 
+Near the top of `test/all.sh`, just after `fails=0`, add a guard. A running recorder holds Home's live picture open, and headless Chromium's virtual time never moves past an open request, so `app_test.py` would hang rather than fail:
+
+```bash
+# ---- redesign/cameras ---------------------------------------------------------
+# A running camera recorder holds Home's live picture open, and headless
+# Chromium's virtual time never moves past an open request: app_test would hang
+# rather than fail. So refuse, fast, and say why.
+if systemctl --user is-active --quiet omacar-cams.service 2>/dev/null \
+   || pgrep -f "lib/cams.py (run|sim)" >/dev/null 2>&1; then
+  echo "  omacar-cams is recording on this machine; stop it first: omacar cams off"
+  exit 1
+fi
+# ---- end redesign/cameras -----------------------------------------------------
+```
+
 - [ ] **Step 3: Run it to see it fail**
 
 Run: `BOXTEST`'s rsync, then `ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && python3 test/cams_test.py'`.
@@ -611,6 +801,10 @@ DEFAULT_PATTERNS = {
     "cabin": "C920|Logitech|ELP",
 }
 DEFAULT_BUDGET_GB = 40      # of the tablet's 93 GB free
+# The best mode at or under 1080p30 front and rear; the cabin at low
+# resolution. omacar-cameras.json may lower any of them ("caps"): Tuesday's
+# fallback, if the tablet cannot carry two 1080p cameras, is a file edit.
+DEFAULT_CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (640, 480, 30)}
 
 
 def videos():
@@ -623,10 +817,18 @@ def config_path():
 
 
 def load_config(path=None):
-    """The defaults, with ~/.config/omarchy/omacar-cameras.json laid over them.
-    A pattern for a role that does not exist, or a budget that is not a
-    positive number, is ignored rather than trusted."""
-    cfg = {"patterns": dict(DEFAULT_PATTERNS), "budget_gb": DEFAULT_BUDGET_GB}
+    """The defaults, with ~/.config/omarchy/omacar-cameras.json laid over them:
+
+        {"patterns": {"rear": "Insta360"},    a role's by-id pattern; "" or null
+                                              turns the role off
+         "caps": {"rear": [1280, 720, 30]},   a role's largest mode
+         "budget_gb": 40}
+
+    Anything for a role that does not exist, a cap that is not three positive
+    numbers, or a budget that is not a positive number is ignored rather than
+    trusted."""
+    cfg = {"patterns": dict(DEFAULT_PATTERNS), "budget_gb": DEFAULT_BUDGET_GB,
+           "caps": dict(DEFAULT_CAPS)}
     try:
         with open(path or config_path(), encoding="utf-8") as f:
             user = json.load(f)
@@ -637,8 +839,15 @@ def load_config(path=None):
     pats = user.get("patterns")
     if isinstance(pats, dict):
         for role, pat in pats.items():
-            if role in ROLES and isinstance(pat, str) and pat:
-                cfg["patterns"][role] = pat
+            if role in ROLES and (pat is None or isinstance(pat, str)):
+                cfg["patterns"][role] = pat or ""
+    caps = user.get("caps")
+    if isinstance(caps, dict):
+        for role, cap in caps.items():
+            if (role in ROLES and isinstance(cap, list) and len(cap) == 3
+                    and all(isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0
+                            for x in cap)):
+                cfg["caps"][role] = (int(cap[0]), int(cap[1]), cap[2])
     gb = user.get("budget_gb")
     if isinstance(gb, (int, float)) and not isinstance(gb, bool) and gb > 0:
         cfg["budget_gb"] = gb
@@ -957,6 +1166,14 @@ daemon and live.json already work.
 
 CAMERAS ARE FOUND BY NAME, never by /dev/videoN: the tablet's IPU6 driver
 claims video0-video63, so USB cameras land at video64 and up, in any order.
+And on a machine where the IPU6 owns those low nodes, nothing below video64 is
+ever opened, whatever a pattern matches: opening one wedged the IPU6 firmware
+and rebooted the Surface on 2026-09-27.
+
+A CAMERA THAT STALLS IS RESTARTED. A camera that browns out on USB power
+leaves ffmpeg alive and blocked in its read, writing nothing. After ten
+seconds without a live frame it is reported "stalled", never REC, killed, and
+started again.
 
 Stdlib only; ffmpeg and v4l2-ctl do the work.
 """
@@ -977,8 +1194,10 @@ import camstore  # noqa: E402
 ROLES = camstore.ROLES
 BY_ID = "/dev/v4l/by-id"
 VAAPI = "/dev/dri/renderD128"
-# The best mode at or under 1080p30; the cabin at low resolution.
-CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (640, 480, 30)}
+SYSFS = "/sys/class/video4linux"
+MIN_USB_NODE = 64       # the IPU6 claims video0-video63 on the tablet
+# The defaults; omacar-cameras.json may lower them (camstore.load_config).
+CAPS = camstore.DEFAULT_CAPS
 BITRATE = {"front": "6M", "rear": "6M", "cabin": "1M"}
 FORMAT_ORDER = ("MJPG", "H264", "YUYV")
 INPUT_FORMAT = {"MJPG": "mjpeg", "H264": "h264", "YUYV": "yuyv422"}
@@ -990,6 +1209,8 @@ SIM_MODE = {"front": {"fmt": "SIM", "w": 1280, "h": 720, "fps": 30.0},
 LIVE_WIDTH = 640
 LIVE_FPS = 10
 LIVE_GIVE_UP = 10       # seconds without a new frame before a live stream ends
+STALL_SECS = 10         # ffmpeg alive, no new frame for this long: stalled
+START_GRACE = 15        # a camera's first frame may take this long
 BOUNDARY = "omacarframe"
 
 
@@ -1030,14 +1251,48 @@ def match_roles(names, patterns):
     return out
 
 
-def find_cameras(cfg=None):
-    """{role: /dev/v4l/by-id/...} for what is plugged in now."""
+def _node_name(sysfs, node):
+    try:
+        with open(os.path.join(sysfs, f"video{node}", "name"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def usb_floor(sysfs=SYSFS):
+    """The lowest /dev/videoN a camera may be. On a machine where any node is
+    the IPU6's (sysfs names them "Intel IPU6 ISYS Capture N"), that is video64;
+    elsewhere, the box for one, where the C920 is video0, it is 0. A machine
+    whose sysfs cannot be read is treated as the tablet."""
+    try:
+        names = os.listdir(sysfs)
+    except OSError:
+        return MIN_USB_NODE
+    for n in names:
+        m = re.fullmatch(r"video(\d+)", n)
+        if m and re.search(r"\bIPU", _node_name(sysfs, m.group(1)), re.I):
+            return MIN_USB_NODE
+    return 0
+
+
+def find_cameras(cfg=None, by_id=BY_ID, sysfs=SYSFS):
+    """{role: /dev/v4l/by-id/...} for what is plugged in now. Each link is
+    resolved, and a node below the floor, or named as the IPU's, is refused
+    whatever the config's patterns say."""
     cfg = cfg or camstore.load_config()
     try:
-        names = os.listdir(BY_ID)
+        names = os.listdir(by_id)
     except OSError:
         names = []
-    return {r: os.path.join(BY_ID, n) for r, n in match_roles(names, cfg["patterns"]).items()}
+    floor = usb_floor(sysfs)
+    out = {}
+    for role, name in match_roles(names, cfg["patterns"]).items():
+        path = os.path.join(by_id, name)
+        m = re.fullmatch(r"video(\d+)", os.path.basename(os.path.realpath(path)))
+        if not m or int(m.group(1)) < floor or re.search(r"\bIPU", _node_name(sysfs, m.group(1)), re.I):
+            continue
+        out[role] = path
+    return out
 
 
 # ---- what each camera can do -------------------------------------------------
@@ -1172,9 +1427,11 @@ class FpsMeter:
         while len(self.points) > 2 and t - self.points[0][0] > self.window:
             self.points.popleft()
 
-    def fps(self):
+    def fps(self, now=None):
         if len(self.points) < 2:
             return None
+        if now is not None and now - self.points[-1][0] > self.window:
+            return None            # ffmpeg has stopped counting: no rate, not the last one
         (t0, f0), (t1, f1) = self.points[0], self.points[-1]
         return round((f1 - f0) / (t1 - t0), 1) if t1 > t0 else None
 
@@ -1204,33 +1461,41 @@ class Camera:
         threading.Thread(target=self._frames, daemon=True).start()
         threading.Thread(target=self._progress, daemon=True).start()
 
+    # A reader that dies leaves ffmpeg blocked on a full pipe; the error is
+    # kept, and the stall watchdog restarts the camera.
     def _frames(self):
-        out = live_path(self.role)
-        tmp = out + ".tmp"
-        buf = b""
-        while True:
-            chunk = self.proc.stdout.read1(1 << 16)
-            if not chunk:
-                return
-            frames, buf = split_jpegs(buf + chunk)
-            if frames:
-                with open(tmp, "wb") as f:
-                    f.write(frames[-1])
-                os.replace(tmp, out)
-                self.last_frame = time.time()
-            if len(buf) > 8 << 20:
-                buf = b""      # eight megabytes with no end marker is not a picture
+        try:
+            out = live_path(self.role)
+            tmp = out + ".tmp"
+            buf = b""
+            while True:
+                chunk = self.proc.stdout.read1(1 << 16)
+                if not chunk:
+                    return
+                frames, buf = split_jpegs(buf + chunk)
+                if frames:
+                    with open(tmp, "wb") as f:
+                        f.write(frames[-1])
+                    os.replace(tmp, out)
+                    self.last_frame = time.time()
+                if len(buf) > 8 << 20:
+                    buf = b""      # eight megabytes with no end marker is not a picture
+        except Exception as e:                                 # noqa: BLE001
+            self.error = f"live picture reader failed: {type(e).__name__}: {e}"[:300]
 
     def _progress(self):
-        for raw in self.proc.stderr:
-            line = raw.decode("utf-8", "replace").strip()
-            key, sep, val = line.partition("=")
-            if sep and re.fullmatch(r"[a-z0-9_]+", key):
-                if key == "frame" and val.isdigit():
-                    self.meter.add(time.time(), int(val))
-                continue
-            if line:
-                self.error = line[:300]
+        try:
+            for raw in self.proc.stderr:
+                line = raw.decode("utf-8", "replace").strip()
+                key, sep, val = line.partition("=")
+                if sep and re.fullmatch(r"[a-z0-9_]+", key):
+                    if key == "frame" and val.isdigit():
+                        self.meter.add(time.time(), int(val))
+                    continue
+                if line:
+                    self.error = line[:300]
+        except Exception as e:                                 # noqa: BLE001
+            self.error = f"progress reader failed: {type(e).__name__}: {e}"[:300]
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
@@ -1245,13 +1510,38 @@ class Camera:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
 
+    def stalled(self, now=None):
+        """ffmpeg alive, and no live frame for STALL_SECS (or none at all
+        START_GRACE after it started)."""
+        if not self.alive():
+            return False
+        now = time.time() if now is None else now
+        if self.last_frame is None:
+            return now - (self.started or now) > START_GRACE
+        return now - self.last_frame > STALL_SECS
+
+    def kill(self):
+        # SIGKILL, not SIGINT: a stalled ffmpeg is blocked in the V4L2 read and
+        # may never see a gentler signal. The fragments written so far play.
+        if self.alive():
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
     def status(self):
+        now = time.time()
         alive = self.alive()
-        fresh = self.last_frame is not None and time.time() - self.last_frame < 3
+        stalled = self.stalled(now)
+        fresh = self.last_frame is not None and now - self.last_frame < 3
+        since = self.last_frame or self.started or now
         return {"device": self.device, "mode": self.mode, "sim": self.sim,
-                "recording": alive, "live": alive and fresh,
-                "fps": self.meter.fps() if alive else None,
-                "since": self.started, "error": self.error}
+                "recording": alive and not stalled, "stalled": stalled,
+                "live": alive and fresh and not stalled,
+                "fps": self.meter.fps(now) if alive and not stalled else None,
+                "since": self.started,
+                "error": f"stalled: no picture for {int(now - since)} s" if stalled else self.error}
 
 
 # ---- the recorder --------------------------------------------------------------
@@ -1276,7 +1566,8 @@ class Recorder:
         self.last_t = None
 
     def discover(self):
-        found = find_cameras()
+        cfg = camstore.load_config()
+        found = find_cameras(cfg)
         now = time.time()
         for role in ROLES:
             cam = self.cams.get(role)
@@ -1287,9 +1578,13 @@ class Recorder:
             if now < self.retry_at.get(role, 0):
                 continue
             self.retry_at[role] = now + 5          # a camera that dies is retried, not spun
+            if not cfg["patterns"].get(role):
+                self.notes[role] = "off in omacar-cameras.json"
+                self.cams.pop(role, None)
+                continue
             dev = found.get(role)
             if dev:
-                mode = choose_mode(probe_modes(dev), CAPS[role])
+                mode = choose_mode(probe_modes(dev), cfg["caps"][role])
                 if not mode:
                     self.notes[role] = "no mode at or under 1080p30"
                     self.cams.pop(role, None)
@@ -1304,9 +1599,18 @@ class Recorder:
             new.start()
             self.cams[role] = new
 
+    def check_stalls(self):
+        """Kill any camera that has stalled; discover() starts it again."""
+        for role, cam in list(self.cams.items()):
+            if cam.stalled():
+                self.notes[role] = f"stalled; restarted at {time.strftime('%H:%M:%S')}"
+                cam.kill()
+                self.retry_at[role] = 0
+
     def watch_braking(self):
         s = _live()
-        if not s or not s.get("connected"):
+        # The simulator's speed is not the car's: never hard braking.
+        if not s or not s.get("connected") or s.get("simulated"):
             self.brake.feed(time.time(), None)
             return
         t = s.get("t")
@@ -1318,17 +1622,26 @@ class Recorder:
             camstore.mark("hard-braking", t=t, speed_kph=self.brake.peak)
 
     def write_status(self):
-        doc = {"pid": os.getpid(), "t": time.time(), "sim": self.sim, "roles": {}}
+        doc = {"pid": os.getpid(), "t": time.time(), "sim": self.sim,
+               "note": self.notes.get("recorder"), "roles": {}}
         for role in ROLES:
             cam = self.cams.get(role)
             doc["roles"][role] = cam.status() if cam else {
-                "device": None, "mode": None, "sim": False, "recording": False,
+                "device": None, "mode": None, "sim": False, "recording": False, "stalled": False,
                 "live": False, "fps": None, "since": None, "error": self.notes.get(role)}
         os.makedirs(run_dir(), exist_ok=True)
         tmp = status_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(doc, f)
         os.replace(tmp, status_path())
+
+    def _safely(self, what, fn):
+        """One failing chore must not take the recorder down: systemd would
+        restart it every 5 s, and every restart cuts every clip short."""
+        try:
+            fn()
+        except Exception as e:                                 # noqa: BLE001
+            self.notes["recorder"] = f"{what} failed: {type(e).__name__}: {e}"[:300]
 
     def run(self):
         stop = threading.Event()
@@ -1338,17 +1651,18 @@ class Recorder:
         while not stop.is_set():
             now = time.time()
             if now >= next_find:
-                self.discover()
+                self._safely("the stall watchdog", self.check_stalls)
+                self._safely("discovery", self.discover)
                 next_find = now + 2
             # live.json is written five times a second; one second of braking
             # needs every sample of it.
-            self.watch_braking()
+            self._safely("the hard-braking watch", self.watch_braking)
             if now >= next_settle:
-                camstore.settle()
-                self.write_status()
+                self._safely("locking", camstore.settle)
+                self._safely("the status file", self.write_status)
                 next_settle = now + 1
             if now >= next_janitor:
-                camstore.janitor()
+                self._safely("the loop", camstore.janitor)
                 next_janitor = now + 30
             stop.wait(0.2)
         for cam in self.cams.values():
@@ -1377,26 +1691,48 @@ def _alive(pid):
         return False
 
 
+def _ours(pid):
+    """Is `pid` a live recorder, rather than a number the kernel has since
+    handed to something else? /proc says what it is running; without /proc
+    (not Linux) the pid is all there is."""
+    if not _alive(pid):
+        return False
+    try:
+        with open(f"/proc/{int(pid)}/cmdline", "rb") as f:
+            argv = f.read().decode("utf-8", "replace").split("\0")
+    except OSError:
+        return True
+    return any(a.endswith("cams.py") for a in argv) and ("run" in argv or "sim" in argv)
+
+
+def running(st):
+    """A status file says a recorder is running only if it is fresh and its
+    pid is still a recorder."""
+    return bool(st) and time.time() - st.get("t", 0) < 5 and _ours(st.get("pid"))
+
+
 def overview():
     """GET /api/cams. Per role: device, mode, recording, real fps, clip count,
     storage used, and the last error; and storage used of the budget."""
     cfg = camstore.load_config()
     st = _read_status()
-    running = bool(st) and time.time() - st.get("t", 0) < 5 and _alive(st.get("pid"))
+    running_now = running(st)
     found = find_cameras(cfg)
     use = camstore.usage()
     roles = {}
     for role in ROLES:
-        r = (st or {}).get("roles", {}).get(role, {}) if running else {}
-        why = r.get("error") if running else ("recorder off" if role in found else "no camera")
+        r = (st or {}).get("roles", {}).get(role, {}) if running_now else {}
+        why = r.get("error") if running_now else ("recorder off" if role in found else "no camera")
         roles[role] = {
             "device": r.get("device") or found.get(role),
             "mode": r.get("mode"), "sim": bool(r.get("sim")),
-            "recording": bool(r.get("recording")), "live": bool(r.get("live")),
+            "recording": bool(r.get("recording")), "stalled": bool(r.get("stalled")),
+            "live": bool(r.get("live")),
             "fps": r.get("fps"), "clips": use["clips"][role], "used": use["by_role"][role],
             "error": why,
         }
-    return {"running": running, "sim": bool(running and st.get("sim")),
+    return {"running": running_now, "sim": bool(running_now and st.get("sim")),
+            "note": (st or {}).get("note") if running_now else None,
             "storage": {"used": use["used"], "budget": camstore.budget_bytes(cfg)},
             "loop": True, "roles": roles, "now": time.time()}
 
@@ -1444,7 +1780,8 @@ def _print_status():
         m = r["mode"]
         mode = f"{m['fmt']} {m['w']}x{m['h']}@{m['fps']:g}" if m else "-"
         fps = f"{r['fps']:.1f} fps" if r["fps"] else ""
-        print(f"  {role:<6} {'REC' if r['recording'] else '---'}  {mode:<22} {fps:<9} "
+        state = "REC" if r["recording"] else ("STALLED" if r["stalled"] else "---")
+        print(f"  {role:<6} {state:<7} {mode:<22} {fps:<9} "
               f"{r['clips']:>4} clips  {os.path.basename(r['device'] or '') or '(none)'}")
         if r["error"]:
             print(f"         {r['error']}")
@@ -1461,7 +1798,7 @@ def main(argv):
         return subprocess.run(["systemctl", "--user", *how, "omacar-cams.service"]).returncode
     if cmd in ("run", "sim"):
         st = _read_status()
-        if st and _alive(st.get("pid")) and st.get("pid") != os.getpid():
+        if running(st) and st.get("pid") != os.getpid():
             print(f"omacar: the recorder is already running (pid {st['pid']}): "
                   f"omacar cams off first", file=sys.stderr)
             return 1
@@ -1479,7 +1816,7 @@ if __name__ == "__main__":
 
 Run: rsync, then `python3 test/cams_test.py` on the box.
 
-Expected: every check ok. The last section runs for about 8 s on the box, with its VA-API.
+Expected: every check ok. The last section runs for about 8 s on the box, with its VA-API. The pid checks read `/proc`, so this suite means what it says on Linux (the box and the tablet).
 
 If "every whole segment is 2 s long" fails, print `_durs`, compare against the tablet facts in Global constraints, and fix `ffmpeg_args`. Do not loosen the tolerance.
 
@@ -1538,7 +1875,7 @@ Run `BOXTEST`. Expected: `cams_test.py` green; the guards' cheatsheet section st
 ```bash
 cd /Users/jmyers/omgarchy/omacar-cameras
 git add lib/camstore.py lib/cams.py share/systemd/omacar-cams.service bin/omacar test/cams_test.py test/all.sh
-git commit -m "The tablet records its cameras in one-minute clips that loop, and locks the minute around a hard stop" -m "One ffmpeg per camera decodes once and splits two ways: h264_vaapi clips with passthrough frame timing and keyframes forced at each boundary, as measured on the tablet, and a 10 fps live picture this process writes atomically. Cameras are found by their by-id names, because the IPU6 driver owns video0-63. Hard braking is read from the car's own speed; locked clips leave the loop's reach.
+git commit -m "The tablet records its cameras in one-minute clips that loop, and locks the minute around a hard stop" -m "One ffmpeg per camera decodes once and splits two ways: h264_vaapi clips with passthrough frame timing and keyframes forced at each boundary, as measured on the tablet, and a 10 fps live picture this process writes atomically. Cameras are found by their by-id names, and nothing below video64 is opened where the IPU6 owns those nodes. A camera that stops sending pictures is reported stalled and restarted. Hard braking is read from the car's own speed, never the simulator's; locked clips leave the loop's reach.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1551,12 +1888,13 @@ The JSON routes go through `lib/api.py` like every other route. The live stream 
 
 **Files:**
 - Create: `lib/camroutes.py`, `test/camserve_test.py`
-- Modify: `lib/api.py` (one block at the end), `lib/serve.py` (`import re`, two routes in `do_GET`, two methods), `test/all.sh` (the cameras block)
+- Modify: `lib/api.py` (one block at the end), `lib/serve.py` (`import re`, two routes in `do_GET`, two methods), `test/app_test.py` (one helper, `wait_for_port`), `test/all.sh` (the cameras block)
 
 **Interfaces:**
 - Consumes: `cams.overview()`, `cams.stream_live()`, `cams.ROLES`, `cams.BOUNDARY`, `camstore.list_clips()`, `list_events()`, `mark()`, `clip_path()` and `parse_range()` (all Task 1).
 - Produces:
-  - `camroutes.handle_get(path, query)` and `camroutes.handle_post(path, body)`, each returning `(status, payload)` or `None`. Tasks 5 and 10 add their routes here.
+  - `wait_for_port(port, secs=20) → bool` in `test/app_test.py`: the one server wait every later suite and tool uses.
+  - `camroutes.handle_get(path, query)` and `camroutes.handle_post(path, body)`, each returning `(status, payload)` or `None`. Tasks 4 and 9 add their routes here.
   - `GET /api/cams/clips` → `{clips: [{role, file, start, end, size, locked}], events: [event], now}`.
   - `POST /api/cams/mark` and `POST /api/cams/lock` accept `{t?}` (epoch seconds, within the last week) and return the event.
   - `GET /api/cams/<role>/live[?frames=N]` and `GET /api/cams/clip/<role>/<file>` (Range: 200, 206 or 416).
@@ -1576,17 +1914,15 @@ import http.client
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 sys.path.insert(0, os.path.join(ROOT, "test"))
-from app_test import free_port, python_for_server  # noqa: E402
+from app_test import free_port, python_for_server, wait_for_port  # noqa: E402
 
 SCRATCH = tempfile.mkdtemp(prefix="omacar-camserve-")
 ENV = dict(os.environ,
@@ -1628,13 +1964,9 @@ PORT = free_port()
 SRV = subprocess.Popen([python_for_server(), os.path.join(ROOT, "lib", "serve.py"),
                         str(PORT), os.path.join(ROOT, "share")],
                        env=ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-for _ in range(80):
-    time.sleep(0.25)
-    try:
-        with socket.create_connection(("127.0.0.1", PORT), 0.25):
-            break
-    except OSError:
-        continue
+if not wait_for_port(PORT):
+    SRV.kill()
+    sys.exit("  FAIL  the server never came up")
 
 
 def req(method, path, body=None, headers=None):
@@ -1712,15 +2044,23 @@ try:
     J1, J2 = b"\xff\xd8one\xff\xd9", b"\xff\xd8second\xff\xd9"
     with open(cams.live_path("cabin"), "wb") as f:
         f.write(J1)
-
-    def swap():
-        time.sleep(0.5)
-        with open(cams.live_path("cabin") + ".tmp", "wb") as fh:
-            fh.write(J2)
-        os.replace(cams.live_path("cabin") + ".tmp", cams.live_path("cabin"))
-
-    threading.Thread(target=swap).start()
-    st, h, body = req("GET", "/api/cams/cabin/live?frames=2")
+    # The second picture is written only once the first has been read back,
+    # so the order cannot depend on how quickly the server gets going.
+    c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=20)
+    c.request("GET", "/api/cams/cabin/live?frames=2")
+    r = c.getresponse()
+    st, h = r.status, {k.lower(): v for k, v in r.getheaders()}
+    body = b""
+    while J1 not in body:
+        chunk = r.read1(256)
+        if not chunk:
+            break
+        body += chunk
+    with open(cams.live_path("cabin") + ".tmp", "wb") as fh:
+        fh.write(J2)
+    os.replace(cams.live_path("cabin") + ".tmp", cams.live_path("cabin"))
+    body += r.read()
+    c.close()
     check("multipart, the way an <img> reads it", (st, h.get("content-type")),
           (200, "multipart/x-mixed-replace; boundary=omacarframe"))
     check("two whole frames, each with its length",
@@ -1754,7 +2094,24 @@ Run: rsync, then `python3 test/camserve_test.py` on the box.
 
 Expected: the clip requests come back 404 (`no such endpoint`), and `GET /api/cams` fails to parse, because it is also a 404.
 
-- [ ] **Step 3: Write lib/camroutes.py**
+- [ ] **Step 3: One server wait, in app_test.py**
+
+In `test/app_test.py`, after `python_for_server()`, add the helper that `camserve_test.py`, `tools/shoot.py` and `tools/cams_e2e.py` all use. Its own four loops in `main()` stay as they are.
+
+```python
+def wait_for_port(port, secs=20):
+    """True once something listens on 127.0.0.1:port, False after `secs`."""
+    deadline = time.time() + secs
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), 0.25):
+                return True
+        except OSError:
+            time.sleep(0.25)
+    return False
+```
+
+- [ ] **Step 4: Write lib/camroutes.py**
 
 ```python
 #!/usr/bin/env python3
@@ -1810,7 +2167,10 @@ def _speed():
         s = records.live()
     except Exception:                                          # noqa: BLE001
         return None
-    v = (s.get("values") or {}).get("SPEED") if s.get("connected") else None
+    # The simulator's speed is not the car's, so it is not recorded as one.
+    if not s.get("connected") or s.get("simulated"):
+        return None
+    v = (s.get("values") or {}).get("SPEED")
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
@@ -1844,7 +2204,7 @@ def handle_post(path, body):
     return None
 ```
 
-- [ ] **Step 4: One block at the end of lib/api.py**
+- [ ] **Step 5: One block at the end of lib/api.py**
 
 Append to `lib/api.py`, after the last line of `handle_post`:
 
@@ -1873,7 +2233,7 @@ def handle_post(path, body):  # noqa: F811
 # ---- end redesign/cameras -----------------------------------------------------
 ```
 
-- [ ] **Step 5: The two streaming routes in lib/serve.py**
+- [ ] **Step 6: The two streaming routes in lib/serve.py**
 
 Add `import re` after `import os` in the imports.
 
@@ -1963,16 +2323,16 @@ Add these two methods to `Handler`, after `_json`:
             pass
 ```
 
-- [ ] **Step 6: Run it to see it pass**
+- [ ] **Step 7: Run it to see it pass**
 
 Run: rsync, then `python3 test/camserve_test.py`. Expected: every check ok.
 
 Then run `BOXTEST`. Expected: nothing regresses. `app_test.py` still starts the app, and `workshop_test.py` still reaches `/api/home` and every other route through the wrapper.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add lib/camroutes.py lib/api.py lib/serve.py test/camserve_test.py test/all.sh
+git add lib/camroutes.py lib/api.py lib/serve.py test/app_test.py test/camserve_test.py test/all.sh
 git commit -m "The server hands out the recorder's live pictures, its clips with Range, and a way to keep a minute" -m "Mark event and Save clip lock thirty seconds either side of the tap, or of the playhead, on every camera. Clips are served with HTTP Range because a <video> cannot seek without it and serve.py had never needed it. The live picture is MJPEG so an <img> shows it with no decoder, and it ends itself when the pictures stop.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1983,7 +2343,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 3: The Cameras tab
 
 **Files:**
-- Create: `share/js/camapi.js`, `share/js/camlogic.js`, `share/css/cameras.css`, `tools/camshot.py`, `test/js/camlogic.test.js`
+- Create: `share/js/camapi.js`, `share/js/camlogic.js`, `share/css/cameras.css`, `tools/sim-cams.sh`, `test/js/camlogic.test.js`
+- Modify: `tools/shoot.py` (foundation's: named targets, `shoot()` and `served()`; its default run unchanged)
 - Replace: `share/js/views/cameras.js` (the placeholder)
 - Modify: `share/app.html` (the `redesign/cameras` block, at the end)
 
@@ -1993,7 +2354,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `camapi.js`: `STILL` (true when the URL has `?still=1`), `getJSON(path)`, `postJSON(path, data)`, `liveUrl(role)`, `clipUrl(role, file)`.
   - `camlogic.js`: `ROLES`, `ROLE_LABEL`, `EVENT_LABEL`, `hhmm(t)`, `hhmmss(t)`, `resLabel(mode)`, `camBadge(ov) → {text, tone}`, `feedState(ov, role) → {title, rec, sim, live, why}`, `storageLine(storage)`, `timelineModel(clips, events, role, now, span=3600) → {t0, t1, ticks, markers, labels}`, `clipAt(clips, role, t) → {file, pos}|null`, `stepAcross(clips, role, file, pos, delta) → {file, pos}|null`.
   - The DOM the end-to-end check reads: each feed is `.cam-feed[data-rec="1"|"0"]`; the badge is `.cam-badge`; event markers are `.cam-marker`.
-  - `tools/camshot.py`: `run(out, shots, doms=()) → ({name: png}, {target: dom})` and a CLI, `camshot.py OUT NAME=TARGET@W,H …`. Tasks 4, 11 and 12 use it.
+  - `tools/shoot.py`: `served(extra=None)` (a context giving `(url, browser argv)`), `shoot(out, shots, doms=()) → ({name: png}, {target: dom})` with `shots = [(name, target, (w, h))]`, and the CLI `shoot.py OUT NAME=TARGET@W,H …`, where TARGET follows `app.html` (for example `?still=1#cameras`).
+  - `tools/sim-cams.sh CMD …`: CMD runs beside a scratch recorder (sim for every role with no camera), with scratch `OMACAR_VIDEOS`, `XDG_RUNTIME_DIR`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME`.
+  - Tasks 9, 10, 11 and 13 use both.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2584,7 +2947,7 @@ export default function camerasView(root) {
 }
 ```
 
-In `share/app.html`, after the last line (`<script type="module" src="js/bootscreen.js"></script>`), add the block that Tasks 5 and 8 extend:
+In `share/app.html`, after the last line (`<script type="module" src="js/bootscreen.js"></script>`), add the block that Tasks 4 and 7 extend:
 
 ```html
 <!-- ---- redesign/cameras ------------------------------------------------------
@@ -2601,78 +2964,76 @@ In `share/app.html`, after the last line (`<script type="module" src="js/bootscr
 
 Run `BOXTEST`. Expected: all green. `app_test.py` still boots to Home.
 
-Screenshots need two things a bare headless Chromium does not have: the first-run tour already seen, and live feeds that stop after one frame. `tools/camshot.py` does both. It marks the tour seen the way foundation's `tools/shoot.py` does, with a same-origin seed page in a copy of `share/`.
+Screenshots need three things a bare headless Chromium does not have: the first-run tour already seen, live feeds that stop after one frame, and a recorder on scratch folders. Foundation's `tools/shoot.py` already does the first. Extend it rather than copy it: replace `tools/shoot.py` with the version below. Its default run, Home and Vehicle at both orientations, is unchanged. It gains named targets, a `shoot()` function the end-to-end check calls, and `served()`, which `tools/drowsy_check.py` uses.
 
 ```python
 #!/usr/bin/env python3
-"""Screenshots of the app for review beside the owner's mockups: served from a
-copy of share/ with the first-run tour already seen, in headless Chromium.
-Not a test; it passes and fails nothing.
+"""Screenshots of the app for setting beside the owner's mockups. Not a test:
+it passes and fails nothing.
 
-    python3 tools/camshot.py OUT_DIR NAME=TARGET@W,H ...
+    tools/shoot.py [OUT_DIR]                    Home and Vehicle, both orientations
+    tools/shoot.py OUT_DIR NAME=TARGET@W,H ...  any page; TARGET is what follows
+                                                app.html, e.g. '?still=1#cameras'
 
-TARGET is what follows app.html?, for example `still=1#cameras`. `still=1`
-asks each live feed for one frame, so a stream that never ends cannot hold the
-page open. The server inherits this process's environment, so OMACAR_VIDEOS
-and XDG_RUNTIME_DIR point it at a scratch recorder.
+Uses the same server and the same onboarding seed as test/app_test.py, and the
+same outer-window allowance: app.html's inner height comes back 56 px short of
+--window-size, so 912 of inner height needs 968 of window.
 
-The inner height comes back 56 px short of --window-size (test/app_test.py),
-so 912 of inner height needs 968 of window. The tour is marked seen the way
-foundation's tools/shoot.py does it: a same-origin seed page in the copy.
+The server inherits this process's environment, so OMACAR_VIDEOS,
+XDG_RUNTIME_DIR and XDG_STATE_HOME point it at scratch folders
+(tools/sim-cams.sh). `?still=1` asks every live camera feed for one frame
+(share/js/camapi.js), so a stream that never ends cannot hold a headless page
+open. `served()` is also how tools/drowsy_check.py puts its page in front of
+the real server.
 """
 
+import contextlib
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
-import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SHARE = os.path.join(ROOT, "share")
+SIZES = {"landscape": (1368, 968), "portrait": (912, 1424)}
+VIEWS = ("home", "vehicle")
+
+# One copy of how a browser, a port and the server's python are found, and of
+# how to wait for the server: test/app_test.py's.
 sys.path.insert(0, os.path.join(ROOT, "test"))
-from app_test import browser, free_port, python_for_server  # noqa: E402
+from app_test import browser, free_port, python_for_server, wait_for_port  # noqa: E402
+
+SEED = '<script>localStorage.setItem("omacar.onboarded","1")</script>ok'
 
 
-def run(out, shots, doms=()):
-    """shots: [(name, target, "W,H")]; doms: [target]. Returns
-    ({name: png path or None}, {target: DOM text})."""
-    os.makedirs(out, exist_ok=True)
+@contextlib.contextmanager
+def served(extra=None):
+    """(url, the browser's argv so far) for a copy of share/ served by
+    lib/serve.py, with the first-run tour marked seen in a fresh profile.
+    `extra` adds files to the copy: {path inside share/: text}."""
     exe = browser()
     if not exe:
         raise SystemExit("no chromium here")
     work = tempfile.mkdtemp()
     copy = os.path.join(work, "share")
-    shutil.copytree(os.path.join(ROOT, "share"), copy)
-    with open(os.path.join(copy, "_seed.html"), "w", encoding="utf-8") as f:
-        f.write('<script>localStorage.setItem("omacar.onboarded","1")</script>ok')
+    shutil.copytree(SHARE, copy)
+    for rel, text in dict({"_seed.html": SEED}, **(extra or {})).items():
+        with open(os.path.join(copy, rel), "w", encoding="utf-8") as f:
+            f.write(text)
     port = free_port()
     srv = subprocess.Popen([python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     prof = tempfile.mkdtemp()
     url = f"http://127.0.0.1:{port}"
-    pngs, dom = {}, {}
+    base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            f"--user-data-dir={prof}", "--hide-scrollbars", "--force-device-scale-factor=2"]
     try:
-        for _ in range(80):
-            time.sleep(0.25)
-            try:
-                with socket.create_connection(("127.0.0.1", port), 0.25):
-                    break
-            except OSError:
-                continue
-        base = [exe, "--headless=new", "--no-sandbox", "--hide-scrollbars", f"--user-data-dir={prof}"]
+        if not wait_for_port(port):
+            raise SystemExit("the server never came up")
         subprocess.run(base + ["--virtual-time-budget=2000", "--dump-dom", url + "/_seed.html"],
                        capture_output=True, timeout=120)
-        for name, target, size in shots:
-            png = os.path.join(out, name + ".png")
-            subprocess.run(base + [f"--window-size={size}", "--virtual-time-budget=8000",
-                                   f"--screenshot={png}", f"{url}/app.html?{target}"],
-                           capture_output=True, timeout=180)
-            pngs[name] = png if os.path.exists(png) else None
-        for target in doms:
-            dom[target] = subprocess.run(base + ["--virtual-time-budget=8000", "--dump-dom",
-                                                 f"{url}/app.html?{target}"],
-                                         capture_output=True, text=True, timeout=180).stdout
+        yield url, base
     finally:
         srv.terminate()
         try:
@@ -2681,37 +3042,93 @@ def run(out, shots, doms=()):
             srv.kill()
         shutil.rmtree(prof, ignore_errors=True)
         shutil.rmtree(work, ignore_errors=True)
+
+
+def shoot(out, shots, doms=()):
+    """shots: [(name, target, (w, h))]; doms: [target]. Returns
+    ({name: png path, or None if it failed}, {target: the DOM})."""
+    os.makedirs(out, exist_ok=True)
+    pngs, dom = {}, {}
+    with served() as (url, base):
+        for name, target, (w, hgt) in shots:
+            path = os.path.join(out, name + ".png")
+            subprocess.run(base + [f"--window-size={w},{hgt}", "--virtual-time-budget=9000",
+                                   f"--screenshot={path}", f"{url}/app.html{target}"],
+                           capture_output=True, timeout=180)
+            pngs[name] = path if os.path.exists(path) else None
+        for target in doms:
+            dom[target] = subprocess.run(base + ["--virtual-time-budget=9000", "--dump-dom",
+                                                 f"{url}/app.html{target}"],
+                                         capture_output=True, text=True, timeout=180).stdout
     return pngs, dom
 
 
 def main(argv):
-    if len(argv) < 3:
-        print(__doc__)
-        return 2
-    shots = []
-    for arg in argv[2:]:
-        name, _, rest = arg.partition("=")
-        target, _, size = rest.rpartition("@")
-        shots.append((name, target, size))
-    pngs, _ = run(argv[1], shots)
-    for name, png in pngs.items():
-        print(("  wrote  " + png) if png else ("  FAILED " + name))
-    return 0 if all(pngs.values()) else 1
+    out = argv[1] if len(argv) > 1 else "/tmp/omacar-shots"
+    if len(argv) > 2:
+        shots = []
+        for arg in argv[2:]:
+            name, _, rest = arg.partition("=")
+            target, _, size = rest.rpartition("@")
+            w, hgt = size.split(",")
+            shots.append((name, target, (int(w), int(hgt))))
+    else:
+        shots = [(f"{view}-{orient}", f"#{view}", size) for orient, size in SIZES.items() for view in VIEWS]
+    pngs, _ = shoot(out, shots)
+    for name, path in pngs.items():
+        print(("  wrote " + path) if path else ("  FAILED " + name))
+    return 0
 
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv))
 ```
 
-Then screenshot the tab with the recorder running on scratch folders:
+`tools/sim-cams.sh` (mode 755) starts the scratch recorder, waits until it is ready, runs a command beside it, and stops it by its pid. No `pkill` pattern, which could match the shell running it:
+
+```bash
+#!/bin/bash
+#
+# Run a command beside a scratch camera recorder: `sim` test pictures for any
+# role with no camera (on the box the C920 is the cabin), on scratch folders,
+# so nothing touches ~/Videos, the real runtime directory, the real live.json
+# or the real settings.
+#
+#   tools/sim-cams.sh python3 tools/shoot.py /tmp/shots 'cams=?still=1#cameras@1368,968'
+#
+# It waits, up to 60 s, until the recorder reports every role recording; runs
+# the command with the same environment; then stops the recorder by its pid.
+# The command's exit status is this script's.
+
+set -uo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+S="$(mktemp -d)"
+mkdir -p "$S/videos" "$S/state" "$S/config"
+mkdir -m 700 "$S/run"
+export OMACAR_VIDEOS="$S/videos" XDG_RUNTIME_DIR="$S/run" XDG_STATE_HOME="$S/state" XDG_CONFIG_HOME="$S/config"
+python3 "$ROOT/lib/cams.py" sim >"$S/cams.log" 2>&1 &
+REC=$!
+trap 'kill -INT "$REC" 2>/dev/null; wait "$REC" 2>/dev/null; rm -rf "$S"' EXIT
+ready=0
+for _ in $(seq 60); do
+  if [[ "$(python3 "$ROOT/lib/cams.py" status | grep -c ' REC ')" == 3 ]]; then ready=1; break; fi
+  sleep 1
+done
+if (( ! ready )); then
+  echo "sim-cams: the recorder did not report three roles within 60 s:" >&2
+  tail -5 "$S/cams.log" >&2
+  exit 1
+fi
+"$@"
+```
+
+Then:
 
 ```bash
 rsync -a --delete --exclude .git --exclude share/assets/private/ /Users/jmyers/omgarchy/omacar-cameras/ jmyers@omarchy:Projects/.omacar-test/cameras/
-ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && S=/tmp/omacar-shot && rm -rf $S && mkdir -p $S/videos && mkdir -p -m 700 $S/run && export OMACAR_VIDEOS=$S/videos XDG_RUNTIME_DIR=$S/run && (setsid -f python3 lib/cams.py sim >$S/cams.log 2>&1) && sleep 75 && python3 tools/camshot.py $S/out cameras-landscape=still=1#cameras@1368,968 cameras-portrait=still=1#cameras@912,1424; pkill -INT -f "[l]ib/cams.py sim"; sleep 3; ls $S/out'
-scp 'jmyers@omarchy:/tmp/omacar-shot/out/*.png' "$SCRATCH/"
+ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && chmod +x tools/sim-cams.sh && rm -rf /tmp/omacar-shot && tools/sim-cams.sh python3 tools/shoot.py /tmp/omacar-shot "cameras-landscape=?still=1#cameras@1368,968" "cameras-portrait=?still=1#cameras@912,1424"'
+scp 'jmyers@omarchy:/tmp/omacar-shot/*.png' "$SCRATCH/"
 ```
-
-The `[l]` in the `pkill` pattern keeps it from matching the ssh shell's own command line, which contains the same words.
 
 Open both next to `/Users/jmyers/omgarchy/omacar/doc/design/mockups/6.webp`. Check:
 - the main feed and two small feeds (the cabin is the real C920; front and rear are test pictures, each labelled SIMULATED);
@@ -2722,12 +3139,12 @@ Open both next to `/Users/jmyers/omgarchy/omacar/doc/design/mockups/6.webp`. Che
 - camera selection;
 - storage, loop recording On, parking watch "Off · coming later".
 
-Fix spacing in `cameras.css` before committing. Then remove the scratch: `ssh jmyers@omarchy 'rm -rf /tmp/omacar-shot'`.
+Also check that `tools/shoot.py` with no targets still writes the four Home and Vehicle shots. Fix spacing in `cameras.css` before committing. Then remove the output: `ssh jmyers@omarchy 'rm -rf /tmp/omacar-shot'`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add share/js/camapi.js share/js/camlogic.js share/js/views/cameras.js share/css/cameras.css share/app.html tools/camshot.py test/js/camlogic.test.js
+git add share/js/camapi.js share/js/camlogic.js share/js/views/cameras.js share/css/cameras.css share/app.html tools/shoot.py tools/sim-cams.sh test/js/camlogic.test.js
 git commit -m "The Cameras tab shows three live feeds, the last hour, and plays back any minute of it" -m "Mockup 6: a main feed with two small ones to swap in, a timeline of clips and events where a tap plays that moment, back and forward ten seconds across clip boundaries, Save clip and Mark event. The badge says SIMULATED when any feed is a test picture. Nothing here opens a camera; the recorder owns them.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -2735,158 +3152,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Home's Dashcams card
-
-**Files:**
-- Create: `share/js/dashcard.js`
-- Modify: `share/js/camlogic.js` (add `dashState`), `test/js/camlogic.test.js`, `share/css/cameras.css` (append), `share/js/views/home.js` (one hunk: the `dashcam:` line in `MAKERS`)
-
-**Interfaces:**
-- Consumes: `getJSON`, `liveUrl` (Task 3); `feedState` (Task 3); `tappable`, `h` in `home.js`.
-- Produces:
-  - `dashState(ov) → {live, rec, sim, why}` in `camlogic.js`.
-  - `dashcamCard(node) → {top, paint(), destroy()}` in `dashcard.js`. `top` is the caption row, which Task 11 adds the drowsy chip to.
-
-- [ ] **Step 1: Write the failing test**
-
-Add to `test/js/camlogic.test.js`: put `dashState` in the import list, and add these entries to the default export's array:
-
-```js
-  ["Home's card shows the front picture with REC while recording", () =>
-    eq(dashState(ov({})), { live: true, rec: true, sim: false, why: null })],
-  ["and says SIMULATED over a test picture", () => eq(dashState(ov({ front: role({ sim: true }) })).sim, true)],
-  ["recorder off, with the front camera plugged in", () => eq(dashState(ov({}, false)).why, "Recorder off")],
-  ["no front camera at all", () =>
-    eq(dashState(ov({ front: role({ device: null, recording: false, error: "no camera" }) })).why, "No front camera")],
-  ["and no server at all", () => eq(dashState(null).why, "OmaCar cannot reach its server")],
-```
-
-- [ ] **Step 2: Run it to see it fail**
-
-Run: rsync, then `python3 test/js_test.py`. Expected: `camlogic.test.js :: import :: … dashState`.
-
-- [ ] **Step 3: dashState, the card, and its styles**
-
-Append to `share/js/camlogic.js`:
-
-```js
-// Home's Dashcams card: the front picture, or in words why there is none.
-export function dashState(ov) {
-  const off = (why) => ({ live: false, rec: false, sim: false, why });
-  if (!ov) return off("OmaCar cannot reach its server");
-  const r = (ov.roles && ov.roles.front) || {};
-  if (!ov.running) return off(r.device ? "Recorder off" : "No front camera");
-  if (!r.recording) return off(!r.error || r.error === "no camera" ? "No front camera" : r.error);
-  return { live: !!r.live, rec: true, sim: !!r.sim, why: r.live ? null : "Waiting for the picture" };
-}
-```
-
-`share/js/dashcard.js`:
-
-```js
-// Home's Dashcams card: the front camera's live picture with a REC dot while
-// the recorder runs, and in words why not when it does not -- no camera, or
-// recorder off -- so a black rectangle never stands in for a reason. A test
-// picture says SIMULATED, the same rule as the car's numbers.
-//
-// home.js makes the card's node (a tap opens Cameras) and imports this module
-// where the card is made: see the redesign/cameras block in its MAKERS.
-import { h } from "./core.js";
-import { getJSON, liveUrl } from "./camapi.js";
-import { dashState } from "./camlogic.js";
-
-export function dashcamCard(node) {
-  const img = h("img.dc-img", { alt: "Front camera, live", draggable: "false", hidden: true });
-  const why = h("div.dc-why");
-  const rec = h("span.dc-rec", { hidden: true }, h("span.dc-dot"), "REC");
-  const sim = h("span.dc-sim", { hidden: true }, "SIMULATED");
-  const top = h("div.dc-top", h("span.dc-title", "Dashcams"), sim, rec);
-  node.append(h("div.dc-stage", img, why), top);
-  let streaming = false, dead = false;
-  img.addEventListener("error", () => { streaming = false; });
-
-  async function poll() {
-    let ov = null;
-    try { ov = await getJSON("/api/cams"); } catch { /* dashState says so */ }
-    if (dead) return;
-    const s = dashState(ov);
-    rec.hidden = !s.rec;
-    sim.hidden = !s.sim;
-    why.hidden = !s.why;
-    why.textContent = s.why || "";
-    if (s.live && !streaming) { img.src = liveUrl("front"); img.hidden = false; streaming = true; }
-    if (!s.live && streaming) { img.removeAttribute("src"); img.hidden = true; streaming = false; }
-  }
-  poll();
-  const timer = setInterval(poll, 3000);
-
-  return {
-    top,
-    paint() {},
-    destroy() { dead = true; clearInterval(timer); img.removeAttribute("src"); },
-  };
-}
-```
-
-Append to `share/css/cameras.css`:
-
-```css
-/* Home's Dashcams card. */
-.hc-cam { padding: 0; background: #000; }
-.dc-stage { position: absolute; inset: 0; }
-.dc-img { width: 100%; height: 100%; object-fit: cover; }
-.dc-why { position: absolute; inset: 0; display: grid; place-items: center; padding: 40px 16px 16px;
-          text-align: center; color: var(--dim); font-size: .9rem; background: var(--panel); }
-.dc-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 8px;
-          padding: 12px 14px; color: #F6FCFF; background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent); }
-.dc-title { flex: 1; font-size: .9rem; }
-.dc-rec { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
-          background: rgba(0, 0, 0, .55); font-size: .75rem; font-weight: 600; letter-spacing: .06em; }
-.dc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
-.dc-sim { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: var(--warn);
-          font-size: .66rem; letter-spacing: .12em; }
-```
-
-- [ ] **Step 4: The one hunk in home.js**
-
-In `share/js/views/home.js`, replace the single line in `MAKERS` that begins `  dashcam: () => soonCard(ICONS.camera, "Dashcams",` with:
-
-```js
-  // ---- redesign/cameras: the live front view (share/js/dashcard.js) -----------
-  // Imported where the card is made, so the cameras branch meets this file in
-  // one hunk (doc/design/2026-09-28-cameras-drowsy-plan.md).
-  dashcam: () => {
-    const node = tappable(h("div.card.hc.hc-cam"), "cameras");
-    let card = null, gone = false;
-    import("../dashcard.js").then((m) => { if (!gone) card = m.dashcamCard(node); });
-    return { node, paint: () => { if (card) card.paint(); },
-             destroy: () => { gone = true; if (card) card.destroy(); } };
-  },
-  // ---- end redesign/cameras ---------------------------------------------------
-```
-
-`soonCard` stays: the Navigation card still uses it.
-
-- [ ] **Step 5: Run everything, and look at it**
-
-Run `BOXTEST`. Expected:
-- `js_test.py` is green.
-- `app_test.py` still boots to Home. The box's only camera is the C920, which is the cabin, so the card reads "No front camera".
-
-Then repeat Task 3's screenshot command with `home-landscape=still=1#home@1368,968` as the only shot, and check that the card shows the SIMULATED front picture with REC.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add share/js/dashcard.js share/js/camlogic.js share/css/cameras.css share/js/views/home.js test/js/camlogic.test.js
-git commit -m "Home's Dashcams card shows the front camera live, or says in words why it cannot" -m "No front camera, recorder off, or a simulated picture labelled as one: a black rectangle never stands in for a reason. The card is loaded where it is made so this branch meets home.js in one hunk while the foundation branch is still editing it.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-```
-
----
-
-### Task 5: The audio stage
+### Task 4: The audio stage
 
 **Files:**
 - Create: `lib/audio.py`, `share/js/audiobus.js`, `share/js/audiostate.js`, `share/js/alertness.js`, `test/audio_test.py`, `test/js/audiobus.test.js`
@@ -2898,7 +3164,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `audio.py`: `status() → {volume, muted, port: "aux"|"speakers"|"other"|"unknown", port_name, aux: true|false|null, managed, error}`, `pin()`, `apply()`, `managed()`, `set_managed(on)`, `parse_volume(text)`, `port_of(sinks, default)`. CLI `omacar audio status|on|off|pin`.
   - `GET /api/audio` → `status()`; `POST /api/audio {"action": "apply"}` → `apply()`.
   - `audiobus.js` levels: `MUSIC_DB = -12`, `ALERT_MAX_DB = 0`, `FLOOR_DB = -60`, `dbToGain(db)`, `gainToDb(g)`, `headroomDb(musicDb = -12, alertDb = 0)`.
-  - `audiobus.js` graph: `audioContext()`, `musicIn()`, `alertIn()`, `resume()`, `currentDb(bus)`, `schedule(bus, points, at, append=false)`, `setLevelNow(bus, db)`, `outputDb()`. A bus is `"music"` or `"alert"`, and points are `[seconds, dB]` pairs.
+  - `audiobus.js` graph: `audioContext()`, `musicIn()`, `alertIn()`, `resume()`, `currentDb(bus)`, `schedule(bus, points, at, append=false)` (the music bus), `gateAlerts(openAt, closeAt)` (the alert bus, which is a gate and never a fader), `outputDb()`. A bus is `"music"` or `"alert"`, and points are `[seconds, dB]` pairs. Nothing sets a level in one step.
   - `audiostate.js`: `audio.last`, `onAudio(fn) → off()`, `applyAudio()`, `auxLine(status)`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -3022,18 +3288,16 @@ python3 "$ROOT/test/audio_test.py" || fails=$((fails + 1))
 
 ```js
 import { eq, ok } from "./assert.js";
-import { MUSIC_DB, ALERT_MAX_DB, dbToGain, gainToDb, headroomDb } from "../js/audiobus.js";
+import { MUSIC_DB, ALERT_MAX_DB, dbToGain, gainToDb, headroomDb, musicIn, alertIn } from "../js/audiobus.js";
 import { auxLine } from "../js/audiostate.js";
 
 export default [
   ["music sits 12 dB below full scale", () => eq(MUSIC_DB, -12)],
   ["alerts may use all of it", () => eq(ALERT_MAX_DB, 0)],
   ["so an alert always has 12 dB over music", () => eq(headroomDb(), 12)],
-  ["whatever the car's knob says: the knob scales both alike", () => {
-    for (const knob of [0.05, 0.3, 1]) {
-      eq(Math.round(gainToDb(dbToGain(ALERT_MAX_DB) * knob) - gainToDb(dbToGain(MUSIC_DB) * knob)), 12, `knob ${knob}`);
-    }
-  }],
+  // The real graph, not arithmetic: this builds the page's own AudioContext.
+  ["the stage is built that way: the music bus at -12 dB", () => eq(musicIn().gain.value.toFixed(4), "0.2512")],
+  ["and the alert gate closed, so nothing plays on it until an alert opens it", () => eq(alertIn().gain.value, 0)],
   ["-12 dB is a quarter of the amplitude", () => eq(dbToGain(-12).toFixed(4), "0.2512")],
   ["gain and dB round-trip", () => ok(Math.abs(gainToDb(dbToGain(-7.5)) + 7.5) < 1e-9, "round trip")],
   ["silence is zero gain, not a tiny number", () => eq([dbToGain(-Infinity), dbToGain(-200)], [0, 0])],
@@ -3245,11 +3509,13 @@ In `bin/omacar`:
 // knob scales both alike. lib/audio.py holds the Surface itself at 100%.
 //
 //   radio <audio> -> its analyser -> music gain (-12 dB) --+
-//   chime, bark, alarm, voice ----> alert gain (silent) ---+-> limiter -> out
+//   chime, bark, alarm, voice ----> alert gate (closed) ---+-> limiter -> out
 //
-// Level changes are ramps (linearRampToValueAtTime) shaped by ramps.js, so no
-// step is ever audible. The alert bus starts silent: every alert begins from a
-// ramp, or from a level set while nothing was playing on it.
+// The music bus moves by ramps (linearRampToValueAtTime) shaped by ramps.js,
+// so no step is ever audible. The alert bus is a GATE, NEVER A FADER: every
+// alert sound carries its own envelope from silence and back
+// (alertplayer.js), the gate opens only when the next sound starts at
+// silence, and it closes only after the last sound has faded to silence.
 
 export const MUSIC_DB = -12;
 export const ALERT_MAX_DB = 0;
@@ -3316,13 +3582,17 @@ export function schedule(bus, points, at, append = false) {
   for (const [t, db] of points) g.linearRampToValueAtTime(dbToGain(db), at + t);
 }
 
-// Set a bus that has nothing playing on it. No ramp is needed where there is
-// nothing to hear.
-export function setLevelNow(bus, db) {
+// Open the alert gate at `openAt`, when the sound starting then is at silence,
+// and close it at `closeAt`, when the last sound will have faded to silence
+// (Infinity: not yet known). A close already scheduled after `openAt` is
+// cancelled, so a sound that starts during another's release keeps the gate
+// open under both.
+export function gateAlerts(openAt, closeAt) {
   ensure();
-  const g = node[bus].gain;
-  g.cancelScheduledValues(ctx.currentTime);
-  g.setValueAtTime(dbToGain(db), ctx.currentTime);
+  const g = node.alert.gain;
+  g.cancelScheduledValues(openAt);
+  g.setValueAtTime(1, openAt);
+  if (Number.isFinite(closeAt)) g.setValueAtTime(0, closeAt);
 }
 
 // The output's level in dBFS, to check the stage is carrying anything.
@@ -3406,23 +3676,23 @@ Check the CLI on the box without changing anything: `ssh jmyers@omarchy 'cd ~/Pr
 
 ```bash
 git add lib/audio.py lib/camroutes.py bin/omacar share/js/audiobus.js share/js/audiostate.js share/js/alertness.js share/js/radio.js share/app.html test/audio_test.py test/js/audiobus.test.js test/all.sh
-git commit -m "Everything OmaCar plays goes through one stage, so an alert always has 12 dB over the music" -m "Music sits 12 dB below full scale and alerts may use all of it, which holds whatever the car's volume knob says. The radio's analyser now feeds that stage. The Surface itself is held at 100% by lib/audio.py, only where omacar audio on asked, so the test suite can never turn the box's speakers up.
+git commit -m "Everything OmaCar plays goes through one stage, so an alert always has 12 dB over the music" -m "Music sits 12 dB below full scale and alerts may use all of it, which holds whatever the car's volume knob says. The radio's analyser now feeds that stage, and the alert bus is a gate that opens only on silence. The tests read the real graph. The Surface itself is held at 100% by lib/audio.py, only where omacar audio on asked, so the test suite can never turn the box's speakers up.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 6: The drowsy measures (pure)
+### Task 5: The drowsy measures (pure)
 
 **Files:**
 - Create: `share/data/drowsy.json`, `share/js/drowsy.js`, `test/js/drowsy.test.js`
 
 **Interfaces:**
 - Produces:
-  - `share/data/drowsy.json`: the defaults every later drowsy task reads. It has `enabled`, `sensitivity`, `name`, `sounds`, `min_speed_mph`, `eyes`, `perclos`, `yawn`, `nod`, `face_lost_secs`, `stop`, `level1`, `level2`, `level3`, `release`, and `banner_stopped_secs`.
+  - `share/data/drowsy.json`: the defaults every later drowsy task reads. It has `enabled`, `sensitivity`, `name`, `sounds`, `min_speed_mph`, `alert_continues_below_gate`, `eyes`, `perclos`, `yawn`, `nod`, `face_lost_secs`, `stop`, `level1`, `level2`, `level3`, `release`, and `banner_stopped_secs`.
   - `drowsy.js`: `PITCH_SIGN`, `pitchDeg(matrixData) → degrees` (negative is chin down), and `frameFrom(result, t) → {t, face, blink, jaw, pitch}`, which reads a MediaPipe FaceLandmarkerResult.
-  - `drowsy.js`: `createMeasures(cfg) → {feed(frame) → snapshot, snapshot}`. A frame is `{t, face, blink, jaw, pitch, gated}`, with t in seconds.
+  - `drowsy.js`: `createMeasures(cfg) → {feed(frame) → snapshot, setConfig(cfg), snapshot}`. `setConfig` swaps the thresholds and keeps the baseline and every window. A frame is `{t, face, blink, jaw, pitch, gated}`, with t in seconds.
   - A snapshot is `{t, face, calibrated, baseline, threshold, blink, closed, closedFor, openFor, perclos, yawns, nods, faceLost, pitch, pitchBaseline}`. `perclos` is null until the window holds 30 s; `yawns` and `nods` are counts in the last 5 min.
 
 - [ ] **Step 1: The defaults, and the failing test**
@@ -3431,12 +3701,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ```json
 {
-  "_comment": "Drowsy mode's numbers, from doc/design/2026-09-28-cameras-drowsy.md. Read through GET /api/drowsy, which lays ~/.config/omarchy/omacar-drowsy.json over these (lib/drowsycfg.py). Seconds, degrees, and PERCLOS as a fraction. Sensitive lowers every threshold by 20% (share/js/ladder.js, scaled()).",
+  "_comment": "Drowsy mode's numbers, from doc/design/2026-09-28-cameras-drowsy.md. Read through GET /api/drowsy, which lays ~/.config/omarchy/omacar-drowsy.json over these (lib/drowsycfg.py). Seconds, degrees, and PERCLOS as a fraction. Sensitive lowers every trigger threshold by 20% (share/js/ladder.js, scaled()). alert_continues_below_gate: true (the default the controller recommended, 2026-09-28) lets an alert already sounding carry on, repeats and all, below the 30 mph gate until 'I'm awake' or a stopped car; false silences it there while its card stays. The gate always decides whether a NEW alert may start. The owner's answer is this one line.",
   "enabled": true,
   "sensitivity": "standard",
   "name": "James",
   "sounds": ["bark", "voice", "alarm"],
   "min_speed_mph": 30,
+  "alert_continues_below_gate": true,
   "eyes": { "baseline_secs": 60, "closed_over_baseline": 0.35, "closed_cap": 0.8 },
   "perclos": { "window_secs": 60, "min_secs": 30 },
   "yawn": { "jaw_open": 0.6, "hold_secs": 1.5 },
@@ -3557,6 +3828,14 @@ export default [
     const b = run(m, 65.9, 1.2, () => ({ face: false }));
     eq([a.faceLost, b.faceLost, b.closed, b.closedFor], [false, true, false, 0]);
   }],
+  ["new thresholds keep the baseline: no minute blind after a settings change", async () => {
+    const m = await calibrated();
+    const c = await CFG();
+    c.eyes.closed_over_baseline = 0.28;
+    m.setConfig(c);
+    const s = run(m, 61, 0.1);
+    eq([s.calibrated, s.baseline, +s.threshold.toFixed(2)], [true, 0.1, 0.38]);
+  }],
 ];
 ```
 
@@ -3587,7 +3866,7 @@ Run: rsync, then `python3 test/js_test.py`. Expected: `drowsy.test.js :: import`
 // Which way is chin-down. The facial transformation matrix is column-major
 // in MediaPipe's y-up camera space, so a nod tips the face's forward axis to
 // negative y and this reads negative. The owner confirms it on the tablet
-// (Task 12); if nodding reads positive there, this becomes -1.
+// (Task 13); if nodding reads positive there, this becomes -1.
 export const PITCH_SIGN = 1;
 
 export function pitchDeg(data) {
@@ -3615,7 +3894,13 @@ function median(xs) {
 }
 
 export function createMeasures(cfg) {
-  const E = cfg.eyes, W = cfg.perclos, Y = cfg.yawn, N = cfg.nod, L1 = cfg.level1;
+  let E, W, Y, N, L1, lostSecs;
+  // New thresholds, from a settings change, keep the baseline and every
+  // window: a change of sensitivity must not leave the driver a minute blind.
+  function setConfig(c) {
+    E = c.eyes; W = c.perclos; Y = c.yawn; N = c.nod; L1 = c.level1; lostSecs = c.face_lost_secs;
+  }
+  setConfig(cfg);
   let gatedSecs = 0, prevGatedT = null;
   const blinks = [], pitches = [];
   let baseline = null, pitch0 = null;
@@ -3678,13 +3963,13 @@ export function createMeasures(cfg) {
       closedFor: closedSince === null ? 0 : t - closedSince,
       openFor: openSince === null ? 0 : t - openSince,
       perclos, yawns: recent(yawns), nods: recent(nods),
-      faceLost: t - (lastFace === null ? firstT : lastFace) > cfg.face_lost_secs,
+      faceLost: t - (lastFace === null ? firstT : lastFace) > lostSecs,
       pitch: f.face && typeof f.pitch === "number" ? f.pitch : null, pitchBaseline: pitch0,
     };
     return snap;
   }
 
-  return { feed, get snapshot() { return snap; } };
+  return { feed, setConfig, get snapshot() { return snap; } };
 }
 ```
 
@@ -3696,28 +3981,29 @@ Run: rsync, then `python3 test/js_test.py`. Expected: all green.
 
 ```bash
 git add share/data/drowsy.json share/js/drowsy.js test/js/drowsy.test.js
-git commit -m "Eye closure, PERCLOS, yawns and nods are measured from frames, against the driver's own open-eye baseline" -m "Pure, so each measure is tested on a synthetic series. The first minute above 30 mph sets the baseline from its median, so blinks do not raise it; closed is 0.35 above that, capped at 0.8. A lost face says so and never alerts on its own. The spec's numbers live in share/data/drowsy.json.
+git commit -m "Eye closure, PERCLOS, yawns and nods are measured from frames, against the driver's own open-eye baseline" -m "Pure, so each measure is tested on a synthetic series. The first minute above 30 mph sets the baseline from its median, so blinks do not raise it; closed is 0.35 above that, capped at 0.8. A lost face says so and never alerts on its own. New thresholds keep the baseline. The spec's numbers live in share/data/drowsy.json, with one named setting for the owner's answer on what the 30 mph gate governs.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: The ladder (pure)
+### Task 6: The ladder (pure)
 
 **Files:**
 - Create: `share/js/ladder.js`, `test/js/ladder.test.js`
 
 **Interfaces:**
-- Consumes: `drowsy.json` (Task 6) and the measures snapshot shape (Task 6).
+- Consumes: `drowsy.json` and the measures snapshot shape (Task 5).
 - Produces:
-  - `scaled(cfg, sensitivity) → cfg` (Sensitive is −20%) and `isNight(hour, cfg)`.
+  - `scaled(cfg, sensitivity) → cfg`. Sensitive lowers every trigger threshold by 20%.
+  - `isNight(hour, cfg)`.
   - `createStopClock(cfg) → {feed(t, kph, connected) → {sinceStop, stoppedFor}}`.
-  - `createLadder(cfg, sounds = cfg.sounds) → {step(input) → out, level}`.
+  - `createLadder(cfg, sounds = cfg.sounds) → {step(input) → out, setConfig(cfg, sounds), level}`. `setConfig` keeps the level, the Level 2 history, the hourly limits and the armed evidence.
   - `input` is `{t, active, parked, m, sinceStop, stoppedFor, hour, tap}`.
   - `out` is `{t, level, trigger, raised: null|{level, trigger}, cleared, cues, banner}`.
   - Triggers are `perclos`, `closed`, `yawns`, `nods`, `since-stop`, `night` and `repeat-l2`.
-  - Cues are `{kind: "chime"}`, `{kind: "voice", clip: "l1"|"l2"|"l3"}`, `{kind: "swell"}`, `{kind: "duck"}`, `{kind: "bark"}`, `{kind: "alarm", secs?, hold?}` and `{kind: "fade"}`.
+  - Cues are `{kind: "chime"}`, `{kind: "voice", clip: "l1"|"l2"|"l3"}`, `{kind: "swell"}`, `{kind: "duck"}`, `{kind: "bark"}`, `{kind: "alarm", hold?}` and `{kind: "fade"}`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3744,10 +4030,14 @@ export default [
         c.banner_stopped_secs, c.stop.still_secs],
        [0.15, 3, 3, 300, 7200, 2, 6, 1.0, 0.25, 2.0, 2, 300, 5, 120, 300]);
   }],
-  ["Sensitive is every threshold 20% lower", async () => {
+  ["the owner's gate setting defaults to the recommended answer", async () =>
+    eq((await CFG()).alert_continues_below_gate, true)],
+  ["Sensitive is every trigger threshold 20% lower", async () => {
     const s = scaled(await CFG(), "sensitive");
-    eq([s.level1.perclos, s.level2.perclos, s.level2.closed_secs, s.level3.closed_secs, s.level1.yawns,
-        s.level1.nods, s.level1.since_stop_secs], [0.12, 0.2, 0.8, 1.6, 2, 2, 5760]);
+    eq([s.eyes.closed_over_baseline, s.eyes.closed_cap, s.yawn.jaw_open, s.yawn.hold_secs, s.nod.below_deg,
+        s.nod.hold_secs, s.level1.perclos, s.level2.perclos, s.level2.closed_secs, s.level3.closed_secs,
+        s.level1.yawns, s.level1.nods, s.level1.since_stop_secs, s.level3.level2_count],
+       [0.28, 0.64, 0.48, 1.2, 12, 0.4, 0.12, 0.2, 0.8, 1.6, 2, 2, 5760, 2]);
   }],
   ["Standard changes nothing", async () => { const c = await CFG(); eq(scaled(c, "standard"), c); }],
   ["night is 02:00 to 06:00", async () => { const c = await CFG(); eq([1, 2, 5, 6].map((h) => isNight(h, c)), [false, true, true, false]); }],
@@ -3762,9 +4052,20 @@ export default [
   ["nothing is raised below 30 mph, even with eyes closed", async () => {
     eq(drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 2.5 }, { active: false }]])[0].level, 0);
   }],
-  ["but a condition still true when the car passes 30 mph raises then", async () => {
+  ["a condition that became true below 30 mph raises once the car passes it", async () => {
     const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }, { active: false }], [1, { perclos: 0.16 }]]);
     eq(out.map((o) => o.level), [0, 1]);
+  }],
+  ["hovering around 30 mph with the same evidence raises once, never again", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }, { active: false }], [1, { perclos: 0.16 }],
+      [2, { perclos: 0.16 }, { active: false }], [3, { perclos: 0.16 }], [4, { perclos: 0.16 }, { tap: true }],
+      [5, { perclos: 0.16 }, { active: false }], [6, { perclos: 0.16 }]]);
+    eq(out.map((o) => !!o.raised), [false, true, false, false, false, false, false]);
+  }],
+  ["crossing the gate never builds two Level 2s into Level 3", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.26 }, { active: false }], [1, { perclos: 0.26 }],
+      [2, { perclos: 0.26 }, { tap: true }], [3, { perclos: 0.26 }, { active: false }], [4, { perclos: 0.26 }]]);
+    eq(out.map((o) => o.level), [0, 2, 0, 0, 0]);
   }],
   ["PERCLOS 15% is Level 1: a chime, the voice, the radio rising", async () => {
     const [o] = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }]]);
@@ -3805,7 +4106,7 @@ export default [
     const out = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 1.0 }], [1, {}, { tap: true }]]);
     eq([out[1].level, out[1].cleared, kinds(out[1])], [0, true, ["fade"]]);
   }],
-  ["eyes open 5 s with PERCLOS not rising clears it; 4 s does not", async () => {
+  ["eyes open 5 s with PERCLOS not rising clears Level 1; 4 s does not", async () => {
     const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }], [1, { perclos: 0.16 }],
       [5, { perclos: 0.15 }], [6, { perclos: 0.15 }]]);
     eq(out.map((o) => o.level), [1, 1, 1, 0]);
@@ -3814,9 +4115,25 @@ export default [
     const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }], [1, { perclos: 0.16 }], [6, { perclos: 0.17 }]]);
     eq(out[2].level, 1);
   }],
-  ["a stationary car clears the level", async () => {
-    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }], [1, {}, { active: false, parked: true }]]);
-    eq(out[1].level, 0);
+  ["Level 3 has no time cap: open eyes do not end it, 'I'm awake' does", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 2.0 }], [1, {}], [10, {}],
+      [3600, {}], [3601, {}, { tap: true }]]);
+    eq(out.map((o) => o.level), [3, 3, 3, 3, 0]);
+  }],
+  ["and so does a stopped car", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 2.0 }], [1, {}, { active: false, parked: true }]]);
+    eq([out[1].level, kinds(out[1])], [0, ["fade"]]);
+  }],
+  ["below the gate a sounding alert keeps repeating, by default", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 1.0 }], [5, { face: false }, { active: false }]]);
+    eq([out[1].level, kinds(out[1])], [2, ["voice:l2"]]);
+  }],
+  ["with alert_continues_below_gate false it stays raised and falls silent below the gate", async () => {
+    const c = await CFG();
+    c.alert_continues_below_gate = false;
+    const out = drive(createLadder(c), [[0, { closed: true, closedFor: 1.0 }], [5, { face: false }, { active: false }],
+      [6, { face: false }]]);
+    eq([out[1].level, kinds(out[1]), kinds(out[2])], [2, [], ["voice:l2"]]);
   }],
   ["after Level 3 the banner stays until the car has been stopped 2 minutes", async () => {
     const out = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 2.0 }], [1, {}, { tap: true }],
@@ -3832,6 +4149,14 @@ export default [
     const out = drive(createLadder(await CFG()), [[0, { face: false }, { sinceStop: 7200 }], [30, { face: false }, { sinceStop: 7230 }]]);
     eq([out[0].level, out[0].trigger, out[1].level, kinds(out[1])], [1, "since-stop", 1, []]);
   }],
+  ["new settings keep the ladder's memory", async () => {
+    const c = await CFG();
+    const lad = createLadder(c);
+    drive(lad, [[0, { closed: true, closedFor: 1.0 }], [1, {}, { tap: true }]]);
+    lad.setConfig(scaled(c, "sensitive"));
+    const out = drive(lad, [[100, { closed: true, closedFor: 0.2 }], [101, { closed: true, closedFor: 0.9 }]]);
+    eq([out[1].level, out[1].trigger], [3, "repeat-l2"]);
+  }],
 ];
 ```
 
@@ -3843,37 +4168,59 @@ Run: rsync, then `python3 test/js_test.py`. Expected: `ladder.test.js :: import`
 
 ```js
 // The ladder: three alert levels, raised from the measures (drowsy.js) and two
-// signals that need no camera, and released by a tap or by eyes that stay
-// open. Pure, with the clock injected: step() is handed the time, and nothing
-// here reads Date.now().
+// signals that need no camera, and released by the driver. Pure, with the
+// clock injected: step() is handed the time, and nothing here reads Date.now().
 //
 //   1 · Notice     PERCLOS >= 15%, 3 yawns or 3 nods in 5 min, 2 h since a
 //                  stop, or night hours (once an hour)
 //   2 · Wake       eyes closed >= 1.0 s, or PERCLOS >= 25%
 //   3 · Pull over  eyes closed >= 2.0 s, or two Level 2 alerts within 5 min
 //
-// RAISED ON AN EDGE, ONLY WHILE THE GATE IS OPEN (above 30 mph, connected,
-// moving). A condition that stays true raises once, not on every frame; one
-// that was already true when the car passed 30 mph raises then. A raised level
-// STAYS if the car slows -- eyes closed at 25 mph are no safer -- and clears
-// on a tap of "I'm awake", when the eyes stay open for 5 s after it was raised
-// with PERCLOS no higher than when they opened (PERCLOS is a 60 s window, so
-// it cannot fall within 5 s of a closure; "not rising" is what can be seen),
-// or when the car is stationary.
+// EVIDENCE, NOT SPEED. Every trigger is watched on every step, below the gate
+// or above it, and a condition that becomes true is armed until a raise uses
+// it. The 30 mph gate decides only whether an armed trigger may raise now.
+// So a condition that became true at 25 mph raises once the car passes 30, and
+// hovering around 30 mph with the same evidence never raises it again, nor
+// builds two Level 2s into a Level 3.
+//
+// A SOUNDING ALERT AND THE GATE. With alert_continues_below_gate (the
+// default), a raised level carries on below 30 mph, repeats and all. Set to
+// false, it falls silent below the gate and its card stays.
+//
+// RELEASE. Every level clears on "I'm awake" or once the car is stationary.
+// Levels 1 and 2 also clear when the eyes stay open 5 s after the raise with
+// PERCLOS no higher than when they opened: PERCLOS is a 60 s window, so it
+// cannot fall within 5 s of a closure, and "not rising" is what can be seen.
+// Level 3 has no time cap and does not clear on open eyes: it ends on
+// "I'm awake" or a stopped car.
 
+const has = (v) => v !== null && v !== undefined;
+
+// Sensitive lowers every trigger threshold by 20%: the closed-eye margin and
+// its cap, PERCLOS, the yawn and nod measures and counts, the closure times,
+// the time since a stop, and the Level 2 count, which cannot go below two.
+// Windows, the baseline minute, the release time and the hourly limit are not
+// thresholds and stay as they are.
 export function scaled(cfg, sensitivity = cfg.sensitivity) {
   const c = JSON.parse(JSON.stringify(cfg));
   if (sensitivity !== "sensitive") return c;
   const f = 0.8;
+  const r = (x, d = 4) => +(x * f).toFixed(d);
   const n = (x) => Math.max(1, Math.round(x * f));
-  const r = (x, d) => +(x * f).toFixed(d);
-  c.level1.perclos = r(c.level1.perclos, 4);
+  c.eyes.closed_over_baseline = r(c.eyes.closed_over_baseline);
+  c.eyes.closed_cap = r(c.eyes.closed_cap);
+  c.yawn.jaw_open = r(c.yawn.jaw_open);
+  c.yawn.hold_secs = r(c.yawn.hold_secs, 3);
+  c.nod.below_deg = r(c.nod.below_deg, 2);
+  c.nod.hold_secs = r(c.nod.hold_secs, 3);
+  c.level1.perclos = r(c.level1.perclos);
   c.level1.yawns = n(c.level1.yawns);
   c.level1.nods = n(c.level1.nods);
   c.level1.since_stop_secs = Math.round(c.level1.since_stop_secs * f);
   c.level2.closed_secs = r(c.level2.closed_secs, 3);
-  c.level2.perclos = r(c.level2.perclos, 4);
+  c.level2.perclos = r(c.level2.perclos);
   c.level3.closed_secs = r(c.level3.closed_secs, 3);
+  c.level3.level2_count = Math.max(2, n(c.level3.level2_count));
   return c;
 }
 
@@ -3897,21 +4244,31 @@ export function createStopClock(cfg) {
   };
 }
 
-export function createLadder(cfg, sounds = cfg.sounds) {
-  const L1 = cfg.level1, L2 = cfg.level2, L3 = cfg.level3;
-  const rota = sounds && sounds.length ? sounds : ["alarm"];
+export function createLadder(cfg0, sounds0 = cfg0.sounds) {
+  let cfg, L1, L2, L3, rota;
+  // New settings keep the ladder's memory: its level, the Level 2 history,
+  // the hourly limits and the armed evidence. Only the thresholds and the
+  // rotation change.
+  function setConfig(c, sounds = c.sounds) {
+    cfg = c;
+    L1 = c.level1;
+    L2 = c.level2;
+    L3 = c.level3;
+    rota = sounds && sounds.length ? [...sounds] : ["alarm"];
+  }
+  setConfig(cfg0, sounds0);
+
   let level = 0, trigger = null, banner = false;
   let rot = 0, nextRepeat = null, nextVoice = null;
   let openStart = null, perclosAtOpen = null;
-  const was = {};
+  const was = {}, armed = {};
   const l2Times = [];
   const lastFree = {};
 
-  const has = (v) => v !== null && v !== undefined;
   function rotation() {
     const s = rota[rot++ % rota.length];
     if (s === "voice") return { kind: "voice", clip: "l2" };
-    if (s === "alarm") return { kind: "alarm", secs: 3 };
+    if (s === "alarm") return { kind: "alarm" };
     return { kind: "bark" };
   }
 
@@ -3943,27 +4300,36 @@ export function createLadder(cfg, sounds = cfg.sounds) {
     const t = inp.t, m = inp.m || {};
     const out = { t, level, trigger, raised: null, cleared: false, cues: [], banner };
 
-    // Release first: a tap, open eyes, or a stationary car.
+    // Release first: "I'm awake", a stationary car, or (Levels 1 and 2)
+    // eyes that have stayed open.
     if (level > 0) {
-      if (m.face && m.calibrated && !m.closed) {
+      if (level < 3 && m.face && m.calibrated && !m.closed) {
         if (openStart === null) { openStart = t; perclosAtOpen = has(m.perclos) ? m.perclos : null; }
       } else openStart = null;
-      const steady = openStart !== null && t - openStart >= cfg.release.open_secs
+      const steady = level < 3 && openStart !== null && t - openStart >= cfg.release.open_secs
         && (!has(m.perclos) || perclosAtOpen === null || m.perclos <= perclosAtOpen);
       if (inp.tap || steady || inp.parked) clear(out);
     }
     if (banner && inp.stoppedFor >= cfg.banner_stopped_secs) banner = false;
 
-    if (!inp.active) {
-      for (const k of Object.keys(was)) was[k] = false;
-    } else {
-      const edge = (k, v) => { const rose = !!v && !was[k]; was[k] = !!v; return rose; };
-      const c3 = edge("closed3", m.closedFor >= L3.closed_secs);
-      const c2 = edge("closed2", m.closedFor >= L2.closed_secs);
-      const p2 = edge("perclos2", has(m.perclos) && m.perclos >= L2.perclos);
-      const p1 = edge("perclos1", has(m.perclos) && m.perclos >= L1.perclos);
-      const y1 = edge("yawns", m.yawns >= L1.yawns);
-      const n1 = edge("nods", m.nods >= L1.nods);
+    // Evidence, on every step: armed on its rising edge, disarmed when it
+    // goes false, used up by a raise.
+    const see = (k, v) => {
+      if (v && !was[k]) armed[k] = true;
+      if (!v) armed[k] = false;
+      was[k] = !!v;
+    };
+    see("closed3", m.closedFor >= L3.closed_secs);
+    see("closed2", m.closedFor >= L2.closed_secs);
+    see("perclos2", has(m.perclos) && m.perclos >= L2.perclos);
+    see("perclos1", has(m.perclos) && m.perclos >= L1.perclos);
+    see("yawns", m.yawns >= L1.yawns);
+    see("nods", m.nods >= L1.nods);
+
+    if (inp.active) {
+      const use = (k) => { const a = !!armed[k]; armed[k] = false; return a; };
+      const c3 = use("closed3"), c2 = use("closed2"), p2 = use("perclos2");
+      const p1 = use("perclos1"), y1 = use("yawns"), n1 = use("nods");
       const free = (k, v) => {
         if (!v || (has(lastFree[k]) && t - lastFree[k] < L1.camera_free_every_secs)) return false;
         lastFree[k] = t;
@@ -3988,11 +4354,12 @@ export function createLadder(cfg, sounds = cfg.sounds) {
       if (to > level) raise(to, why, t, out);
     }
 
-    if (level === 2 && nextRepeat !== null && t >= nextRepeat && !out.raised) {
+    const mayRepeat = inp.active || cfg.alert_continues_below_gate !== false;
+    if (mayRepeat && level === 2 && nextRepeat !== null && t >= nextRepeat && !out.raised) {
       out.cues.push(rotation());
       nextRepeat = t + L2.repeat_secs;
     }
-    if (level === 3 && nextVoice !== null && t >= nextVoice && !out.raised) {
+    if (mayRepeat && level === 3 && nextVoice !== null && t >= nextVoice && !out.raised) {
       out.cues.push({ kind: "voice", clip: "l3" });
       nextVoice = t + L3.voice_repeat_secs;
     }
@@ -4002,7 +4369,7 @@ export function createLadder(cfg, sounds = cfg.sounds) {
     return out;
   }
 
-  return { step, get level() { return level; } };
+  return { step, setConfig, get level() { return level; } };
 }
 ```
 
@@ -4016,25 +4383,35 @@ If "Level 2 repeats every 5 s" fails at t=15 with no cue, check that `nextRepeat
 
 ```bash
 git add share/js/ladder.js test/js/ladder.test.js
-git commit -m "Three alert levels rise from the measures, repeat and rotate, and clear when the driver answers" -m "A pure state machine with the clock handed in, so triggers, rotation, release and the Level 3 banner are tested step by step. Levels rise on an edge and only above 30 mph, and stay raised if the car slows. Night hours and two hours without a stop only ever raise Level 1, once an hour. Sensitive lowers every threshold by 20%.
+git commit -m "Three alert levels rise from new evidence, repeat and rotate, and clear when the driver answers" -m "A pure state machine with the clock handed in, so triggers, rotation, release and the Level 3 banner are tested step by step. Evidence is armed on its rising edge and used up by a raise, so crossing 30 mph is never evidence on its own. A sounding alert carries on below the gate unless the owner's one setting says otherwise. Level 3 has no time cap and ends only on I'm awake or a stopped car. Sensitive lowers every trigger threshold by 20%, and new settings keep the ladder's memory.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 8: Ramp plans, the sounds, and Begin's chime
+### Task 7: Every sound rises from silence: envelopes, the sounds, the alert player, and Begin's chime
+
+The owner's requirement is that alerts ramp up and down and never startle. So every alert sound carries its own level envelope, from silence up to its target and back down, never faster than 3 dB in any 100 ms. That covers every chime note, bark call, voice line and alarm: the first alert of a drive, every repeat, and every escalation from Level 1 to 2 to 3. The alert bus underneath is only a gate. It opens when the next sound starts at silence, and it closes once the last sound has faded to silence, so the next onset starts from silence too.
 
 **Files:**
-- Create: `share/js/ramps.js`, `share/js/sounds.js`, `share/css/drowsy.css`, `test/js/ramps.test.js`, `test/js/sounds.test.js`
+- Create:
+  - the shapes: `share/js/ramps.js`;
+  - the sounds and their player: `share/js/sounds.js`, `share/js/alertplayer.js`;
+  - Begin's AUX line: `share/css/drowsy.css`;
+  - tests: `test/js/ramps.test.js`, `test/js/sounds.test.js`, `test/js/alertplayer.test.js`.
 - Modify: `share/js/views/launcher.js` (the chime and the AUX line), `share/app.html` (inside the cameras block)
 
 **Interfaces:**
-- Consumes: `audioContext`, `alertIn`, `resume`, `setLevelNow` (Task 5); `withToken` (core.js).
+- Consumes: `audioContext`, `alertIn`, `resume`, `schedule`, `currentDb`, `gateAlerts`, `dbToGain`, `MUSIC_DB`, `FLOOR_DB` (Task 4); `asset(name)` (`share/js/assets.js`); `withToken` (`core.js`); the cue kinds (Task 6).
 - Produces:
-  - `ramps.js`: `RAMP_SECS`, `MAX_DB_PER_STEP = 3`, `STEP_SECS = 0.1`, `rampPlan(level, from, to) → {secs, points: [[t, dB], …]}`. It throws on an unknown level or a non-finite level.
-  - `sounds.js` plans: `CHIME`, `ALARM`, `BARK`, `alarmSteps(secs) → [[t, hz]]`, `barkCalls(calls) → [t]`.
-  - `sounds.js` players: `playChime(at)`, `playAlarm(at, secs) → {stop(when)}`, `playBark(at, calls = 1)`, `playVoice(url, at) → Promise<source|null>`, `beginChime()`.
+  - `ramps.js` constants: `RAMP_SECS`, `MAX_DB_PER_STEP = 3`, `STEP_SECS = 0.1`, `SILENCE_DB = -48`, `RISE_SECS = {1: 1.5, 2: 1.5, 3: 3}`, `RELEASE_SECS = 3`.
+  - `ramps.js` plans: `rampPlan(level, from, to)` (the music bus), `envelopePlan(level, targetDb, holdSecs) → {points, rise, secs}` (`secs` is Infinity for a held sound), `releasePlan(fromDb)`, `dbAt(points, t)`, and `worstStep(points, until)` (the largest change over any 100 ms).
+  - `sounds.js`: the plans `CHIME`, `ALARM`, `BARK`, `alarmModulation()` and `barkCalls(calls)`; the players `playChimeNote(v)`, `playBark(v)`, `playAlarm(v)`, `playVoice(v, buffer)` (each returns `{release(now, points, end)}`); and `loadClip(url) → Promise<AudioBuffer>`.
+  - `alertplayer.js` levels: `ALERT_DB = {1: -6, 2: -3, 3: 0}`, `CHIME_NOTE_DB = -9`, `HOLD_SECS`, `VOICE_AFTER`, `SWELL_DB = 6`, `DUCK_DB = -12`.
+  - `alertplayer.js` scheduling: `voicePlays(clipSecs, riseSecs)`, `voicesFor(cue, level, at, clipSecs) → [voice]`, `releaseVoices(voices, now)`, `gateCloseAt(voices)`, `createAlertPlayer()`.
+  - `alertPlayer()`, the page's one player: `setName(fn)`, `play(cues, out)`, `voices`. Also `beginChime()`.
+  - A voice is `{id, kind, level, start, rise, end, env: [[t, dB], …]}` in absolute context time, plus `hz` (chime), `calls` (bark), or `plays` and `clip` (voice).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4042,23 +4419,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ```js
 import { eq, ok } from "./assert.js";
-import { rampPlan, RAMP_SECS } from "../js/ramps.js";
+import { rampPlan, envelopePlan, releasePlan, worstStep, RAMP_SECS, SILENCE_DB } from "../js/ramps.js";
 
-// The largest step between consecutive points, after checking they are never
-// more than 100 ms apart.
-const worst = (p) => {
-  let w = 0;
-  for (let i = 1; i < p.points.length; i++) {
-    const [t0, a] = p.points[i - 1], [t1, b] = p.points[i];
-    ok(t1 - t0 <= 0.1 + 1e-9, `points ${t0} and ${t1} are more than 100 ms apart`);
-    w = Math.max(w, Math.abs(b - a));
-  }
-  return w;
-};
 const throws = (fn) => { try { fn(); return false; } catch { return true; } };
 
 export default [
-  ["the spec's ramp times", () =>
+  ["the spec's ramp times for the music", () =>
     eq(RAMP_SECS, { 0: { up: 3, down: 3 }, 1: { up: 10, down: 30 }, 2: { up: 1.5, down: 0.5 }, 3: { up: 3, down: 0.5 } })],
   ["Level 1: the radio rises 6 dB over 10 s", () => {
     const p = rampPlan(1, -12, -6);
@@ -4066,20 +4432,34 @@ export default [
   }],
   ["and settles back over 30 s", () => eq(rampPlan(1, -6, -12).secs, 30)],
   ["Level 2: music ducks 12 dB over half a second", () => eq(rampPlan(2, -12, -24).secs, 0.5)],
-  ["and the alert rises over 1.5 s", () => eq(rampPlan(2, -40, -3).secs, 1.5)],
-  ["Level 3: the alarm reaches full over 3 s", () => eq(rampPlan(3, -40, 0).secs, 3)],
-  ["release: the sound fades out over 3 s", () => eq(rampPlan(0, 0, -60).secs, 3)],
-  ["no step larger than 3 dB per 100 ms, at any level, over any span", () => {
+  ["no music ramp moves more than 3 dB in any 100 ms, over any span", () => {
     for (const level of [0, 1, 2, 3]) {
-      for (const [a, b] of [[-60, 0], [0, -60], [-12, -6], [-6, -12], [-12, -24], [-24, -12], [-40, -3], [-40, 0], [-120, 0]]) {
-        ok(worst(rampPlan(level, a, b)) <= 3 + 1e-9, `level ${level}, ${a} to ${b} dB`);
+      for (const [a, b] of [[-60, 0], [0, -60], [-12, -6], [-6, -12], [-12, -24], [-24, -12], [-120, 0]]) {
+        ok(worstStep(rampPlan(level, a, b).points) <= 3 + 1e-6, `level ${level}, ${a} to ${b} dB`);
       }
     }
   }],
-  ["a span too big for the level's time is stretched, never stepped", () =>
-    ok(rampPlan(2, -60, 0).secs >= 2, "60 dB needs 2 s at 3 dB per 100 ms")],
+  ["every alert sound starts and ends at silence, -48 dBFS", () => {
+    const e = envelopePlan(2, -3, 1.5);
+    eq([SILENCE_DB, e.points[0], e.points[e.points.length - 1][1]], [-48, [0, -48], -48]);
+  }],
+  ["it rises over its level's time: 1.5 s at Levels 1 and 2, 3 s at Level 3", () =>
+    eq([envelopePlan(1, -6, 0).rise, envelopePlan(2, -3, 0).rise, envelopePlan(3, 0, 0).rise], [1.5, 1.5, 3])],
+  ["and falls back over 3 s", () => { const e = envelopePlan(2, -3, 1); eq(+(e.secs - e.rise - 1).toFixed(4), 3); }],
+  ["no envelope, at any level, moves more than 3 dB in any 100 ms", () => {
+    for (const [lv, db] of [[1, -9], [1, -6], [2, -3], [3, 0]]) {
+      ok(worstStep(envelopePlan(lv, db, 1).points) <= 3 + 1e-6, `level ${lv} to ${db} dB`);
+    }
+  }],
+  ["a held envelope has no end until it is let go", () => eq(envelopePlan(3, 0, Infinity).secs, Infinity)],
+  ["a release from anywhere reaches silence in 3 s, without a step", () => {
+    const r = releasePlan(-3);
+    eq([r.secs, r.points[r.points.length - 1][1]], [3, -48]);
+    ok(worstStep(r.points) <= 3 + 1e-6, "gentle");
+  }],
   ["an unknown level, or silence as a number, is an error rather than a guess", () =>
-    eq([throws(() => rampPlan(7, 0, -6)), throws(() => rampPlan(0, -Infinity, 0))], [true, true])],
+    eq([throws(() => rampPlan(7, 0, -6)), throws(() => rampPlan(0, -Infinity, 0)), throws(() => envelopePlan(0, -6, 1))],
+       [true, true, true])],
 ];
 ```
 
@@ -4087,93 +4467,227 @@ export default [
 
 ```js
 import { eq, ok } from "./assert.js";
-import { CHIME, ALARM, BARK, alarmSteps, barkCalls } from "../js/sounds.js";
+import { CHIME, ALARM, BARK, alarmModulation, barkCalls } from "../js/sounds.js";
 
 export default [
-  ["the chime is two soft notes, rising", () => {
+  ["the chime is two notes, the second higher and later", () => {
     eq(CHIME.notes.length, 2);
-    ok(CHIME.notes[1].hz > CHIME.notes[0].hz, "the second note is higher");
-    ok(CHIME.peak <= 0.5, "soft");
+    ok(CHIME.notes[1].hz > CHIME.notes[0].hz && CHIME.notes[1].at > CHIME.notes[0].at, "rising, one after the other");
   }],
   ["the alarm's two tones sit inside ISO 7731's 500-1500 Hz", () =>
     ok(ALARM.tones.length === 2 && ALARM.tones.every((hz) => hz >= 500 && hz <= 1500), String(ALARM.tones))],
-  ["and alternate every quarter second", () => eq(alarmSteps(1), [[0, 700], [0.25, 1000], [0.5, 700], [0.75, 1000]])],
+  ["and it swings between them every quarter second, for as long as it sounds", () => {
+    const m = alarmModulation();
+    eq([m.base - m.depth, m.base + m.depth, 1 / (2 * m.hz)], [700, 1000, 0.25]);
+  }],
   ["a bark call is two barks", () => eq(barkCalls(1), [0, BARK.gap])],
   ["three calls carry a bark through a Level 2 rise", () => eq(barkCalls(3).length, 6)],
   ["each bark falls in pitch, fast", () => ok(BARK.sweepTo < BARK.sweepFrom && BARK.secs <= 0.2, "a fast downward sweep")],
-  ["nothing is louder than full scale", () =>
-    ok([CHIME.peak, ALARM.peak, BARK.peak].every((p) => p > 0 && p <= 1), "every peak in (0, 1]")],
+  ["nothing is louder than full scale", () => ok([ALARM.peak, BARK.peak].every((p) => p > 0 && p <= 1), "every peak in (0, 1]")],
+];
+```
+
+`test/js/alertplayer.test.js`. It tests the schedule itself: what each sound's own level does from its first sample, and what the gate does around it:
+
+```js
+import { eq, ok } from "./assert.js";
+import { voicesFor, releaseVoices, gateCloseAt, voicePlays, ALERT_DB } from "../js/alertplayer.js";
+import { SILENCE_DB, worstStep, dbAt } from "../js/ramps.js";
+import { ALERT_MAX_DB } from "../js/audiobus.js";
+
+// What a voice sounds like as heard. The gate is open (unity) from the first
+// voice's start until the last voice's end, so the heard level is the
+// voice's own envelope.
+const first = (v) => dbAt(v.env, v.start);
+const worst = (v) => worstStep(v.env, Number.isFinite(v.end) ? v.end : v.env[v.env.length - 1][0] + 1);
+const fromSilence = (v) => first(v) <= SILENCE_DB + 1e-9;
+const gentle = (v) => worst(v) <= 3 + 1e-6;
+
+export default [
+  ["no alert is louder than full scale, and Level 3 uses all of it", () => {
+    ok(Object.values(ALERT_DB).every((db) => db <= ALERT_MAX_DB), "every level at or under 0 dBFS");
+    eq(ALERT_DB[3], 0);
+  }],
+  ["the first alert of a drive starts from silence, after Begin's chime", () => {
+    const begin = voicesFor({ kind: "chime" }, 1, 0);
+    const bark = voicesFor({ kind: "bark" }, 2, 600)[0];
+    ok(begin.every(fromSilence) && begin.every(gentle), "Begin's two notes rise from silence and fall back to it");
+    ok(gateCloseAt(begin) < 600, "the gate closed after Begin's chime, long before the first alert");
+    eq([first(bark), bark.rise, +dbAt(bark.env, 601.5).toFixed(6)], [SILENCE_DB, 1.5, ALERT_DB[2]]);
+    ok(gentle(bark), `the bark's worst 100 ms is ${worst(bark).toFixed(2)} dB`);
+  }],
+  ["a repeat starts from silence too, while the one before it is still fading", () => {
+    const one = voicesFor({ kind: "bark" }, 2, 0)[0];
+    const repeat = voicesFor({ kind: "alarm" }, 2, 5)[0];
+    ok(one.end > 5, "the first bark is still sounding when the repeat begins");
+    ok(gateCloseAt([one, repeat]) >= repeat.end, "the gate stays open under both");
+    eq(first(repeat), SILENCE_DB);
+    ok(gentle(repeat) && gentle(one), "neither moves more than 3 dB in 100 ms");
+  }],
+  ["an escalation from Level 1 to 2 to 3: every new sound rises from silence", () => {
+    const l1 = [...voicesFor({ kind: "chime" }, 1, 0), ...voicesFor({ kind: "voice", clip: "l1" }, 1, 2.5, 2.8)];
+    const l2 = voicesFor({ kind: "bark" }, 2, 4);
+    const l3 = [...voicesFor({ kind: "alarm", hold: true }, 3, 7), ...voicesFor({ kind: "voice", clip: "l3" }, 3, 8, 1.0)];
+    const all = [...l1, ...l2, ...l3];
+    ok(all.every(fromSilence), "every first sample is at silence");
+    ok(all.every(gentle), "no envelope moves more than 3 dB in any 100 ms");
+    eq([l3[0].end, +dbAt(l3[0].env, 10).toFixed(6)], [Infinity, 0]);
+  }],
+  ["Level 3's alarm has no time cap: it holds until let go, then falls to silence over 3 s", () => {
+    const alarm = voicesFor({ kind: "alarm", hold: true }, 3, 0)[0];
+    const [r] = releaseVoices([alarm], 3600);
+    eq([alarm.end, r.end, dbAt(r.env, 3600), dbAt(r.env, 3603)], [Infinity, 3603, 0, SILENCE_DB]);
+    ok(gentle(r), "its release is as gentle as its rise");
+  }],
+  ["after 'I'm awake' every sound fades to silence, and the gate closes behind them", () => {
+    const vs = [...voicesFor({ kind: "bark" }, 2, 0), ...voicesFor({ kind: "alarm", hold: true }, 3, 2)];
+    const out = releaseVoices(vs, 4);
+    ok(out.every((v) => dbAt(v.env, v.end) === SILENCE_DB), "every voice ends at silence");
+    ok(out.every(gentle), "no release steps");
+    eq(gateCloseAt(out), 7);
+  }],
+  ["a sound not yet started when 'I'm awake' comes is never heard", () => {
+    const v = voicesFor({ kind: "voice", clip: "l1" }, 1, 10, 2.8)[0];
+    eq(releaseVoices([v], 5).map((r) => [r.dropped, r.end]), [[true, 5]]);
+  }],
+  ["a line is said once more than its rise can hide", () =>
+    eq([voicePlays(1.8, 1.5), voicePlays(1.0, 3)], [[0, 2.2], [0, 1.4, 2.8, 4.2]])],
 ];
 ```
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: rsync, then `python3 test/js_test.py`. Expected: two `:: import` failures.
+Run: rsync, then `python3 test/js_test.py`. Expected: three `:: import` failures.
 
-- [ ] **Step 3: Write ramps.js and sounds.js**
+- [ ] **Step 3: Write ramps.js**
 
 `share/js/ramps.js`:
 
 ```js
-// The shapes of every level change, as plans the audio stage runs with
-// linearRampToValueAtTime (audiobus.js schedule()). Pure, and tested.
+// The shapes of every level change, as plans run with linearRampToValueAtTime.
+// Pure, and tested.
 //
 // linearRampToValueAtTime is linear in AMPLITUDE: one long ramp from quiet to
 // loud gains most of its decibels in its first instant, which is exactly the
-// startle the design forbids. So a plan is a point every 100 ms, evenly spaced
-// in dB, and no step between points is larger than 3 dB. A span too big for
-// its level's time is stretched until it fits, never stepped.
+// startle the design forbids. So a plan is a point every 100 ms at most,
+// evenly spaced in dB, and no 100 ms of it changes by more than 3 dB. A span
+// too big for its time is stretched until it fits, never stepped.
+//
+//   rampPlan(level, from, to)           the music bus: the Level 1 swell, the
+//                                       duck, the return after a release
+//   envelopePlan(level, target, hold)   ONE ALERT SOUND'S OWN LEVEL: up from
+//                                       silence, held, and back to silence
+//   releasePlan(from)                   a sound let go early, down to silence
+//
+// SILENCE IS -48 dBFS. Every alert sound starts and ends there: 36 dB under
+// the music and below road noise at any speed, and exactly far enough under
+// a Level 2 alert (-3 dBFS) that 3 dB per 100 ms reaches it in the spec's
+// 1.5 s.
 
 export const RAMP_SECS = {
-  0: { up: 3, down: 3 },       // release: sound fades out over 3 s, music comes back
+  0: { up: 3, down: 3 },       // release: music comes back over 3 s
   1: { up: 10, down: 30 },     // Level 1: the radio rises over 10 s, settles over 30 s
-  2: { up: 1.5, down: 0.5 },   // Level 2: the alert rises over 1.5 s; music ducks in 0.5 s
-  3: { up: 3, down: 0.5 },     // Level 3: the alarm rises to full over 3 s
+  2: { up: 1.5, down: 0.5 },   // Level 2: music ducks in 0.5 s
+  3: { up: 3, down: 0.5 },     // Level 3: music ducks in 0.5 s
 };
 export const MAX_DB_PER_STEP = 3;
 export const STEP_SECS = 0.1;
+export const SILENCE_DB = -48;
+export const RISE_SECS = { 1: 1.5, 2: 1.5, 3: 3 };   // a sound's rise from silence, by level
+export const RELEASE_SECS = 3;                        // and its fall back to it
+
+function ramp(from, to, minSecs) {
+  if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error("a ramp needs finite levels in dB");
+  const span = Math.abs(to - from);
+  const secs = Math.max(minSecs, (span / MAX_DB_PER_STEP) * STEP_SECS);
+  const n = Math.max(1, Math.ceil(secs / STEP_SECS - 1e-6));
+  const points = [];
+  // The last point is `to` itself, not arithmetic that lands a hair beside it.
+  for (let i = 0; i <= n; i++) points.push([+((secs * i) / n).toFixed(4), i === n ? to : from + ((to - from) * i) / n]);
+  return { secs, points };
+}
 
 export function rampPlan(level, from, to) {
   const spec = RAMP_SECS[level];
   if (!spec) throw new Error(`no ramp for level ${level}`);
-  if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error("a ramp needs finite levels in dB");
-  const span = Math.abs(to - from);
-  const secs = Math.max(to > from ? spec.up : spec.down, (span / MAX_DB_PER_STEP) * STEP_SECS);
-  const n = Math.max(1, Math.ceil(secs / STEP_SECS - 1e-6));
-  const points = [];
-  for (let i = 0; i <= n; i++) points.push([+((secs * i) / n).toFixed(4), from + ((to - from) * i) / n]);
-  return { secs, points };
+  return ramp(from, to, to > from ? spec.up : spec.down);
+}
+
+export function envelopePlan(level, targetDb, holdSecs) {
+  if (!RISE_SECS[level]) throw new Error(`no envelope for level ${level}`);
+  const up = ramp(SILENCE_DB, targetDb, RISE_SECS[level]);
+  if (holdSecs === Infinity) return { points: up.points, rise: up.secs, secs: Infinity };
+  const down = ramp(targetDb, SILENCE_DB, RELEASE_SECS);
+  const t1 = +(up.secs + holdSecs).toFixed(4);
+  return {
+    points: [...up.points, [t1, targetDb], ...down.points.slice(1).map(([t, d]) => [+(t1 + t).toFixed(4), d])],
+    rise: up.secs,
+    secs: +(t1 + down.secs).toFixed(4),
+  };
+}
+
+export function releasePlan(fromDb) {
+  return ramp(Math.max(SILENCE_DB, fromDb), SILENCE_DB, RELEASE_SECS);
+}
+
+// Where a plan is at time t, in dB. Each segment is linear in amplitude,
+// because that is what linearRampToValueAtTime does.
+export function dbAt(points, t) {
+  if (t <= points[0][0]) return points[0][1];
+  for (let i = 1; i < points.length; i++) {
+    const [t0, a] = points[i - 1], [t1, b] = points[i];
+    if (t <= t1) {
+      const ga = 10 ** (a / 20), gb = 10 ** (b / 20);
+      const g = t1 > t0 ? ga + ((gb - ga) * (t - t0)) / (t1 - t0) : gb;
+      return 20 * Math.log10(g);
+    }
+  }
+  return points[points.length - 1][1];
+}
+
+// The largest change over any 100 ms of a plan, walked in 10 ms steps: the
+// spec's rule, measured the way the ear meets it.
+export function worstStep(points, until = points[points.length - 1][0]) {
+  let worst = 0;
+  for (let t = points[0][0]; t + STEP_SECS <= until + 1e-9; t += 0.01) {
+    worst = Math.max(worst, Math.abs(dbAt(points, t + STEP_SECS) - dbAt(points, t)));
+  }
+  return worst;
 }
 ```
+
+- [ ] **Step 4: Write sounds.js and alertplayer.js**
 
 `share/js/sounds.js`:
 
 ```js
-// The alert sounds. The chime, the two-tone alarm and the dog's bark are
-// synthesized here, each from a plan (plain numbers, tested) played on the
-// audio stage's alert input. The voice is the one recording: Piper, rendered
-// ahead of time (tools/render_voice.py), because the tablet has no speech
-// engine and nothing in the car should depend on one.
+// The alert sounds, each played at its own level: an envelope from silence and
+// back (ramps.js envelopePlan), scheduled by alertplayer.js. The chime, the
+// two-tone alarm and the dog's bark are synthesized here. The voice is the one
+// recording: Piper, rendered ahead of time (Task 12), because the tablet has
+// no speech engine and nothing in the car should depend on one.
+//
+// Inside its envelope a sound keeps its character: a bark's syllables start
+// fast, a chime's notes ring. They are only ever as loud as the envelope is at
+// that moment, and the envelope never moves more than 3 dB in any 100 ms.
 //
 // THE BARK IS HONEST ABOUT BEING SYNTHESIZED: a pitched harmonic burst with a
-// fast downward sweep through two formants, over band-passed noise, two
-// barks to a call. Better sounds are another day's work (owner, 2026-09-28).
+// fast downward sweep through two formants, over band-passed noise, two barks
+// to a call. Better sounds are another day's work (owner, 2026-09-28).
 
 import { withToken } from "./core.js";
-import { audioContext, alertIn, resume, setLevelNow } from "./audiobus.js";
+import { audioContext, alertIn, dbToGain } from "./audiobus.js";
 
-export const CHIME = { notes: [{ hz: 659.25, at: 0, secs: 1.0 }, { hz: 880, at: 0.3, secs: 1.3 }],
-                       attack: 0.04, peak: 0.4 };
+export const CHIME = { notes: [{ hz: 659.25, at: 0 }, { hz: 880, at: 0.6 }] };
 export const ALARM = { tones: [700, 1000], toneSecs: 0.25, peak: 0.6 };
 export const BARK = { gap: 0.3, callEvery: 0.8, sweepFrom: 540, sweepTo: 260, secs: 0.16,
                       formants: [1100, 2400], noiseHz: 1700, attack: 0.006, peak: 0.8 };
 
-export function alarmSteps(secs, plan = ALARM) {
-  const out = [];
-  for (let i = 0; i * plan.toneSecs < secs - 1e-9; i++) {
-    out.push([+(i * plan.toneSecs).toFixed(3), plan.tones[i % plan.tones.length]]);
-  }
-  return out;
+// The alarm is one oscillator swung between its two tones by a square wave,
+// so it alternates for as long as it sounds, with no schedule to run out.
+export function alarmModulation(plan = ALARM) {
+  const [lo, hi] = plan.tones;
+  return { base: (lo + hi) / 2, depth: (hi - lo) / 2, hz: 1 / (2 * plan.toneSecs) };
 }
 
 export function barkCalls(calls, plan = BARK) {
@@ -4182,42 +4696,69 @@ export function barkCalls(calls, plan = BARK) {
   return out;
 }
 
-export function playChime(at) {
-  const ctx = audioContext(), out = alertIn();
-  for (const n of CHIME.notes) {
-    const t = at + n.at;
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(CHIME.peak, t + CHIME.attack);
-    env.gain.exponentialRampToValueAtTime(0.0001, t + n.secs);
-    env.connect(out);
-    // A bell's first three partials, the upper two quietly.
-    for (const [mult, lvl] of [[1, 1], [2, 0.18], [3, 0.06]]) {
-      const o = ctx.createOscillator();
-      o.type = "sine";
-      o.frequency.value = n.hz * mult;
-      const g = ctx.createGain();
-      g.gain.value = lvl;
-      o.connect(g);
-      g.connect(env);
-      o.start(t);
-      o.stop(t + n.secs + 0.05);
-    }
-  }
+// A sound's own level: its envelope, point by point, on a gain node into the
+// alert gate. The first point is silence at the sound's start.
+function levelNode(ctx, v) {
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(dbToGain(v.env[0][1]), v.env[0][0]);
+  for (const [t, db] of v.env.slice(1)) g.gain.linearRampToValueAtTime(dbToGain(db), t);
+  g.connect(alertIn());
+  return g;
 }
 
-export function playAlarm(at, secs) {
-  const ctx = audioContext();
+// What the player keeps of a sound: a way to let it go early, along a
+// release plan (absolute points), stopping its sources once it is silent.
+function held(g, sources) {
+  return {
+    release(now, points, end) {
+      if (g.gain.cancelAndHoldAtTime) g.gain.cancelAndHoldAtTime(now);
+      else g.gain.cancelScheduledValues(now);
+      for (const [t, db] of points) g.gain.linearRampToValueAtTime(dbToGain(db), t);
+      for (const s of sources) { try { s.stop(end + 0.05); } catch { /* already stopped */ } }
+    },
+  };
+}
+
+function run(src, v) {
+  src.start(v.start);
+  if (Number.isFinite(v.end)) src.stop(v.end + 0.05);
+  return src;
+}
+
+export function playChimeNote(v) {
+  const ctx = audioContext(), g = levelNode(ctx, v), sources = [];
+  // A bell's first three partials, the upper two quietly, sounding for as
+  // long as the note's envelope does.
+  for (const [mult, lvl] of [[1, 0.8], [2, 0.12], [3, 0.04]]) {
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.value = v.hz * mult;
+    const p = ctx.createGain();
+    p.gain.value = lvl;
+    o.connect(p);
+    p.connect(g);
+    sources.push(run(o, v));
+  }
+  return held(g, sources);
+}
+
+export function playAlarm(v) {
+  const ctx = audioContext(), g = levelNode(ctx, v), m = alarmModulation();
   const o = ctx.createOscillator();
   o.type = "triangle";
-  for (const [t, hz] of alarmSteps(secs)) o.frequency.setValueAtTime(hz, at + t);
-  const g = ctx.createGain();
-  g.gain.value = ALARM.peak;
-  o.connect(g);
-  g.connect(alertIn());
-  o.start(at);
-  o.stop(at + secs);
-  return { stop(when) { try { o.stop(when); } catch { /* already stopped */ } } };
+  o.frequency.value = m.base;
+  const lfo = ctx.createOscillator();
+  lfo.type = "square";
+  lfo.frequency.value = m.hz;
+  const depth = ctx.createGain();
+  depth.gain.value = m.depth;
+  lfo.connect(depth);
+  depth.connect(o.frequency);
+  const p = ctx.createGain();
+  p.gain.value = ALARM.peak;
+  o.connect(p);
+  p.connect(g);
+  return held(g, [run(o, v), run(lfo, v)]);
 }
 
 let noise = null;
@@ -4229,15 +4770,15 @@ function noiseBuffer(ctx) {
   return noise;
 }
 
-export function playBark(at, calls = 1) {
-  const ctx = audioContext(), out = alertIn();
-  for (const off of barkCalls(calls)) {
-    const t = at + off;
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(BARK.peak, t + BARK.attack);
-    env.gain.exponentialRampToValueAtTime(0.001, t + BARK.secs);
-    env.connect(out);
+export function playBark(v) {
+  const ctx = audioContext(), g = levelNode(ctx, v), sources = [];
+  for (const off of barkCalls(v.calls)) {
+    const t = v.start + off;
+    const syl = ctx.createGain();
+    syl.gain.setValueAtTime(0, t);
+    syl.gain.linearRampToValueAtTime(BARK.peak, t + BARK.attack);
+    syl.gain.exponentialRampToValueAtTime(0.001, t + BARK.secs);
+    syl.connect(g);
     const o = ctx.createOscillator();
     o.type = "sawtooth";
     o.frequency.setValueAtTime(BARK.sweepFrom, t);
@@ -4248,7 +4789,7 @@ export function playBark(at, calls = 1) {
       bp.frequency.value = hz;
       bp.Q.value = q;
       o.connect(bp);
-      bp.connect(env);
+      bp.connect(syl);
     }
     const n = ctx.createBufferSource();
     n.buffer = noiseBuffer(ctx);
@@ -4260,47 +4801,220 @@ export function playBark(at, calls = 1) {
     ng.gain.value = 0.35;
     n.connect(nb);
     nb.connect(ng);
-    ng.connect(env);
+    ng.connect(syl);
     o.start(t);
     o.stop(t + BARK.secs + 0.02);
     n.start(t);
     n.stop(t + BARK.secs + 0.02);
+    sources.push(o, n);
   }
+  return held(g, sources);
 }
 
 const decoded = new Map();
 
-export async function playVoice(url, at) {
+export function loadClip(url) {
   const ctx = audioContext();
   if (!decoded.has(url)) {
     decoded.set(url, fetch(withToken(url))
       .then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.arrayBuffer(); })
-      .then((b) => ctx.decodeAudioData(b)));
+      .then((b) => ctx.decodeAudioData(b))
+      .catch((e) => { decoded.delete(url); throw e; }));
   }
-  let buf;
-  try { buf = await decoded.get(url); } catch { decoded.delete(url); return null; }
-  const s = ctx.createBufferSource();
-  s.buffer = buf;
-  s.connect(alertIn());
-  s.start(Math.max(at, ctx.currentTime));
-  return s;
+  return decoded.get(url);
 }
 
-// Begin's chime: the one chance to hear that sound reaches the car before
-// anything depends on it. Called from the Begin tap, which is the gesture a
-// browser wants before it lets a page make a sound.
-export async function beginChime() {
-  await resume();
-  setLevelNow("alert", -6);
-  playChime(audioContext().currentTime + 0.05);
+export function playVoice(v, buffer) {
+  const ctx = audioContext(), g = levelNode(ctx, v), sources = [];
+  for (const p of v.plays) {
+    const s = ctx.createBufferSource();
+    s.buffer = buffer;
+    s.connect(g);
+    s.start(v.start + p);
+    sources.push(s);
+  }
+  return held(g, sources);
 }
 ```
 
-- [ ] **Step 4: Run them to see them pass**
+`share/js/alertplayer.js`:
 
-Run: rsync, then `python3 test/js_test.py`. Expected: all green.
+```js
+// Every alert OmaCar sounds, and Begin's chime: the ladder's cues (ladder.js)
+// turned into sounds (sounds.js), each with its own level envelope, on the
+// audio stage (audiobus.js).
+//
+// EVERY ONSET RAMPS, AT THE SOUND'S OWN GAIN. Every chime note, bark call,
+// voice line and alarm -- the first of a drive, every repeat and every
+// escalation from Level 1 to 2 to 3 -- rises from silence (-48 dBFS) to its
+// level and falls back, never more than 3 dB in any 100 ms (envelopePlan). The
+// alert bus is only a gate: opened when a sound starts at silence, closed once
+// the last one has faded to silence. So after "I'm awake", the next onset
+// starts from silence too. Nothing is ever set in one step.
+//
+// The schedule is pure (voicesFor, releaseVoices, gateCloseAt) and tested;
+// createAlertPlayer only hands it to Web Audio.
 
-- [ ] **Step 5: Begin plays the chime and says to keep the radio on AUX**
+import { audioContext, schedule, currentDb, resume, gateAlerts, MUSIC_DB, FLOOR_DB } from "./audiobus.js";
+import { rampPlan, envelopePlan, releasePlan, dbAt, RISE_SECS } from "./ramps.js";
+import { CHIME, BARK, playChimeNote, playBark, playAlarm, playVoice, loadClip } from "./sounds.js";
+import { asset } from "./assets.js";
+
+// Where each level's sound peaks, in dBFS. Level 3 uses the full scale.
+export const ALERT_DB = { 1: -6, 2: -3, 3: 0 };
+export const CHIME_NOTE_DB = -9;       // each of the chime's two notes; together about -6
+export const HOLD_SECS = { chime: 1.0, bark: 1.5, alarm: 1.5 };
+export const VOICE_GAP = 0.4;
+// When the voice starts after its cue: after Level 1's chime, and once Level
+// 3's alarm has begun. Level 2's voice is a rotation of its own.
+export const VOICE_AFTER = { 1: 2.5, 3: 1.0 };
+export const SWELL_DB = 6;             // Level 1: the radio rises +6 dB
+export const DUCK_DB = -12;            // Levels 2 and 3: music ducks -12 dB
+
+// How many times a line is said: enough that one saying falls wholly after the
+// rise, at full level. Start offsets from the voice's start.
+export function voicePlays(clipSecs, riseSecs, gap = VOICE_GAP) {
+  const n = 1 + Math.ceil(riseSecs / (clipSecs + gap));
+  return Array.from({ length: n }, (_, i) => +(i * (clipSecs + gap)).toFixed(3));
+}
+
+// Pure: the voices a cue sounds, each with its envelope in absolute time.
+export function voicesFor(cue, level, at, clipSecs = 2) {
+  const lv = Math.min(3, Math.max(1, level || 1));
+  const voice = (kind, start, env, extra) => Object.assign({
+    kind, level: lv, start, rise: env.rise, end: start + env.secs,
+    env: env.points.map(([t, d]) => [+(start + t).toFixed(4), d]),
+  }, extra || {});
+  if (cue.kind === "chime") {
+    return CHIME.notes.map((n) => voice("chime", at + n.at, envelopePlan(1, CHIME_NOTE_DB, HOLD_SECS.chime), { hz: n.hz }));
+  }
+  if (cue.kind === "bark") {
+    const env = envelopePlan(lv, ALERT_DB[lv], HOLD_SECS.bark);
+    return [voice("bark", at, env, { calls: Math.max(1, Math.floor((env.rise + HOLD_SECS.bark) / BARK.callEvery)) })];
+  }
+  if (cue.kind === "alarm") {
+    return [voice("alarm", at, envelopePlan(lv, ALERT_DB[lv], cue.hold ? Infinity : HOLD_SECS.alarm))];
+  }
+  if (cue.kind === "voice") {
+    const plays = voicePlays(clipSecs, RISE_SECS[lv]);
+    const rise = envelopePlan(lv, ALERT_DB[lv], 0).rise;
+    const hold = Math.max(0, plays[plays.length - 1] + clipSecs - rise);
+    return [voice("voice", at, envelopePlan(lv, ALERT_DB[lv], hold), { plays, clip: cue.clip })];
+  }
+  return [];
+}
+
+// Pure: every voice still sounding at `now`, let go from wherever its envelope
+// is, down to silence over 3 s. A voice not yet started is dropped, never
+// heard. A held alarm has no end until this.
+export function releaseVoices(voices, now) {
+  const out = [];
+  for (const v of voices) {
+    if (v.end <= now) continue;
+    if (v.start >= now) {
+      out.push(Object.assign({}, v, { env: [[now, v.env[0][1]]], end: now, dropped: true }));
+      continue;
+    }
+    const r = releasePlan(dbAt(v.env, now));
+    out.push(Object.assign({}, v, {
+      env: [...v.env.filter(([t]) => t < now), ...r.points.map(([t, d]) => [+(now + t).toFixed(4), d])],
+      end: now + r.secs,
+    }));
+  }
+  return out;
+}
+
+// Pure: when the alert gate may close, once the last voice has faded to
+// silence. Infinity while a held alarm has not been let go.
+export function gateCloseAt(voices) {
+  return voices.reduce((m, v) => Math.max(m, v.end), 0);
+}
+
+export function createAlertPlayer() {
+  let voices = [];
+  const handles = new Map();
+  let nextId = 0;
+  let name = () => "James";
+
+  async function clipFor(clip) {
+    const withName = clip !== "l3" && name() === "James";
+    const a = await asset(`voice-${clip}${withName ? "-james" : ""}`);
+    if (!a || !a.url) return null;
+    try { return await loadClip(a.url); } catch { return null; }
+  }
+
+  function render(v, buffer) {
+    if (v.kind === "chime") return playChimeNote(v);
+    if (v.kind === "bark") return playBark(v);
+    if (v.kind === "alarm") return playAlarm(v);
+    return playVoice(v, buffer);
+  }
+
+  function fade(now) {
+    const out = releaseVoices(voices, now);
+    for (const r of out) {
+      const h = handles.get(r.id);
+      if (h) h.release(now, r.env.filter(([t]) => t >= now), r.end);
+    }
+    voices = out.filter((r) => !r.dropped);
+    if (voices.length) gateAlerts(now, gateCloseAt(voices));
+    schedule("music", rampPlan(0, Math.max(FLOOR_DB, currentDb("music")), MUSIC_DB).points, now);
+  }
+
+  return {
+    setName(fn) { name = fn; },
+    get voices() { return voices; },
+    async play(cues, out) {
+      await resume();
+      const ctx = audioContext();
+      const level = (out && out.level) || 0;
+      for (const cue of cues) {
+        const now = ctx.currentTime;
+        voices = voices.filter((v) => v.end > now);
+        for (const id of [...handles.keys()]) if (!voices.some((v) => v.id === id)) handles.delete(id);
+        if (cue.kind === "fade") { fade(now); continue; }
+        if (cue.kind === "swell") {
+          const up = rampPlan(1, Math.max(FLOOR_DB, currentDb("music")), MUSIC_DB + SWELL_DB);
+          schedule("music", up.points, now + 0.05);
+          schedule("music", rampPlan(1, MUSIC_DB + SWELL_DB, MUSIC_DB).points, now + 0.05 + up.secs, true);
+          continue;
+        }
+        if (cue.kind === "duck") {
+          schedule("music", rampPlan(Math.max(2, level), Math.max(FLOOR_DB, currentDb("music")), MUSIC_DB + DUCK_DB).points, now + 0.05);
+          continue;
+        }
+        let buffer = null;
+        if (cue.kind === "voice") {
+          buffer = await clipFor(cue.clip);
+          if (!buffer) continue;               // no clips installed: the other sounds carry on
+        }
+        const at = ctx.currentTime + 0.05 + (cue.kind === "voice" ? (VOICE_AFTER[level] || 0) : 0);
+        const vs = voicesFor(cue, level, at, buffer ? buffer.duration : undefined);
+        if (!vs.length) continue;
+        for (const v of vs) { v.id = ++nextId; voices.push(v); }
+        gateAlerts(Math.min(...vs.map((v) => v.start)), gateCloseAt(voices));
+        for (const v of vs) handles.set(v.id, render(v, buffer));
+      }
+    },
+  };
+}
+
+// One player for the page, so Begin's chime, drowsy mode and "Test the
+// alerts" share one gate and one list of what is sounding.
+let the = null;
+export function alertPlayer() { return the || (the = createAlertPlayer()); }
+
+// Begin's chime: the same envelopes as any alert, from silence and back.
+export async function beginChime() {
+  await alertPlayer().play([{ kind: "chime" }], { level: 1 });
+}
+```
+
+- [ ] **Step 5: Run them to see them pass**
+
+Run: rsync, then `python3 test/js_test.py`. Expected: all green, including the three first-sample cases.
+
+- [ ] **Step 6: Begin plays the chime and says to keep the radio on AUX**
 
 In `share/js/views/launcher.js`:
 - after `const foot = h("div.launch-foot");`, add:
@@ -4317,9 +5031,9 @@ In `share/js/views/launcher.js`:
 
 ```js
     // THE CHIME SAYS THE PATH WORKS: from the tablet, down the AUX cable, out
-    // of the car's speakers. No sound is not a failed start, so it cannot
-    // stop the sequence.
-    import("../sounds.js").then((s) => s.beginChime()).catch(() => {});
+    // of the car's speakers, rising from silence like every alert. No sound
+    // is not a failed start, so it cannot stop the sequence.
+    import("../alertplayer.js").then((m) => m.beginChime()).catch(() => {});
 ```
 
 `share/css/drowsy.css`:
@@ -4339,43 +5053,50 @@ In `share/app.html`, inside the `redesign/cameras` block, after the `cameras.css
 <link rel="stylesheet" href="css/drowsy.css">
 ```
 
-- [ ] **Step 6: Run everything, and listen**
+- [ ] **Step 7: Run everything**
 
 Run `BOXTEST`. Expected: all green, including the launcher guards ("the marked line says why", "Open the dashboard anyway" and "Nothing will be recorded" are untouched).
 
-The box has no car speakers. The chime is heard on the tablet in Task 12.
+The box has no car speakers. The owner hears the chime and every alert through the car in Task 13.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add share/js/ramps.js share/js/sounds.js share/css/drowsy.css share/js/views/launcher.js share/app.html test/js/ramps.test.js test/js/sounds.test.js
-git commit -m "Alerts rise and fall in steps nobody can hear, and Begin's chime proves the sound reaches the car" -m "Every level change is a plan of points 100 ms apart and at most 3 dB apart, because a single linear ramp gains most of its decibels in its first instant. The chime, the two-tone alarm (700 and 1000 Hz, inside ISO 7731's range) and a synthesized bark are plans too. Begin says to keep the car's radio on AUX, which the app cannot see.
+git add share/js/ramps.js share/js/sounds.js share/js/alertplayer.js share/css/drowsy.css share/js/views/launcher.js share/app.html test/js/ramps.test.js test/js/sounds.test.js test/js/alertplayer.test.js
+git commit -m "Every alert sound rises from silence at its own level and falls back to it, so nothing startles" -m "Each chime note, bark call, voice line and alarm carries its own envelope from -48 dBFS to its level and back, never more than 3 dB in any 100 ms: the first alert of a drive, every repeat and every escalation alike. The alert bus is only a gate that opens on silence and closes after the last release, so Begin's chime can no longer leave it up. The Level 3 alarm holds with no time cap until it is let go. The tests check each sound's first sample and its whole envelope, not just the bus.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 9: Vendoring: MediaPipe, and the voice
+### Task 8: MediaPipe, fetched once at install and pinned
 
-The owner approved both downloads on 2026-09-28.
+The owner approved the download on 2026-09-28. His choice on how it ships is still open. This task writes option B, which the controller recommended:
+- Nothing binary goes in git; `share/js/vendor/mediapipe/` is git-ignored.
+- The files are listed with their sizes and SHA-256 pins in `share/assets/manifest.json`, under a `fetch` list beside the private pictures.
+- `omacar assets fetch` downloads them once, at install, and checks every file against its pin. The app never fetches anything, on the road or anywhere else.
+- The no-SIMD pair is dropped: Chromium on the tablet has WebAssembly SIMD, and Task 9 names the SIMD files directly rather than letting MediaPipe choose.
 
-**The voice** is Piper's `en_US-ljspeech-high`, trained on the LJ Speech dataset, which is in the public domain. Step 4 checks its model card before anything is rendered. If the card does not say public domain, the fallback is `en_US-libritts_r-medium` (LibriTTS-R, CC BY 4.0, speaker 0), with the attribution changed to match.
+**If the owner picks option A** (commit the files), the change is small. Delete the `.gitignore` block from Step 3 and `git add share/js/vendor/mediapipe`. `omacar assets fetch` then finds every file already matching its pin and does nothing, and every test here still passes.
 
 **Files:**
-- Create:
-  - the MediaPipe files: `share/js/vendor/mediapipe/{vision_bundle.mjs, face_landmarker.task, LICENSE, SHA256SUMS, README.md}` and `share/js/vendor/mediapipe/wasm/{vision_wasm_internal.js, vision_wasm_internal.wasm, vision_wasm_nosimd_internal.js, vision_wasm_nosimd_internal.wasm}`;
-  - the voice tool: `tools/render_voice.py`;
-  - the tests: `test/vendor_test.py`, `test/js/vendor.test.js`.
-- Create, not committed: `share/assets/private/voice/{l1-james, l1, l2-james, l2, l3}.ogg`, in the Mac worktree and in the box's canonical `~/Projects/omacar/share/assets/private/voice/`.
-- Modify: `share/assets/manifest.json` (five entries), `test/guards_test.py` (one line), `ATTRIBUTION.md` (append), `test/all.sh` (the cameras block).
+- Modify:
+  - `lib/assets.py`: `fetch`, `fetch_status`, the `fetch` command, and `status` listing fetched files;
+  - `share/assets/manifest.json`: a `fetch` list of four entries, pinned in Step 5;
+  - `.gitignore`: one block;
+  - `share/js/vendor/README.md` and `ATTRIBUTION.md`: a MediaPipe section each;
+  - `test/all.sh`: the cameras block.
+- Create: `test/vendor_test.py`, `test/js/vendor.test.js`
+- Fetched, never committed: `share/js/vendor/mediapipe/vision_bundle.mjs`, `wasm/vision_wasm_internal.js`, `wasm/vision_wasm_internal.wasm`, `face_landmarker.task`
 
 **Interfaces:**
 - Produces:
-  - `import("./vendor/mediapipe/vision_bundle.mjs")`, which exports `FilesetResolver` and `FaceLandmarker`, with the wasm under `vendor/mediapipe/wasm/` and the model at `vendor/mediapipe/face_landmarker.task`.
-  - Asset names `voice-l1-james`, `voice-l1`, `voice-l2-james`, `voice-l2` and `voice-l3`. Each is served as `assets/private/voice/<clip>.ogg` through `asset(name)` (`share/js/assets.js`).
-  - Clip `l1` says "You seem tired. Plan a break soon.", `l2` "Are you with me?" and `l3` "Pull over now.". The `-james` pair begin with "James, ".
-  - The name setting (Task 11) can only choose among names that have clips: "James" or none.
+  - `assets.fetch(names=None, pin=False, manifest_path=MANIFEST, root=ROOT) → {name: "fetched"|"already here"}`. It raises ValueError on a wrong size, a pin mismatch, or an entry not yet pinned when `pin` is off.
+  - `assets.fetch_status(manifest=None, root=ROOT) → {name: {file, present, ok, why}}`.
+  - The CLI: `omacar assets fetch [--pin]`, and `omacar assets status` listing the fetched files too.
+  - A `fetch` entry is `{url, file (relative to the repo), bytes, sha256}`.
+  - The layout Task 9 loads: `share/js/vendor/mediapipe/vision_bundle.mjs`, `wasm/vision_wasm_internal.js`, `wasm/vision_wasm_internal.wasm`, `face_landmarker.task`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4383,26 +5104,27 @@ The owner approved both downloads on 2026-09-28.
 
 ```python
 #!/usr/bin/env python3
-"""What drowsy mode needs and must never fetch on the road. MediaPipe's
-tasks-vision 1.0.1 and the Face Landmarker model are checked against the
-sizes the owner approved and the hashes pinned in SHA256SUMS. The voice
-clips are private, so they are checked in the manifest, and against their
-pins wherever they are installed."""
+"""What drowsy mode needs and must never fetch on the road: MediaPipe's
+tasks-vision 1.0.1 engine and the Face Landmarker model.
 
-import hashlib
+They are not in git. share/assets/manifest.json lists them under `fetch`, with
+the sizes the owner approved and SHA-256 pins, and `omacar assets fetch` puts
+them in share/js/vendor/mediapipe/ once, at install. This checks the fetch
+itself against local files, the shipped list, and the files installed here."""
+
+import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 import assets  # noqa: E402
 
-V = os.path.join(ROOT, "share", "js", "vendor", "mediapipe")
 SIZES = {"vision_bundle.mjs": 155439, "wasm/vision_wasm_internal.js": 323377,
          "wasm/vision_wasm_internal.wasm": 11756954, "face_landmarker.task": 3758596}
-NOSIMD = ["wasm/vision_wasm_nosimd_internal.js", "wasm/vision_wasm_nosimd_internal.wasm"]
-VOICE = ["voice-l1-james", "voice-l1", "voice-l2-james", "voice-l2", "voice-l3"]
-
 fails = 0
 
 
@@ -4427,46 +5149,64 @@ def check(msg, got, want):
         bad(f"{msg} (wanted {want!r}, got {got!r})")
 
 
-def sha(p):
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest()
+def raises(fn):
+    try:
+        fn()
+        return False
+    except ValueError:
+        return True
 
 
-head("the vendored face tracker")
-for rel, size in SIZES.items():
-    p = os.path.join(V, rel)
-    check(f"{rel} is the approved {size:,} bytes", os.path.getsize(p) if os.path.isfile(p) else None, size)
-for rel in NOSIMD:
-    check(f"{rel} is here", os.path.isfile(os.path.join(V, rel)), True)
-sums = {}
-if os.path.isfile(os.path.join(V, "SHA256SUMS")):
-    for line in open(os.path.join(V, "SHA256SUMS"), encoding="utf-8"):
-        if line.strip():
-            digest, rel = line.split(None, 1)
-            sums[rel.strip()] = digest
-check("every file is pinned", sorted(sums), sorted(list(SIZES) + NOSIMD))
-for rel, want in sums.items():
-    p = os.path.join(V, rel)
-    check(f"{rel} matches its pin", sha(p) if os.path.isfile(p) else None, want)
-lic = os.path.join(V, "LICENSE")
-text = open(lic, encoding="utf-8").read() if os.path.isfile(lic) else ""
-check("the licence is Apache 2.0", "Apache License" in text and "Version 2.0" in text, True)
+head("fetch downloads once, checks the size, and holds every file to its pin")
+d = tempfile.mkdtemp(prefix="omacar-fetch-")
+src = os.path.join(d, "source.bin")
+with open(src, "wb") as f:
+    f.write(b"engine" * 100)
+mf = os.path.join(d, "manifest.json")
 
-head("the voice clips")
-m = assets.load_manifest()["assets"]
-check("all five phrases are in the manifest", [n for n in VOICE if n not in m], [])
-check("each in the private voice folder, as Ogg",
-      [n for n in VOICE if n in m and m[n].get("file") != f"voice/{n[len('voice-'):]}.ogg"], [])
-check("and every one is pinned", [n for n in VOICE if n in m and not m[n].get("sha256")], [])
-st = assets.status()
-here = [n for n in VOICE if n in st and st[n]["present"]]
-if here:
-    check("the ones installed here match their pins", [n for n in here if not st[n]["ok"]], [])
+
+def manifest(**entry):
+    e = dict({"url": "file://" + src, "file": "out/engine.bin", "bytes": 600, "sha256": None}, **entry)
+    with open(mf, "w", encoding="utf-8") as fh:
+        json.dump({"assets": {}, "fetch": {"engine": e}}, fh)
+
+
+manifest()
+check("an entry with no pin is refused, unless asked to pin it",
+      raises(lambda: assets.fetch(manifest_path=mf, root=d)), True)
+check("and nothing half-downloaded is left behind", os.listdir(os.path.join(d, "out")), [])
+check("with --pin it is fetched", assets.fetch(pin=True, manifest_path=mf, root=d), {"engine": "fetched"})
+_pinned = json.load(open(mf, encoding="utf-8"))["fetch"]["engine"]["sha256"]
+check("and the pin is written into the manifest", _pinned, assets.sha256(src))
+check("a second fetch finds it already here", assets.fetch(manifest_path=mf, root=d), {"engine": "already here"})
+os.remove(os.path.join(d, "out", "engine.bin"))
+manifest(sha256="0" * 64)
+check("a download that does not match its pin is refused",
+      raises(lambda: assets.fetch(manifest_path=mf, root=d)), True)
+manifest(bytes=599)
+check("so is one of the wrong size, before its hash is even taken",
+      raises(lambda: assets.fetch(pin=True, manifest_path=mf, root=d)), True)
+shutil.rmtree(d)
+
+head("the shipped list: MediaPipe 1.0.1 and the model, at the approved sizes, pinned")
+m = assets.load_manifest()["fetch"]
+check("four files, and no no-SIMD pair",
+      sorted(e["file"].split("share/js/vendor/mediapipe/")[1] for e in m.values()), sorted(SIZES))
+check("each at the size the owner approved",
+      {e["file"].split("share/js/vendor/mediapipe/")[1]: e["bytes"] for e in m.values()}, SIZES)
+check("each from https", all(e["url"].startswith("https://") for e in m.values()), True)
+check("and each pinned", [n for n, e in m.items() if not e.get("sha256")], [])
+tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "share/js/vendor/mediapipe"],
+                         capture_output=True, text=True)
+if tracked.returncode == 0:
+    check("nothing under share/js/vendor/mediapipe is in git", tracked.stdout.split(), [])
 else:
-    ok("(no voice clips installed here: the box's test mirror never has them)")
+    ok("(not a git checkout: the tracked-files check is skipped)")
+
+head("installed here")
+st = assets.fetch_status()
+check("every file is here and matches its pin (if not: omacar assets fetch)",
+      {n: s["why"] for n, s in st.items() if not s["ok"]}, {})
 
 print()
 if fails:
@@ -4487,7 +5227,7 @@ python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 import { ok } from "./assert.js";
 
 export default [
-  ["the vendored bundle loads, with the two things drowsy mode uses", async () => {
+  ["the fetched bundle loads, with the two things drowsy mode uses", async () => {
     const m = await import("../js/vendor/mediapipe/vision_bundle.mjs");
     ok(typeof m.FilesetResolver === "function" && typeof m.FaceLandmarker === "function",
        "FilesetResolver and FaceLandmarker are exported");
@@ -4497,260 +5237,253 @@ export default [
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: rsync, then `python3 test/vendor_test.py` and `python3 test/js_test.py`. Expected: the size checks fail with `None`, and `vendor.test.js :: import` fails.
+Run: rsync, then `python3 test/vendor_test.py` and `python3 test/js_test.py`. Expected: `AttributeError: module 'assets' has no attribute 'fetch'`, and `vendor.test.js :: import`.
 
-- [ ] **Step 3: Vendor MediaPipe**
+- [ ] **Step 3: fetch in lib/assets.py, the list, and .gitignore**
 
-On the Mac:
+In `lib/assets.py`:
+- Add these lines to the docstring's command list, after `omacar assets sync`:
+
+```
+    omacar assets fetch [--pin]      download what the `fetch` list names, once,
+                                     and check each file against its pin
+```
+
+- Add `import shutil` and `import urllib.request` to the imports.
+- Add, after `pin()`:
+
+```python
+# ---- fetched once, at install ---------------------------------------------
+#
+# Files too big for a public repository and free to download: MediaPipe's
+# engine and face model. The manifest's `fetch` list names each one's source,
+# size and, once pinned, SHA-256. `omacar assets fetch` downloads what is
+# missing or wrong and refuses anything that is not what the list says. It
+# runs at install; the app never fetches anything, on the road or anywhere.
+
+def fetch_status(manifest=None, root=ROOT):
+    """{name: {file, present, ok, why}} for every `fetch` entry."""
+    m = manifest if manifest is not None else load_manifest()
+    out = {}
+    for name, e in (m.get("fetch") or {}).items():
+        p = os.path.join(root, e["file"])
+        row = {"file": e["file"], "present": os.path.isfile(p), "ok": False, "why": "not fetched"}
+        if row["present"]:
+            if e.get("bytes") and os.path.getsize(p) != e["bytes"]:
+                row["why"] = "the wrong size"
+            elif not e.get("sha256"):
+                row["why"] = "not pinned"
+            elif sha256(p) != e["sha256"]:
+                row["why"] = "does not match the manifest"
+            else:
+                row["ok"], row["why"] = True, None
+        out[name] = row
+    return out
+
+
+def _download(url, dest):
+    with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f, 1 << 16)
+
+
+def fetch(names=None, pin=False, manifest_path=MANIFEST, root=ROOT):
+    """Download every `fetch` entry that is missing or wrong, then check it:
+    first the size the list names, then the pin. With `pin`, an entry with no
+    pin yet is pinned to what arrived. That is done once, where the download
+    is trusted, and the manifest is committed."""
+    m = load_manifest(manifest_path)
+    done, pinned = {}, False
+    for name, e in (m.get("fetch") or {}).items():
+        if names and name not in names:
+            continue
+        if fetch_status({"fetch": {name: e}}, root)[name]["ok"]:
+            done[name] = "already here"
+            continue
+        dest = os.path.join(root, e["file"])
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        part = dest + ".part"
+        try:
+            _download(e["url"], part)
+            size = os.path.getsize(part)
+            if e.get("bytes") and size != e["bytes"]:
+                raise ValueError(f"{name}: {size} bytes arrived; the manifest says {e['bytes']}")
+            digest = sha256(part)
+            if e.get("sha256"):
+                if digest != e["sha256"]:
+                    raise ValueError(f"{name}: what arrived does not match its pin")
+            elif pin:
+                e["sha256"] = digest
+                pinned = True
+            else:
+                raise ValueError(f"{name}: not pinned yet; fetch it once with --pin where the download is trusted")
+            os.replace(part, dest)
+            done[name] = "fetched"
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+    if pinned:
+        tmp = manifest_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(m, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, manifest_path)
+    return done
+```
+
+- In `main()`, in the `status` branch, before `return 1 if missing else 0`, add:
+
+```python
+        for name, s in fetch_status().items():
+            note = f"  ({s['why']})" if s["why"] else ""
+            print(f"  {'ok' if s['ok'] else '--'}  {name:<10} {s['file']}{note}")
+            missing += 0 if s["ok"] else 1
+```
+
+- In `main()`, before `print(__doc__)`, add:
+
+```python
+    if cmd == "fetch":
+        try:
+            for name, what in fetch(pin="--pin" in args).items():
+                print(f"  {what:<13} {name}")
+        except (OSError, ValueError) as e:
+            print(f"omacar: {e}", file=sys.stderr)
+            return 1
+        return 0
+```
+
+In `share/assets/manifest.json`, make the `_comment` end with this sentence: "`fetch` lists files too big for the repository, downloaded once at install by `omacar assets fetch` and held to their pins." Then add a top-level `fetch` object after `assets`:
+
+```json
+  "fetch": {
+    "mediapipe-bundle": {
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs",
+      "file": "share/js/vendor/mediapipe/vision_bundle.mjs",
+      "bytes": 155439,
+      "sha256": null
+    },
+    "mediapipe-wasm-loader": {
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm/vision_wasm_internal.js",
+      "file": "share/js/vendor/mediapipe/wasm/vision_wasm_internal.js",
+      "bytes": 323377,
+      "sha256": null
+    },
+    "mediapipe-wasm": {
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm/vision_wasm_internal.wasm",
+      "file": "share/js/vendor/mediapipe/wasm/vision_wasm_internal.wasm",
+      "bytes": 11756954,
+      "sha256": null
+    },
+    "face-landmarker": {
+      "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "file": "share/js/vendor/mediapipe/face_landmarker.task",
+      "bytes": 3758596,
+      "sha256": null
+    }
+  }
+```
+
+Append to `.gitignore`:
+
+```
+# MediaPipe's engine and face model: fetched once at install by `omacar
+# assets fetch` and held to the pins in share/assets/manifest.json. Never
+# committed: megabytes of binaries in a public repository.
+share/js/vendor/mediapipe/
+```
+
+- [ ] **Step 4: Check the licence before anything is pinned**
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/package.json | python3 -c 'import json,sys; print("licence:", json.load(sys.stdin)["license"])'
+```
+
+Expected: `licence: Apache-2.0`. Then read the Face Landmarker model card, linked under "Models" from https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker.
+- If it says Apache 2.0, go on.
+- If it says anything else, stop and report it to the controller: the owner approved the download as Apache-2.0.
+
+- [ ] **Step 5: Fetch and pin, on the Mac, once**
 
 ```bash
 cd /Users/jmyers/omgarchy/omacar-cameras
-V=share/js/vendor/mediapipe; B=https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1
-mkdir -p $V/wasm
-curl -fsSL -o $V/vision_bundle.mjs $B/vision_bundle.mjs
-for f in vision_wasm_internal.js vision_wasm_internal.wasm vision_wasm_nosimd_internal.js vision_wasm_nosimd_internal.wasm; do
-  curl -fsSL -o $V/wasm/$f $B/wasm/$f
-done
-curl -fsSL -o $V/face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
-curl -fsSL $B/package.json | python3 -c 'import json,sys; print("licence:", json.load(sys.stdin)["license"])'
-curl -fsSL -o $V/LICENSE https://www.apache.org/licenses/LICENSE-2.0.txt
-wc -c $V/vision_bundle.mjs $V/wasm/* $V/face_landmarker.task
-(cd $V && shasum -a 256 vision_bundle.mjs wasm/vision_wasm_internal.js wasm/vision_wasm_internal.wasm wasm/vision_wasm_nosimd_internal.js wasm/vision_wasm_nosimd_internal.wasm face_landmarker.task > SHA256SUMS)
+python3 lib/assets.py fetch --pin && python3 lib/assets.py status
+git status --short share/js/vendor   # must print nothing: the folder is ignored
 ```
 
 Expected:
-- `licence: Apache-2.0`.
-- The sizes 155439, 323377, 11756954 and 3758596. A different size means a different file: stop and report it.
-- Record the two no-SIMD sizes for the README.
+- `fetched` four times.
+- `status` reports `ok` for all four, and for `crz-xray` if it is installed.
+- A size refusal means the file changed upstream: stop and report it.
+- `share/assets/manifest.json` now carries four SHA-256 pins. It is the only file that changed.
 
-Read the Face Landmarker model card, linked from https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker under "Models". If it says Apache 2.0, the README below stands. If it says anything else, stop and report it to the controller before committing: the owner approved the download as Apache-2.0.
+The next `BOXTEST` rsync carries the fetched files to the box's mirror. `rsync` excludes only `.git` and the private folder, and `.gitignore` does not affect rsync. The tablet fetches its own copy in Task 13, checked against these pins.
 
-`share/js/vendor/mediapipe/README.md`:
+- [ ] **Step 6: The README and the credit**
+
+Append to `share/js/vendor/README.md`:
 
 ```markdown
-# Vendored MediaPipe
 
-Drowsy mode's face tracker, checked in so nothing is fetched on the road.
+# MediaPipe, fetched rather than vendored
 
-| File | From | Bytes |
-|---|---|---|
-| `vision_bundle.mjs` | npm `@mediapipe/tasks-vision@1.0.1` | 155,439 |
-| `wasm/vision_wasm_internal.js` | the same | 323,377 |
-| `wasm/vision_wasm_internal.wasm` | the same | 11,756,954 |
-| `wasm/vision_wasm_nosimd_internal.js` | the same | (its `wc -c`) |
-| `wasm/vision_wasm_nosimd_internal.wasm` | the same | (its `wc -c`) |
-| `face_landmarker.task` | MediaPipe's model catalogue, float16 v1 | 3,758,596 |
+`mediapipe/` holds drowsy mode's face tracker: MediaPipe tasks-vision 1.0.1
+(`vision_bundle.mjs` and the SIMD `wasm/` pair) and the Face Landmarker model
+(`face_landmarker.task`, float16 v1). It is not in git. `omacar assets fetch`
+downloads it once, at install, from the URLs in `share/assets/manifest.json`
+(`fetch`), and holds every file to the size and SHA-256 pinned there. The app
+never fetches it.
 
-Fetched from https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/ and
-https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
-for the drive of 2026-09-30. `SHA256SUMS` pins every file and
-`test/vendor_test.py` checks them.
+The no-SIMD pair tasks-vision also ships is not fetched: Chromium on the
+tablet has WebAssembly SIMD, and `share/js/facewatch.js` names the SIMD files
+directly.
 
-The no-SIMD pair is what `FilesetResolver` falls back to in a browser without
-WebAssembly SIMD. Chromium on the tablet has SIMD and never loads it.
-
-tasks-vision is Apache License 2.0 (`LICENSE`), as its package.json declares.
-The model is Google's, distributed with MediaPipe under Apache 2.0 per its
-model card.
-```
-
-The two "(its `wc -c`)" cells take the sizes `wc -c` just printed, with thousands separators like the rows above them: they are the one thing in this file that cannot be known before the download.
-
-- [ ] **Step 4: Render the voice clips with Piper**
-
-`tools/render_voice.py`:
-
-```python
-#!/usr/bin/env python3
-"""Render drowsy mode's spoken phrases with Piper, once, off the tablet.
-
-The tablet has no speech engine, and nothing in the car depends on one. These
-are rendered here, turned into Ogg by ffmpeg, and shipped as private assets:
-they carry the owner's name, so they stay out of the public repository.
-
-    python tools/render_voice.py MODEL.onnx OUT_DIR
-
-Needs piper-tts in the running Python, and ffmpeg on PATH. The phrases are the
-spec's (doc/design/2026-09-28-cameras-drowsy.md), each with and without the
-owner's name, because the voice's name setting can only choose between clips
-that exist.
-"""
-
-import os
-import shutil
-import subprocess
-import sys
-import tempfile
-import wave
-
-NAME = "James"
-PHRASES = {
-    "l1-james": f"{NAME}, you seem tired. Plan a break soon.",
-    "l1": "You seem tired. Plan a break soon.",
-    "l2-james": f"{NAME}, are you with me?",
-    "l2": "Are you with me?",
-    "l3": "Pull over now.",
-}
-
-
-def synth(voice, text, path):
-    with wave.open(path, "wb") as w:
-        if hasattr(voice, "synthesize_wav"):     # piper-tts 1.3
-            voice.synthesize_wav(text, w)
-        else:                                    # piper-tts 1.2
-            voice.synthesize(text, w)
-
-
-def main(argv):
-    if len(argv) != 3:
-        print(__doc__)
-        return 2
-    from piper import PiperVoice
-    voice = PiperVoice.load(argv[1])
-    out = argv[2]
-    os.makedirs(out, exist_ok=True)
-    enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
-    codec = ["-c:a", "libopus", "-b:a", "64k"] if "libopus" in enc else ["-c:a", "libvorbis", "-q:a", "5"]
-    tmp = tempfile.mkdtemp()
-    try:
-        for name, text in PHRASES.items():
-            wav = os.path.join(tmp, name + ".wav")
-            synth(voice, text, wav)
-            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wav,
-                            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", *codec,
-                            os.path.join(out, name + ".ogg")], check=True)
-            print(f"  {name}.ogg  {text}")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
-```
-
-First, try Piper on the box (Arch, Python 3.14.7):
-
-```bash
-rsync -a --delete --exclude .git --exclude share/assets/private/ /Users/jmyers/omgarchy/omacar-cameras/ jmyers@omarchy:Projects/.omacar-test/cameras/
-ssh jmyers@omarchy 'python3 --version && rm -rf /tmp/piper-venv && python3 -m venv /tmp/piper-venv && /tmp/piper-venv/bin/pip install -q piper-tts && /tmp/piper-venv/bin/python -c "import piper; print(\"piper ok\")"'
-```
-
-If that printed `Python 3.14.7` and `piper ok`, render on the box:
-
-```bash
-ssh jmyers@omarchy 'set -e; W=/tmp/piper-voice; rm -rf $W; mkdir -p $W; cd $W
-B=https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ljspeech/high
-curl -fsSLO $B/en_US-ljspeech-high.onnx; curl -fsSLO $B/en_US-ljspeech-high.onnx.json; curl -fsSL -o MODEL_CARD $B/MODEL_CARD
-cat MODEL_CARD; grep -qi "public domain" MODEL_CARD
-/tmp/piper-venv/bin/python ~/Projects/.omacar-test/cameras/tools/render_voice.py $W/en_US-ljspeech-high.onnx $W/out
-mkdir -p ~/Projects/omacar/share/assets/private/voice && cp $W/out/*.ogg ~/Projects/omacar/share/assets/private/voice/'
-mkdir -p share/assets/private/voice && scp 'jmyers@omarchy:/tmp/piper-voice/out/*.ogg' share/assets/private/voice/
-```
-
-If `pip install piper-tts` failed on the box (usually because onnxruntime has no wheel for Python 3.14), fall back to the Mac. Use `python3`, and if that fails too, `python3.12`, which is also installed:
-
-```bash
-P=$SCRATCH/piper; rm -rf $P; mkdir -p $P
-python3 -m venv $P/venv && $P/venv/bin/pip install -q piper-tts \
-  || { rm -rf $P/venv; python3.12 -m venv $P/venv && $P/venv/bin/pip install -q piper-tts; }
-B=https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ljspeech/high
-(cd $P && curl -fsSLO $B/en_US-ljspeech-high.onnx && curl -fsSLO $B/en_US-ljspeech-high.onnx.json && curl -fsSL -o MODEL_CARD $B/MODEL_CARD)
-cat $P/MODEL_CARD; grep -qi "public domain" $P/MODEL_CARD
-$P/venv/bin/python tools/render_voice.py $P/en_US-ljspeech-high.onnx share/assets/private/voice
-ssh jmyers@omarchy 'mkdir -p ~/Projects/omacar/share/assets/private/voice'
-scp share/assets/private/voice/*.ogg jmyers@omarchy:Projects/omacar/share/assets/private/voice/
-```
-
-Either way, the expected output is five lines, `l1-james.ogg` through `l3.ogg`, each with its phrase.
-
-If `grep -qi "public domain"` fails, use the fallback voice instead. Its base is `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/libritts_r/medium`, and its files are `en_US-libritts_r-medium.onnx` and `.onnx.json`. Check that its MODEL_CARD names CC BY 4.0, and change the ATTRIBUTION line below to match.
-
-Listen to all five on the Mac (`afplay share/assets/private/voice/l1-james.ogg` plays it if Core Audio decodes it; otherwise `ffplay -nodisp -autoexit`). Check that "James" is said as a name, and that nothing is clipped.
-
-- [ ] **Step 5: The manifest, the pins, the guard and the credits**
-
-In `share/assets/manifest.json`, add these five entries inside `"assets"`, after `"crz-home"`:
-
-```json
-    "voice-l1-james": { "file": "voice/l1-james.ogg", "use": "Drowsy mode, Level 1: \"James, you seem tired. Plan a break soon.\" Piper en_US-ljspeech-high, rendered by tools/render_voice.py", "sha256": null },
-    "voice-l1": { "file": "voice/l1.ogg", "use": "Drowsy mode, Level 1, with no name: \"You seem tired. Plan a break soon.\"", "sha256": null },
-    "voice-l2-james": { "file": "voice/l2-james.ogg", "use": "Drowsy mode, Level 2: \"James, are you with me?\"", "sha256": null },
-    "voice-l2": { "file": "voice/l2.ogg", "use": "Drowsy mode, Level 2, with no name: \"Are you with me?\"", "sha256": null },
-    "voice-l3": { "file": "voice/l3.ogg", "use": "Drowsy mode, Level 3: \"Pull over now.\"", "sha256": null }
-```
-
-Then pin them, on the Mac where the files are:
-
-```bash
-for n in voice-l1-james voice-l1 voice-l2-james voice-l2 voice-l3; do python3 lib/assets.py pin $n; done
-python3 lib/assets.py status
-```
-
-Expected: `ok` for all five voice entries and `crz-xray`, and `--` for `crz-home` if it is still not installed.
-
-In `test/guards_test.py`, the private-assets check lists exactly the car pictures. Change its last line from:
-
-```python
-      sorted(_as.load_manifest()["assets"]), ["crz-home", "crz-xray"])
-```
-
-to:
-
-```python
-      sorted(n for n in _as.load_manifest()["assets"] if n.startswith("crz-")), ["crz-home", "crz-xray"])
+tasks-vision is Apache License 2.0, as its package.json declares; the model is
+Google's, distributed with MediaPipe under Apache 2.0 per its model card.
 ```
 
 Append to the "Bundled with the app" section at the end of `ATTRIBUTION.md`:
 
 ```markdown
-- **MediaPipe tasks-vision 1.0.1** (`share/js/vendor/mediapipe/`: `vision_bundle.mjs`
-  and the `wasm/` engine) and the **Face Landmarker** model (`face_landmarker.task`),
-  by Google — Apache License 2.0, full text in `share/js/vendor/mediapipe/LICENSE`.
-  Drowsy mode reads the cabin camera with them, in the page, with nothing fetched
-  on the road.
 
-Not bundled, and credited because the app plays it: **the voice clips**
-(`share/assets/private/voice/`, private because they say the owner's name) were
-rendered once with Piper TTS and its `en_US-ljspeech-high` voice, trained on the
-LJ Speech dataset (public domain). Piper itself does not ship; it ran on another
-machine and only the audio came back. `tools/render_voice.py` is how.
+Fetched at install, not in this repository: **MediaPipe tasks-vision 1.0.1**
+and the **Face Landmarker** model, by Google, under the Apache License 2.0.
+`omacar assets fetch` downloads them into `share/js/vendor/mediapipe/` and
+checks them against the pins in `share/assets/manifest.json`. Drowsy mode reads
+the cabin camera with them, in the page, with nothing fetched on the road.
 ```
 
-- [ ] **Step 6: Run everything**
+- [ ] **Step 7: Run everything**
 
 Run `BOXTEST`. Expected:
-- `vendor_test.py` passes. On the box it says no voice clips are installed, because the mirror never has them.
+- `vendor_test.py` passes, including "installed here", because the mirror has the fetched files.
 - `vendor.test.js` imports the bundle.
-- The guards pass with the new manifest.
-- The since() guard, which reads every `.js` under `share/js`, still passes with the vendored `wasm/*.js` in scope. If it flags a vendored file, exclude `share/js/vendor/` from that one glob in `guards_test.py` and say so in the commit body.
+- The since() guard, which reads every `.js` under `share/js`, still passes with `wasm/vision_wasm_internal.js` in scope. If it flags that file, exclude `share/js/vendor/` from that one glob in `guards_test.py`, and say so in the commit body.
 
-Then run `python3 test/vendor_test.py` on the Mac as well, where the voice clips are installed. Expected: "the ones installed here match their pins".
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add share/js/vendor/mediapipe tools/render_voice.py share/assets/manifest.json test/guards_test.py ATTRIBUTION.md test/vendor_test.py test/js/vendor.test.js test/all.sh
-git status --short share/assets   # must list manifest.json only
-git commit -m "The face tracker and the voice ship with the app, so drowsy mode fetches nothing on the road" -m "MediaPipe tasks-vision 1.0.1 and the Face Landmarker model are vendored at the sizes the owner approved and pinned by hash. The spoken phrases were rendered once with Piper's public-domain LJ Speech voice and ship as private assets, because they say the owner's name; each also exists without it, which is what the name setting chooses between.
+git add lib/assets.py share/assets/manifest.json .gitignore share/js/vendor/README.md ATTRIBUTION.md test/vendor_test.py test/js/vendor.test.js test/all.sh
+git status --short share/js/vendor/mediapipe   # nothing: the binaries are not committed
+git commit -m "MediaPipe's face tracker is fetched once at install and held to pinned hashes, and never committed" -m "tasks-vision 1.0.1 and the Face Landmarker model come to share/js/vendor/mediapipe/ through omacar assets fetch, which checks the sizes the owner approved and a SHA-256 pinned in the manifest, so no binaries enter the public repository and nothing is fetched on the road. The no-SIMD pair is not fetched. If the owner prefers the files committed, delete the .gitignore block and add them; the fetch then finds nothing to do.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 10: Detection wiring
+### Task 9: Detection wiring
 
 **Files:**
-- Create: `lib/drowsycfg.py`, `share/js/mjpeg.js`, `share/js/facewatch.js`, `share/js/drowsyrun.js`, `tools/drowsy_check.py`, `test/drowsy_test.py`, `test/js/mjpeg.test.js`, `test/js/drowsyrun.test.js`
+- Create: `lib/drowsycfg.py`, `share/js/mjpeg.js`, `share/js/facewatch.js`, `share/js/drowsyrun.js`, `tools/drowsy_check.py` (on `tools/shoot.py`'s `served()`), `test/drowsy_test.py`, `test/js/mjpeg.test.js`, `test/js/drowsyrun.test.js`
 - Modify: `lib/camroutes.py` (the drowsy routes), `test/all.sh` (the cameras block)
 
 **Interfaces:**
 - Consumes:
-  - `drowsy.json` and `createMeasures`/`frameFrom` (Task 6);
-  - `createLadder`, `createStopClock`, `scaled` (Task 7);
-  - the vendored bundle (Task 9);
-  - `getJSON`/`postJSON` (Task 3);
+  - `drowsy.json` and `createMeasures`/`frameFrom`/`setConfig` (Task 5);
+  - `createLadder` (with `setConfig`), `createStopClock`, `scaled` (Task 6);
+  - the fetched MediaPipe files (Task 8);
+  - `getJSON`/`postJSON` (Task 3); `tools/shoot.py`'s `served()` and `tools/sim-cams.sh` (Task 3);
+  - `asset(name)` (`share/js/assets.js`), to learn whether the voice clips are installed;
   - `/api/live` (records.live) and `/api/cams` (Task 2);
   - `records.write_record(kind, label, payload)`.
 - Produces:
@@ -4758,8 +5491,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Routes: `GET /api/drowsy`; `POST /api/drowsy` with `{enabled?, sensitivity?, name?, sounds?}`; `POST /api/drowsy/event` with `{t, level, trigger, speed_kph, measures}`; `POST /api/drowsy/log` with `{rows: [...]}`.
   - `mjpeg.js`: `createMjpegParser() → {push(Uint8Array) → [Uint8Array jpeg]}`.
   - `facewatch.js`: `loadLandmarker(delegate="GPU") → FaceLandmarker` (it falls back to CPU), and `watchCabin({landmarker, canvas, onFrame, fps=12}) → {stop()}`.
-  - `drowsyrun.js` pure helpers: `KPH_PER_MPH`, `gateOf(sample, cfg) → {connected, kph, moving, active, parked}`, `chipOf({enabled, gate, measures, cabinLive}) → chip text`.
-  - `drowsyrun.js` engine: `drowsy`, with `.state {chip, level, trigger, banner, measures, gate, cfg, cabinLive, error}`, `.canvas`, `.preview`, `.onCues`, `.on(fn)`, `.tap()`, `.reload()`, `.canTest()` and `.test()`; and `startDrowsy()`.
+  - `drowsyrun.js` pure helpers: `KPH_PER_MPH`, `gateOf(sample, cfg) → {connected, simulated, kph, moving, active, parked}`, `chipOf({enabled, gate, measures, cabinLive}) → chip text`, `rotationFor(sounds, voiceInstalled)`, `testMayRun(gate)`.
+  - `drowsyrun.js` engine: `drowsy`, with `.state {chip, level, trigger, banner, measures, gate, cfg, cabinLive, testing, testLevel, error}`, `.canvas`, `.preview`, `.onCues`, `.on(fn)`, `.tap()`, `.reload()`, `.canTest()` (parked only), `.test()` and `.stopTest()`; and `startDrowsy()`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4915,7 +5648,7 @@ export default [
 
 ```js
 import { eq } from "./assert.js";
-import { gateOf, chipOf } from "../js/drowsyrun.js";
+import { gateOf, chipOf, rotationFor, testMayRun } from "../js/drowsyrun.js";
 
 const cfg = { min_speed_mph: 30 };
 const moving = { moving: true };
@@ -4934,6 +5667,18 @@ export default [
         chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: true } }),
         chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: false } })],
        ["Off", "Paused · parked", "Can't see you", "Can't see you", "Watching"])],
+  ["the simulator's numbers never open the gate, and the chip says Off", () => {
+    const g = gateOf({ connected: true, simulated: true, values: { SPEED: 100 } }, cfg);
+    eq([g.active, g.moving, g.parked, chipOf({ enabled: true, gate: g, cabinLive: true, measures: { faceLost: false } })],
+       [false, false, false, "Off"]);
+  }],
+  ["Test the alerts runs only while connected and stopped, and stops when that ends", () =>
+    eq([{ connected: true, values: { SPEED: 0 } }, { connected: true, values: { SPEED: 8 } }, { connected: false },
+        { connected: true, simulated: true, values: { SPEED: 0 } }].map((s) => testMayRun(gateOf(s, cfg))),
+       [true, false, false, false])],
+  ["the voice leaves the rotation when its clips are not installed", () =>
+    eq([rotationFor(["bark", "voice", "alarm"], false), rotationFor(["bark", "voice", "alarm"], true), rotationFor(["voice"], false)],
+       [["bark", "alarm"], ["bark", "voice", "alarm"], ["alarm"]])],
 ];
 ```
 
@@ -5154,7 +5899,7 @@ export function createMjpegParser() {
 
 ```js
 // The cabin camera, watched: the recorder's live picture, through MediaPipe's
-// Face Landmarker (vendored in share/js/vendor/mediapipe), into the measures'
+// Face Landmarker (fetched at install into share/js/vendor/mediapipe), into the measures'
 // frame shape (drowsy.js, frameFrom). The recorder owns the camera -- a V4L2
 // device has one owner -- so this reads its JPEGs rather than opening the
 // device a second time.
@@ -5172,8 +5917,11 @@ const VENDOR = new URL("./vendor/mediapipe/", import.meta.url);
 // The 12 MB engine loads here and only here, the first time a cabin picture
 // is worth watching. GPU first; the CPU if the GPU will not start.
 export async function loadLandmarker(delegate = "GPU") {
-  const { FilesetResolver, FaceLandmarker } = await import("./vendor/mediapipe/vision_bundle.mjs");
-  const fileset = await FilesetResolver.forVisionTasks(new URL("wasm", VENDOR).href);
+  const { FaceLandmarker } = await import("./vendor/mediapipe/vision_bundle.mjs");
+  // The SIMD engine, named directly: it is the only one fetched (Task 8), and
+  // Chromium on the tablet has WebAssembly SIMD.
+  const fileset = { wasmLoaderPath: new URL("wasm/vision_wasm_internal.js", VENDOR).href,
+                    wasmBinaryPath: new URL("wasm/vision_wasm_internal.wasm", VENDOR).href };
   const make = (d) => FaceLandmarker.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: new URL("face_landmarker.task", VENDOR).href, delegate: d },
     runningMode: "VIDEO",
@@ -5222,82 +5970,142 @@ export function watchCabin({ landmarker, canvas, onFrame, fps = 12 }) {
 `share/js/drowsyrun.js`:
 
 ```js
-// Drowsy mode, running. The gate (above 30 mph, connected, moving), the cabin
-// watch, the measures, the ladder and the logs. It keeps one state object that
-// the screens draw (drowsyui.js), and hands the ladder's cues to whoever sounds
-// them (alertplayer.js); it draws nothing itself.
+// Drowsy mode, running. The gate (above 30 mph, connected, moving, and never
+// on simulated numbers), the cabin watch, the measures, the ladder and the
+// logs. It keeps one state object that the screens draw (drowsyui.js) and
+// hands the ladder's cues to whoever sounds them (alertness.js wires in the
+// alert player); it draws nothing itself.
 //
 // Detection runs only while the car is moving, or while the settings sheet's
 // preview is open, and only when the recorder has a live cabin picture. A
 // parked car and a desk machine never load the engine at all.
+//
+// "I'M AWAKE" AND A STOPPED CAR ALWAYS CLEAR EVERYTHING: the ladder's level,
+// every sound (a fade through the alert player), and a running "Test the
+// alerts". A settings change goes through that same path first, then swaps
+// the thresholds under the same ladder and the same baseline.
 
 import { getJSON, postJSON } from "./camapi.js";
 import { createMeasures } from "./drowsy.js";
 import { createLadder, createStopClock, scaled } from "./ladder.js";
 import { loadLandmarker, watchCabin } from "./facewatch.js";
+import { asset } from "./assets.js";
 
 export const KPH_PER_MPH = 1.609344;
 
-// The gate, from a live sample. A dropped link is neither active nor parked:
-// an adapter hiccup must not clear an alert that is sounding.
+// The gate, from a live sample. The simulator's numbers never open it
+// (lib/sim.py marks them `simulated`). A dropped link is neither active nor
+// parked: an adapter hiccup must not clear an alert that is sounding.
 export function gateOf(sample, cfg) {
   const s = sample || {};
-  const v = s.connected ? (s.values || {}).SPEED : null;
+  const simulated = !!s.simulated;
+  const live = !!s.connected && !simulated;
+  const v = live ? (s.values || {}).SPEED : null;
   const kph = typeof v === "number" ? v : null;
-  return { connected: !!s.connected, kph, moving: kph !== null && kph > 0,
+  return { connected: live, simulated, kph, moving: kph !== null && kph > 0,
            active: kph !== null && kph >= cfg.min_speed_mph * KPH_PER_MPH,
-           parked: !!s.connected && kph === 0 };
+           parked: live && kph === 0 };
 }
 
-// The status chip, in the spec's four words.
+// The status chip, in the spec's four words. Simulated driving is "Off":
+// drowsy mode ignores it.
 export function chipOf({ enabled, gate, measures, cabinLive }) {
-  if (!enabled) return "Off";
+  if (!enabled || (gate && gate.simulated)) return "Off";
   if (!gate || !gate.moving) return "Paused · parked";
   if (!cabinLive || !measures || measures.faceLost) return "Can't see you";
   return "Watching";
 }
 
+// The Level 2 rotation the ladder may use: "voice" only when its clips are
+// installed (Task 12 is deferrable), so a missing voice is never a silent
+// slot in the rotation.
+export function rotationFor(sounds, voiceInstalled) {
+  const r = (sounds || []).filter((s) => s !== "voice" || voiceInstalled);
+  return r.length ? r : ["alarm"];
+}
+
+// "Test the alerts" may run, and keeps running, only while the car is
+// connected and stopped. Moving off, a dropped link or simulated numbers stop it.
+export function testMayRun(gate) {
+  return !!(gate && gate.parked);
+}
+
 const listeners = new Set();
 let cfg = null, measures = null, ladder = null, stops = null;
-let gate = null, cabinLive = false;
+let gate = null, cabinLive = false, voiceInstalled = false;
 let landmarker = null, loading = null, watcher = null, retryAt = 0;
 let tapPending = false, lastSnap = null, logBuf = [], lastLogT = 0;
+let testing = null;
 
 const now = () => performance.now() / 1000;
 
 export const drowsy = {
   state: { chip: "Off", level: 0, trigger: null, banner: false, measures: null,
-           gate: null, cfg: null, cabinLive: false, error: null },
+           gate: null, cfg: null, cabinLive: false, testing: false, testLevel: 0, error: null },
   canvas: document.createElement("canvas"),
   preview: false,
   onCues: null,
   on(fn) { listeners.add(fn); fn(this.state); return () => listeners.delete(fn); },
-  tap() { tapPending = true; tick(); },
-  async reload() { await loadConfig(); },
-  canTest() { return !(gate && gate.moving); },
-  // "Test the alerts", only while parked: each level in turn, as the ladder
-  // would sound it, then a fade.
+  // "I'm awake": the ladder clears, every sound fades, a test stops.
+  tap() { stopTest(); tapPending = true; tick(); },
+  async reload() {
+    let next;
+    try { next = await getJSON("/api/drowsy"); } catch { return; }
+    // Nothing sounding survives a settings change: it is cleared through the
+    // same path as "I'm awake" first.
+    stopTest();
+    if (ladder && ladder.level > 0) { tapPending = true; tick(); }
+    apply(next);
+  },
+  canTest() { return testMayRun(gate) && !testing; },
+  // "Test the alerts": parked only, shown as a card with Stop (drowsyui.js),
+  // and stopped by itself if the car moves off or the link drops.
   test() {
     if (!this.canTest() || !this.onCues) return false;
-    const say = (cues, level, at) => setTimeout(() => this.onCues(cues, { level }), at * 1000);
+    testing = { timers: [], level: 0 };
+    const say = (cues, level, secs) => testing.timers.push(setTimeout(() => {
+      testing.level = level;
+      this.onCues(cues, { level });
+      publish();
+    }, secs * 1000));
     say([{ kind: "chime" }, { kind: "voice", clip: "l1" }], 1, 0);
-    say([{ kind: "fade" }], 0, 5);
-    say([{ kind: "duck" }, { kind: "bark" }], 2, 8);
-    say([{ kind: "duck" }, { kind: "alarm", hold: true }, { kind: "voice", clip: "l3" }], 3, 14);
-    say([{ kind: "fade" }], 0, 20);
+    say([{ kind: "fade" }], 0, 8);
+    say([{ kind: "duck" }, { kind: "bark" }], 2, 11);
+    say([{ kind: "duck" }, { kind: "alarm", hold: true }, { kind: "voice", clip: "l3" }], 3, 19);
+    say([{ kind: "fade" }], 0, 27);
+    testing.timers.push(setTimeout(() => { testing = null; publish(); }, 31000));
+    publish();
     return true;
   },
+  stopTest() { stopTest(); },
 };
 
-async function loadConfig() {
-  try { cfg = await getJSON("/api/drowsy"); } catch { drowsy.state.error = "No settings from the server"; publish(); return; }
-  const c = scaled(cfg, cfg.sensitivity);
-  measures = createMeasures(c);
-  ladder = createLadder(c, cfg.sounds);
+function stopTest() {
+  if (!testing) return;
+  for (const t of testing.timers) clearTimeout(t);
+  testing = null;
+  if (drowsy.onCues) drowsy.onCues([{ kind: "fade" }], { level: 0 });
+  publish();
+}
+
+function apply(next) {
+  cfg = next;
+  const c = scaled(next, next.sensitivity);
+  const rota = rotationFor(next.sounds, voiceInstalled);
+  if (measures) measures.setConfig(c); else measures = createMeasures(c);
+  if (ladder) ladder.setConfig(c, rota); else ladder = createLadder(c, rota);
   stops = stops || createStopClock(c);
-  drowsy.state.cfg = cfg;
+  drowsy.state.cfg = next;
   drowsy.state.error = null;
   publish();
+}
+
+async function loadConfig() {
+  let next;
+  try { next = await getJSON("/api/drowsy"); } catch { drowsy.state.error = "No settings from the server"; publish(); return; }
+  const a = await asset("voice-l2").catch(() => null);
+  voiceInstalled = !!(a && a.url);
+  apply(next);
 }
 
 function publish() {
@@ -5305,6 +6113,8 @@ function publish() {
   st.gate = gate;
   st.cabinLive = cabinLive;
   st.measures = lastSnap;
+  st.testing = !!testing;
+  st.testLevel = testing ? testing.level : 0;
   st.chip = chipOf({ enabled: !!(cfg && cfg.enabled), gate, measures: lastSnap, cabinLive });
   for (const fn of listeners) { try { fn(st); } catch (e) { console.error(e); } }
 }
@@ -5362,8 +6172,8 @@ async function startWatch() {
         onFrame: (f) => { f.gated = !!(gate && gate.active); tick(measures.feed(f)); } });
     }
   } catch (e) {
-    // A minute before trying again: a failed load is 12 MB, and this is asked
-    // twice a second.
+    // A minute before trying again: a failed load is megabytes, and this is
+    // asked twice a second.
     retryAt = now() + 60;
     drowsy.state.error = "The face tracker did not load: " + ((e && e.message) || e);
   } finally { loading = null; }
@@ -5379,6 +6189,7 @@ async function pollLive() {
   let sample = null;
   try { sample = await getJSON("/api/live"); } catch { /* no server: no gate */ }
   if (cfg) gate = gateOf(sample, cfg);
+  if (testing && !testMayRun(gate)) stopTest();
   syncWatch();
   tick();
 }
@@ -5414,31 +6225,32 @@ Run: rsync, then `python3 test/drowsy_test.py` and `python3 test/js_test.py`. Ex
 """Does drowsy mode's face tracker load and run here, on the recorder's real
 cabin picture, fetching nothing from anywhere but this machine?
 
-Needs the recorder running with a live cabin camera (`omacar cams sim` on the
-box, where the C920 is the cabin). This serves share/ and the cabin's live
-MJPEG itself, opens headless Chromium on a page that loads the vendored
-MediaPipe, runs the Face Landmarker on 20 frames, and has the page post back
-what happened. It is a step in the plan rather than a line in test/all.sh,
-because it needs a camera.
+Run it beside a recorder: `tools/sim-cams.sh python3 tools/drowsy_check.py`.
+On the box the C920 is the cabin. The check page is served by lib/serve.py
+itself, through tools/shoot.py's served(), so the cabin's live MJPEG comes
+from the real handler. The page loads the fetched MediaPipe, runs the Face
+Landmarker on 20 frames, and reports on the browser's console, which this
+reads. A step in the plan rather than a line in test/all.sh, because it needs
+a camera.
 
     python3 tools/drowsy_check.py
 """
 
-import http.server
+import base64
 import json
 import os
-import shutil
+import queue
+import re
 import subprocess
 import sys
-import tempfile
 import threading
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHARE = os.path.join(ROOT, "share")
 sys.path.insert(0, os.path.join(ROOT, "lib"))
-sys.path.insert(0, os.path.join(ROOT, "test"))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
 import cams  # noqa: E402
-from app_test import browser, free_port  # noqa: E402
+from shoot import served  # noqa: E402
 
 PAGE = """<!doctype html><meta charset="utf-8"><title>drowsy check</title><canvas id="c"></canvas>
 <script type="module">
@@ -5458,89 +6270,49 @@ try {
   out.secs = (performance.now() - t1) / 1000;
 } catch (e) { out.error = String((e && e.message) || e); }
 out.resources = performance.getEntriesByType("resource").map((r) => r.name);
-await fetch("/_result", { method: "POST", body: JSON.stringify(out) });
+console.log("DROWSYCHECK " + btoa(JSON.stringify(out)));
 </script>
 """
 
-RESULT = {}
-DONE = threading.Event()
-
-
-class Handler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *a, **k):
-        super().__init__(*a, directory=SHARE, **k)
-
-    def log_message(self, *a):
-        pass
-
-    def do_GET(self):
-        path = self.path.partition("?")[0]
-        if path == "/_check.html":
-            body = PAGE.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        if path == "/api/cams/cabin/live":
-            self.close_connection = True
-            self.send_response(200)
-            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=" + cams.BOUNDARY)
-            self.send_header("Connection", "close")
-            self.end_headers()
-            try:
-                cams.stream_live(self.wfile, "cabin")
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            return
-        super().do_GET()
-
-    def do_POST(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        RESULT.update(json.loads(self.rfile.read(n) or b"{}"))
-        self.send_response(204)
-        self.end_headers()
-        DONE.set()
-
 
 def main():
-    exe = browser()
-    if not exe:
-        print("  no chromium here")
-        return 2
     if not os.path.exists(cams.live_path("cabin")):
-        print(f"  no cabin picture at {cams.live_path('cabin')}: start the recorder first")
+        print(f"  no cabin picture at {cams.live_path('cabin')}: run this beside a recorder (tools/sim-cams.sh)")
         return 2
-    port = free_port()
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    prof = tempfile.mkdtemp()
-    ch = subprocess.Popen([exe, "--headless=new", "--no-sandbox", f"--user-data-dir={prof}",
-                           f"http://127.0.0.1:{port}/_check.html"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        DONE.wait(120)
-    finally:
-        ch.terminate()
+    report = None
+    with served({"_check.html": PAGE}) as (url, base):
+        ch = subprocess.Popen(base + ["--enable-logging=stderr", "--v=0", url + "/_check.html"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        lines = queue.Queue()
+        threading.Thread(target=lambda: [lines.put(ln) for ln in ch.stderr], daemon=True).start()
+        deadline = time.time() + 120
         try:
-            ch.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            ch.kill()
-        srv.shutdown()
-        shutil.rmtree(prof, ignore_errors=True)
-    r = RESULT
-    if not r:
+            while report is None and time.time() < deadline:
+                try:
+                    line = lines.get(timeout=1)
+                except queue.Empty:
+                    continue
+                m = re.search(r"DROWSYCHECK ([A-Za-z0-9+/=]+)", line)
+                if m:
+                    report = json.loads(base64.b64decode(m.group(1)))
+        finally:
+            ch.terminate()
+            try:
+                ch.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                ch.kill()
+    if not report:
         print("  FAIL  the page never reported back")
         return 1
-    foreign = [u for u in r["resources"] if not u.startswith(f"http://127.0.0.1:{port}/")]
-    print(f"  loaded   {r['loaded']} in {r['loadMs']} ms (CPU delegate)")
-    print(f"  frames   {r['frames']} in {r['secs'] and round(r['secs'], 1)} s, {r['faces']} with a face")
-    print(f"  error    {r['error']}")
-    print(f"  fetched  {len(r['resources'])} resources, {len(foreign)} from anywhere else")
+    foreign = [u for u in report["resources"] if not u.startswith(url + "/")]
+    print(f"  loaded   {report['loaded']} in {report['loadMs']} ms (CPU delegate)")
+    print(f"  frames   {report['frames']} in {report['secs'] and round(report['secs'], 1)} s, "
+          f"{report['faces']} with a face")
+    print(f"  error    {report['error']}")
+    print(f"  fetched  {len(report['resources'])} resources, {len(foreign)} from anywhere else")
     for u in foreign:
         print(f"    FOREIGN  {u}")
-    good = r["loaded"] and r["frames"] >= 20 and not foreign and not r["error"]
+    good = report["loaded"] and report["frames"] >= 20 and not foreign and not report["error"]
     print("\n  " + ("ok" if good else "FAIL") + "\n")
     return 0 if good else 1
 
@@ -5549,11 +6321,11 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-Run it on the box, against the C920 as the cabin, on scratch folders:
+Run it on the box, against the C920 as the cabin, beside a scratch recorder:
 
 ```bash
 rsync -a --delete --exclude .git --exclude share/assets/private/ /Users/jmyers/omgarchy/omacar-cameras/ jmyers@omarchy:Projects/.omacar-test/cameras/
-ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && S=/tmp/omacar-check && rm -rf $S && mkdir -p $S/videos && mkdir -p -m 700 $S/run && export OMACAR_VIDEOS=$S/videos XDG_RUNTIME_DIR=$S/run && (setsid -f python3 lib/cams.py sim >$S/cams.log 2>&1) && sleep 15 && python3 tools/drowsy_check.py; pkill -INT -f "[l]ib/cams.py sim"; sleep 3; rm -rf $S'
+ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && tools/sim-cams.sh python3 tools/drowsy_check.py'
 ```
 
 Expected:
@@ -5561,175 +6333,86 @@ Expected:
 - `frames 20`, at about 10 a second (the recorder's live rate). The count of frames with a face is whatever is in front of the C920.
 - `0 from anywhere else`, then `ok`.
 
-If `loaded` is False, read `error`. A MIME error means the server sent the `.mjs` or `.wasm` with the wrong type: Python 3.14's `mimetypes` gives `text/javascript` and `application/wasm`, so check which Python ran the tool.
+If `loaded` is False, read `error`. A MIME error means the server sent the `.mjs` or `.wasm` with the wrong type: Python 3.14's `mimetypes` gives `text/javascript` and `application/wasm`, so check which Python ran the server. A 404 on `wasm/` means Task 8's fetch has not reached this machine: `python3 lib/assets.py status`.
 
 - [ ] **Step 7: Run everything**
 
-Run `BOXTEST`. Expected: all green. `app_test.py` does not load drowsy mode yet; that is Task 11.
+Run `BOXTEST`. Expected: all green. `app_test.py` does not load drowsy mode yet; that is Task 10.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add lib/drowsycfg.py lib/camroutes.py share/js/mjpeg.js share/js/facewatch.js share/js/drowsyrun.js tools/drowsy_check.py test/drowsy_test.py test/js/mjpeg.test.js test/js/drowsyrun.test.js test/all.sh
-git commit -m "Drowsy mode reads the cabin camera's live picture through the vendored face tracker, and logs what it measures" -m "The recorder owns the camera, so the page reads its MJPEG, draws each frame to a canvas and runs the Face Landmarker only while the car is moving, with the gate at 30 mph deciding what may alert. A dropped link is not parked, so it cannot clear an alert. Settings, events (kind=drowsy) and a per-second measures log for Wednesday's tuning go through lib/drowsycfg.py.
+git commit -m "Drowsy mode reads the cabin camera's live picture through the face tracker, and logs what it measures" -m "The recorder owns the camera, so the page reads its MJPEG, draws each frame to a canvas and runs the Face Landmarker only while the car is moving, with the gate at 30 mph deciding what may start an alert. Simulated numbers never open the gate, and a dropped link is not parked, so it cannot clear an alert. I'm awake, a stopped car and a settings change all clear through one path, and new settings keep the baseline. Test the alerts runs only while parked and stops if the car moves. Settings, events (kind=drowsy) and a per-second measures log for Wednesday's tuning go through lib/drowsycfg.py.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 11: Drowsy mode on screen, and in the car's speakers
+### Task 10: Drowsy mode on screen, and in the car's speakers
 
 **Files:**
-- Create: `share/js/alertplayer.js`, `share/js/drowsyui.js`, `test/js/alertplayer.test.js`
+- Create: `share/js/drowsyui.js`, `test/js/drowsyui.test.js`
 - Modify:
-  - the page: `share/js/alertness.js` (start drowsy mode), `share/js/dashcard.js` (the chip and the AUX line), `share/css/drowsy.css` (append);
+  - the page: `share/js/alertness.js` (start drowsy mode and hand its cues to the alert player), `share/css/drowsy.css` (append);
   - `share/js/main.js`: one hunk, the Settings row.
+
+The alert player itself, with every sound's envelope, is Task 7's; this task only wires it in. Home's Dashcams card gets its chip and AUX line in Task 11, which this task does not need.
 
 **Interfaces:**
 - Consumes:
-  - `drowsy`, `startDrowsy` (Task 10);
-  - `rampPlan` (Task 8);
-  - `playChime`, `playAlarm`, `playBark`, `playVoice` (Task 8);
-  - `audioContext`, `schedule`, `setLevelNow`, `currentDb`, `resume`, `MUSIC_DB`, `FLOOR_DB` (Task 5);
-  - `asset(name)` (`share/js/assets.js`);
-  - `onAudio`, `auxLine` (Task 5);
-  - `dashcamCard(...).top` (Task 4).
+  - `drowsy`, `startDrowsy` (Task 9), including `.stopTest()` and `.state.testing`/`.testLevel`;
+  - `alertPlayer()` with `setName(fn)` and `play(cues, out)` (Task 7);
+  - `onAudio`, `applyAudio` (Task 4);
+  - `postJSON` (Task 3); `h`, `clear`, `toast` (`share/js/core.js`);
+  - `tools/sim-cams.sh` and `tools/shoot.py` (Task 3), for the screenshots.
 - Produces:
-  - `alertplayer.js`: `ALERT_DB = {1: -6, 2: -3, 3: 0}`, `ALERT_FLOOR_DB = -40`, `SWELL_DB = 6`, `DUCK_DB = -12`, `VOICE_AFTER`, `rampsFor(cue, level, cur) → [{bus, plan, at, append}]`, and `createAlertPlayer({name}) → {play(cues, out)}`.
-  - `drowsyui.js`: `mountDrowsyUI()` and `openDrowsySheet()`. With `?dz=1|2|3` it draws that level's card for a screenshot, with no sound.
-  - The DOM: the chip `.tb-drowsy` in `#vbar .tb-right`; the alert layer `.dz-layer[data-level]`; the banner `.dz-banner`.
+  - `drowsyui.js`: `TRIGGER`, `REST`, `AUX`; the pure `chipTitle(st)`, `testLine(st)`, `measureLine(m)` and `audioLine(a)`; `mountDrowsyUI()` and `openDrowsySheet()`. With `?dz=1|2|3` it draws that level's card for a screenshot, and with `?dz=test` the test card, with no sound.
+  - The DOM: the chip `.tb-drowsy` in `#vbar .tb-right`; the alert layer `.dz-layer[data-level]`; the banner `.dz-banner`; the test card `.dz-test` with its `.dz-stop` button.
 
 - [ ] **Step 1: Write the failing test**
 
-`test/js/alertplayer.test.js`:
+`test/js/drowsyui.test.js`:
 
 ```js
-import { eq, ok } from "./assert.js";
-import { rampsFor, ALERT_DB } from "../js/alertplayer.js";
-import { ALERT_MAX_DB } from "../js/audiobus.js";
-
-const quiet = { music: -12, alert: -Infinity };
-const ends = (r) => r.map((x) => [x.bus, x.plan.points[0][1], x.plan.points[x.plan.points.length - 1][1], x.plan.secs, x.at]);
+import { eq } from "./assert.js";
+import { chipTitle, testLine, measureLine, audioLine } from "../js/drowsyui.js";
 
 export default [
-  ["no alert is louder than full scale, and Level 3 uses all of it", () => {
-    ok(Object.values(ALERT_DB).every((db) => db <= ALERT_MAX_DB), "every level at or under 0 dBFS");
-    eq(ALERT_DB[3], 0);
-  }],
-  ["Level 1: the radio rises 6 dB over 10 s, then settles back over 30 s", () =>
-    eq(ends(rampsFor({ kind: "swell" }, 1, quiet)), [["music", -12, -6, 10, 0], ["music", -6, -12, 30, 10]])],
-  ["Level 1's soft sounds need no ramp", () => eq(rampsFor({ kind: "chime" }, 1, quiet), [])],
-  ["Level 2: music ducks 12 dB in half a second", () =>
-    eq(ends(rampsFor({ kind: "duck" }, 2, quiet)), [["music", -12, -24, 0.5, 0]])],
-  ["and the first sound rises from -40 dB to its target over 1.5 s, from silence", () =>
-    eq(ends(rampsFor({ kind: "bark" }, 2, quiet)), [["alert", -40, -3, 1.5, 0]])],
-  ["a repeat with the bus already up does not ramp again", () =>
-    eq(rampsFor({ kind: "bark" }, 2, { music: -24, alert: -3 }), [])],
-  ["Level 3's alarm reaches full scale over 3 s", () =>
-    eq(ends(rampsFor({ kind: "alarm", hold: true }, 3, quiet)), [["alert", -40, 0, 3, 0]])],
-  ["from Level 2 it rises the last 3 dB, still over 3 s", () =>
-    eq(ends(rampsFor({ kind: "alarm", hold: true }, 3, { music: -24, alert: -3 })), [["alert", -3, 0, 3, 0]])],
-  ["release: the alert fades out over 3 s and the music comes back", () =>
-    eq(ends(rampsFor({ kind: "fade" }, 0, { music: -24, alert: 0 })), [["alert", 0, -60, 3, 0], ["music", -24, -12, 3, 0]])],
-  ["a fade from silence is still a finite plan", () =>
-    eq(ends(rampsFor({ kind: "fade" }, 0, quiet)), [["alert", -60, -60, 3, 0], ["music", -12, -12, 3, 0]])],
+  ["the measures line: no picture, no face, and learning the driver's eyes", () =>
+    eq([measureLine(null), measureLine({ face: false }),
+        measureLine({ face: true, calibrated: false, blink: 0.31, perclos: 0.04, yawns: 0, nods: 1, pitch: -4.4 })],
+       ["No picture from the cabin camera yet.", "No face in view.",
+        "Closure 0.31 (learning your eyes: the first minute above 30 mph) · PERCLOS 4% · yawns 0 · nods 1 · pitch -4°"])],
+  ["and once it has a baseline", () =>
+    eq(measureLine({ face: true, calibrated: true, baseline: 0.3, threshold: 0.21, blink: 0.29, perclos: 0.12, yawns: 1, nods: 0, pitch: null }),
+       "Closure 0.29 (baseline 0.30, closed above 0.21) · PERCLOS 12% · yawns 1 · nods 0 · pitch –")],
+  ["where the sound goes, and only 'disconnected' when the port is known", () =>
+    eq([audioLine(null), audioLine({ aux: true, volume: 0.8, managed: true }), audioLine({ aux: false, volume: 0.5 }),
+        audioLine({ aux: null, volume: null, port_name: "Speaker" })],
+       ["The server did not say where sound is going.", "Sound goes to the AUX cable, at 80%, held there.",
+        "Sound goes to the tablet's speakers: AUX disconnected, at 50%.", "Sound goes to Speaker, at an unknown volume."])],
+  ["the test card names the level sounding, and is empty with no test", () =>
+    eq([testLine({ testing: false }), testLine({ testing: true, testLevel: 0 }), testLine({ testing: true, testLevel: 2 })],
+       ["", "Testing the alerts · starting", "Testing the alerts · Level 2"])],
+  ["the chip's title: new alerts start above the gate, and simulated driving is ignored", () =>
+    eq([chipTitle({ chip: "Watching", gate: { active: false } }),
+        chipTitle({ chip: "Watching", gate: { active: false }, cfg: { min_speed_mph: 25 } }),
+        chipTitle({ chip: "Watching", gate: { active: true } }),
+        chipTitle({ chip: "Off", gate: { simulated: true } })],
+       ["Watching. New alerts start above 30 mph.", "Watching. New alerts start above 25 mph.",
+        "Drowsy mode: Watching", "Drowsy mode: Off. It ignores simulated driving."])],
 ];
 ```
 
 - [ ] **Step 2: Run it to see it fail**
 
-Run: rsync, then `python3 test/js_test.py`. Expected: `alertplayer.test.js :: import`.
+Run: rsync, then `python3 test/js_test.py`. Expected: `drowsyui.test.js :: import`.
 
-- [ ] **Step 3: Write alertplayer.js**
+- [ ] **Step 3: Write drowsyui.js**
 
-```js
-// Drowsy mode's cues, sounded. Each cue the ladder hands over (ladder.js)
-// becomes ramps on the audio stage (audiobus.js, ramps.js) and a sound
-// (sounds.js). Every level change is a ramp. The only thing ever set in one
-// step is a bus with nothing playing on it.
-
-import { audioContext, schedule, setLevelNow, currentDb, resume, MUSIC_DB, FLOOR_DB } from "./audiobus.js";
-import { rampPlan } from "./ramps.js";
-import { playChime, playAlarm, playBark, playVoice } from "./sounds.js";
-import { asset } from "./assets.js";
-
-// Where each level's alert sits, in dBFS. Level 3 uses the full scale.
-export const ALERT_DB = { 1: -6, 2: -3, 3: 0 };
-export const ALERT_FLOOR_DB = -40;   // an alert's rise starts here, never from nothing
-export const SWELL_DB = 6;           // Level 1: the radio rises +6 dB
-export const DUCK_DB = -12;          // Levels 2 and 3: music ducks -12 dB
-// When the voice starts after its cue: after Level 1's chime, part-way up
-// Level 2's rise, and once Level 3's alarm has begun.
-export const VOICE_AFTER = { 1: 1.4, 2: 0.5, 3: 1.0 };
-const SOUNDS = new Set(["chime", "bark", "alarm", "voice"]);
-
-// Pure: the ramps a cue asks for, from where the two buses are now.
-export function rampsFor(cue, level, cur) {
-  const c = { music: Math.max(FLOOR_DB, cur.music), alert: Math.max(FLOOR_DB, cur.alert) };
-  const r = (bus, plan, at = 0, append = false) => ({ bus, plan, at, append });
-  if (cue.kind === "swell") {
-    const up = rampPlan(1, c.music, MUSIC_DB + SWELL_DB);
-    return [r("music", up), r("music", rampPlan(1, MUSIC_DB + SWELL_DB, MUSIC_DB), up.secs, true)];
-  }
-  if (cue.kind === "duck") return [r("music", rampPlan(level, c.music, MUSIC_DB + DUCK_DB))];
-  if (cue.kind === "fade") return [r("alert", rampPlan(0, c.alert, FLOOR_DB)), r("music", rampPlan(0, c.music, MUSIC_DB))];
-  if (SOUNDS.has(cue.kind) && level >= 2 && c.alert < ALERT_DB[level] - 0.5) {
-    return [r("alert", rampPlan(level, Math.max(ALERT_FLOOR_DB, c.alert), ALERT_DB[level]))];
-  }
-  return [];
-}
-
-export function createAlertPlayer({ name = () => "James" } = {}) {
-  let level = 0;
-  let held = [];                     // what the next fade must stop
-
-  async function voiceUrl(clip) {
-    const withName = clip !== "l3" && name() === "James";
-    const a = await asset(`voice-${clip}${withName ? "-james" : ""}`);
-    return a && a.url ? a.url : null;
-  }
-
-  async function sound(cue, at) {
-    if (cue.kind === "chime") playChime(at);
-    else if (cue.kind === "bark") playBark(at, level >= 2 ? 3 : 1);
-    else if (cue.kind === "alarm") held.push(playAlarm(at, cue.hold ? 600 : (cue.secs || 3)));
-    else if (cue.kind === "voice") {
-      const url = await voiceUrl(cue.clip);
-      const s = url ? await playVoice(url, at + (VOICE_AFTER[level] || 0)) : null;
-      if (s) held.push(s);
-    }
-  }
-
-  return {
-    async play(cues, out) {
-      await resume();
-      const ctx = audioContext();
-      for (const cue of cues) {
-        const at = ctx.currentTime + 0.05;
-        const cur = { music: currentDb("music"), alert: currentDb("alert") };
-        if (cue.kind === "fade") {
-          for (const x of rampsFor(cue, 0, cur)) schedule(x.bus, x.plan.points, at + x.at, x.append);
-          for (const s of held) { try { s.stop(at + 3.05); } catch { /* already stopped */ } }
-          held = [];
-          level = 0;
-          continue;
-        }
-        level = (out && out.level) || level;
-        if (level === 1 && SOUNDS.has(cue.kind)) setLevelNow("alert", ALERT_DB[1]);
-        for (const x of rampsFor(cue, level, cur)) schedule(x.bus, x.plan.points, at + x.at, x.append);
-        if (SOUNDS.has(cue.kind)) await sound(cue, at);
-      }
-    },
-  };
-}
-```
-
-- [ ] **Step 4: Run it to see it pass**
-
-Run: rsync, then `python3 test/js_test.py`. Expected: all green.
-
-- [ ] **Step 5: Write drowsyui.js**
+`share/js/drowsyui.js`:
 
 ```js
 // Drowsy mode on screen: the status chip in the top bar, the alert cards, the
@@ -5739,7 +6422,8 @@ Run: rsync, then `python3 test/js_test.py`. Expected: all green.
 // never rebuilds it ("the vehicle bar"), so an element added beside its own
 // stays put, and main.js carries no line for it.
 //
-// ?dz=1, 2 or 3 draws that level's card with no sound, for screenshots.
+// ?dz=1, 2 or 3 draws that level's card with no sound, and ?dz=test the
+// "Test the alerts" card, for screenshots.
 
 import { h, clear, toast } from "./core.js";
 import { postJSON } from "./camapi.js";
@@ -5761,6 +6445,19 @@ export const REST = "Alerts buy you minutes, not safety. The fix is to stop and 
   + "a 20-minute nap, or a coffee (NHTSA, AAA Foundation).";
 export const AUX = "Keep the car's radio on AUX. OmaCar's sound reaches the car through that cable, "
   + "and it cannot see which source the radio is on.";
+
+// Pure, for the tests: the lines the chip, the test card and the sheet show.
+export function chipTitle(st) {
+  const mph = (st.cfg && st.cfg.min_speed_mph) || 30;
+  if (st.chip === "Off" && st.gate && st.gate.simulated) return "Drowsy mode: Off. It ignores simulated driving.";
+  return st.chip === "Watching" && st.gate && !st.gate.active
+    ? `Watching. New alerts start above ${mph} mph.` : `Drowsy mode: ${st.chip}`;
+}
+
+export function testLine(st) {
+  if (!st.testing) return "";
+  return "Testing the alerts · " + (st.testLevel ? `Level ${st.testLevel}` : "starting");
+}
 
 function awake(big) {
   return h("button.dz-awake" + (big ? ".big" : ""), { type: "button", onclick: () => drowsy.tap() }, "I'm awake");
@@ -5791,22 +6488,30 @@ export function mountDrowsyUI() {
   }
   const layer = h("div.dz-layer", { hidden: true });
   const banner = h("div.dz-banner", { hidden: true, role: "status" }, "Stop at the next safe place");
-  document.getElementById("app").append(layer, banner);
+  // "Test the alerts" runs only while parked, and always shows this card with
+  // Stop; the car moving off stops it too (drowsyrun.js).
+  const testT = h("span.dz-test-t");
+  const test = h("div.dz-test", { hidden: true, role: "status" }, testT,
+    h("button.dz-stop", { type: "button", onclick: () => drowsy.stopTest() }, "Stop"));
+  document.getElementById("app").append(layer, banner, test);
 
-  const preview = Number(new URLSearchParams(location.search).get("dz")) || 0;
+  const dz = new URLSearchParams(location.search).get("dz");
+  const preview = Number(dz) || 0;
   let shown = -1;
   drowsy.on((st) => {
     chip.querySelector(".tb-drowsy-t").textContent = st.chip;
     chip.dataset.tone = TONE[st.chip] || "";
-    chip.title = st.chip === "Watching" && st.gate && !st.gate.active
-      ? "Watching. Alerts start above 30 mph." : `Drowsy mode: ${st.chip}`;
+    chip.title = chipTitle(st);
     banner.hidden = !(st.banner && st.level === 0);
+    const tl = dz === "test" ? testLine({ testing: true, testLevel: 2 }) : testLine(st);
+    test.hidden = !tl;
+    testT.textContent = tl;
     const level = preview || st.level;
     if (level !== shown) { shown = level; paintLayer(layer, level, st.trigger || (preview ? "closed" : null)); }
   });
 }
 
-function measureLine(m) {
+export function measureLine(m) {
   if (!m) return "No picture from the cabin camera yet.";
   if (!m.face) return "No face in view.";
   const pc = (x) => (x === null || x === undefined ? "–" : Math.round(x * 100) + "%");
@@ -5818,7 +6523,7 @@ function measureLine(m) {
   return `Closure ${n2(m.blink)} (${base}) · PERCLOS ${pc(m.perclos)} · yawns ${m.yawns} · nods ${m.nods} · pitch ${pitch}`;
 }
 
-function audioLine(a) {
+export function audioLine(a) {
   if (!a) return "The server did not say where sound is going.";
   const vol = a.volume === null || a.volume === undefined ? "an unknown volume" : `${Math.round(a.volume * 100)}%`;
   const where = a.aux === true ? "the AUX cable" : a.aux === false
@@ -5866,8 +6571,8 @@ export function openDrowsySheet() {
         if (!next.length) { toast("At least one sound has to stay in the rotation."); return; }
         save({ sounds: next });
       })),
-      row("Test the alerts", drowsy.canTest() ? "Level 1, 2 and 3 in turn, over twenty seconds" : "Only while parked",
-        "Play", () => { if (!drowsy.test()) toast("Only while parked."); }, !drowsy.canTest()));
+      row("Test the alerts", drowsy.canTest() ? "Level 1, 2 and 3 in turn, about half a minute. Stops if the car moves" : "Only while parked",
+        "Play", () => { if (drowsy.test()) close(); else toast("Only while parked."); }, !drowsy.canTest()));
   }
 
   const sheet = h("div.sheet", { role: "dialog", "aria-modal": "true", "aria-label": "Drowsy mode" },
@@ -5888,9 +6593,13 @@ export function openDrowsySheet() {
 }
 ```
 
-- [ ] **Step 6: Start it beside the app, and put it on Home**
+- [ ] **Step 4: Run it to see it pass**
 
-Replace `share/js/alertness.js` with:
+Run: rsync, then `python3 test/js_test.py`. Expected: all green.
+
+- [ ] **Step 5: Start it beside the app**
+
+Replace `share/js/alertness.js` (Task 4) with:
 
 ```js
 // Started beside the app (share/app.html), like awake.js, because it is not
@@ -5900,52 +6609,28 @@ Replace `share/js/alertness.js` with:
 // (lib/audio.py), at start and every half minute: plugging the AUX cable in
 // switches to a port that keeps a volume of its own.
 //
-// It also runs drowsy mode, whose chip goes into the top bar main.js builds,
-// and whose cues become sound on the one output stage.
+// It also runs drowsy mode. The chip goes into the top bar main.js builds,
+// and the cues go to the page's one alert player (alertplayer.js), the same
+// one Begin's chime uses, so every sound shares one gate and one envelope
+// rule.
 import { applyAudio } from "./audiostate.js";
 import { drowsy, startDrowsy } from "./drowsyrun.js";
-import { createAlertPlayer } from "./alertplayer.js";
+import { alertPlayer } from "./alertplayer.js";
 import { mountDrowsyUI } from "./drowsyui.js";
 
 applyAudio();
 setInterval(applyAudio, 30000);
 
-const player = createAlertPlayer({ name: () => (drowsy.state.cfg && drowsy.state.cfg.name) || "" });
-drowsy.onCues = (cues, out) => { player.play(cues, out).catch((e) => console.warn("drowsy sound:", e)); };
+alertPlayer().setName(() => (drowsy.state.cfg && drowsy.state.cfg.name) || "");
+drowsy.onCues = (cues, out) => { alertPlayer().play(cues, out).catch((e) => console.warn("drowsy sound:", e)); };
 mountDrowsyUI();
 startDrowsy().catch((e) => console.warn("drowsy mode did not start:", e));
 ```
 
-In `share/js/dashcard.js`:
-- add to the imports:
-
-```js
-import { drowsy } from "./drowsyrun.js";
-import { onAudio, auxLine } from "./audiostate.js";
-```
-
-- after `node.append(h("div.dc-stage", img, why), top);`, add:
-
-```js
-  // Home carries drowsy mode's chip, and says when the AUX cable is out.
-  const dz = h("span.dc-drowsy");
-  const aux = h("div.dc-aux", { hidden: true });
-  top.appendChild(dz);
-  node.appendChild(aux);
-  const offDz = drowsy.on((st) => { dz.textContent = st.chip; dz.dataset.tone = st.chip === "Watching" ? "ok" : st.chip === "Can't see you" ? "warn" : ""; });
-  const offAux = onAudio((a) => { const s = auxLine(a); aux.hidden = !s; aux.textContent = s; });
-```
-
-- change `destroy()` to:
-
-```js
-    destroy() { dead = true; clearInterval(timer); img.removeAttribute("src"); offDz(); offAux(); },
-```
-
-Append to `share/css/drowsy.css`:
+Append to `share/css/drowsy.css` (Task 7 created it):
 
 ```css
-.dz-layer[hidden], .dz-banner[hidden], .dc-aux[hidden] { display: none; }
+.dz-layer[hidden], .dz-banner[hidden], .dz-test[hidden] { display: none; }
 
 /* The chip in the top bar. */
 .tb-drowsy { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px; white-space: nowrap;
@@ -5984,15 +6669,16 @@ Append to `share/css/drowsy.css`:
 .dz-status { font-weight: 600; }
 .dz-measures, .dz-aux { font-size: .82rem; color: var(--dim); font-variant-numeric: tabular-nums; }
 
-/* Home's Dashcams card: the chip, and the AUX line along the bottom. */
-.dc-drowsy { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); font-size: .7rem; }
-.dc-drowsy[data-tone="ok"] { color: var(--ok); }
-.dc-drowsy[data-tone="warn"] { color: var(--warn); }
-.dc-aux { position: absolute; right: 0; bottom: 0; left: 0; padding: 8px 14px;
-          background: rgba(0, 0, 0, .7); color: var(--warn); font-size: .8rem; }
+/* "Test the alerts": above everything, sheet included, with Stop. */
+.dz-test { position: fixed; top: 64px; left: 50%; z-index: 320; transform: translateX(-50%);
+           display: flex; align-items: center; gap: 14px; padding: 8px 8px 8px 18px; border-radius: 999px;
+           background: var(--panel); border: 1px solid var(--edge); box-shadow: 0 8px 28px rgba(0, 0, 0, .5); }
+.dz-test-t { font-weight: 600; white-space: nowrap; }
+.dz-stop { min-height: var(--tap); padding: 0 20px; border: 0; border-radius: 999px;
+           background: var(--accent-fill); color: var(--on-accent); font: inherit; font-weight: 600; }
 ```
 
-- [ ] **Step 7: The one hunk in main.js: Settings → Drowsy mode**
+- [ ] **Step 6: The one hunk in main.js: Settings → Drowsy mode**
 
 In `share/js/main.js`, in `openSettings()`, just before the line `rows.appendChild(row("Learn mode", "Explains the terms in place, and hides nothing",`, add:
 
@@ -6005,49 +6691,497 @@ In `share/js/main.js`, in `openSettings()`, just before the line `rows.appendChi
 
 This is the only line this branch adds to main.js. It writes no `location.hash`, so the guard's count of hash writers stays at one.
 
-- [ ] **Step 8: Run everything, and look at it**
+- [ ] **Step 7: Run everything, and look at it**
 
 Run `BOXTEST`. Expected:
 - `js_test.py` is green.
-- `app_test.py` boots with drowsy mode running: nothing threw, and no failure card. The box has no recorder running, so no stream opens.
+- `app_test.py` boots with drowsy mode running: nothing threw, and no failure card. The all.sh guard (Task 1) has already made sure no recorder runs, so no stream opens.
 - The guards pass: "every mount the registry names…" and "nothing but a tap writes the hash".
 
-Then take screenshots with `tools/camshot.py` (Task 3), without the recorder. `?dz=N` draws a level's card with no sound:
+Then take screenshots beside a scratch recorder. `tools/sim-cams.sh` gives the server scratch `XDG_RUNTIME_DIR`, `XDG_STATE_HOME` and `XDG_CONFIG_HOME`, so it never reads the box's real `live.json` or settings: with no `live.json` the car is not connected, and the chip reads `Paused · parked`. `?dz=N` draws a level's card, and `?dz=test` the test card, with no sound:
 
 ```bash
-ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && S=/tmp/omacar-shot && rm -rf $S && mkdir -p -m 700 $S/run && export XDG_RUNTIME_DIR=$S/run && python3 tools/camshot.py $S/out home=still=1#home@1368,968 "dz1=still=1&dz=1#home@1368,968" "dz2=still=1&dz=2#home@1368,968" "dz3=still=1&dz=3#home@1368,968"; ls $S/out'
-scp 'jmyers@omarchy:/tmp/omacar-shot/out/*.png' "$SCRATCH/"
+rsync -a --delete --exclude .git --exclude share/assets/private/ /Users/jmyers/omgarchy/omacar-cameras/ jmyers@omarchy:Projects/.omacar-test/cameras/
+ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && rm -rf /tmp/omacar-shot && tools/sim-cams.sh python3 tools/shoot.py /tmp/omacar-shot "home=?still=1#home@1368,968" "dz1=?still=1&dz=1#home@1368,968" "dz2=?still=1&dz=2#home@1368,968" "dz3=?still=1&dz=3#home@1368,968" "dztest=?still=1&dz=test#home@1368,968"'
+scp 'jmyers@omarchy:/tmp/omacar-shot/*.png' "$SCRATCH/"
 ssh jmyers@omarchy 'rm -rf /tmp/omacar-shot'
 ```
 
 Check:
-- the chip reads `Paused · parked` in the top bar and on the Dashcams card;
+- the chip reads `Paused · parked` in the top bar;
 - Level 1 is a card above the navigation, with "I'm awake";
 - Level 2 fills the screen with a large "I'm awake";
 - Level 3 says "Pull over now" and "Stop at the next safe place";
-- every card carries the rest line.
+- every card carries the rest line;
+- the test card reads "Testing the alerts · Level 2" with a Stop button, above everything.
 
-Open Settings by hand in a headed window if you can, to check the Drowsy mode row opens the sheet.
+Open Settings by hand in a headed window if you can, to check the Drowsy mode row opens the sheet, and that "Test the alerts" is greyed out ("Only while parked") with no car connected.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add share/js/alertplayer.js share/js/drowsyui.js share/js/alertness.js share/js/dashcard.js share/css/drowsy.css share/js/main.js test/js/alertplayer.test.js
-git commit -m "Drowsy mode wakes the driver in rising steps, shows its state in the top bar and on Home, and has its own settings" -m "Level 1 is a chime, the voice and the radio rising 6 dB; Level 2 ducks the music and rotates a bark, the voice and a two-tone alarm up over a second and a half; Level 3 holds a full-scale alarm and says pull over. Every change is a ramp. Settings -> Drowsy mode is the one line this branch adds to main.js; the chip goes into the top bar from outside it.
+git add share/js/drowsyui.js share/js/alertness.js share/css/drowsy.css share/js/main.js test/js/drowsyui.test.js
+git commit -m "Drowsy mode shows its state in the top bar, wakes the driver through the alert player, and has its own settings" -m "The top bar carries the chip; Level 1 is a card, Level 2 and 3 fill the screen, and Level 3 leaves a banner until the car has stopped. Every cue goes to the one alert player, so each sound rises from silence and fades back to it. Test the alerts runs only while parked, shows a card with Stop, and stops if the car moves. Settings -> Drowsy mode is the one line this branch adds to main.js; the chip goes into the top bar from outside it.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 12: End to end on the box, then the tablet, then a draft PR
+### Task 11: Home's Dashcams card (deferrable)
+
+**Deferrable.** Nothing in Tasks 12 and 13 needs this card: the Cameras tab (Task 3) and the top-bar chip (Task 10) already show everything it shows. If Tuesday is short, skip it: Home keeps the foundation's "soon" card, and Task 13 skips the steps marked "(Task 11)". It comes after drowsy mode so it can carry the drowsy chip and the AUX line from the start, rather than being edited twice.
+
+**Files:**
+- Create: `share/js/dashcard.js`
+- Modify: `share/js/camlogic.js` (add `dashState`), `test/js/camlogic.test.js`, `share/css/cameras.css` (append), `share/js/views/home.js` (one hunk: the `dashcam:` line in `MAKERS`)
+
+**Interfaces:**
+- Consumes: `getJSON`, `liveUrl` (Task 3); `tappable`, `h` in `home.js`; `drowsy` (Task 9); `onAudio`, `auxLine` (Task 4).
+- Produces:
+  - `dashState(ov) → {live, rec, sim, why}` in `camlogic.js`.
+  - `dashcamCard(node) → {top, paint(), destroy()}` in `dashcard.js`. The caption row carries the drowsy chip (`.dc-drowsy`), and an AUX line (`.dc-aux`) appears along the bottom when the cable is known to be out.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `test/js/camlogic.test.js`: put `dashState` in the import list, and add these entries to the default export's array:
+
+```js
+  ["Home's card shows the front picture with REC while recording", () =>
+    eq(dashState(ov({})), { live: true, rec: true, sim: false, why: null })],
+  ["and says SIMULATED over a test picture", () => eq(dashState(ov({ front: role({ sim: true }) })).sim, true)],
+  ["recorder off, with the front camera plugged in", () => eq(dashState(ov({}, false)).why, "Recorder off")],
+  ["no front camera at all", () =>
+    eq(dashState(ov({ front: role({ device: null, recording: false, error: "no camera" }) })).why, "No front camera")],
+  ["and no server at all", () => eq(dashState(null).why, "OmaCar cannot reach its server")],
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: rsync, then `python3 test/js_test.py`. Expected: `camlogic.test.js :: import :: … dashState`.
+
+- [ ] **Step 3: dashState, the card, and its styles**
+
+Append to `share/js/camlogic.js`:
+
+```js
+// Home's Dashcams card: the front picture, or in words why there is none.
+export function dashState(ov) {
+  const off = (why) => ({ live: false, rec: false, sim: false, why });
+  if (!ov) return off("OmaCar cannot reach its server");
+  const r = (ov.roles && ov.roles.front) || {};
+  if (!ov.running) return off(r.device ? "Recorder off" : "No front camera");
+  if (!r.recording) return off(!r.error || r.error === "no camera" ? "No front camera" : r.error);
+  return { live: !!r.live, rec: true, sim: !!r.sim, why: r.live ? null : "Waiting for the picture" };
+}
+```
+
+`share/js/dashcard.js`:
+
+```js
+// Home's Dashcams card: the front camera's live picture with a REC dot while
+// the recorder runs, and in words why not when it does not -- no camera, or
+// recorder off -- so a black rectangle never stands in for a reason. A test
+// picture says SIMULATED, the same rule as the car's numbers.
+//
+// It also carries drowsy mode's chip, and says when the AUX cable is out.
+//
+// home.js makes the card's node (a tap opens Cameras) and imports this module
+// where the card is made: see the redesign/cameras block in its MAKERS.
+import { h } from "./core.js";
+import { getJSON, liveUrl } from "./camapi.js";
+import { dashState } from "./camlogic.js";
+import { drowsy } from "./drowsyrun.js";
+import { onAudio, auxLine } from "./audiostate.js";
+
+export function dashcamCard(node) {
+  const img = h("img.dc-img", { alt: "Front camera, live", draggable: "false", hidden: true });
+  const why = h("div.dc-why");
+  const rec = h("span.dc-rec", { hidden: true }, h("span.dc-dot"), "REC");
+  const sim = h("span.dc-sim", { hidden: true }, "SIMULATED");
+  const top = h("div.dc-top", h("span.dc-title", "Dashcams"), sim, rec);
+  const dz = h("span.dc-drowsy");
+  const aux = h("div.dc-aux", { hidden: true });
+  top.appendChild(dz);
+  node.append(h("div.dc-stage", img, why), top, aux);
+  const offDz = drowsy.on((st) => {
+    dz.textContent = st.chip;
+    dz.dataset.tone = st.chip === "Watching" ? "ok" : st.chip === "Can't see you" ? "warn" : "";
+  });
+  const offAux = onAudio((a) => { const s = auxLine(a); aux.hidden = !s; aux.textContent = s; });
+  let streaming = false, dead = false;
+  img.addEventListener("error", () => { streaming = false; });
+
+  async function poll() {
+    let ov = null;
+    try { ov = await getJSON("/api/cams"); } catch { /* dashState says so */ }
+    if (dead) return;
+    const s = dashState(ov);
+    rec.hidden = !s.rec;
+    sim.hidden = !s.sim;
+    why.hidden = !s.why;
+    why.textContent = s.why || "";
+    if (s.live && !streaming) { img.src = liveUrl("front"); img.hidden = false; streaming = true; }
+    if (!s.live && streaming) { img.removeAttribute("src"); img.hidden = true; streaming = false; }
+  }
+  poll();
+  const timer = setInterval(poll, 3000);
+
+  return {
+    top,
+    paint() {},
+    destroy() { dead = true; clearInterval(timer); img.removeAttribute("src"); offDz(); offAux(); },
+  };
+}
+```
+
+Append to `share/css/cameras.css`:
+
+```css
+/* Home's Dashcams card. */
+.hc-cam { padding: 0; background: #000; }
+.dc-stage { position: absolute; inset: 0; }
+.dc-img { width: 100%; height: 100%; object-fit: cover; }
+.dc-why { position: absolute; inset: 0; display: grid; place-items: center; padding: 40px 16px 16px;
+          text-align: center; color: var(--dim); font-size: .9rem; background: var(--panel); }
+.dc-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 8px;
+          padding: 12px 14px; color: #F6FCFF; background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent); }
+.dc-title { flex: 1; font-size: .9rem; }
+.dc-rec { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+          background: rgba(0, 0, 0, .55); font-size: .75rem; font-weight: 600; letter-spacing: .06em; }
+.dc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
+.dc-sim { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: var(--warn);
+          font-size: .66rem; letter-spacing: .12em; }
+.dc-drowsy { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); font-size: .7rem; }
+.dc-drowsy[data-tone="ok"] { color: var(--ok); }
+.dc-drowsy[data-tone="warn"] { color: var(--warn); }
+.dc-aux { position: absolute; right: 0; bottom: 0; left: 0; padding: 8px 14px;
+          background: rgba(0, 0, 0, .7); color: var(--warn); font-size: .8rem; }
+.dc-aux[hidden] { display: none; }
+```
+
+- [ ] **Step 4: The one hunk in home.js**
+
+In `share/js/views/home.js`, replace the single line in `MAKERS` that begins `  dashcam: () => soonCard(ICONS.camera, "Dashcams",` with:
+
+```js
+  // ---- redesign/cameras: the live front view (share/js/dashcard.js) -----------
+  // Imported where the card is made, so the cameras branch meets this file in
+  // one hunk (doc/design/2026-09-28-cameras-drowsy-plan.md).
+  dashcam: () => {
+    const node = tappable(h("div.card.hc.hc-cam"), "cameras");
+    let card = null, gone = false;
+    import("../dashcard.js").then((m) => { if (!gone) card = m.dashcamCard(node); });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // ---- end redesign/cameras ---------------------------------------------------
+```
+
+`soonCard` stays: the Navigation card still uses it.
+
+- [ ] **Step 5: Run everything, and look at it**
+
+Run `BOXTEST`. Expected:
+- `js_test.py` is green.
+- `app_test.py` still boots to Home. The box's only camera is the C920, which is the cabin, so the card reads "No front camera".
+
+Then take a screenshot beside a scratch recorder:
+
+```bash
+ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && rm -rf /tmp/omacar-shot && tools/sim-cams.sh python3 tools/shoot.py /tmp/omacar-shot "home-landscape=?still=1#home@1368,968"'
+scp 'jmyers@omarchy:/tmp/omacar-shot/*.png' "$SCRATCH/"
+ssh jmyers@omarchy 'rm -rf /tmp/omacar-shot'
+```
+
+Check that the card shows the SIMULATED front picture with REC, and the drowsy chip reading `Paused · parked`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add share/js/dashcard.js share/js/camlogic.js share/css/cameras.css share/js/views/home.js test/js/camlogic.test.js
+git commit -m "Home's Dashcams card shows the front camera live, or says in words why it cannot" -m "No front camera, recorder off, or a simulated picture labelled as one: a black rectangle never stands in for a reason. It also carries drowsy mode's chip and says when the AUX cable is out. The card is loaded where it is made, so this branch meets home.js in one hunk.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 12: The spoken voice (deferrable)
+
+**Deferrable.** Without this task drowsy mode is complete, only quieter in words:
+- Task 9 leaves `"voice"` out of the Level 2 rotation while `voice-l2` has no file.
+- The alert player skips a voice cue that has no clip (Task 7). Level 1 is then the chime and the radio's swell, and Level 3 the alarm.
+- The settings sheet's "The voice" row still saves, and changes nothing until clips exist.
+
+Task 13 skips the steps marked "(Task 12)". Nothing else reads these files.
+
+**Piper is never bundled, imported or installed with OmaCar.** It is a system package on the machine that renders (the box: the AUR's `piper-tts`) and runs there as its own program. Only the audio comes back, as private assets, because the phrases carry the owner's name.
+
+**The voice** is Piper's `en_US-ljspeech-high`, trained on the LJ Speech dataset, which is in the public domain. Step 5 checks its model card before anything is rendered. If the card does not say public domain, the fallback is `en_US-libritts_r-medium` (LibriTTS-R, CC BY 4.0, speaker 0), with the attribution changed to match. The owner approved the download on 2026-09-28.
+
+**Files:**
+- Create: `tools/render_voice.py`
+- Create, not committed: `share/assets/private/voice/{l1-james, l1, l2-james, l2, l3}.ogg`, in the Mac worktree and in the box's canonical `~/Projects/omacar/share/assets/private/voice/`.
+- Modify: `test/vendor_test.py` (a voice section), `share/assets/manifest.json` (five entries under `"assets"`), `test/guards_test.py` (one line), `ATTRIBUTION.md` (append)
+
+**Interfaces:**
+- Consumes: `assets.load_manifest()`, `assets.status()` and `assets.py pin` (`lib/assets.py`).
+- Produces:
+  - Asset names `voice-l1-james`, `voice-l1`, `voice-l2-james`, `voice-l2` and `voice-l3`. Each is served as `assets/private/voice/<clip>.ogg` through `asset(name)` (`share/js/assets.js`). The alert player asks for them (Task 7), and drowsy mode's rotation checks `voice-l2` (Task 9).
+  - Clip `l1` says "You seem tired. Plan a break soon.", `l2` "Are you with me?" and `l3` "Pull over now.". The `-james` pair begin with "James, ".
+  - `render_voice.find_piper(candidates) → path or None`: the first candidate whose `--help` offers `--model`.
+
+- [ ] **Step 1: Write the failing test**
+
+In `test/vendor_test.py`, insert just before the closing `print()`:
+
+```python
+head("the voice clips (Task 12): private, pinned, and rendered by Piper as its own program")
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import render_voice  # noqa: E402
+
+d = tempfile.mkdtemp()
+def fake(name, helptext):
+    p = os.path.join(d, name)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(f"#!/bin/sh\necho '{helptext}'\n")
+    os.chmod(p, 0o755)
+    return p
+mouse = fake("piper", "Usage: piper [OPTION...] GTK application to configure gaming mice")
+tts = fake("piper-tts", "usage: piper [-h] -m MODEL [-f OUTPUT_FILE]  --model")
+check("Piper TTS is the program that offers --model, not Arch's mouse tool",
+      render_voice.find_piper([mouse, tts]), tts)
+check("and with only the mouse tool there is no Piper",
+      render_voice.find_piper([mouse, os.path.join(d, "absent")]), None)
+shutil.rmtree(d)
+
+VOICE = ["voice-l1-james", "voice-l1", "voice-l2-james", "voice-l2", "voice-l3"]
+va = assets.load_manifest()["assets"]
+check("all five phrases are in the manifest", [n for n in VOICE if n not in va], [])
+check("each in the private voice folder, as Ogg",
+      [n for n in VOICE if n in va and va[n].get("file") != f"voice/{n[len('voice-'):]}.ogg"], [])
+check("and every one is pinned", [n for n in VOICE if n in va and not va[n].get("sha256")], [])
+vs = assets.status()
+here = [n for n in VOICE if n in vs and vs[n]["present"]]
+if here:
+    check("the ones installed here match their pins", [n for n in here if not vs[n]["ok"]], [])
+else:
+    ok("(no voice clips installed here: the box's test mirror never has them)")
+```
+
+`vendor_test.py` already imports `os`, `shutil`, `sys` and `tempfile` (Task 8).
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: rsync, then `python3 test/vendor_test.py`. Expected: `ModuleNotFoundError: No module named 'render_voice'`.
+
+- [ ] **Step 3: Write tools/render_voice.py**
+
+```python
+#!/usr/bin/env python3
+"""Render drowsy mode's spoken phrases with Piper, once, off the tablet.
+
+Piper is not part of OmaCar in any form. It is a system package on the machine
+that renders (on the box: `yay -S --needed piper-tts`), and this runs it as its
+own program, text in and WAV out. ffmpeg turns each WAV into Ogg, and the Ogg
+files ship as private assets, because the phrases carry the owner's name.
+
+    python3 tools/render_voice.py MODEL.onnx OUT_DIR
+
+The phrases are the spec's (doc/design/2026-09-28-cameras-drowsy.md), each with
+and without the owner's name, because the name setting can only choose between
+clips that exist.
+"""
+
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+NAME = "James"
+PHRASES = {
+    "l1-james": f"{NAME}, you seem tired. Plan a break soon.",
+    "l1": "You seem tired. Plan a break soon.",
+    "l2-james": f"{NAME}, are you with me?",
+    "l2": "Are you with me?",
+    "l3": "Pull over now.",
+}
+# Arch's own `piper` package is a tool for gaming mice. Piper TTS is whichever
+# of these answers --help with a --model option: the AUR's piper-tts installs
+# `piper`, and piper-tts-bin installs `piper-tts`.
+CANDIDATES = ("piper-tts", "piper", "/opt/piper-tts/piper")
+
+
+def find_piper(candidates=CANDIDATES):
+    for c in candidates:
+        exe = shutil.which(c)
+        if not exe:
+            continue
+        try:
+            r = subprocess.run([exe, "--help"], capture_output=True, text=True, timeout=20,
+                               stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if "--model" in r.stdout + r.stderr:
+            return exe
+    return None
+
+
+def synth(exe, model, text, wav):
+    """The text on stdin, one WAV out: the same two flags in piper-tts 1.x and
+    the older piper-tts-bin."""
+    subprocess.run([exe, "-m", model, "-f", wav], input=text + "\n", text=True,
+                   capture_output=True, timeout=300, check=True)
+    if not os.path.isfile(wav) or os.path.getsize(wav) < 1000:
+        raise SystemExit(f"  Piper wrote no audio for {text!r}")
+
+
+def main(argv):
+    if len(argv) != 3:
+        print(__doc__)
+        return 2
+    exe = find_piper()
+    if not exe:
+        print("  no Piper TTS on this machine: install it as a system package (on the box: yay -S --needed piper-tts)")
+        return 1
+    model, out = argv[1], argv[2]
+    os.makedirs(out, exist_ok=True)
+    enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
+    codec = ["-c:a", "libopus", "-b:a", "64k"] if "libopus" in enc else ["-c:a", "libvorbis", "-q:a", "5"]
+    tmp = tempfile.mkdtemp()
+    try:
+        for name, text in PHRASES.items():
+            wav = os.path.join(tmp, name + ".wav")
+            synth(exe, model, text, wav)
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wav,
+                            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000", *codec,
+                            os.path.join(out, name + ".ogg")], check=True)
+            print(f"  {name}.ogg  {text}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"  rendered with {exe}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+```
+
+Run: rsync, then `python3 test/vendor_test.py`. Expected: the two `find_piper` checks pass. "all five phrases are in the manifest" still fails until Step 6.
+
+- [ ] **Step 4: Install Piper on the box, as a system package**
+
+```bash
+ssh -t jmyers@omarchy 'yay -S --needed piper-tts'
+```
+
+yay builds `piper-tts` (1.8.0, the OHF-Voice `piper1-gpl` release) and asks for the sudo password to install it. If you cannot answer that prompt, stop and ask the controller to have the owner run the line above. If the build fails, the fallback is the older prebuilt `piper-tts-bin` (2023.11.14), which takes the same `-m` and `-f` flags: `ssh -t jmyers@omarchy 'yay -S --needed piper-tts-bin'`. Both conflict with Arch's gaming-mouse `piper`, which is not installed on the box.
+
+Check it:
+
+```bash
+ssh jmyers@omarchy 'for p in piper-tts piper; do command -v $p && $p --help 2>&1 | grep -m1 -- --model; done'
+```
+
+Expected: a path, and a help line naming `--model`. Nothing is installed on the Mac or the tablet.
+
+- [ ] **Step 5: Render the clips on the box**
+
+```bash
+cd /Users/jmyers/omgarchy/omacar-cameras
+rsync -a --delete --exclude .git --exclude share/assets/private/ ./ jmyers@omarchy:Projects/.omacar-test/cameras/
+ssh jmyers@omarchy 'set -e; W=/tmp/piper-voice; rm -rf $W; mkdir -p $W; cd $W
+B=https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ljspeech/high
+curl -fsSLO $B/en_US-ljspeech-high.onnx; curl -fsSLO $B/en_US-ljspeech-high.onnx.json; curl -fsSL -o MODEL_CARD $B/MODEL_CARD
+cat MODEL_CARD; grep -qi "public domain" MODEL_CARD
+python3 ~/Projects/.omacar-test/cameras/tools/render_voice.py $W/en_US-ljspeech-high.onnx $W/out
+mkdir -p ~/Projects/omacar/share/assets/private/voice && cp $W/out/*.ogg ~/Projects/omacar/share/assets/private/voice/'
+mkdir -p share/assets/private/voice && scp 'jmyers@omarchy:/tmp/piper-voice/out/*.ogg' share/assets/private/voice/
+ssh jmyers@omarchy 'rm -rf /tmp/piper-voice'
+```
+
+Expected: the model card, then five lines, `l1-james.ogg` through `l3.ogg`, each with its phrase, and `rendered with` Piper's path.
+
+If `grep -qi "public domain"` fails, use the fallback voice instead. Its base is `https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/libritts_r/medium`, and its files are `en_US-libritts_r-medium.onnx` and `.onnx.json`. Check that its MODEL_CARD names CC BY 4.0, and change the ATTRIBUTION line below to match.
+
+Listen to all five on the Mac (`afplay share/assets/private/voice/l1-james.ogg` plays it if Core Audio decodes it; otherwise `ffplay -nodisp -autoexit`). Check that "James" is said as a name, and that nothing is clipped.
+
+- [ ] **Step 6: The manifest, the pins, the guard and the credit**
+
+In `share/assets/manifest.json`, add these five entries inside `"assets"`, after `"crz-home"`:
+
+```json
+    "voice-l1-james": { "file": "voice/l1-james.ogg", "use": "Drowsy mode, Level 1: \"James, you seem tired. Plan a break soon.\" Piper en_US-ljspeech-high, rendered by tools/render_voice.py", "sha256": null },
+    "voice-l1": { "file": "voice/l1.ogg", "use": "Drowsy mode, Level 1, with no name: \"You seem tired. Plan a break soon.\"", "sha256": null },
+    "voice-l2-james": { "file": "voice/l2-james.ogg", "use": "Drowsy mode, Level 2: \"James, are you with me?\"", "sha256": null },
+    "voice-l2": { "file": "voice/l2.ogg", "use": "Drowsy mode, Level 2, with no name: \"Are you with me?\"", "sha256": null },
+    "voice-l3": { "file": "voice/l3.ogg", "use": "Drowsy mode, Level 3: \"Pull over now.\"", "sha256": null }
+```
+
+Then pin them, on the Mac where the files are:
+
+```bash
+for n in voice-l1-james voice-l1 voice-l2-james voice-l2 voice-l3; do python3 lib/assets.py pin $n; done
+python3 lib/assets.py status
+```
+
+Expected: `ok` for all five voice entries, the four fetched MediaPipe files and `crz-xray`, and `--` for `crz-home` if it is still not installed.
+
+In `test/guards_test.py`, the private-assets check lists exactly the car pictures. Change its last line from:
+
+```python
+      sorted(_as.load_manifest()["assets"]), ["crz-home", "crz-xray"])
+```
+
+to:
+
+```python
+      sorted(n for n in _as.load_manifest()["assets"] if n.startswith("crz-")), ["crz-home", "crz-xray"])
+```
+
+Append to the end of `ATTRIBUTION.md`, after Task 8's MediaPipe paragraph:
+
+```markdown
+
+Not bundled, and credited because the app plays it: **the voice clips**
+(`share/assets/private/voice/`, private because they say the owner's name) were
+rendered once with Piper TTS and its `en_US-ljspeech-high` voice, trained on the
+LJ Speech dataset (public domain). Piper (GPL-3.0) is not part of OmaCar in any
+form: it is a system package on the machine that rendered the clips, it ran
+there as its own program, and only the audio came back. `tools/render_voice.py`
+is how.
+```
+
+- [ ] **Step 7: Run everything**
+
+Run `BOXTEST`. Expected:
+- `vendor_test.py` passes. On the box it says no voice clips are installed, because the mirror never has them.
+- The guards pass with the new manifest.
+
+Then run `python3 test/vendor_test.py` on the Mac as well, where the clips are installed. Expected: "the ones installed here match their pins".
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add tools/render_voice.py share/assets/manifest.json test/guards_test.py ATTRIBUTION.md test/vendor_test.py
+git status --short share/assets   # must list manifest.json only
+git commit -m "Drowsy mode can speak, in clips rendered once by Piper running as its own program" -m "Piper is a system package on the box, never part of OmaCar; tools/render_voice.py runs it, text in and WAV out, and ffmpeg makes the Ogg clips. They ship as private assets because they say the owner's name, and each also exists without it, which is what the name setting chooses between. Without them drowsy mode leaves the voice out of the rotation.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 13: End to end on the box, then a draft PR, then the tablet
 
 **Files:**
 - Create: `tools/cams_e2e.py`
 - Modify: `doc/cameras.md` (append the section measured on the tablet)
 
 **Interfaces:**
-- Consumes: everything above.
+- Consumes: everything above; `shoot.shoot()` (Task 3) and `wait_for_port` (Task 2) in particular. Steps marked "(Task 11)" or "(Task 12)" apply only if that deferrable task was done.
 
 - [ ] **Step 1: Write the end-to-end check**
 
@@ -6061,13 +7195,15 @@ as the cabin, and `sim` test pictures for front and rear.
 It starts the recorder and the server on scratch folders, then checks:
 - recording: three roles, the real one not simulated;
 - the live pictures;
+- hard braking from a scripted live.json, and Mark event;
 - a finished one-minute clip per role that starts on a keyframe;
 - playback with Range;
-- Mark event, and hard braking from a scripted live.json;
-- the locks and events both leave behind.
-Then it takes screenshots of the Cameras tab and Home.
+- the locks both events leave behind.
+Then it takes screenshots of the Cameras tab and Home through tools/shoot.py.
 
-Takes about three minutes. Not in test/all.sh, because it needs a camera.
+Every wait is a poll with a deadline, so a slow machine takes longer rather
+than failing. About three minutes. Not in test/all.sh, because it needs a
+camera.
 
     python3 tools/cams_e2e.py OUT_DIR
 """
@@ -6077,7 +7213,6 @@ import json
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -6086,8 +7221,10 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 sys.path.insert(0, os.path.join(ROOT, "test"))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
 import camstore  # noqa: E402
-from app_test import free_port, python_for_server  # noqa: E402
+import shoot  # noqa: E402
+from app_test import free_port, python_for_server, wait_for_port  # noqa: E402
 
 ROLES = ("front", "rear", "cabin")
 fails = 0
@@ -6098,6 +7235,17 @@ def check(msg, cond):
     if not cond:
         fails += 1
     print(f"    {'ok  ' if cond else 'FAIL'}  {msg}")
+
+
+def until(secs, fn, every=1.0):
+    """fn() again and again until it returns something true or `secs` have
+    passed. Returns its last value."""
+    end = time.time() + secs
+    while True:
+        v = fn()
+        if v or time.time() >= end:
+            return v
+        time.sleep(every)
 
 
 def main(argv):
@@ -6135,29 +7283,24 @@ def main(argv):
         c.close()
         return r.status, data
 
+    def get_json(path):
+        try:
+            return json.loads(req("GET", path)[1])
+        except (OSError, ValueError):
+            return None
+
     def probe(path, *q):
         return subprocess.run(["ffprobe", "-v", "error", *q, path], capture_output=True, text=True).stdout.strip()
 
     try:
-        for _ in range(80):
-            time.sleep(0.25)
-            try:
-                with socket.create_connection(("127.0.0.1", port), 0.25):
-                    break
-            except OSError:
-                continue
+        check("the server is up", wait_for_port(port))
         print("\n  recording")
-        ov = None
-        for _ in range(40):
-            try:
-                ov = json.loads(req("GET", "/api/cams")[1])
-            except (OSError, ValueError):
-                ov = None
-            if ov and ov["running"] and all(ov["roles"][r]["live"] for r in ROLES):
-                break
-            time.sleep(1)
-        check("the recorder is up, with three live roles",
-              bool(ov and ov["running"] and all(ov["roles"][r]["live"] for r in ROLES)))
+
+        def up():
+            ov = get_json("/api/cams")
+            return ov if ov and ov["running"] and all(ov["roles"][r]["live"] for r in ROLES) else None
+        ov = until(60, up)
+        check("the recorder is up, with three live roles", bool(ov))
         if not ov:
             return 1
         cab = ov["roles"]["cabin"]
@@ -6170,22 +7313,33 @@ def main(argv):
             check(f"{r}: three live JPEGs", st == 200 and body.count(b"\xff\xd8") >= 3)
 
         print("\n  events")
-        for _ in range(10):
+        # Hard braking: 100 km/h for two seconds, then down to 40 at 40 km/h a
+        # second. The recorder reads live.json five times a second, so any
+        # second of the drop it sees is well past the 16 km/h threshold.
+        for _ in range(20):
             say(100.0)
-            time.sleep(0.2)
-        say(90.0)
-        time.sleep(0.25)
-        say(80.0)
-        time.sleep(3)
+            time.sleep(0.1)
+        for k in range(15):
+            say(100.0 - 4 * (k + 1))
+            time.sleep(0.1)
+        braked = until(10, lambda: any(e["kind"] == "hard-braking"
+                                       for e in (get_json("/api/cams/clips") or {}).get("events", [])), every=0.5)
         say(0.0)
-        evs = json.loads(req("GET", "/api/cams/clips")[1])["events"]
-        check("hard braking was caught from the car's speed", any(e["kind"] == "hard-braking" for e in evs))
+        check("hard braking was caught from the car's speed", braked)
         st, body = req("POST", "/api/cams/mark", body="{}")
         check("Mark event answered", st == 200 and json.loads(body)["kind"] == "marked")
 
-        print("\n  waiting 80 s for a whole minute of every camera and the locks to settle")
-        time.sleep(80)
-        doc = json.loads(req("GET", "/api/cams/clips")[1])
+        print("\n  waiting, up to 150 s, for two clips of every camera and both events locked")
+
+        def settled():
+            doc = get_json("/api/cams/clips")
+            if not doc:
+                return None
+            enough = all(sum(1 for c in doc["clips"] if c["role"] == r) >= 2 for r in ROLES)
+            kinds = {e["kind"]: e for e in doc["events"]}
+            locked = all(kinds.get(k, {}).get("state") == "locked" for k in ("hard-braking", "marked"))
+            return doc if enough and locked else None
+        doc = until(150, settled, every=5) or get_json("/api/cams/clips") or {"clips": [], "events": []}
         for r in ROLES:
             mine = sorted((c for c in doc["clips"] if c["role"] == r), key=lambda c: c["start"])
             check(f"{r}: at least two clips", len(mine) >= 2)
@@ -6197,9 +7351,10 @@ def main(argv):
                         "-show_entries", "frame=key_frame", "-of", "csv=p=0").startswith("1")
             check(f"{r}: the first clip is a whole minute ({dur:.1f} s) and starts on a keyframe",
                   abs(dur - 60) <= 1.5 and key)
-        cabin = sorted((c for c in doc["clips"] if c["role"] == "cabin"), key=lambda c: c["start"])[0]
-        st, body = req("GET", f"/api/cams/clip/cabin/{cabin['file']}", headers={"Range": "bytes=0-1023"})
-        check("playback can seek: a Range request is a 206", st == 206 and len(body) == 1024)
+        cabins = sorted((c for c in doc["clips"] if c["role"] == "cabin"), key=lambda c: c["start"])
+        if cabins:
+            st, body = req("GET", f"/api/cams/clip/cabin/{cabins[0]['file']}", headers={"Range": "bytes=0-1023"})
+            check("playback can seek: a Range request is a 206", st == 206 and len(body) == 1024)
         by_kind = {e["kind"]: e for e in doc["events"]}
         for k in ("hard-braking", "marked"):
             e = by_kind.get(k, {})
@@ -6214,16 +7369,14 @@ def main(argv):
               bool(paths) and all(p and f"{os.sep}locked{os.sep}" in p for p in paths))
 
         print("\n  on screen")
-        sys.path.insert(0, os.path.join(ROOT, "tools"))
-        import camshot
-        os.environ.update(env)
-        pngs, doms = camshot.run(out, [("cameras-landscape", "still=1#cameras", "1368,968"),
-                                       ("cameras-portrait", "still=1#cameras", "912,1424"),
-                                       ("home-landscape", "still=1#home", "1368,968")],
-                                 doms=["still=1#cameras"])
+        os.environ.update(env)      # shoot.py's server reads the same scratch folders
+        pngs, doms = shoot.shoot(out, [("cameras-landscape", "?still=1#cameras", (1368, 968)),
+                                       ("cameras-portrait", "?still=1#cameras", (912, 1424)),
+                                       ("home-landscape", "?still=1#home", (1368, 968))],
+                                 doms=["?still=1#cameras"])
         for name, png in pngs.items():
             check(f"screenshot {name}", bool(png))
-        dom = doms["still=1#cameras"]
+        dom = doms["?still=1#cameras"]
         check("three feeds, all recording", dom.count('data-rec="1"') == 3)
         check("the badge says SIMULATED", 'cam-badge warn">SIMULATED</span>' in dom)
         check("the timeline shows both events", dom.count('class="cam-marker"') >= 2)
@@ -6246,105 +7399,157 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run the whole suite, then the end-to-end check on the box**
 
-Run `BOXTEST`. Expected: every suite green, or failing only where it already failed at baseline (Task 1, Step 1).
+Run `BOXTEST`. Expected: every suite green, or failing only where it already failed at baseline (Task 1, Step 1). The all.sh guard (Task 1) refuses to run while a recorder is up, so a hang here is not the recorder.
 
 Then:
 
 ```bash
-ssh jmyers@omarchy 'systemctl --user is-active omacar-cams.service; cd ~/Projects/.omacar-test/cameras && python3 tools/cams_e2e.py /tmp/omacar-e2e'
+ssh jmyers@omarchy 'systemctl --user is-active omacar-cams.service; cd ~/Projects/.omacar-test/cameras && rm -rf /tmp/omacar-e2e && python3 tools/cams_e2e.py /tmp/omacar-e2e'
 scp 'jmyers@omarchy:/tmp/omacar-e2e/*.png' "$SCRATCH/"
+ssh jmyers@omarchy 'cd ~/Projects/.omacar-test/cameras && tools/sim-cams.sh python3 tools/drowsy_check.py'
 ```
 
 Expected:
 - `inactive` or `unknown`. If the unit is active on the box, stop it first with `systemctl --user stop omacar-cams`: two recorders cannot share the C920.
-- Every check `ok`, and three screenshots.
+- Every e2e check `ok`, and three screenshots.
+- The face tracker check from Task 9, Step 6: `ok`.
 
-Compare `cameras-landscape.png` and `cameras-portrait.png` with `/Users/jmyers/omgarchy/omacar/doc/design/mockups/6.webp`, and `home-landscape.png` with `3.webp`. Fix what differs in `cameras.css` and rerun.
+Compare `cameras-landscape.png` and `cameras-portrait.png` with `/Users/jmyers/omgarchy/omacar/doc/design/mockups/6.webp`. Fix what differs in `cameras.css` and rerun. (Task 11) Compare `home-landscape.png` with `3.webp` too; without Task 11, Home shows the foundation's "soon" card and there is nothing to compare.
 
-Then rerun the face tracker check from Task 10, Step 6. Expected: `ok`.
+- [ ] **Step 3: Check the foundation is still underneath**
 
-- [ ] **Step 3: Check the merge with the foundation branch**
+The branch was rebased onto `redesign/foundation` at 1cda3bb (foundation Task 11). Foundation's own Task 12 pushes it and changes no files.
 
 ```bash
 cd /Users/jmyers/omgarchy/omacar-cameras
-git merge-tree --write-tree --name-only redesign/foundation redesign/cameras
+git fetch origin
+git merge-base --is-ancestor redesign/foundation redesign/cameras && echo "foundation is underneath"
+git rev-parse redesign/foundation origin/redesign/foundation
 ```
 
-Expected: a tree id alone (no conflicts), or conflicts only in `test/guards_test.py`. Record the output for the PR body. Any other conflicting file means a foundation task edited a line this branch changed: resolve it now, on this branch, rather than leave it for the merge.
+Expected: `foundation is underneath`, and two identical SHAs.
+- If the first line is missing, foundation gained commits after the rebase: run `git rebase redesign/foundation`, then `BOXTEST`, and name the new base in the PR body.
+- If `origin/redesign/foundation` is missing or differs from the local branch, stop and ask the controller. Foundation is pushed in its own Task 12, first; this branch does not push it or guess which one is right.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add tools/cams_e2e.py
-git commit -m "One command proves the cameras end to end on the box: recording, live, playback and locks" -m "The C920 records as the cabin and test pictures stand in for front and rear. It checks every role, whole one-minute clips that start on a keyframe, a Range request, Mark event, and hard braking from a scripted speed, and it takes the screenshots to set beside mockup 6.
+git commit -m "One command proves the cameras end to end on the box: recording, live, playback and locks" -m "The C920 records as the cabin and test pictures stand in for front and rear. It checks every role, whole one-minute clips that start on a keyframe, a Range request, Mark event, and hard braking from a scripted speed, polling with deadlines rather than sleeping, and it takes the screenshots to set beside mockup 6 through tools/shoot.py.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 5: Push, and open a draft PR**
+- [ ] **Step 5: Push, and open a draft PR against the foundation**
 
 ```bash
-git push -u origin redesign/cameras
 git ls-remote --heads origin redesign/foundation
 ```
 
-If `redesign/foundation` is on origin, open the PR against it. If not, open it against `omacar-launch`, and make the body's first line "Stacks on redesign/foundation; merge that first."
+If that prints nothing, stop and ask the controller: the PR's base is `redesign/foundation`, and there is no other base to fall back to. Otherwise:
 
 ```bash
+git push -u origin redesign/cameras
 gh pr create --draft --base redesign/foundation --head redesign/cameras \
   --title "Cameras and drowsy mode" --body-file "$SCRATCH/pr-body.md"
 ```
 
 `$SCRATCH/pr-body.md` must contain:
-- a line per task's commit;
-- the merge-tree result from Step 3;
+- a line per task's commit, and which deferrable tasks (11, 12) were skipped, if any;
+- the result of Step 3;
 - any suite that already failed at baseline;
-- the end-to-end output and the three screenshots, attached through the PR's web UI;
+- the end-to-end output and the screenshots, attached through the PR's web UI;
 - the line `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 
 Then run `get_status` from the ccd_pr tools, and bind the PR if it is not reported.
 
-- [ ] **Step 6: Ask which build the demo drives**
+- [ ] **Step 6: Tuesday evening, on the tablet, with the owner (time-boxed)**
 
-`redesign/foundation` may have moved on (Tasks 8–12). Ask the controller whether Wednesday's build should include it. If yes:
-- run `git merge redesign/foundation` on this branch, and resolve `test/guards_test.py` by keeping both sides;
-- run `BOXTEST`;
-- push.
+**The time box is 90 minutes, and the cameras (6.3 and 6.4) get 40 of them.** Drowsy mode needs only the cabin camera. When the cameras' 40 minutes are up, keep the last rung of the fallback ladder in 6.4 that held, and go on to sound (6.5). Record which rung it was.
 
-If no, the demo drives `redesign/cameras` as it stands.
-
-- [ ] **Step 7: Tuesday evening, on the tablet, with the owner**
-
-These run from the Mac through the box: `ssh jmyers@omarchy 'ssh -o BatchMode=yes omacar "…"'`. `T` below means `~/Projects/.omacar-wt/cameras` on the tablet.
-
-1. **Put the branch on the tablet** without touching the kiosk's checkout, bring the private pictures and voice clips across, and run the suite there:
+Every command in this step runs in a shell on the tablet unless it says "on the box". Open one from the Mac with:
 
 ```bash
-ssh jmyers@omarchy 'ssh -o BatchMode=yes omacar "cd ~/Projects/omacar && git fetch origin && git worktree add ~/Projects/.omacar-wt/cameras origin/redesign/cameras"'
-ssh jmyers@omarchy 'rsync -a ~/Projects/omacar/share/assets/private/ omacar:Projects/.omacar-wt/cameras/share/assets/private/'
-ssh jmyers@omarchy 'ssh -o BatchMode=yes omacar "cd ~/Projects/.omacar-wt/cameras && test/all.sh; python3 lib/assets.py status"'
+ssh -t jmyers@omarchy ssh -t omacar
 ```
 
-Expected: the suite as on the box, and `ok` for every voice clip.
-
-2. **Install the recorder's unit, pointed at the worktree:**
+Every path is spelled out, so each line pastes as it stands. An implementer without a terminal sends the same lines as a script instead, as in:
 
 ```bash
-ssh jmyers@omarchy 'ssh -o BatchMode=yes omacar "T=\$HOME/Projects/.omacar-wt/cameras; sed \"s|__ROOT__|\$T|g\" \$T/share/systemd/omacar-cams.service > ~/.config/systemd/user/omacar-cams.service && systemctl --user daemon-reload"'
+ssh jmyers@omarchy ssh -o BatchMode=yes omacar bash -s <<'EOF'
+python3 ~/Projects/.omacar-wt/cameras/lib/cams.py status
+EOF
 ```
 
-3. **With the owner, plug in the cameras.** The DJI Osmo Action 4 goes on the front, the Insta360 Ace Pro on the rear, and the C920 on the cabin, all through the powered USB 3 hub. Then run `ls -l /dev/v4l/by-id`, `v4l2-ctl -d <each video-index0> --list-formats-ext > ~/cams-<role>.txt`, and `python3 T/lib/cams.py status`. If a camera's name does not match its default pattern, write `~/.config/omarchy/omacar-cameras.json` with `{"patterns": {"<role>": "<a word from its by-id name>"}}` and check again.
+**6.1 Put the branch on the tablet, fetch MediaPipe, and run the suite.** Do this before the recorder starts: the suite refuses to run beside it (Task 1).
 
-4. **Record.** `python3 T/lib/cams.py on`, wait 70 s, then `python3 T/lib/cams.py status`.
-   - For ten minutes, `python3 T/lib/cams.py status` once a minute. Each role's fps must stay at or above 90% of its mode's rate. This is open question 2: one hub, three cameras, no dropped frames. An error line such as `VIDIOC_STREAMON: No space left on device` means the bus is full: move the rear camera to the tablet's other USB port, run the ten minutes again, and record which arrangement held.
-   - CPU: `top -b -n 3 -d 5 | grep -E "ffmpeg|python"`.
-   - Ask the owner how long the DJI and the Insta360 run on USB power, and how hot they get. This is open question 1.
+```bash
+cd ~/Projects/omacar && git fetch origin && git worktree add ~/Projects/.omacar-wt/cameras origin/redesign/cameras
+mkdir -p ~/Projects/.omacar-wt/cameras/share/assets/private && cp -a ~/Projects/omacar/share/assets/private/. ~/Projects/.omacar-wt/cameras/share/assets/private/
+python3 ~/Projects/.omacar-wt/cameras/lib/assets.py fetch
+cd ~/Projects/.omacar-wt/cameras && test/all.sh
+```
 
-5. **Sound.**
-   - Run `python3 T/lib/audio.py on`, then `status`. Expected: output `AUX (headphone jack)`, volume 100% (held at 100%).
-   - Unplug the jack and run `status` again. Expected: `the speakers: AUX disconnected`. Plug it back in.
+Expected: `fetched` four times, then the suite as on the box.
+- If the tablet cannot reach the internet, copy the box's fetched files, **on the box**: `rsync -a ~/Projects/.omacar-test/cameras/share/js/vendor/mediapipe/ omacar:Projects/.omacar-wt/cameras/share/js/vendor/mediapipe/`. Then run the `fetch` line again on the tablet, which checks them against the pins and fetches nothing.
+- (Task 12) Bring the voice clips across, **on the box**: `rsync -a ~/Projects/omacar/share/assets/private/voice/ omacar:Projects/.omacar-wt/cameras/share/assets/private/voice/`. Then, on the tablet, `python3 ~/Projects/.omacar-wt/cameras/lib/assets.py status` must say `ok` for every voice clip.
 
-6. **The demo build, in the kiosk** (these commands run on the tablet). Record where `~/.local/bin/omacar` points (`readlink ~/.local/bin/omacar`) so it can be put back. Then:
+**6.2 Install the recorder's unit, pointed at the worktree:**
+
+```bash
+sed "s|__ROOT__|$HOME/Projects/.omacar-wt/cameras|g" ~/Projects/.omacar-wt/cameras/share/systemd/omacar-cams.service > ~/.config/systemd/user/omacar-cams.service
+systemctl --user daemon-reload
+```
+
+**6.3 With the owner, plug in the cameras.** The DJI Osmo Action 4 goes on the front, the Insta360 Ace Pro on the rear, and the C920 on the cabin, all through the powered USB 3 hub. Then:
+
+```bash
+ls -l /dev/v4l/by-id
+for d in /dev/v4l/by-id/*-video-index0; do echo "== $d"; v4l2-ctl -d "$d" --list-formats-ext; done > ~/cams-formats.txt
+python3 ~/Projects/.omacar-wt/cameras/lib/cams.py status
+```
+
+The tablet's own IPU6 nodes (`/dev/video0`–`63`) never appear: the recorder refuses them (Task 1). If a camera's by-id name does not match its default pattern, write the config with a word from its name, for example `echo '{"patterns": {"front": "SZ_DJI"}}' > ~/.config/omarchy/omacar-cameras.json`, and run `status` again. Keep those patterns in every config line of 6.4.
+
+**6.4 Record for ten minutes, and step down the ladder if it does not hold.**
+
+```bash
+python3 ~/Projects/.omacar-wt/cameras/lib/cams.py on
+sleep 70; python3 ~/Projects/.omacar-wt/cameras/lib/cams.py status
+for i in 1 2 3 4 5 6 7 8 9 10; do sleep 60; python3 ~/Projects/.omacar-wt/cameras/lib/cams.py status; done
+top -b -n 3 -d 5 | grep -E "ffmpeg|python"
+```
+
+This is open question 2: one hub, three cameras, no dropped frames. The arrangement holds when, for the whole ten minutes:
+- every role recording stays at or above 90% of its mode's rate;
+- none reads STALLED (the watchdog restarts a camera whose picture stops for 10 s, Task 1);
+- no error line appears.
+
+An error such as `VIDIOC_STREAMON: No space left on device` means the USB bus is full. Try the rear camera on the tablet's other USB port once, for five minutes, before the ladder.
+
+If it does not hold, step down one rung at a time. Each rung is one config line and a restart; then run the `status` loop again, for five minutes rather than ten:
+
+| Rung | What records | Config line |
+|---|---|---|
+| 1 | all three, the rear at 720p | `echo '{"caps": {"rear": [1280, 720, 30]}}' > ~/.config/omarchy/omacar-cameras.json && systemctl --user restart omacar-cams` |
+| 2 | front and cabin | `echo '{"patterns": {"rear": ""}}' > ~/.config/omarchy/omacar-cameras.json && systemctl --user restart omacar-cams` |
+| 3 | the cabin only, for drowsy mode | `echo '{"patterns": {"rear": "", "front": ""}}' > ~/.config/omarchy/omacar-cameras.json && systemctl --user restart omacar-cams` |
+
+If 6.3 needed patterns, put them in the same object, for example `{"patterns": {"front": "SZ_DJI", "rear": ""}}`.
+
+Ask the owner how long the DJI and the Insta360 run on USB power, and how hot they get. This is open question 1.
+
+**6.5 Sound.**
+- Run `python3 ~/Projects/.omacar-wt/cameras/lib/audio.py on`, then `python3 ~/Projects/.omacar-wt/cameras/lib/audio.py status`. Expected: output `AUX (headphone jack)`, volume 100% (held at 100%).
+- Unplug the jack and run `status` again. Expected: `the speakers: AUX disconnected`. Plug it back in.
+
+**6.6 The demo build, in the kiosk.** Record where `~/.local/bin/omacar` points, so it can be put back:
+
+```bash
+readlink ~/.local/bin/omacar
+```
+
+If that printed nothing, `~/.local/bin/omacar` is a file rather than a link: run `cp ~/.local/bin/omacar ~/.local/bin/omacar.before-cameras` first, and put that copy back after the drive. Then:
 
 ```bash
 systemctl --user stop omacar-kiosk; ~/.local/bin/omacar server stop
@@ -6352,16 +7557,23 @@ ln -sfn ~/Projects/.omacar-wt/cameras/bin/omacar ~/.local/bin/omacar
 systemctl --user start omacar-kiosk
 ```
 
-   If `readlink` printed nothing, `~/.local/bin/omacar` is a file rather than a link: copy it to `~/.local/bin/omacar.before-cameras` before the `ln`, and put that copy back after the drive instead.
+Press Begin. The owner hears the chime through the car, with the radio on AUX, rising from silence and fading back to it (Task 7).
 
-   Press Begin: the owner hears the chime through the car, with the radio on AUX.
+**6.7 Drowsy mode, parked, with the owner in the driver's seat and the ignition on.** "Test the alerts" needs the car connected and stopped; with no link it is greyed out.
+- Open Settings → Drowsy mode. The preview shows the cabin picture and a face.
+- Have the owner look straight ahead, then nod down. The measures line's pitch must fall (more negative) on the nod. If it rises instead:
+  - set `PITCH_SIGN = -1` in `share/js/drowsy.js` on the Mac, and commit ("Chin-down reads negative on the tablet's camera, as the nod detector expects");
+  - push;
+  - on the tablet, run `git -C ~/Projects/.omacar-wt/cameras fetch && git -C ~/Projects/.omacar-wt/cameras checkout --detach origin/redesign/cameras`.
+- Run "Test the alerts" with the radio playing through the car. The card at the top reads "Testing the alerts" with Stop. In turn you should hear:
+  - the chime (and the voice, Task 12) and the radio swelling;
+  - the radio ducking and the bark rising;
+  - the alarm rising to full (and "Pull over now", Task 12);
+  - then the fade.
+- Set the car's knob so the radio is comfortable. The alerts must then be clearly louder, and none of them startling: every sound starts from silence and rises over 1.5 s or 3 s.
+- Run it again and press Stop part-way: the sound fades out within 3 s and the card goes.
 
-7. **Drowsy mode, parked, with the owner in the driver's seat.**
-   - Open Settings → Drowsy mode. The preview shows the cabin picture and a face.
-   - Have the owner look straight ahead, then nod down. The measures line's pitch must fall (more negative) on the nod. If it rises instead, set `PITCH_SIGN = -1` in `share/js/drowsy.js` on the Mac, and commit ("Chin-down reads negative on the tablet's camera, as the nod detector expects"). Then push, and `git -C ~/Projects/.omacar-wt/cameras fetch && git -C ~/Projects/.omacar-wt/cameras checkout --detach origin/redesign/cameras` on the tablet.
-   - Run "Test the alerts" with the radio playing through the car. You should hear the chime and the voice, the radio duck and the bark rise, then the alarm rise to full and "Pull over now", and then the fade. Set the car's knob so the radio is comfortable. The alerts must then be clearly louder, and none of them startling.
-
-8. **Write down what was measured.** Append to `doc/cameras.md` on the Mac:
+**6.8 Write down what was measured.** Append to `doc/cameras.md` on the Mac:
 
 ```markdown
 ## What the tablet records, measured 2026-09-29
@@ -6378,6 +7590,7 @@ did with three USB cameras on one powered USB 3 hub.
 | cabin | … | … | … | … | … |
 
 - Ten minutes with all three: …
+- The fallback rung that held (none, 1, 2 or 3), and its config: …
 - USB power and heat (DJI, Insta360): …
 - Audio: AUX at 100%, held by `omacar audio on`; unplugged reads "AUX disconnected".
 - Drowsy mode: the nod sign …; Test the alerts, heard through the car: ….
@@ -6385,12 +7598,16 @@ did with three USB cameras on one powered USB 3 hub.
 For the Los Banos session: the per-second measures are in
 `~/.local/state/omacar/drowsy/2026-09-30.jsonl`, events are in the records
 book as `kind=drowsy`, and the cabin clips are in `~/Videos/OmaCar/cabin/`.
-Thresholds are tuned in `~/.config/omarchy/omacar-drowsy.json`.
+Thresholds are tuned in `~/.config/omarchy/omacar-drowsy.json`, and whether an
+alert already sounding carries on below 30 mph is its
+`alert_continues_below_gate`.
 ```
 
-   Fill every `…` with what steps 3–7 measured: the by-id names, `cams.py status` modes and fps, the `top` figures, and the owner's answers. Then commit ("The tablet's cameras, measured: modes, frame rates and CPU with all three on one hub"), and push.
+Fill every `…` with what 6.3–6.7 measured: the by-id names, `cams.py status` modes and fps, the `top` figures, the rung, and the owner's answers. Then commit ("The tablet's cameras, measured: modes, frame rates and CPU on one hub"), and push.
 
-9. **Leave it running.** `omacar cams on` has already enabled the unit, so the recorder starts at login. The kiosk now serves the worktree. Tell the owner the one line that puts the kiosk back after the drive: `ln -sfn <the readlink from step 6> ~/.local/bin/omacar && systemctl --user restart omacar-kiosk`.
+**6.9 Leave it running.** `cams.py on` has already enabled the unit, so the recorder starts at login, and the kiosk now serves the worktree. Tell the owner:
+- the one line that puts the kiosk back after the drive: `ln -sfn <the readlink from 6.6> ~/.local/bin/omacar && systemctl --user restart omacar-kiosk`;
+- that the suite on the tablet now needs `python3 ~/Projects/.omacar-wt/cameras/lib/cams.py off` first, and `on` after.
 
 ---
 
@@ -6400,31 +7617,31 @@ Thresholds are tuned in `~/.config/omarchy/omacar-drowsy.json`.
 
 | Spec | Task |
 |---|---|
-| Roles by `/dev/v4l/by-id` patterns, config override, infrared ELP drops in | 1 |
-| Modes from `v4l2-ctl`, best at or under 1080p30, MJPEG > H.264 > YUYV; cabin low resolution | 1 |
+| Roles by `/dev/v4l/by-id` patterns, config override, infrared ELP drops in; the IPU6 floor | 1 |
+| Modes from `v4l2-ctl`, best at or under the cap (1080p30; cabin 640×480), MJPEG > H.264 > YUYV | 1 |
 | One ffmpeg per camera, decoded once, split; `h264_vaapi`; 6/6/1 Mbit/s; passthrough; keyframes at boundaries; one-minute fMP4 at the named path | 1 |
 | Live picture 640 px, 10 fps, JPEG, atomic, `$XDG_RUNTIME_DIR/omacar-cams/<role>.jpg` | 1 |
 | Loop budget 40 GB, oldest unlocked first, locked moved and never deleted | 1 |
 | Hard braking (16 km/h in 1 s) locks −30 s…+30 s on every camera; events.json | 1 |
 | The six server routes, Range support | 2 (`live` and `clip` in serve.py) |
-| `omacar-cams.service` (Restart=always, no start limit, Nice=10); `omacar cams status\|on\|off\|sim`; SIMULATED | 1, 3, 4 |
+| `omacar-cams.service` (Restart=always, no start limit, Nice=10); `omacar cams status\|on\|off\|sim`; SIMULATED | 1, 3 |
 | Cameras tab: main and two small feeds with role, resolution, REC, clock; timeline; playback ±10 s; Save clip, Mark event; Mute disabled; selection; storage, loop, parking watch; the badge | 3 |
-| Home's Dashcams card: live front, REC, and why not | 4 |
-| MediaPipe 1.0.1 Face Landmarker, VIDEO mode, blendshapes and matrix, self-hosted | 9, 10 |
-| Page draws the cabin picture to a canvas at 10–15 fps | 10 |
-| Measures: closure, baseline, closed, duration, PERCLOS, yawn, nod, face lost | 6 |
-| Camera-free signals; Level 1 only | 7, 10 |
-| Active only above 30 mph, connected and moving | 7, 10 |
-| The ladder, thresholds file, sensitivity −20% | 6, 7, 10 |
-| Release, fade 3 s, Level 3 banner, `kind=drowsy` records | 7, 10, 11 |
-| One output stage; music −12 dBFS; 12 dB headroom | 5 |
-| Volume pinned to 100% (wpctl), `GET /api/audio`, applied at start; AUX disconnected on Home | 5, 11 |
-| Radio stays on AUX: Begin and settings say so; Begin chimes | 8, 11 |
-| Ramps via `linearRampToValueAtTime`; `rampPlan(level, from, to)`; ≤ 3 dB per 100 ms | 8 |
-| Chime and alarm synthesized; bark synthesized; Piper voice, private, in the manifest | 8, 9 |
-| Status chip on Home and the top bar; Settings → Drowsy mode (on/off, sensitivity, name, sounds, test while parked); the rest copy | 11 |
-| Tests: JS units, Python units, the box end to end, the tablet on Tuesday | 1–12 |
-| Measured modes in `doc/cameras.md` | 12 |
+| Home's Dashcams card: live front, REC, and why not | 11 (deferrable) |
+| MediaPipe 1.0.1 Face Landmarker, VIDEO mode, blendshapes and matrix, self-hosted | 8, 9 |
+| Page draws the cabin picture to a canvas at 10–15 fps | 9 |
+| Measures: closure, baseline, closed, duration, PERCLOS, yawn, nod, face lost | 5 |
+| Camera-free signals; Level 1 only | 6, 9 |
+| Active only above 30 mph, connected and moving | 6, 9 |
+| The ladder, thresholds file, sensitivity −20% | 5, 6, 9 |
+| Release, fade 3 s, Level 3 banner, `kind=drowsy` records | 6, 7, 9, 10 |
+| One output stage; music −12 dBFS; 12 dB headroom | 4 |
+| Volume pinned to 100% (wpctl), `GET /api/audio`, applied at start; AUX disconnected on Home | 4, 11 |
+| Radio stays on AUX: Begin and settings say so; Begin chimes | 7, 10 |
+| Ramps via `linearRampToValueAtTime`; `rampPlan(level, from, to)`; ≤ 3 dB per 100 ms, per sound | 4, 7 |
+| Chime and alarm synthesized; bark synthesized; Piper voice, private, in the manifest | 7, 12 (deferrable) |
+| Status chip in the top bar (and on Home, Task 11); Settings → Drowsy mode (on/off, sensitivity, name, sounds, test while parked); the rest copy | 10 |
+| Tests: JS units, Python units, the box end to end, the tablet on Tuesday | 1–13 |
+| Measured modes in `doc/cameras.md` | 13 |
 
 Not built by this plan, by the spec's own design:
 - Wednesday's drive and the Los Banos tuning session. The plan gives them the measures log and the thresholds file.
@@ -6432,22 +7649,60 @@ Not built by this plan, by the spec's own design:
 - Parking watch ("coming later").
 - Better alert sounds ("another day").
 
-**2. Placeholder scan.** No step says TBD or "handle edge cases", and none says "similar to Task N". Two places deliberately take values that only exist at execution time:
-- Task 9, the no-SIMD file sizes, printed by `wc -c` in the same step;
-- Task 12, Step 7, the tablet's measured modes and the owner's answers. The table's shape and the commands that produce each value are given.
+**2. Placeholder scan.** No step says TBD or "handle edge cases", and none says "similar to Task N". Three places deliberately take values that only exist at execution time:
+- Task 8, Step 5, and Task 12, Step 6: the SHA-256 pins, written by `assets.py fetch --pin` and `assets.py pin` from the files themselves;
+- Task 13, Step 6.8: the tablet's measured modes, the fallback rung that held and the owner's answers. The table's shape and the commands that produce each value are given.
 
 **3. Type and name consistency.**
-- **The ladder's names.** The trigger names (`perclos`, `closed`, `yawns`, `nods`, `since-stop`, `night`, `repeat-l2`) match between `ladder.js`, its tests and `drowsyui.js`'s `TRIGGER`. The cue kinds match between `ladder.js`, `alertplayer.js` and `drowsyrun.js`'s `test()`.
-- **Voice names.** `voice-<clip>[-james]` is used by the manifest (Task 9), `vendor_test.py` and `alertplayer.js`.
+- **The ladder's names.** The trigger names (`perclos`, `closed`, `yawns`, `nods`, `since-stop`, `night`, `repeat-l2`) match between `ladder.js`, its tests and `drowsyui.js`'s `TRIGGER`. The cue kinds (`chime`, `voice`, `swell`, `duck`, `bark`, `alarm`, `fade`) match between `ladder.js`, `alertplayer.js` and `drowsyrun.js`'s `test()`.
+- **Voice names.** `voice-<clip>[-james]` is used by the manifest (Task 12), `vendor_test.py`, `alertplayer.js` and `drowsyrun.js`'s `rotationFor` check.
 - **Recorder names.** `cams.BOUNDARY` is `omacarframe` in `cams.py`, both HTTP tests and `mjpeg.test.js`. `camstore.clip_path(role, name, root=None)` has that signature in every caller.
 - **The measures snapshot.** Its keys (`face`, `calibrated`, `closed`, `closedFor`, `perclos`, `yawns`, `nods`, `faceLost`) are the ones `ladder.js`, `chipOf` and `measureLine` read.
-- **The config keys.** `nod.below_deg` and `level1.count_window_secs` are named the same in `drowsy.json`, `drowsy.js` and both tests.
+- **The config keys.** `nod.below_deg`, `level1.count_window_secs`, `min_speed_mph` and `alert_continues_below_gate` are named the same in `drowsy.json`, `drowsy.js`, `ladder.js`, `drowsyrun.js` and the tests.
+- **The state `drowsyui.js` draws.** `testing` and `testLevel` are published by `drowsyrun.js` and read by `testLine`.
 
-**4. Checked before it was committed (2026-09-28).** This plan's new files and hunks were built, from its own text, into a scratch copy of the tree at 5f9356f, and its suites run on the box:
-- `cams_test`, `camserve_test`, `audio_test`, `drowsy_test` and `guards_test` passed.
-- `app_test` booted with drowsy mode loaded and nothing threw.
-- `js_test` passed 149 and failed 0.
-- The real `h264_vaapi` command gave 2.0 s segments, each starting on a keyframe, and 70 live frames in 7 s.
-- `cams_e2e.py` ran with all three roles simulated (the C920 held out on purpose). It found whole 60.0 s first clips, hard braking, both locks, a 206, and the screenshots. That run is what corrected its lock check and led to `tools/camshot.py`.
+**4. Checked before it was committed (2026-09-28).** This revision's new files and hunks were built, from its own text, into a scratch copy of the tree at 8768165 (on 1cda3bb), mirrored to `~/Projects/.omacar-test/cameras`, and run on the box:
+- `test/all.sh`: every suite green except what only exists after an execution-time step:
+  - `vendor_test.py`: the four MediaPipe pins, the files not yet fetched, and the five voice pins (Task 8, Step 5; Task 12, Step 6);
+  - `vendor.test.js`: the bundle is not fetched yet.
+  - Its fetch mechanism checks, against `file://` downloads, passed.
+- `js_test` passed 171 and failed 1 (that `vendor.test.js`). `cams_test`, `camserve_test`, `audio_test`, `drowsy_test` and `guards_test` passed, and `app_test` booted with drowsy mode running and nothing thrown.
+- Foundation's two later commits (c471ae7, 90c9cf6) applied cleanly on top, and `app_test` then passed its exact `data-state` count with the Dashcams card and the drowsy chip in place.
+- `cams_e2e.py` ran with the C920 held out, so every role was simulated. Every check held except, as intended, "the cabin is the C920":
+  - braking was caught by polling;
+  - the first clips were whole 60.0 s clips, each starting on a keyframe;
+  - both events were locked in locked folders;
+  - there was a 206;
+  - the screenshots and DOM checks went through `shoot.shoot()`.
+- `tools/sim-cams.sh` ran `shoot.py` with `?dz=1`, `?dz=3` and `?dz=test`. The chip read `Paused · parked`, the test card showed Stop, and no recorder was left running.
 
-Not run: anything with the real camera or the car. That is Task 10's check, Task 12's end-to-end run, and Tuesday evening.
+Not run: anything that needs the fetched MediaPipe (`drowsy_check.py`), Piper, the real camera, or the car. Those are Task 9 Step 6, Task 12, Task 13 Step 2, and Tuesday evening.
+
+**5. The pre-flight findings of 2026-09-28, and where each landed.**
+
+| Finding | Where |
+|---|---|
+| 1.1 rebase onto 1cda3bb; SHAs; PR base | "Merging with the foundation branch"; Task 13 Steps 3 and 5 |
+| 2.1 / 4.3 the gate starts alerts; one sounding carries on (`alert_continues_below_gate`, default true, awaiting the owner) | Global constraints; Task 5 Step 1; Task 6 Steps 1 and 3 |
+| 2.3 "not rising" kept | Global constraints (Release); Task 6 Step 3 |
+| 2.4 Sensitive lowers every threshold | Task 6 Steps 1 and 3 (`scaled`) |
+| 2.5 Level 3 has no time cap while moving | Task 6 Steps 1 and 3; Task 7 Step 4 (`playAlarm` holds until the fade) |
+| 3.2 the identity test replaced by the real graph | Task 4 Step 1 |
+| 3.3 poll, do not sleep | Task 2 Step 1 (J1 read before J2); Task 13 Step 1 |
+| 3.4 no duplication | Task 2 Step 3 (`wait_for_port`); Task 3 Step 7 (`shoot.py` extended); Task 9 Step 6 (`served()` and `serve.py`'s stream) |
+| 3.5 no `pkill` | Task 3 Step 7 (`sim-cams.sh` kills its pid) |
+| 3.6 pasteable tablet commands | Task 13 Step 6 |
+| 4.1 per-sound envelopes from silence; bus back to silence; `playAlarm` enveloped; first alert, repeat, escalation tested | Task 4 Steps 1 and 4 (`gateAlerts`); Task 7 Steps 1, 3 and 4 |
+| 4.2 simulated samples ignored | Task 1 Steps 2 and 5 (braking); Task 2 Step 4 (`_speed`); Task 9 Steps 1 and 4 (`gateOf`, `chipOf`) |
+| 4.4 a settings save never orphans audio | Task 9 Step 4 (`reload` clears through the tap path); Task 5 Step 3 and Task 6 Step 3 (`setConfig`) |
+| 4.5 Test the alerts parked-only, with Stop, aborts on moving | Task 9 Steps 1 and 4 (`testMayRun`); Task 10 Step 3 (the card) |
+| 4.6 no re-raise without new evidence | Task 6 Steps 1 and 3 (armed evidence) |
+| 5.1 stall watchdog | Task 1 Steps 2 and 5 (`check_stalls`, `stalled`) |
+| 5.2 exception guard; pid check | Task 1 Steps 2 and 5 (`_safely`, `_ours`) |
+| 5.3 the video64 floor | Task 1 Steps 2 and 5 (`usb_floor`, `find_cameras`) |
+| 5.4 caps from `omacar-cameras.json` | Task 1 Steps 2, 4 and 5 |
+| 6.1 the suite fails fast beside a recorder | Task 1 Step 2 (the all.sh guard) |
+| 6.2 screenshots on scratch state | Task 10 Step 7 (`sim-cams.sh`) |
+| MediaPipe option B | Task 8 |
+| Piper as a system package | Task 12 |
+| Schedule: time box and fallback ladder; Task 3 kept; deferrable card and voice | Task 13 Step 6; Tasks 11 and 12 |
