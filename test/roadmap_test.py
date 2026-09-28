@@ -294,5 +294,24 @@ else:
         R.ROOT = saved
         shutil.rmtree(nowhere, ignore_errors=True)
 
+# ---------------------------------------------------------------------------
+head("A byte that is not UTF-8 cannot stop the count")
+
+fake = tempfile.mkdtemp(prefix="omacar-roadmap-bytes-")
+os.makedirs(os.path.join(fake, "test"))
+with open(os.path.join(fake, "test", "all.sh"), "wb") as f:
+    f.write(b"#!/bin/bash\n"
+            b"printf '\\n  A suite with a camera called \\xff\\xfe\\n\\n'\n"
+            b"printf '   ok   one\\n   ok   two\\n'\n")
+saved = R.ROOT
+R.ROOT = fake
+try:
+    t = R.run_tests()
+    ok("run_tests reads a suite whose output is not valid UTF-8",
+       t is not None and t["checks"] == 2 and t["ok"])
+finally:
+    R.ROOT = saved
+    shutil.rmtree(fake, ignore_errors=True)
+
 print(f"\n  {PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

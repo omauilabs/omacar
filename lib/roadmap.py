@@ -270,13 +270,19 @@ def run_tests():
     the scratch HOME it built, which is a fresh temp path on every run. Left in,
     it would make the generated block differ from itself every single time and
     the whole no-op-when-nothing-changed design would collapse.
+
+    Decoded with errors="replace". A suite that prints one byte that is not
+    UTF-8 -- a device name, a stray escape from a terminal program -- made a
+    strict decode raise, and `--check` died on the Mac with a traceback about
+    encodings instead of a count. Only headings and "ok" lines are read, so a
+    replacement character in some other line changes nothing here.
     """
     sh = os.path.join(ROOT, "test", "all.sh")
     if not os.path.exists(sh):
         return None
     try:
         out = subprocess.run(["bash", sh], cwd=ROOT, capture_output=True,
-                             text=True, timeout=600)
+                             encoding="utf-8", errors="replace", timeout=600)
     except (OSError, subprocess.TimeoutExpired):
         return None
     groups, cur = [], None
