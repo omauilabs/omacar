@@ -12,6 +12,9 @@
 // anyway.
 
 import { h } from "./core.js";
+// The radio joins the one output stage (audiobus.js): its analyser feeds the
+// music bus, 12 dB below full scale, so every alert has headroom over it.
+import { audioContext, musicIn } from "./audiobus.js";
 
 const STREAM = "https://radio.cliamp.stream/omarchy/stream";
 const STATS = "https://radio.cliamp.stream/statistics";
@@ -214,7 +217,7 @@ function analyserFor(a) {
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return null;
   try {
-    actx = new AC();
+    actx = audioContext();
     sourceNode = actx.createMediaElementSource(a);
     analyser = actx.createAnalyser();
     // 1024 bins, ~23 Hz apiece at 48 kHz. 1024 was the first choice and it was
@@ -230,10 +233,10 @@ function analyserFor(a) {
     analyser.minDecibels = -76;
     analyser.maxDecibels = -20;
     // The element's audio now flows THROUGH this graph. Forget to connect the
-    // far end to the destination and the visualiser works beautifully while
-    // the radio goes silent.
+    // far end to the stage and the visualiser works beautifully while the
+    // radio goes silent.
     sourceNode.connect(analyser);
-    analyser.connect(actx.destination);
+    analyser.connect(musicIn());
     bins = new Uint8Array(analyser.frequencyBinCount);
   } catch {
     // Tainted, unsupported, or the element was already taken. The player must

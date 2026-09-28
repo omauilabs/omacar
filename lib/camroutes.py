@@ -69,6 +69,9 @@ def handle_get(path, query):
         t0, t1 = _num(_one(q, "from")), _num(_one(q, "to"))
         return 200, {"clips": camstore.list_clips(role or None, t0, t1),
                      "events": camstore.list_events(t0, t1), "now": time.time()}
+    if path == "/api/audio":
+        import audio
+        return 200, audio.status()
     return None
 
 
@@ -85,4 +88,10 @@ def handle_post(path, body):
                 return 400, {"error": "t is not within the last week"}
         kind = "marked" if path.endswith("/mark") else "saved"
         return 200, camstore.mark(kind, t=t, speed_kph=_speed())
+    if path == "/api/audio":
+        import audio
+        data = _body(body)
+        if data is None or data.get("action") != "apply":
+            return 400, {"error": 'the one action is {"action": "apply"}'}
+        return 200, audio.apply()
     return None
