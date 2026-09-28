@@ -6,8 +6,19 @@ Documentation=file:__ROOT__/lib/drivelog.py
 # screen may be off. Tying it to the session would stop it exactly when the
 # screen was turned off to save the battery.
 After=graphical-session.target
-StartLimitBurst=3
-StartLimitIntervalSec=300
+
+# NO START LIMIT, WHICH IS WHAT Restart=always BELOW ALREADY PROMISES.
+#
+# This was StartLimitBurst=3 over StartLimitIntervalSec=300. With RestartSec=20
+# that is three failures inside about a minute, after which systemd stops
+# restarting it permanently -- so the one situation a rate limit exists to
+# contain is precisely the situation that ends the recording for the rest of
+# the day. An adapter that re-enumerates a few times as the engine cranks would
+# have been enough, and nobody in the car would find out until they got home.
+#
+# RestartSec=20 already bounds this to three starts a minute, which is not a
+# busy loop; a rate limit on top of it buys nothing and costs the return leg.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

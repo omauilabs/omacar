@@ -255,6 +255,28 @@ class Supervisor:
         except RuntimeError as why:
             self.say("declined", str(why))
             return False
+        except OSError as why:
+            # THE ADAPTER GOING AWAY MID-LEG IS NOT A PROGRAM FAULT, AND IT
+            # USED TO KILL THE SUPERVISOR OUTRIGHT.
+            #
+            # pyserial raises SerialException, which is an OSError and NOT a
+            # RuntimeError, and it is raised in the places this file was not
+            # guarding: serial.Serial() in Elm.__init__, and the setup writes
+            # in init(), both of which run before the protected read loop. So
+            # a USB re-enumeration -- vibration on a dash mount, or the
+            # voltage dip at crank -- walked out of leg(), out of run(), past
+            # main()'s KeyboardInterrupt-only guard, and exited non-zero.
+            #
+            # Losing the leg would have been survivable. Losing the process is
+            # not: the unit restarts after twenty seconds, so three of these
+            # inside a minute trip StartLimitBurst and systemd stops trying
+            # for good. The adapter comes back and the recorder never does,
+            # with nobody watching the screen to notice -- which is the entire
+            # premise of this file.
+            #
+            # A leg is the right thing to lose here. Back off, and try again.
+            self.say("declined", str(why))
+            return False
         finally:
             try:
                 if cap.frames:

@@ -205,12 +205,21 @@ def _power(sheet):
 
     # THE ONE THAT ACTUALLY ENDS DRIVES. A tablet that suspends mid-leg does
     # not report an error; it stops answering and comes home with nothing.
+    #
+    # AND IT BLOCKS, because this is not a hypothetical: on 8 September 2026
+    # this machine asked for suspend-then-hibernate at 15:57 during a drive
+    # that was recording, and that boot never resumed -- the account is in
+    # lib/tablet.py's own docstring. It was written here as merely interesting,
+    # which put the one condition that has actually destroyed a leg in the same
+    # yellow column as "this laptop cannot sleep". The contract of this file is
+    # that exit 0 means nothing on this machine will stop a recording, and a
+    # machine that can suspend itself mid-leg does not meet it.
     code, out, _ = _run(["systemctl", "is-enabled", "suspend.target"])
     masked = out == "masked"
     sheet.row("cannot suspend itself", masked,
               "suspend.target is masked" if masked
               else "IT CAN SUSPEND — a tablet in a car should not",
-              "omacar tablet awake", blocking=False)
+              "omacar tablet awake")
 
 
 def _port(sheet):
