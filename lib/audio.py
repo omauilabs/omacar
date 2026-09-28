@@ -183,7 +183,21 @@ def _pin_locked(target):
     iteration re-reads the real sink and decides its next move from THAT
     reading -- never from a count of its own past calls -- which is what
     makes a failed set, an outside change or a sink already at 0.00 cost at
-    most one small step rather than becoming a later jump or a hang."""
+    most one small step rather than becoming a later jump or a hang.
+
+    BELOW THE FLOOR, THE 3 dB RULE DOES NOT APPLY (fix round 3): nothing
+    down there is audible enough to startle anybody, so a sink the volume
+    keys left at, say, 5% or 1% is set straight to FLOOR_V in one step --
+    the one large step this function is allowed to take -- and the ordinary
+    step-by-step ramp takes over once a read confirms it is there. Round 2's
+    version instead tried to ramp UP FROM that low reading directly: at
+    those levels a single hundredth-of-a-percent wpctl tick is many dB, so
+    its "the next tick is too big, call it close enough" escape valve fired
+    immediately and reported `pinned: true` while the sink was still nearly
+    silent -- a dishonest status as well as a safety failure. That escape
+    valve cannot legitimately fire above the floor at all (a tick is ~2.5 dB
+    at v=0.1 and only gets smaller above it), so if it somehow does, this
+    now reports a truthful failure instead of a false success."""
     start = time.monotonic()
     iterations = 0
     last_vol = None
@@ -216,6 +230,15 @@ def _pin_locked(target):
             _sleep(STEP_SECS)
             continue
 
+        if vol < FLOOR_V - 1e-9:
+            # Below the floor: not loud enough to ramp, and not loud enough
+            # to need to. One step straight to the floor -- see this
+            # function's own docstring -- then loop to re-read and confirm
+            # it landed before the ordinary ramp below ever runs on it.
+            _set_volume(FLOOR_V)
+            _sleep(STEP_SECS)
+            continue
+
         cur_db = _db(vol)
         if abs(cur_db - target_db) <= TARGET_TOL_DB:
             return {"pinned": True, "busy": False, "volume": vol,
@@ -229,15 +252,21 @@ def _pin_locked(target):
         if v_next <= vol2 + 1e-9:
             # Rounding down landed back on the level that was just read: at
             # this level, 2.5 dB isn't even one hundredth. Try the next tick
-            # up instead, but only if that tick is still within the PLAN's
-            # own ceiling -- otherwise there is nowhere to go without
-            # breaking it, and the level is treated as close enough.
-            v_alt = round(vol2 + 0.01, 2)
+            # up instead (capped at the target, same as the normal step),
+            # but only if that tick is still within the PLAN's own ceiling.
+            v_alt = min(target, round(vol2 + 0.01, 2))
             if _db(v_alt) - cur_db <= STEP_DB_MAX + 1e-9:
                 v_next = v_alt
             else:
-                return {"pinned": True, "busy": False, "volume": vol,
-                        "iterations": iterations, "error": None}
+                # UNREACHABLE ABOVE THE FLOOR IN PRACTICE (fix round 3): a
+                # two-decimal tick is only ~2.5 dB at v=0.1 and smaller from
+                # there up, so this branch should never fire here. If it
+                # somehow does, that is a bug -- report it as the failure it
+                # is rather than claiming the level was pinned.
+                return {"pinned": False, "busy": False, "volume": vol,
+                        "iterations": iterations,
+                        "error": (f"stuck at {vol * 100:.0f}%: no safe step "
+                                  "available above the floor")}
 
         _set_volume(v_next)
         _sleep(STEP_SECS)
