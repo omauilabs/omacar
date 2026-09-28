@@ -336,6 +336,13 @@ class Store extends EventTarget {
     this.nurseryOn = false;
     this.error = null;        // why the last snapshot failed, or null
     this.liveError = null;    // why the last live sample failed, or null
+    // BUMPED EVERY TIME dropLive() RUNS. A live request already in flight
+    // when the fast clock stops keeps running and answers anyway; without
+    // this, a late success re-latched the sample on the slower screen it
+    // landed on and a late failure left NO SERVER stuck with nothing to clear
+    // it. refreshLive() captures the generation before it awaits and drops
+    // its own answer, success or failure, if dropLive() moved it on.
+    this.liveGen = 0;
     // THE LAST THING KNOWN ABOUT MOTION. `state` says "offline" the moment the
     // adapter stops answering, which is true and says nothing about whether
     // the car is still rolling -- adapters drop out mid-drive. So whether the
@@ -378,13 +385,20 @@ class Store extends EventTarget {
   }
 
   async refreshLive() {
+    const gen = this.liveGen;
+    let live = null, err = null;
     try {
-      this.live = await api.live();
-      this.liveError = null;
+      live = await api.live();
     } catch (e) {
-      this.live = null;
-      this.liveError = String((e && e.message) || e);
+      err = String((e && e.message) || e);
     }
+    // DISCARDED, NOT WRITTEN BACK, if dropLive() moved the generation on
+    // while this was in flight -- see the note on liveGen above. Neither a
+    // late success nor a late failure is current, so neither is applied and
+    // neither is announced.
+    if (gen !== this.liveGen) return;
+    if (err === null) { this.live = live; this.liveError = null; }
+    else { this.live = null; this.liveError = err; }
     this.emit("live");
   }
 
@@ -393,6 +407,7 @@ class Store extends EventTarget {
   // the last thing known about the server. The snapshot clock owns it from
   // here, and clears it the next time it gets an answer.
   dropLive() {
+    this.liveGen++;
     if (this.liveError) this.error = this.liveError;
     this.live = null;
     this.liveError = null;

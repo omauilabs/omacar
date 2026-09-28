@@ -86,4 +86,48 @@ export default [
       await store.refreshCar();
       eq(store.noServer, false, "the snapshot clock got an answer");
     })],
+
+  // ---- N2: a live poll still in flight when dropLive() runs -----------------
+  //
+  // The fast clock's interval is cleared on the way off a screen, but a
+  // request already sent keeps running and used to write back regardless of
+  // what happened while it was in the air. A generation counter, bumped by
+  // dropLive(), lets refreshLive() recognise its own answer has been
+  // overtaken and drop it instead -- success or failure alike.
+  ["a live poll still in flight when dropLive() runs does not re-latch the sample on a late success", async () => {
+    let resolve;
+    const pending = new Promise((r) => { resolve = r; });
+    const was = api.live;
+    try {
+      reset();
+      api.live = () => pending;
+      const p = store.refreshLive();
+      // Left for a screen with no fast clock before the request landed.
+      store.dropLive();
+      resolve(CONNECTED);
+      await p;
+      eq(store.live, null, "the late success is discarded, not latched onto the slower screen");
+      eq(store.connected, false, "so nothing here reads as connected on the strength of it");
+    } finally { api.live = was; reset(); }
+  }],
+
+  ["...and a late failure does not leave NO SERVER stuck on a server that answered", async () => {
+    let reject;
+    const pending = new Promise((_, r) => { reject = r; });
+    const was = api.live;
+    try {
+      reset();
+      api.live = async () => CONNECTED;
+      await store.refreshLive();
+      eq(store.noServer, false, "healthy before the stale failure lands");
+      api.live = () => pending;
+      const p = store.refreshLive();
+      // Left before this one landed too -- the daemon caught up in the meantime.
+      store.dropLive();
+      reject(new TypeError("Failed to fetch"));
+      await p;
+      eq(store.liveError, null, "the late failure left no mark to clear later");
+      eq(store.noServer, false, "a healthy server does not read NO SERVER because of it");
+    } finally { api.live = was; reset(); }
+  }],
 ];
