@@ -2214,8 +2214,14 @@ check("econ and normal keep the cockpit's own accents",
 # It is always a word. looks.js ships a night palette in which every hue
 # collapses to a lightness, and three tints two hours into the dark is not a
 # distinction anybody should be asked to make.
+#
+# THE CHIP MOVED. It used to be painted in main.js's top bar; Task 6 moved it
+# onto Home's speed dial (share/js/views/home.js), so that is what this guard
+# reads now.
+_home_dial = open(os.path.join(ROOT, "share", "js", "views", "home.js"),
+                  encoding="utf-8").read()
 check("and the chip always carries the word",
-      "textContent = String(mode).toUpperCase()" in _main, True)
+      "String(m).toUpperCase()" in _home_dial, True)
 
 # ------------------------------------------------------------------- the dock
 head("the dock got bigger without getting quieter where it matters")
@@ -2359,9 +2365,14 @@ _port = _css2.index("@media (orientation: portrait)")
 # CASCADE ORDER IS THE WHOLE MECHANISM. Every rule in that block overrides one
 # defined earlier at the same specificity, so anywhere but last it silently
 # loses -- which is exactly what happened: written two hundred lines up, and
-# .hub-vitals went on drawing four across in portrait because its own rule came
-# after it.
-for _sel in (".hub-vitals {", ".drive-row {", ".vbar {", ".hub-grid {"):
+# the hub's old vitals strip went on drawing four across in portrait because
+# its own rule came after it.
+#
+# .hub-vitals and .hub-grid dropped out of this tuple with the hub itself
+# (Task 6): those selectors no longer exist in app.css at all, so checking
+# their order would only ever fail. .drive-row and .vbar still live in the
+# same portrait block and still have to come last, so they stay.
+for _sel in (".drive-row {", ".vbar {"):
     check(f"portrait overrides {_sel.strip(' {')} after it is defined",
           _css2.index(_sel) < _port, True)
 

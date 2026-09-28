@@ -11,10 +11,10 @@ import { record } from "./trail.js";
 
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
-import { savedLook, applyLook } from "./looks.js";
+import { savedLook, saveLook, applyLook, nextLook, lookById } from "./looks.js";
 import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
-import hub from "./views/hub.js";
+import home from "./views/home.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
 import replayView from "./views/replay.js";
@@ -169,7 +169,7 @@ import { badge } from "./provenance.js";
 const TABS = [
   { id: "home", label: "Home", icon: ICONS.home,
     views: [
-      { id: "home", label: "Home", title: "Home", mount: hub, fast: true },
+      { id: "home", label: "Home", title: "Home", mount: home, fast: true },
     ] },
   { id: "navigation", label: "Navigation", icon: ICONS.nav,
     views: [
@@ -647,31 +647,6 @@ function buildBar() {
   const right = h("div.tb-right");
   els.name = h("span.tb-car");
 
-  // WHICH MODE THE CAR IS IN, KEPT IN FRAME.
-  //
-  // The cockpit design carries the selected mode in its header and tints the
-  // interface with it: ECON green, NORMAL blue, SPORT red. The first two port
-  // straight across. The third does not, and this is a deliberate divergence
-  // rather than a miss.
-  //
-  // In this app red is the fault colour. It is what an active DTC wears, what
-  // a coolant temperature over 105 wears, and what the launcher marks a failed
-  // step with. A red chip in the one bar that is never off the screen reads as
-  // something being WRONG with the car, and SPORT is not a fault -- it is a
-  // switch position somebody chose. So SPORT takes amber, which carries
-  // "sharper, working harder" without borrowing the word this palette already
-  // uses for trouble.
-  //
-  // It is also always a WORD, never a bare colour: looks.js ships a night
-  // palette in which every hue collapses to a lightness, and a driver two
-  // hours into the dark should not have to distinguish three tints.
-  //
-  // STILL HERE, NOT YET ON HOME. Task 6 moves this onto Home's speed dial;
-  // until then it stays in the bar so the mark you made is never lost.
-  els.mode = h("span.pill.mode-pill", { hidden: true,
-    title: "The drive mode you last marked. OmaCar cannot read it from the "
-         + "car — no identifier reports it — so this is what you wrote down." });
-
   els.src = h("span.tb-src");
   // Visible, not subtle. The failure that matters is thinking you are private
   // when you are not.
@@ -680,13 +655,7 @@ function buildBar() {
     title: "Identifying details are hidden. Tap to show them again.",
     onclick: () => { privacy.on = false; paintBar(); go(); },
   }, "VIN hidden");
-  right.append(els.name, els.mode, els.src, els.priv);
-  refreshDriveMode();
-  // The drive screen is where it gets marked; this is how the bar hears about
-  // it without either file importing the other.
-  document.addEventListener("omacar:drivemode", (e) => {
-    paintDriveMode((e && e.detail) || null);
-  });
+  right.append(els.name, els.src, els.priv);
 
   els.daynight = h("button.vbar-btn", {
     type: "button", id: "btn-daynight", hidden: true,
@@ -780,20 +749,6 @@ async function toggleDayNight() {
     toast(String((e && e.message) || e), "bad");
   }
 }
-
-function paintDriveMode(mode) {
-  if (!els.mode) return;
-  if (!mode) { els.mode.hidden = true; return; }
-  els.mode.hidden = false;
-  els.mode.textContent = String(mode).toUpperCase();
-  els.mode.dataset.mode = mode;
-}
-
-function refreshDriveMode() {
-  api.driveMode().then((d) => paintDriveMode(d && d.mode))
-    .catch(() => { /* an older server: no chip, which is the honest default */ });
-}
-
 
 function paintBar() {
   buildBar();
@@ -916,6 +871,14 @@ function openSettings() {
         }
       }));
 
+    // THE LOOK, which lived on the hub and would otherwise have gone with it.
+    rows.appendChild(row("Look", lookById(savedLook()).note || "",
+      lookById(savedLook()).label, () => {
+        const next = nextLook(savedLook());
+        saveLook(next);
+        applyLook(next);
+        redraw();
+      }));
 
     rows.appendChild(row("Units", "The server owns this, so the dock card and the terminal follow",
       U.units.dist, async (e) => {

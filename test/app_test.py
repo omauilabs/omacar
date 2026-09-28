@@ -83,18 +83,15 @@ window.__st = store;
   window.__st.emit("live");
   await wait(400);
   // THE SCREEN THE TABLET PAINTS WHEN SOMEBODY GETS IN. Read before anything
-  // navigates away from it: HOME is "hub", and the coolant number here used to
-  // be raw Celsius under a bare degree sign while two other screens showed the
-  // same instant in Fahrenheit.
-  // Read the value and the unit as separate elements. Taking textContent of
-  // the whole tile concatenates them with the label, and "89" + "\u00b0" +
-  // "Coolant" contains the substring "\u00b0C" -- which quietly satisfied a
-  // regex looking for a temperature scale, and made this check pass on the
-  // very code it was written to catch.
-  const cool = [...document.querySelectorAll(".hub-vital")]
-    .find((el) => (el.querySelector(".hub-vital-k") || {}).textContent === "Coolant");
-  const vitalV = cool ? (cool.querySelector(".hub-vital-v") || {}).textContent || "" : "";
-  const vitalU = cool ? (cool.querySelector(".hub-vital-u") || {}).textContent || "" : "";
+  // navigates away from it: HOME is the arrival screen, and the coolant number
+  // here used to be raw Celsius under a bare degree sign while two other
+  // screens showed the same instant in Fahrenheit.
+  // HOME'S COOLANT TILE. Value and unit are separate elements, for the reason
+  // above: textContent of the whole tile would satisfy a unit regex by
+  // accident.
+  const cool = document.querySelector('.sig[data-reading="coolant"]');
+  const vitalV = cool ? (cool.querySelector(".sig-v") || {}).textContent || "" : "";
+  const vitalU = cool ? (cool.querySelector(".sig-u") || {}).textContent || "" : "";
   const vital = vitalV;
   location.hash = "#drive";
   await wait(2500);
@@ -121,7 +118,7 @@ window.__st = store;
     return rect();
   };
   const out = { viewport: [innerWidth, innerHeight],
-                hubCoolant: vital, hubUnit: vitalU, driveCoolant: tile,
+                homeCoolant: vital, homeUnit: vitalU, driveCoolant: tile,
                 agree: !!digits(vital) && digits(vital) === digits(tile),
                 unit: vitalU === "\u00b0F" || vitalU === "\u00b0C" };
   out.stopped = await at(0);
@@ -357,11 +354,11 @@ def main():
                       f"rolling {g.get('rolling')})",
                       g.get("stopped") == g.get("rolling")
                       and g.get("stopped") is not None)
-                check(f"the hub and the drive screen agree about the coolant "
-                      f"({g.get('hubCoolant')!r} vs {g.get('driveCoolant')!r})",
+                check(f"Home and the drive screen agree about the coolant "
+                      f"({g.get('homeCoolant')!r} vs {g.get('driveCoolant')!r})",
                       bool(g.get("agree")))
-                check(f"and the hub says which scale it is in "
-                      f"(unit element reads {g.get('hubUnit')!r})",
+                check(f"and Home says which scale it is in "
+                      f"(unit element reads {g.get('homeUnit')!r})",
                       bool(g.get("unit")))
                 widths = sorted({r[2] for r in (g.get("creep") or []) if r})
                 check(f"nor flicker across the threshold in creeping traffic "

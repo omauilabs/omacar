@@ -1275,15 +1275,16 @@ else:
        _seen["last"] is not None and _seen["last"] <= dtclog.IDLE_POLL < 300.0)
     ok("but it does not give up and exit", _seen["sleeps"] >= 20)
 
-head("The hub")
+head("Home, built once")
 
 # The hub used to rebuild its entire DOM -- title, vitals, the radio transport,
 # six tiles and every SVG icon in them -- inside a listener on `live`, which
 # fires every 250ms. Four times a second the whole screen was destroyed and
 # made again: that is what the blinking was, and it also meant the volume
 # slider could not be dragged, because the element under your finger stopped
-# existing.
-_hub = (_share / "js" / "views" / "hub.js").read_text(encoding="utf-8")
+# existing. The hub is gone (Task 6); the build-once rules it was written to
+# protect moved with it onto Home, so this reads home.js now.
+_hub = (_share / "js" / "views" / "home.js").read_text(encoding="utf-8")
 # These asserted one implementation's identifiers -- `update`, `remountRadio`,
 # the literal "!== text" -- and so they failed the moment a different build-once
 # hub won a merge, while every property they were written to protect still held.
@@ -1298,7 +1299,8 @@ ok("the hub is never cleared wholesale on a sample",
 # not be dragged: the element under your finger stopped existing.
 _removes = re.findall(r"^(.*\.remove\(\).*)$", _hub, re.M)
 ok("anything that removes a child does so from a key reconciler",
-   all("have.values()" in ln or "fxHost" in ln for ln in _removes))
+   all("have.values()" in ln or "fxHost" in ln or "want.includes(n)" in ln
+       for ln in _removes))
 ok("a value is only written when it changed",
    re.search(r"textContent\s*!==\s*\w+", _hub) is not None)
 # THE RADIO MOVED TO THE MUSIC PAGE, and the property moved with it rather
@@ -1545,7 +1547,7 @@ for _sel, _body in _display_rules:
 # And the small figures app.css left without it, now that --mono is no longer
 # guaranteed to be a monospace once somebody picks a stack.
 for _cls in (".vbar .odo", ".tbl .num", ".rp-time", ".rp-v", ".svc-when",
-             ".hub-vital-v", ".learn-stat-n", ".g-num"):
+             ".sig-v", ".learn-stat-n", ".g-num"):
     ok(f"{_cls} is pinned to tabular figures",
        re.search(re.escape(_cls) + r"[^{}]*\{[^{}]*tabular-nums", _fcss, re.S)
        is not None

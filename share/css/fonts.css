@@ -69,7 +69,6 @@ body { font-family: var(--sans); }
 
 /* ---- headings ------------------------------------------------------------ */
 .title,
-.hub-title,
 .th-title,
 .th-pv-title,
 .ob-title,
@@ -91,7 +90,7 @@ h1, h2, h3 { font-family: var(--display); }
 .stat-tile .v,
 .drive-tile-v,
 .g-bar-v,
-.hub-vital-v,
+.sig-v,
 .learn-stat-n,
 .th-pv-v {
   font-family: var(--display);
