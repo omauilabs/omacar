@@ -4,7 +4,9 @@
 // last seen moving, and says why -- the same rule as every write screen.
 import { eq } from "./assert.js";
 import launcher from "../js/views/launcher.js";
-import { store } from "../js/core.js";
+import { store, api } from "../js/core.js";
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function mount(before) {
   before();
@@ -49,5 +51,26 @@ export default [
       live({ SPEED: 0, RPM: 0 });
       eq(m.btn.disabled, false, "free again once the sweep ends and the car answers as stopped");
     } finally { m.done(); }
+  }],
+
+  ["a refused Begin re-applies the lock instead of blindly re-enabling", async () => {
+    const wasStart = api.beginStart, wasStatus = api.beginStatus;
+    // begin.py refusing a step: rc 1, no `running` key left behind.
+    api.beginStart = async () => ({});
+    api.beginStatus = async () => ({
+      steps: [{ step: "port", ok: false, fatal: true, said: "in use by omacar-drivelog" }],
+      rc: 1,
+    });
+    const m = mount(() => live({ SPEED: 0, RPM: 0 }));
+    try {
+      m.btn.click();
+      // The car pulls away while the refused request is still in flight, on
+      // the same "live" channel the real fast poll would deliver it on.
+      live({ SPEED: 60, RPM: 2500 });
+      for (let i = 0; i < 50 && !m.root.querySelector(".launch-anyway"); i++) await wait(20);
+      eq(!!m.root.querySelector(".launch-anyway"), true, "the refusal reached the screen");
+      eq([m.btn.disabled, m.btn.title], [true, "Available when you stop"],
+         "the lock is re-applied from the car's current state, not blindly re-enabled");
+    } finally { api.beginStart = wasStart; api.beginStatus = wasStatus; m.done(); }
   }],
 ];

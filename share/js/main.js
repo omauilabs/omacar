@@ -254,8 +254,13 @@ const OFF_NAV = [
     mount: effectsView, off: "opened from Settings", askable: true },
   // The power-on screen: a destination the tablet is pointed at, and Home's
   // "Begin" button when the car is off. Never something to browse to mid-drive.
+  //
+  // FAST, so its own Begin lock decides from a sample that is always current
+  // rather than the twenty-second snapshot: a car that starts moving, or a
+  // DTC sweep that starts, while somebody is looking at this screen has to
+  // lock the button without waiting for a navigation to notice.
   { id: "launcher", label: "Begin", title: "Ready to drive",
-    mount: launcherView, off: "opened from Home when the car is off", hidden: true },
+    mount: launcherView, off: "opened from Home when the car is off", hidden: true, fast: true },
   { id: "omaplay", label: "Phone", title: "Your phone, and the car",
     mount: omaplayView, fast: true, off: "opened from Home's phone card", askable: true },
   { id: "music",  label: "Music", title: "Music",

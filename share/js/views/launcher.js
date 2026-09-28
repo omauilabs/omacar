@@ -86,8 +86,12 @@ export default function launcher(root) {
     // different words would be a second, competing account of the same fault.
     sub.textContent = "Not ready — the marked line says why";
     btn.textContent = "Begin";
-    btn.disabled = false;
+    // RE-APPLY THE LOCK, NEVER JUST RE-ENABLE. The car may have started
+    // moving during the request that just came back refused; started has to
+    // drop first, since paintLock() itself refuses to touch the button while
+    // it is still true.
     started = false;
+    paintLock();
     again();
   }
 
