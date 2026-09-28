@@ -582,6 +582,28 @@ setTimeout(() => {
 </script>
 """
 
+# A SPOKEN REQUEST FOR "hub", the address Home had for a year and still has in
+# ALIASES for bookmarks and the dock card. The request is answered here, ahead
+# of main.js, as lib/screen.py would answer it.
+HUB_ASK = r"""
+<script>
+const __f2 = window.fetch;
+window.__ask = null;
+window.fetch = (u, o) => (String(u).includes("/api/screen") && !(o && o.method === "POST"))
+  ? Promise.resolve(new Response(JSON.stringify({ ask: window.__ask }),
+      { headers: { "Content-Type": "application/json" } }))
+  : __f2(u, o);
+setTimeout(() => { location.hash = "#vehicle"; }, 3000);
+setTimeout(() => { window.__ask = { view: "hub", fresh: true, at: Date.now() / 1000,
+                                    who: "the assistant" }; }, 4500);
+setTimeout(() => {
+  document.title = "HUBASK " + JSON.stringify({ hash: location.hash,
+    toasts: [...document.querySelectorAll("#toasts .toast")].map((t) => t.textContent) });
+}, 8500);
+</script>
+"""
+
+
 def daynight_check(exe):
     """The day/night button after choosing the Omarchy look on a light desktop."""
     g = run_probe(exe, LIGHT_DESKTOP, "DAYNIGHT")
@@ -592,6 +614,17 @@ def daynight_check(exe):
               f"day/night button offers night ({g})",
               g.get("look") == "omarchy" and g.get("hidden") is False
               and g.get("title") == "Switch to the night palette")
+
+
+def hub_ask_check(exe):
+    """A spoken request for the old 'hub' address opens Home."""
+    h = run_probe(exe, HUB_ASK, "HUBASK")
+    if not h:
+        bad("the hub-request probe returned nothing")
+    else:
+        check(f"a spoken request for 'hub' opens Home, and says so ({h})",
+              h.get("hash") == "#home"
+              and any("opened Home" in t for t in h.get("toasts") or []))
 
 
 def agent_check(exe):
@@ -1029,6 +1062,8 @@ def main():
         agent_check(exe)
         # ---- and the day/night button on a light desktop theme ----------
         daynight_check(exe)
+        # ---- and a spoken request by Home's old name ---------------------
+        hub_ask_check(exe)
     finally:
         server.terminate()
         try:

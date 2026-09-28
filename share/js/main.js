@@ -1032,7 +1032,10 @@ async function honourAsk() {
   if (!ask || !ask.fresh || !ask.view) return;
   if (!(ask.at > honoured)) return;          // already acted on this one
   honoured = ask.at;
-  const v = VIEWS.find((x) => x.id === ask.view);
+  // Through ALIASES, as route() goes: "hub" was Home's address for a year,
+  // and asking for it by that name was dropped without a word.
+  const id = ALIASES[ask.view] || ask.view;
+  const v = VIEWS.find((x) => x.id === id);
   // A screen the current mode hides is not opened by asking for it. The tier
   // is decided by the server and this is not a way around it.
   if (!v || hiddenView(v)) return;
