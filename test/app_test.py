@@ -734,6 +734,18 @@ def lost_server_check(exe):
         shutil.rmtree(work, ignore_errors=True)
 
 
+def wait_for_port(port, secs=20):
+    """True once something listens on 127.0.0.1:port, False after `secs`."""
+    deadline = time.time() + secs
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), 0.25):
+                return True
+        except OSError:
+            time.sleep(0.25)
+    return False
+
+
 def main():
     print("\n  The app starts in a browser\n")
     exe = browser()

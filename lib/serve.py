@@ -31,6 +31,7 @@ Two modes, and the difference between them is the whole security model.
 import hmac
 import json
 import os
+import re
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
@@ -139,6 +140,67 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _json(self, payload, status=200):
         self._send(json.dumps(payload, default=str).encode(), status=status)
+
+    def _ranged(self, real, ctype):
+        """A file with HTTP Range, which a <video> needs before it can seek.
+
+        SimpleHTTPRequestHandler has none: it answers every request with the
+        whole file and a 200. Chromium plays that but cannot seek in it, so
+        back 10 s and a tap on the timeline would do nothing."""
+        import camstore
+        size = os.path.getsize(real)
+        rng = camstore.parse_range(self.headers.get("Range"), size)
+        if rng == "unsatisfiable":
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = rng if rng else (0, size - 1)
+        length = max(0, end - start + 1)
+        self.send_response(206 if rng else 200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if rng:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            with open(real, "rb") as f:
+                f.seek(start)
+                left = length
+                while left > 0:
+                    chunk = f.read(min(1 << 18, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _mjpeg(self, role, query):
+        """A camera's live picture, as MJPEG an <img> shows with no decoder.
+
+        It ends by itself after cams.LIVE_GIVE_UP seconds with no new frame,
+        and after `frames=N` frames when asked (screenshots and tests).
+        Connection: close is the terminator, as for /api/phone/video."""
+        import cams
+        from urllib.parse import parse_qs
+        try:
+            frames = int((parse_qs(query).get("frames") or ["0"])[0]) or None
+        except ValueError:
+            frames = None
+        self.close_connection = True
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=" + cams.BOUNDARY)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            cams.stream_live(self.wfile, role, frames=frames)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _local(self):
         """Only this machine, and only under a loopback name.
@@ -414,6 +476,22 @@ class Handler(SimpleHTTPRequestHandler):
             kind = {"jpg": "image/jpeg", "png": "image/png",
                     "webp": "image/webp"}.get(real.rsplit(".", 1)[-1], "application/octet-stream")
             return self._send(blob, kind)
+        if path.startswith("/api/cams/"):
+            # THE TWO CAMERA ROUTES THAT ARE NOT JSON. The others go through
+            # api.handle_get like everything else (lib/camroutes.py).
+            m = re.fullmatch(r"/api/cams/([a-z]+)/live", path)
+            if m:
+                import cams
+                if m.group(1) not in cams.ROLES:
+                    return self._json({"error": "no such camera"}, 404)
+                return self._mjpeg(m.group(1), query)
+            m = re.fullmatch(r"/api/cams/clip/([a-z]+)/([0-9-]+\.mp4)", path)
+            if m:
+                import camstore
+                real = camstore.clip_path(m.group(1), m.group(2))
+                if real is None:
+                    return self._json({"error": "no such clip"}, 404)
+                return self._ranged(real, "video/mp4")
         if path.startswith("/api/"):
             out = api.handle_get(path, query)
             if out is None:
