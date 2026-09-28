@@ -57,7 +57,9 @@
 #                             the diagnostic advisor — reads this car's own
 #                             numbers and tells you what is actually wrong
 #   omacar card [--quiet]     rebuild the rollup the bar panel and dock read
-#   omacar roadmap [--check]  regenerate the measured half of doc/ROADMAP.md
+#   omacar roadmap [--check|--list next]
+#                             regenerate the measured half of doc/ROADMAP.md;
+#                             --list shows the capability map by status
 #   omacar cheatsheet [--set]
 #                             every command as a picture, for the wallpaper
 #   omacar board [stop]       the same commands, behind your windows, tappable
