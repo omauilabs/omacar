@@ -410,17 +410,17 @@ the one that is wrong.
 
 | | Files | Lines |
 |---|---:|---:|
-| Python — the whole diagnostic side | 67 | 31,839 |
+| Python — the whole diagnostic side | 67 | 31,943 |
 | JavaScript — the app | 66 | 17,943 |
 | CSS | 9 | 3,311 |
 | QML — the Quickshell plugin | 6 | 3,135 |
 | Shell — the CLI and the installer | 6 | 1,789 |
-| Tests | 25 | 7,892 |
-| Documentation | 33 | 14,953 |
+| Tests | 25 | 7,973 |
+| Documentation | 33 | 15,061 |
 | Data — codes, resets, procedures, profiles | 8 | 1,480 |
-| **Tracked in git, all of it** | | **90,511** |
+| **Tracked in git, all of it** | | **90,804** |
 
-**Tests** — 1,207 checks, all passing. Run with `test/all.sh`; none of them needs a car.
+**Tests** — 1,222 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
 What is actually covered, straight out of the runner's own headings:
 
@@ -543,14 +543,16 @@ What is actually covered, straight out of the runner's own headings:
 | Not crying wolf | 5 |
 | Credentials | 7 |
 | Sending refuses rather than sending badly | 4 |
-| The capability map in the tree | 5 |
+| The capability map in the tree | 6 |
 | A shipped capability has to point at something git tracks | 7 |
 | The fields mean one thing each | 10 |
-| A write names the gate that decides it | 7 |
+| A write names the gate that decides it | 8 |
+| The code refuses nothing the owner has not decided on | 12 |
 | Dependencies resolve, and shipped stands on shipped | 5 |
 | The block counts what the map says | 8 |
 | Claims carry a date, a way to re-check, and where they came from | 10 |
 | Regenerating the roadmap is not shipping something | 4 |
+| A byte that is not UTF-8 cannot stop the count | 1 |
 
 **Coverage — the first success metric on this page, counted**
 
@@ -579,25 +581,25 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**The capability map, counted** — `doc/capabilities.json`: 246 capabilities across 23 domains.
+**The capability map, counted** — `doc/capabilities.json`: 248 capabilities across 23 domains.
 
 | Domain | Shipped | Building | Next | Later | Research | All |
 |---|---:|---:|---:|---:|---:|---:|
 | Diagnostics and fault codes | 17 | 1 | 1 | 3 | 0 | 22 |
 | Readiness and emissions | 6 | 0 | 0 | 1 | 0 | 7 |
-| Maintenance and service | 5 | 1 | 0 | 9 | 2 | 17 |
+| Maintenance and service | 5 | 1 | 6 | 3 | 2 | 17 |
 | Hybrid, EV and battery health | 1 | 1 | 1 | 4 | 2 | 9 |
 | 12 V electrical and charging | 4 | 0 | 0 | 2 | 1 | 7 |
 | Tyres, brakes and chassis | 1 | 1 | 1 | 5 | 2 | 10 |
 | Fuel economy, trips and costs | 6 | 1 | 0 | 2 | 1 | 10 |
-| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 0 | 3 | 1 | 10 |
+| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 1 | 3 | 1 | 11 |
 | Navigation and location | 0 | 0 | 5 | 4 | 0 | 9 |
 | Phone, media, CarPlay and Android Auto | 2 | 2 | 0 | 1 | 2 | 7 |
 | Body and comfort | 5 | 1 | 0 | 2 | 2 | 10 |
 | Ownership and paperwork | 4 | 0 | 0 | 5 | 1 | 10 |
 | Performance and track | 2 | 0 | 0 | 5 | 0 | 7 |
 | Community coverage | 4 | 0 | 0 | 3 | 1 | 8 |
-| Manufacturer data and discovery | 8 | 1 | 3 | 1 | 0 | 13 |
+| Manufacturer data and discovery | 8 | 1 | 3 | 2 | 0 | 14 |
 | The agent framework | 7 | 1 | 4 | 2 | 1 | 15 |
 | Hardware | 7 | 0 | 2 | 5 | 0 | 14 |
 | Onboarding and learning | 7 | 0 | 2 | 2 | 0 | 11 |
@@ -606,7 +608,7 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | Accessibility | 7 | 0 | 0 | 3 | 0 | 10 |
 | Interface and looks | 10 | 1 | 2 | 0 | 0 | 13 |
 | Omarchy plugins in the car | 0 | 0 | 2 | 4 | 2 | 8 |
-| **All domains** | **116** | **18** | **24** | **70** | **18** | **246** |
+| **All domains** | **116** | **18** | **31** | **65** | **18** | **248** |
 
 *Shipped* means `omacar roadmap --check` found every file the entry
 names tracked by git, and every entry it stands on shipped too. It does
@@ -639,22 +641,21 @@ adapters it has actually met.
 - *Interface and looks* — Five tabs a driver would name (`share/js/main.js`) · Home (`share/js/views/home.js`) · Arrange Home by hand (`lib/homelayout.py`) · The designed palette and type (`share/css/app.css`) · Every screen says where its numbers came from (`share/js/provenance.js`) · The car's own picture, kept out of git (`lib/assets.py`) · Themes I build (`lib/themes.py`) · Effects driven by the car (`share/js/effects.js`) · Drive mode (`share/js/views/drive.js`) · A boot screen that says what it waits for (`share/js/bootscreen.js`).
 - *Omarchy plugins in the car* — nothing yet.
 
-**Shipped** — 216 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
+**Shipped** — 218 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
 
+- `2026-09-28` The owner's answers: three refusals, four warnings, resets and recalls in Next
+- `2026-09-28` One byte of a suite's output that is not UTF-8 no longer kills the roadmap
 - `2026-09-28` The shipped line says which commits it leaves out, in words that are true
 - `2026-09-28` Every price in the roadmap names the page it came from and the day it was read
 - `2026-09-28` The roadmap refuses a capability it cannot prove, and stops going stale on its own
 - `2026-09-28` The whole car, as a list an agent can read, with the file that proves each item
 - `2026-09-28` Home can be rearranged by hand, while parked, and a hand-edited file cannot break it
 - `2026-09-28` Home stopped filling its own screen and its tiles kept drawing a scale for numbers nobody had
-- `2026-09-28` Home, as the mockups draw it, with every number saying where it came from
-- `2026-09-28` The X-ray render's own transparency was being thrown away and baked to black
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
 not us.
 
-- **A three-button bar panel** — in flight — no new file to check. Lands inside plugin/Panel.qml, which already exists, so git cannot tell you whether it is done. Confirm by opening the panel.
 - **The foundation redesign: Vehicle, the looks, and review screenshots** (branch `redesign/foundation`) — in flight — `share/js/views/vehicle.js`, `share/css/vehicle.css`, `tools/shoot.py`. The frame, Home, private assets and the layout editor have landed. Left: Vehicle (task 8), the advisor on Opus 5.5 (task 9, inside lib/ai.py) and the looks (task 10, inside existing files), then the screenshot tool that sets the screens beside the mockups. See doc/design/2026-09-28-foundation-plan.md.
 - **Cameras and drowsy mode, for the 2026-09-30 drive** (branch `redesign/cameras`) — in flight — `lib/cams.py`, `share/js/drowsy.js`, `share/js/audiobus.js`, `share/systemd/omacar-cams.service`. Three wired cameras recorded on the tablet, hard-braking locks, the Cameras tab from mockup 6, and a drowsy mode that watches the driver's eyes and escalates through three ramped alerts, always 12 dB over the music. Designed in doc/design/2026-09-28-cameras-drowsy.md on that branch.
 - **Drive-day hardening: the recorder outlives a vanishing adapter** (branch `drive-day/hardening`) — in flight — no new file to check. Lands inside lib/drivelog.py, lib/preflight.py, share/systemd/omacar-drivelog.service, doc/drive-day.md and test/guards_test.py, all of which exist, so git cannot tell you whether it is done. Confirm with `git log --oneline -- lib/drivelog.py` showing 'The recorder loses a leg to a vanishing adapter now, not the whole day'.
@@ -686,13 +687,16 @@ the prose looking like a measurement.
   <br>*Asserted 2026-09-28. To re-check: The Wikipedia article's section on clones. A better source is a first-hand test: `omacar doctor` against a clone, recording what it claims and what it does.*
 - rtl_433 has no decoder for Tymate tyre sensors: the name appears nowhere in its device list, sources or configs as of commit 02cd4b6 (2026-09-26).
   <br>Sources: <https://github.com/merbanan/rtl_433>
-  <br>*Asserted 2026-09-28. To re-check: Search the repository for 'Tymate'. Then settle it properly: capture the owner's TM2 sensors with an RTL-SDR at 433.92 MHz and try the flex decoder. A capture that decodes makes this claim irrelevant.*
+  <br>*Asserted 2026-09-28. To re-check: Search the repository for 'Tymate'. Then settle it properly, as decided on 2026-09-28: once the RTL-SDR arrives, record the owner's TM2 sensors at 433.92 MHz for about an hour with rtl_433's generic and flex decoders. A recording that decodes makes this claim irrelevant; buying sensors rtl_433 already supports is the fallback only if it does not.*
 - The RTL-SDR Blog V4 reached end of line in May 2026; its replacement, the V4L, is $37.95. The u-blox NEO-M9V does both untethered and automotive dead reckoning, and a module with a pin header sells for about EUR 70.
   <br>Sources: <https://www.rtl-sdr.com/product/rtl-sdr-blog-v4l-lite-r828s-rtl2832u-1ppm-tcxo-sma-software-defined-radio-dongle-only/>, <https://www.u-blox.com/en/product/neo-m9v-module>, <https://gnss.store/products/elt0165>
   <br>*Asserted 2026-09-28. To re-check: Open the pages. The rtl-sdr.com blog also warns of fake V4s on marketplaces, which the hardware guide should repeat.*
 - OBDb, the community signal-set project lib/knowledge.py reads, had 746 public repositories on 2026-09-28, under CC BY-SA 4.0.
   <br>Sources: <https://github.com/OBDb>
   <br>*Asserted 2026-09-28. To re-check: The organisation page, or the GitHub API's public_repos count for the OBDb org.*
+- Piper's active repository, OHF-Voice/piper1-gpl, is GPL-3.0; the MIT-licensed rhasspy/piper is archived and says development has moved. OmaCar therefore does not bundle Piper: it is installed as a system package and run as its own program, and the voice clips it renders are ordinary audio files.
+  <br>Sources: <https://github.com/OHF-Voice/piper1-gpl>, <https://github.com/rhasspy/piper>
+  <br>*Asserted 2026-09-28. To re-check: Open both repositories and read their licence files. If the licence of the maintained version changes, the reason for not bundling it goes away; the decision of 2026-09-28 still stands until the owner revisits it.*
 - The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.
   <br>Sources: <https://omarchy.org/manual/shell-plugins/>, <https://omarchyplugins.com>, <https://github.com/omacom/omarchy-plugin-marketplace>
   <br>*Asserted 2026-09-28. To re-check: Open the manual page and the marketplace repository, and count the entries in its registry.json. The compatibility analysis in the capability map starts here and at /usr/share/omarchy/shell/plugins on an Omarchy machine.*
