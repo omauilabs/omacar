@@ -31,10 +31,29 @@
    family matching is exact, so that first entry has been quietly falling
    through to the generic this whole time. */
 
+/* The bundled face first. share/fonts/InterVariable.ttf ships with the app
+   (SIL OFL 1.1, share/fonts/OFL.txt) because the car's tablet has only Adwaita
+   installed and the mockups are set in Inter. One variable file carries every
+   weight and, through its opsz axis, the Display cut too. */
+@font-face {
+  font-family: "OmaCar Inter";
+  src: url("../fonts/InterVariable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 :root {
-  --sans:    "Adwaita Sans", "Inter", "Noto Sans", "Liberation Sans", sans-serif;
-  --display: "Adwaita Sans", "Inter", "Noto Sans", "Liberation Sans", sans-serif;
+  --sans:    "OmaCar Inter", "Inter", "Adwaita Sans", "Noto Sans", sans-serif;
+  --display: "OmaCar Inter", "Inter", "Adwaita Sans", "Noto Sans", sans-serif;
   --mono:    "Adwaita Mono", "JetBrainsMono Nerd Font", ui-monospace, monospace;
+}
+/* Big numerals: the Display optical size, light, and tabular so a speed
+   climbing 44, 45, 46 never changes width. */
+.display-num {
+  font-family: var(--display);
+  font-variation-settings: "opsz" 32;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- words ---------------------------------------------------------------

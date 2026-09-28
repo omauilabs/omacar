@@ -47,7 +47,7 @@ export function icon(paths, size = 20) {
   svg.setAttribute("width", size); svg.setAttribute("height", size);
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "1.7");
+  svg.setAttribute("stroke-width", "1.75");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");

@@ -18,50 +18,60 @@
    the app rather than a filter over it. It cost an hour. */
 :root {
   color-scheme: dark;
-  --ground:  #070B0D;
-  --panel:   #0D1417;
-  --panel-2: #111A1E;
-  --raise:   #162228;
-  --edge:    #1B282D;
-  --edge-2:  #24343A;
+  /* THE MOCKUP PALETTE, SAMPLED RATHER THAN CHOSEN. Every value below was read
+     off the owner's mockups of 2026-09-27 (doc/design/2026-09-28-foundation.md,
+     "The look"): the median of a 7x7 patch for fills, the brightest or most
+     saturated pixel in the box for text and strokes. Change one and run
+     test/design_test.py, which holds every text colour to WCAG AA. */
+  --ground:  #0A1314;
+  --panel:   #0E1519;
+  --panel-2: #111A1F;
+  --raise:   #16222A;
+  --edge:    #1E2A30;
+  --edge-2:  #27363D;
 
-  --ink:     #E7F0EE;
-  --dim:     #93A6A2;
-  --faint:   #5F726E;
-  --ghost:   #38474A;
+  --ink:     #F6FCFF;
+  --ink-2:   #CAD4DA;
+  --dim:     #BDC7D1;
+  /* Not sampled: the mockups have no text this faint. It is the faintest value
+     that still clears 4.5:1 on a card, because a caption nobody can read in
+     sunlight is not a caption. */
+  --faint:   #7C8B94;
+  --ghost:   #3A4950;
 
-  --ok:      #4ACE8A;
+  --accent:      #22CDEC;
+  --accent-fill: #25B1BF;
+  --on-accent:   #041014;
+  --rec:         #F55240;
+
+  --ok:      #9BDE68;
   --warn:    #E5B457;
   --bad:     #E85D4E;
   --info:    #4FA8E8;
   --ai:      #8B7CF0;
 
-  --ok-bg:   rgba(74, 206, 138, .12);
-  --warn-bg: rgba(229, 180, 87, .13);
-  --bad-bg:  rgba(232, 93, 78, .13);
-  --info-bg: rgba(79, 168, 232, .12);
-  --ai-bg:   rgba(139, 124, 240, .13);
+  --ok-bg:     rgba(155, 222, 104, .12);
+  --warn-bg:   rgba(229, 180, 87, .13);
+  --bad-bg:    rgba(232, 93, 78, .13);
+  --info-bg:   rgba(79, 168, 232, .12);
+  --ai-bg:     rgba(139, 124, 240, .13);
+  --accent-bg: rgba(34, 205, 236, .12);
 
   /* Derived surfaces, so a light theme does not end up with dark hairlines
      baked into a meter track. Everything below is expressed against these. */
   --track:  color-mix(in srgb, var(--ink) 13%, var(--panel));
-  --hair:   color-mix(in srgb, var(--ink) 7%, var(--panel));
-  /* Text printed on a solid semantic fill. The theme computes these by
-     luminance, because "the colour, darkened" is unreadable on itself. */
+  /* 11%, not 7%: that mix of ink into panel lands exactly on the mockups' card
+     hairline, #272E32. */
+  --hair:   color-mix(in srgb, var(--ink) 11%, var(--panel));
   --on-bad:  #12060A;
   --on-warn: #1A1305;
   --on-ai:   #0B0718;
-
-  /* The hub is designed for direct sunlight, so it uses a harder foreground
-     than the rest of the app. Going through tokens rather than literals is
-     what lets a look change it in ONE place -- the previous version listed
-     every affected selector per look, and every new hub rule silently
-     reintroduced white into the night palettes. */
   --bright:   #FFFFFF;
-  --bright-2: #C8D4D2;
+  --bright-2: #CAD4DA;
 
   --vbar: 58px;
-  --r: 10px;
+  --r: 14px;
+  --r-lg: 20px;
 
   /* The navigation block, and the floor under every target in it.
      48px is the floor and 56px the default, not 44: 44 is Apple's figure for
@@ -435,7 +445,8 @@ canvas { display: block; width: 100%; }
 
 /* --------------------------------------------------------------- surfaces */
 .card {
-  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--r);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 3%, var(--panel)), var(--panel));
+  border: 1px solid var(--hair); border-radius: var(--r);
   padding: 16px 18px;
 }
 .card.flat { background: transparent; border-color: var(--edge); }

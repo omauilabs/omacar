@@ -68,7 +68,7 @@ PANEL_CACHE = os.path.join(os.path.expanduser(
     os.environ.get("XDG_STATE_HOME", "~/.local/state")),
     "omarchy", "liquid-glass-car.json")
 
-DEFAULT = "workshop"
+DEFAULT = "omacar"
 
 # The three slots every stack has to fill. Kept as a tuple because the order is
 # the order fonts.css declares them in and the order the picker shows them in.
@@ -102,6 +102,20 @@ MAX_CHAIN = 6
 # picker shows rather than hides.
 
 STACKS = (
+    {
+        "id": "omacar",
+        "name": "OmaCar",
+        "note": "Inter, shipped inside the app (share/fonts/InterVariable.ttf, "
+                "SIL OFL 1.1), so it looks the same on a machine that has never "
+                "installed a font. The owner's mockups are set in it.",
+        "package": None,
+        # Families that come with the app rather than from fontconfig. They are
+        # never "missing": the browser loads them from share/fonts.
+        "bundled": ["OmaCar Inter"],
+        "sans": ["OmaCar Inter", "Inter", "Adwaita Sans", "Noto Sans", "sans-serif"],
+        "display": ["OmaCar Inter", "Inter", "Adwaita Sans", "Noto Sans", "sans-serif"],
+        "mono": ["Adwaita Mono", "JetBrainsMono Nerd Font", "ui-monospace", "monospace"],
+    },
     {
         "id": "workshop",
         "name": "Workshop",
@@ -247,7 +261,7 @@ def missing(stack, known=None):
     out = []
     for slot in SLOTS:
         head = stack[slot][0]
-        if head in GENERIC:
+        if head in GENERIC or head in stack.get("bundled", ()):
             continue
         if head.lower() not in known and head not in out:
             out.append(head)
