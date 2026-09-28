@@ -49,22 +49,31 @@ export function makeSignalTile(id, { label, def } = {}) {
         text(note, "");
         node.dataset.tone = out.tone || "";
         node.dataset.src = sourceKey(car, s);
+        // A SCALE AND A TRAIL ARE BOTH CLAIMS ABOUT A VALUE, so they are only
+        // drawn here, alongside the number they describe.
+        const sc = d.scale ? d.scale() : null;
+        text(lo, sc ? tick(sc, sc.min) : "");
+        text(hi, sc ? tick(sc, sc.max) : "");
+        // The trail is raw (Celsius, volts); the scale is in display units,
+        // so each point goes through the same read() the number did.
+        const pts = d.pid && d.read
+          ? trail(d.pid).map(([t, r]) => [t, d.read({ [d.pid]: r }, s, car)]).filter((p) => p[1] !== null)
+          : [];
+        path.setAttribute("d", sparkPath(pts, 120, 28, sc ? sc.min : null, sc ? sc.max : null));
       } else {
         text(v, "");
         text(u, "");
         text(note, st === "absent" ? "Not on this car" : "Waiting for the car");
         node.dataset.tone = "";
         delete node.dataset.src;
+        // AN ABSENT OR WAITING TILE HAS NO VALUE TO PLACE ON EITHER ONE. A
+        // "0 ... 100" scale under an empty number, or a sparkline with
+        // nothing on it, both read as a real (if boring) measurement rather
+        // than as "nothing has been read yet".
+        text(lo, "");
+        text(hi, "");
+        path.setAttribute("d", "");
       }
-      const sc = d.scale ? d.scale() : null;
-      text(lo, sc ? tick(sc, sc.min) : "");
-      text(hi, sc ? tick(sc, sc.max) : "");
-      // The trail is raw (Celsius, volts); the scale is in display units, so
-      // each point goes through the same read() the number did.
-      const pts = d.pid && d.read
-        ? trail(d.pid).map(([t, r]) => [t, d.read({ [d.pid]: r }, s, car)]).filter((p) => p[1] !== null)
-        : [];
-      path.setAttribute("d", sparkPath(pts, 120, 28, sc ? sc.min : null, sc ? sc.max : null));
     },
   };
 }

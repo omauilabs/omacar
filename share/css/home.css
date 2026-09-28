@@ -1,10 +1,38 @@
 /* Home: cards on a grid the layout arranges. 12 columns landscape, 6 portrait,
-   96 px rows; each card's span comes from share/data/home-cards.json. */
-.wrap:has(> .home) { max-width: none; }
-.home { display: flex; flex-direction: column; gap: 12px; }
+   96 px rows; each card's span comes from share/data/home-cards.json.
+
+   FILLS THE STAGE, the way the mockups draw it. .stage (app.css) is the 1fr
+   row of a viewport-height grid, so it already has a definite height; .wrap
+   (app.css) is `display: grid` with exactly one child here (.home), and an
+   "auto" grid row does not stretch to fill leftover space on its own, so
+   without the rules below the grid used to end ~150px short of the tab bar
+   with nothing but empty stage under it.
+
+   HEIGHT, NOT MIN-HEIGHT. A `min-height: 100%` chain here (.wrap -> .home)
+   looked right, and was, for landscape's six rows. Portrait's default layout
+   needs eleven, whose 96px floors alone (1176px) already exceed what the
+   stage has to give on the reference tablet (~1151px) -- and asking a
+   min-height-only box to size itself from a 1fr grid whose OWN minimum
+   already exceeds that floor sent Chromium's layout into measuring the grid
+   at roughly 2.3x the screen's height, scrolling the stage through the tab
+   bar, rather than the clean overflow a fixed box gives instead. `height:
+   100%` has nothing to feed back into: the box is exactly the stage's
+   height, full stop, and eleven rows that do not fit simply overflow it by
+   the small remainder -- which .stage's own scroller (app.css) already
+   exists to absorb. */
+.wrap:has(> .home) { max-width: none; display: block; height: 100%; }
+.home {
+  display: flex; flex-direction: column; gap: 12px; height: 100%;
+  /* position + isolation: the look's animated background (.home-fx, below)
+     is the one thing on this screen that should sit behind everything else
+     drawn here, and isolating the stacking context keeps that negative
+     z-index from reaching outside .home -- it never has to reason about
+     what else on the page might also use z-index. */
+  position: relative; isolation: isolate;
+}
 .home-grid {
-  display: grid; gap: 12px; grid-auto-flow: row dense;
-  grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: 96px;
+  display: grid; gap: 12px; grid-auto-flow: row dense; flex: 1; min-height: 0;
+  grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-rows: minmax(96px, 1fr);
 }
 @media (orientation: portrait) {
   .home-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
@@ -15,6 +43,16 @@
              font-size: .75rem; color: var(--dim); }
 .home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap);
                padding: 0 12px; background: none; border: 0; color: var(--ink-2); font: inherit; }
+
+/* The look's animated background (Matrix/Aurora), mounted by home.js only
+   while parked. Negative z-index, inside .home's own isolated stacking
+   context (above), so it paints behind .home's other children -- which are
+   all plain in-flow boxes and so paint above ANY positioned descendant of
+   theirs regardless of z-index value, negative or not. */
+.home-fx {
+  position: absolute; inset: 0; z-index: -1;
+  pointer-events: none; overflow: hidden; border-radius: var(--r);
+}
 
 /* speed */
 .hc-dial { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
@@ -84,3 +122,9 @@
              font-variant-numeric: tabular-nums; }
 .sig[data-tone="warn"] .sig-v { color: var(--warn); }
 .sig[data-tone="bad"] .sig-v { color: var(--bad); }
+/* A tile that is absent or waiting has no scale and no trail (sigtile.js
+   clears both), so an empty sparkline slot would otherwise draw as a flat
+   line at nothing -- which reads as "the reading is zero", not "there is no
+   reading". Hidden rather than removed, so the slot keeps its width and nothing
+   else in the tile reflows when a value arrives. */
+.sig:not([data-state="live"]) .sig-spark { visibility: hidden; }

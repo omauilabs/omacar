@@ -14,8 +14,9 @@ export default [
     const t = makeSignalTile("charge", { label: "Hybrid pack" });
     t.paint({}, { connected: true, values: {}, supported: ["COOLANT_TEMP"] });
     eq([t.node.dataset.state, t.node.querySelector(".sig-v").textContent,
-        t.node.querySelector(".sig-note").textContent, t.node.dataset.src],
-       ["absent", "", "Not on this car", undefined]);
+        t.node.querySelector(".sig-note").textContent, t.node.dataset.src,
+        t.node.querySelector(".sig-scale").textContent],
+       ["absent", "", "Not on this car", undefined, ""]);
   }],
   ["with no car it waits", () => {
     const t = makeSignalTile("fuel");

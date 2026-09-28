@@ -15,6 +15,7 @@ import { footerLine } from "../provenance.js";
 import { asset } from "../assets.js";
 import { tyreState } from "../systems.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
+import { savedLook, mountLookEffect } from "../looks.js";
 
 const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
@@ -36,7 +37,7 @@ function dialCard() {
   const rpm = h("div.dial-rpm");
   // A LABEL, NOT A READING: no identifier reports the drive mode, so this is
   // the one the driver last marked on the drive screen, and it says so.
-  const mode = h("span.dial-mode.mode-pill", { hidden: true,
+  const mode = h("span.pill.dial-mode.mode-pill", { hidden: true,
     title: "The drive mode you last marked. OmaCar cannot read it from the car." });
   const begin = h("button.btn.dial-begin", { type: "button", hidden: true,
     onclick: (e) => { e.stopPropagation(); go("launcher"); } }, "Begin");
@@ -168,12 +169,42 @@ export default function home(root) {
   let cat = null;
   let layout = null;
   const made = new Map();
+  const fx = h("div.home-fx");
   const grid = h("div.home-grid");
   const editBar = h("div.home-editbar", { hidden: true });
   const prov = h("span.home-prov");
   const custom = h("button.home-custom", { type: "button", hidden: true },
     icon(ICONS.layout, 18), "Customize layout");
-  root.appendChild(h("div.home", editBar, grid, h("div.home-foot", prov, custom)));
+  root.appendChild(h("div.home", fx, editBar, grid, h("div.home-foot", prov, custom)));
+
+  // ---- the look's background, behind the grid, while parked -----------------
+  //
+  // The design says nothing moves while the car moves except values, so the
+  // animated look stops the instant the car starts rolling and resumes the
+  // instant it is not. Decided on a TRANSITION only -- never torn down and
+  // rebuilt on every live sample, which is exactly the mistake the hub's own
+  // comments warn against for everything else on this screen.
+  let fxStop = null;
+  // null until the first check decides it, so that first check always runs
+  // even if the car happens to already be moving when Home mounts.
+  let driving = null;
+
+  function fxOn() { if (!fxStop) fxStop = mountLookEffect(fx, savedLook()); }
+  function fxOff() { if (fxStop) { fxStop(); fxStop = null; } }
+
+  function syncFx() {
+    const now = store.state === "driving";
+    if (now === driving) return;
+    driving = now;
+    if (driving) fxOff(); else fxOn();
+  }
+
+  // THE LOOK ITSELF CHANGED (Settings -> Look), which is a different question
+  // from whether the car is moving. Remount with whatever is current now,
+  // but only if something should be showing at all.
+  const onLook = () => { fxOff(); if (!driving) fxOn(); };
+  document.addEventListener("omacar:look", onLook);
+  syncFx();
 
   // PLACED BY MOVING NODES, NEVER BY REBUILDING THEM. appendChild on a node
   // that is already here moves it, so reordering keeps every card's state
@@ -201,6 +232,7 @@ export default function home(root) {
   }
 
   function paint() {
+    syncFx();
     if (!alive || !layout) return;
     for (const c of made.values()) if (c.node.isConnected) c.paint();
     // NAME THE SERVER, NEVER THE CAR (see dialCard()). footerLine() describes
@@ -231,6 +263,8 @@ export default function home(root) {
     offLive();
     offCar();
     mq.removeEventListener("change", onTurn);
+    document.removeEventListener("omacar:look", onLook);
+    fxOff();
     for (const c of made.values()) if (c.destroy) c.destroy();
   };
 }

@@ -877,6 +877,10 @@ function openSettings() {
         const next = nextLook(savedLook());
         saveLook(next);
         applyLook(next);
+        // TASK 10 MOVES THIS DISPATCH INTO applyLook() ITSELF. Until then,
+        // Home is the only screen with a background to remount, and it can
+        // only hear about the change if this row says so.
+        document.dispatchEvent(new CustomEvent("omacar:look", { detail: next }));
         redraw();
       }));
 
