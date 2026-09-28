@@ -268,6 +268,18 @@ def main():
                                   encoding="utf-8").read())
         check("and it let go of the screen once the app was up",
               'id="boot"' not in dom)
+
+        # 4. EVERY DRAWN NUMBER SAYS WHERE IT CAME FROM. A signal tile that
+        #    draws a value carries data-src (sim, bench, obd, recorded); one
+        #    that is waiting or absent carries none and draws words instead.
+        #    Home is the arrival screen, so this reads the tiles it painted.
+        tiles = re.findall(r'<div class="sig[^"]*"[^>]*>', dom)
+        check(f"Home drew its signal tiles (found {len(tiles)})", len(tiles) >= 4)
+        live_tiles = [t for t in tiles if 'data-state="live"' in t]
+        check("every tile drawing a number names its source",
+              all(re.search(r'data-src="[a-z]+"', t) for t in live_tiles))
+        check("and no tile that is not live claims one",
+              not any('data-src=' in t for t in tiles if t not in live_tiles))
         # ---- and again with no server behind it at all -------------------
         #
         # THE FAILURE PATH IS THE ONE THAT LIED. With the OmaCar server down,
