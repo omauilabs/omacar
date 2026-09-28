@@ -416,9 +416,9 @@ the one that is wrong.
 | QML — the Quickshell plugin | 6 | 3,135 |
 | Shell — the CLI and the installer | 6 | 1,789 |
 | Tests | 25 | 7,973 |
-| Documentation | 33 | 15,061 |
+| Documentation | 33 | 15,147 |
 | Data — codes, resets, procedures, profiles | 8 | 1,480 |
-| **Tracked in git, all of it** | | **90,804** |
+| **Tracked in git, all of it** | | **90,890** |
 
 **Tests** — 1,222 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -581,7 +581,7 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**The capability map, counted** — `doc/capabilities.json`: 248 capabilities across 23 domains.
+**The capability map, counted** — `doc/capabilities.json`: 250 capabilities across 23 domains.
 
 | Domain | Shipped | Building | Next | Later | Research | All |
 |---|---:|---:|---:|---:|---:|---:|
@@ -592,11 +592,11 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | 12 V electrical and charging | 4 | 0 | 0 | 2 | 1 | 7 |
 | Tyres, brakes and chassis | 1 | 1 | 1 | 5 | 2 | 10 |
 | Fuel economy, trips and costs | 6 | 1 | 0 | 2 | 1 | 10 |
-| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 1 | 3 | 1 | 11 |
+| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 1 | 4 | 2 | 13 |
 | Navigation and location | 0 | 0 | 5 | 4 | 0 | 9 |
 | Phone, media, CarPlay and Android Auto | 2 | 2 | 0 | 1 | 2 | 7 |
 | Body and comfort | 5 | 1 | 0 | 2 | 2 | 10 |
-| Ownership and paperwork | 4 | 0 | 0 | 5 | 1 | 10 |
+| Ownership and paperwork | 4 | 0 | 1 | 4 | 1 | 10 |
 | Performance and track | 2 | 0 | 0 | 5 | 0 | 7 |
 | Community coverage | 4 | 0 | 0 | 3 | 1 | 8 |
 | Manufacturer data and discovery | 8 | 1 | 3 | 2 | 0 | 14 |
@@ -608,7 +608,7 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | Accessibility | 7 | 0 | 0 | 3 | 0 | 10 |
 | Interface and looks | 10 | 1 | 2 | 0 | 0 | 13 |
 | Omarchy plugins in the car | 0 | 0 | 2 | 4 | 2 | 8 |
-| **All domains** | **116** | **18** | **31** | **65** | **18** | **248** |
+| **All domains** | **116** | **18** | **32** | **65** | **19** | **250** |
 
 *Shipped* means `omacar roadmap --check` found every file the entry
 names tracked by git, and every entry it stands on shipped too. It does
@@ -641,8 +641,9 @@ adapters it has actually met.
 - *Interface and looks* — Five tabs a driver would name (`share/js/main.js`) · Home (`share/js/views/home.js`) · Arrange Home by hand (`lib/homelayout.py`) · The designed palette and type (`share/css/app.css`) · Every screen says where its numbers came from (`share/js/provenance.js`) · The car's own picture, kept out of git (`lib/assets.py`) · Themes I build (`lib/themes.py`) · Effects driven by the car (`share/js/effects.js`) · Drive mode (`share/js/views/drive.js`) · A boot screen that says what it waits for (`share/js/bootscreen.js`).
 - *Omarchy plugins in the car* — nothing yet.
 
-**Shipped** — 218 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
+**Shipped** — 219 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
 
+- `2026-09-28` Every hard stop, jolt or tap becomes one package from all three cameras
 - `2026-09-28` The owner's answers: three refusals, four warnings, resets and recalls in Next
 - `2026-09-28` One byte of a suite's output that is not UTF-8 no longer kills the roadmap
 - `2026-09-28` The shipped line says which commits it leaves out, in words that are true
@@ -650,7 +651,6 @@ adapters it has actually met.
 - `2026-09-28` The roadmap refuses a capability it cannot prove, and stops going stale on its own
 - `2026-09-28` The whole car, as a list an agent can read, with the file that proves each item
 - `2026-09-28` Home can be rearranged by hand, while parked, and a hand-edited file cannot break it
-- `2026-09-28` Home stopped filling its own screen and its tiles kept drawing a scale for numbers nobody had
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
@@ -697,6 +697,12 @@ the prose looking like a measurement.
 - Piper's active repository, OHF-Voice/piper1-gpl, is GPL-3.0; the MIT-licensed rhasspy/piper is archived and says development has moved. OmaCar therefore does not bundle Piper: it is installed as a system package and run as its own program, and the voice clips it renders are ordinary audio files.
   <br>Sources: <https://github.com/OHF-Voice/piper1-gpl>, <https://github.com/rhasspy/piper>
   <br>*Asserted 2026-09-28. To re-check: Open both repositories and read their licence files. If the licence of the maintained version changes, the reason for not bundling it goes away; the decision of 2026-09-28 still stands until the owner revisits it.*
+- The Surface Pro 7+'s accelerometer is reachable on Linux: the Intel ISH presents it as the HID sensor accel_3d, an IIO device with raw x, y and z channels, sampled at 10 Hz by default. iio-sensor-proxy's D-Bus interface exposes only orientation and tilt, not acceleration, so impact detection has to read IIO directly.
+  <br>Sources: <https://hadess.pages.freedesktop.org/iio-sensor-proxy/gdbus-net.hadess.SensorProxy.html>, <https://docs.kernel.org/hid/hid-sensor.html>, <https://github.com/linux-surface/linux-surface/wiki/Supported-Devices-and-Features>
+  <br>*Asserted 2026-09-28. To re-check: Read on the owner's tablet on 2026-09-28 (Surface Pro 7+, kernel 7.2.5-3-omarchy): /sys/bus/iio/devices/iio:device2 is accel_3d, driven by hid_sensor_accel_3d over intel_ish_ipc, with in_accel_x_raw, in_accel_y_raw, in_accel_z_raw, a scale of 0.000009806 and a sampling frequency of 10. The sources describe the general mechanism and the proxy's interface; the device read is the evidence for this tablet. Re-check with `cat /sys/bus/iio/devices/iio:device*/name` on the tablet.*
+- California Penal Code s632 makes it an offence to record a confidential communication without the consent of all parties to it; a conversation is not confidential where the parties can reasonably expect to be overheard or recorded.
+  <br>Sources: <https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=PEN&sectionNum=632>
+  <br>*Asserted 2026-09-28. To re-check: Read the section on the Legislature's own site. This is why cabin audio is never recorded by default and why turning it on shows that warning; it is not legal advice, and other states differ.*
 - The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.
   <br>Sources: <https://omarchy.org/manual/shell-plugins/>, <https://omarchyplugins.com>, <https://github.com/omacom/omarchy-plugin-marketplace>
   <br>*Asserted 2026-09-28. To re-check: Open the manual page and the marketplace repository, and count the entries in its registry.json. The compatibility analysis in the capability map starts here and at /usr/share/omarchy/shell/plugins on an Omarchy machine.*
