@@ -92,6 +92,31 @@ check("a role's resolution cap comes from the file", _cfg["caps"]["rear"], (1280
 check("and a cap that is not three numbers is ignored", _cfg["caps"]["front"], (1920, 1080, 30))
 os.remove(camstore.config_path())
 
+# ------------------------------------------------------- a mistyped pattern
+head("one mistyped pattern disables only that role, never the recorder")
+
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"patterns": {"cabin": "*C920*"}}, f)
+_cfg = camstore.load_config()
+check("match_roles() never raises on a bad pattern; it just cannot match",
+      cams.match_roles(NAMES, _cfg["patterns"]), {"front": DJI, "rear": ACE})
+check("invalid_patterns() names the role and the pattern",
+      cams.invalid_patterns(_cfg["patterns"]), {"cabin": "*C920*"})
+check("find_cameras() does not raise either, and simply has no cabin",
+      "cabin" in cams.find_cameras(_cfg), False)
+check("neither does overview(), with no recorder running at all",
+      isinstance(cams.overview(), dict), True)
+
+_r1 = cams.Recorder()
+_r1.discover()
+check("the recorder's own note names the role and the bad pattern",
+      "*C920*" in (_r1.notes.get("cabin") or ""), True)
+check("cabin is disabled, not merely unmatched",
+      "cabin" in _r1.cams, False)
+check("front and rear are still evaluated on their own -- not held back or crashed by cabin's mistake",
+      (_r1.notes.get("front"), _r1.notes.get("rear")), ("no camera", "no camera"))
+os.remove(camstore.config_path())
+
 # ------------------------------------------------------------ the IPU6 floor
 head("nothing below video64 is opened where the IPU6 owns those nodes")
 
@@ -123,6 +148,84 @@ check("on the box, with no IPU, a low node is a camera like any other",
       sorted(cams.find_cameras(_pats, by_id=_by, sysfs=_sys)), ["cabin", "front"])
 check("a machine whose sysfs cannot be read is treated as the tablet",
       cams.usb_floor(os.path.join(SCRATCH, "nowhere")), 64)
+
+# ------------------------------------------------------- refused by identity
+head("a camera is refused by identity, never by number alone")
+
+
+def identity_machine(nodes):
+    """A fresh by-id folder and sysfs for one or more nodes, each carrying a
+    real device/subsystem chain -- the same shape confirmed against the
+    box's actual C920 (device -> .../usb1/1-3/1-3:1.0, whose own subsystem ->
+    /sys/bus/usb). `nodes` is [(number, name, link, bus), ...], where `bus`
+    is "usb", some other bus name such as "pci", or None for a node with no
+    device link at all (its USB-ness cannot be told)."""
+    root = os.path.join(SCRATCH, f"identity-{time.time_ns()}")
+    by_id, sysfs, dev, devices, buses = (
+        os.path.join(root, d) for d in ("by-id", "sysfs", "dev", "devices", "bus"))
+    for d in (by_id, sysfs, dev, devices, buses):
+        os.makedirs(d)
+    for node, name, link, bus in nodes:
+        vnode = os.path.join(dev, f"video{node}")
+        open(vnode, "w").close()
+        os.symlink(vnode, os.path.join(by_id, link))
+        vdir = os.path.join(sysfs, f"video{node}")
+        os.makedirs(vdir)
+        with open(os.path.join(vdir, "name"), "w") as fh:
+            fh.write(name + "\n")
+        if bus is not None:
+            iface = os.path.join(devices, f"iface{node}")
+            busdir = os.path.join(buses, bus)
+            os.makedirs(iface)
+            os.makedirs(busdir, exist_ok=True)
+            os.symlink(busdir, os.path.join(iface, "subsystem"))
+            os.symlink(iface, os.path.join(vdir, "device"))
+    return by_id, sysfs
+
+
+_pats1 = {"patterns": {"cabin": "C920"}}
+# A real IPU6 node beside the candidate, the tablet's own shape: the floor is
+# 64 here, so a USB camera accepted at video0 anyway is accepted by identity,
+# not because nothing raised the floor in the first place.
+_ipu_node = (5, "Intel IPU6 ISYS Capture 5", "usb-Other_Cam-video-index0", None)
+_by, _sys = identity_machine([_ipu_node, (0, "HD Pro Webcam C920", C920, "usb")])
+check("a real USB camera at video0 is accepted even where the floor is 64 -- "
+      "the Wednesday risk: if uvcvideo enumerates before the IPU6, a USB "
+      "camera can land below video64",
+      cams.find_cameras(_pats1, by_id=_by, sysfs=_sys), {"cabin": os.path.join(_by, C920)})
+
+_by, _sys = identity_machine([(70, "Intel IPU6 ISYS Capture 70", C920, "usb")])
+check("an IPU-named node is refused at any number, even one that is also USB",
+      cams.find_cameras(_pats1, by_id=_by, sysfs=_sys), {})
+check("and refused_cameras() says why, not just \"no camera\"",
+      "IPU6" in cams.refused_cameras(_pats1, by_id=_by, sysfs=_sys).get("cabin", ""), True)
+
+_by, _sys = identity_machine([(70, "Some PCI Capture Device", C920, "pci")])
+check("a non-USB node is refused however high its number",
+      cams.find_cameras(_pats1, by_id=_by, sysfs=_sys), {})
+check("...and refused_cameras() names that too",
+      "not a USB device" in cams.refused_cameras(_pats1, by_id=_by, sysfs=_sys).get("cabin", ""), True)
+
+# An ambiguous node (no device link at all, so its USB-ness cannot be told)
+# alongside the same genuine IPU6 node used above.
+_by, _sys = identity_machine([_ipu_node, (3, "Unknown Capture", C920, None)])
+check("with no way to tell USB-ness, a low node still falls back to the tablet's video64 floor",
+      cams.find_cameras(_pats1, by_id=_by, sysfs=_sys), {})
+_by2, _sys2 = identity_machine([_ipu_node, (70, "Unknown Capture", C920, None)])
+check("...but the same unreadable identity at 64 or above is accepted",
+      cams.find_cameras(_pats1, by_id=_by2, sysfs=_sys2), {"cabin": os.path.join(_by2, C920)})
+_by3, _ = identity_machine([(3, "Unknown Capture", C920, None)])
+check("and an entirely unreadable sysfs falls back the same way, with no other evidence at all",
+      cams.find_cameras(_pats1, by_id=_by3, sysfs=os.path.join(SCRATCH, "no-such-sysfs")), {})
+
+_by, _sys = fake_machine(ipu=False)      # video3 named "USB2.0 Camera", no device link at all
+_unreadable = os.path.join(_sys, "video3", "name")
+os.chmod(_unreadable, 0)
+try:
+    check("the floor never silently drops to zero because one node's name could not be read",
+          cams.usb_floor(_sys), 64)
+finally:
+    os.chmod(_unreadable, 0o644)
 
 # ------------------------------------------------------------ the mode
 head("the best mode at or under 1080p30, MJPEG first")
@@ -249,6 +352,9 @@ _cam.last_frame = _now - 1
 check("a fresh picture is recording", (_cam.status()["recording"], _cam.status()["stalled"]), (True, False))
 _cam.last_frame, _cam.started = None, _now - 10
 check("a camera still starting has fifteen seconds' grace", _cam.stalled(), False)
+check("and during that grace it is not REC either -- it has sent no picture yet",
+      _cam.status()["recording"], False)
+check("status says starting, not silence", _cam.status()["starting"], True)
 _cam.started = _now - 16
 check("and then it is stalled too", _cam.stalled(), True)
 _rec = cams.Recorder()
@@ -257,6 +363,55 @@ _rec.check_stalls()
 check("the watchdog kills it, and it restarts on the next pass",
       ("KILL" in _cam.proc.signals, _rec.retry_at["front"], _rec.notes["front"].startswith("stalled")),
       (True, 0, True))
+
+
+class StubProc:
+    """Alive until killed, needing no real ffmpeg -- for exercising
+    discover()'s restart path without spawning one."""
+
+    def __init__(self):
+        self.code = None
+
+    def poll(self):
+        return self.code
+
+    def send_signal(self, sig):
+        pass
+
+    def kill(self):
+        self.code = -9
+
+    def wait(self, timeout=None):
+        return self.code
+
+
+def _stub_start(self):
+    self.proc = StubProc()
+    self.started = time.time()
+
+
+_real_find, _real_probe, _real_start = cams.find_cameras, cams.probe_modes, cams.Camera.start
+cams.find_cameras = lambda cfg=None, by_id=cams.BY_ID, sysfs=cams.SYSFS: {"front": "/dev/v4l/by-id/x"}
+cams.probe_modes = lambda device: [{"fmt": "MJPG", "w": 1920, "h": 1080, "fps": [30.0]}]
+cams.Camera.start = _stub_start
+try:
+    _r2 = cams.Recorder()
+    _r2.discover()
+    _first = _r2.cams["front"]
+    check("a first start carries no restart note", _first.restarted, None)
+    check("and it is not REC before its own first frame", _first.status()["recording"], False)
+    _first.proc, _first.started, _first.last_frame = StubProc(), time.time() - 60, time.time() - 11
+    _r2.check_stalls()
+    _r2.discover()
+    _second = _r2.cams["front"]
+    check("check_stalls() + discover() together leave a fresh camera in place",
+          _second is not _first, True)
+    check("carrying why it restarted",
+          bool(_second.restarted) and _second.restarted.startswith("stalled"), True)
+    check("and the replacement is not REC either, until it sends a frame of its own",
+          _second.status()["recording"], False)
+finally:
+    cams.find_cameras, cams.probe_modes, cams.Camera.start = _real_find, _real_probe, _real_start
 
 
 class Sink:

@@ -84,20 +84,47 @@ def match_roles(names, patterns):
     Only capture nodes count: a UVC camera also exposes -video-index1, which
     carries metadata, not pictures. Case-sensitive, so the Ace Pro's "Ace" is
     not found inside "Surface"; and tried with underscores read as spaces as
-    well, because udev writes "Osmo Action 4" as Osmo_Action_4."""
+    well, because udev writes "Osmo Action 4" as Osmo_Action_4.
+
+    A pattern that is not a valid regular expression matches nothing, rather
+    than raising: a mistyped glob in omacar-cameras.json (for example
+    "*C920*") must disable only its own role, never take find_cameras() and
+    everything downstream of it -- discover(), overview(), `omacar cams
+    status` -- down with it. See invalid_patterns()."""
     out, taken = {}, set()
     capture = sorted(n for n in names if n.endswith("-video-index0"))
     for role in ROLES:
         pat = patterns.get(role)
         if not pat:
             continue
-        rx = re.compile(pat)
+        try:
+            rx = re.compile(pat)
+        except re.error:
+            continue
         for n in capture:
             if n not in taken and (rx.search(n) or rx.search(n.replace("_", " "))):
                 out[role] = n
                 taken.add(n)
                 break
     return out
+
+
+def invalid_patterns(patterns):
+    """{role: pattern} for a role whose configured pattern is not a valid
+    regular expression. match_roles() already treats such a pattern as no
+    match rather than raising; this is how a caller finds out *why* a role
+    has no camera, so the status line can name the role and the bad pattern
+    instead of a plain, misleading "no camera"."""
+    bad = {}
+    for role in ROLES:
+        pat = patterns.get(role)
+        if not pat:
+            continue
+        try:
+            re.compile(pat)
+        except re.error:
+            bad[role] = pat
+    return bad
 
 
 def _node_name(sysfs, node):
@@ -109,39 +136,108 @@ def _node_name(sysfs, node):
 
 
 def usb_floor(sysfs=SYSFS):
-    """The lowest /dev/videoN a camera may be. On a machine where any node is
-    the IPU6's (sysfs names them "Intel IPU6 ISYS Capture N"), that is video64;
-    elsewhere, the box for one, where the C920 is video0, it is 0. A machine
-    whose sysfs cannot be read is treated as the tablet."""
+    """The floor of last resort, used only for a node whose own USB identity
+    cannot be told (see _is_usb): video64 on a machine where any node is
+    named as the IPU6's ("Intel IPU6 ISYS Capture N"), or where a node's name
+    cannot be read at all -- fail closed rather than let one unreadable name
+    make the floor 0 on what might be the tablet. Otherwise 0: the box, for
+    one, has no IPU and its C920 is video0. A machine whose sysfs cannot be
+    listed at all is treated as the tablet."""
     try:
         names = os.listdir(sysfs)
     except OSError:
         return MIN_USB_NODE
     for n in names:
         m = re.fullmatch(r"video(\d+)", n)
-        if m and re.search(r"\bIPU", _node_name(sysfs, m.group(1)), re.I):
+        if not m:
+            continue
+        try:
+            with open(os.path.join(sysfs, n, "name"), encoding="utf-8") as f:
+                node_name = f.read().strip()
+        except OSError:
+            return MIN_USB_NODE     # a name we cannot read is never proof this is not the tablet
+        if re.search(r"\bIPU", node_name, re.I):
             return MIN_USB_NODE
     return 0
 
 
-def find_cameras(cfg=None, by_id=BY_ID, sysfs=SYSFS):
-    """{role: /dev/v4l/by-id/...} for what is plugged in now. Each link is
-    resolved, and a node below the floor, or named as the IPU's, is refused
-    whatever the config's patterns say."""
-    cfg = cfg or camstore.load_config()
+def _is_usb(sysfs, node):
+    """True if videoN's own sysfs device resolves under the USB subsystem,
+    False if it resolves under a different one, None if that cannot be told
+    at all (no device link, or nothing at the far end of it).
+
+    This is the kernel's own signal for what bus a device sits on -- the same
+    "device/subsystem -> .../bus/usb" chain confirmed against the box's real
+    C920 (device -> .../usb1/1-3/1-3:1.0, whose own subsystem -> /sys/bus/usb)
+    -- so a real USB camera is never refused for enumerating at a low node
+    number, which is the Wednesday risk: if uvcvideo enumerates before the
+    IPU6 registers, a USB camera can land below video64."""
+    target = os.path.realpath(os.path.join(sysfs, f"video{node}", "device", "subsystem"))
+    if not os.path.isdir(target):
+        return None
+    return os.path.basename(target) == "usb"
+
+
+def _scan_cameras(cfg, by_id, sysfs):
+    """One pass over what by-id matches each role's pattern: which are
+    accepted, and why a match that exists was refused. A node is accepted by
+    identity, never by number alone:
+
+      - named as the IPU6's (sysfs calls it "Intel IPU6 ISYS Capture N")?
+        refused, whatever number it is.
+      - otherwise a real USB device (_is_usb)? accepted, whatever number it
+        is -- opening an IPU6 node wedged the IPU6 firmware and rebooted the
+        Surface on 2026-09-27, but a USB camera has never done that.
+      - otherwise, USB-ness itself could not be told (sysfs unreadable, or
+        no device link)? fall back to usb_floor(): refused below video64,
+        the tablet's own floor, since that is the only case where we cannot
+        rule out this being an IPU6 node.
+
+    Shared by find_cameras() (what discover() and the API use) and
+    refused_cameras() (why a matched-but-rejected role is not "no camera")."""
     try:
         names = os.listdir(by_id)
     except OSError:
         names = []
     floor = usb_floor(sysfs)
-    out = {}
+    accepted, refused = {}, {}
     for role, name in match_roles(names, cfg["patterns"]).items():
         path = os.path.join(by_id, name)
         m = re.fullmatch(r"video(\d+)", os.path.basename(os.path.realpath(path)))
-        if not m or int(m.group(1)) < floor or re.search(r"\bIPU", _node_name(sysfs, m.group(1)), re.I):
+        if not m:
+            refused[role] = f"{name} does not resolve to a video4linux device"
             continue
-        out[role] = path
-    return out
+        node = m.group(1)
+        if re.search(r"\bIPU", _node_name(sysfs, node), re.I):
+            refused[role] = f"video{node} is an IPU6 capture node"
+            continue
+        usb = _is_usb(sysfs, node)
+        if usb is False:
+            refused[role] = f"video{node} is not a USB device"
+            continue
+        if usb is None and int(node) < floor:
+            refused[role] = f"video{node} is below the IPU6 floor (video{floor}); its own USB identity could not be confirmed"
+            continue
+        accepted[role] = path
+    return accepted, refused
+
+
+def find_cameras(cfg=None, by_id=BY_ID, sysfs=SYSFS):
+    """{role: /dev/v4l/by-id/...} for what is plugged in now, accepted by
+    identity rather than by node number (see _scan_cameras)."""
+    cfg = cfg or camstore.load_config()
+    accepted, _ = _scan_cameras(cfg, by_id, sysfs)
+    return accepted
+
+
+def refused_cameras(cfg=None, by_id=BY_ID, sysfs=SYSFS):
+    """{role: reason} for a by-id match that exists but that find_cameras()
+    refused. A role refused this way is not unplugged -- it is a camera
+    find_cameras() will not open -- and its status should say so rather than
+    the "no camera" it would otherwise fall back to."""
+    cfg = cfg or camstore.load_config()
+    _, refused = _scan_cameras(cfg, by_id, sysfs)
+    return refused
 
 
 # ---- what each camera can do -------------------------------------------------
@@ -288,14 +384,22 @@ class FpsMeter:
 # ---- one camera ---------------------------------------------------------------
 
 class Camera:
-    """One role's ffmpeg, its live picture, and the last thing it said."""
+    """One role's ffmpeg, its live picture, and the last thing it said.
 
-    def __init__(self, role, device, mode, sim=False):
+    `restarted`, when given, is the note the camera this one replaces left
+    behind (for example "stalled; restarted at 12:03:04"). It is carried
+    only so status() can say *why* while this one is still in its own start
+    grace with no picture of its own yet -- it never on its own makes this
+    instance the stalled one; that would need a live frame it has not had
+    the chance to send."""
+
+    def __init__(self, role, device, mode, sim=False, restarted=None):
         self.role, self.device, self.mode, self.sim = role, device, mode, sim
         self.proc = None
         self.error = None
         self.started = None
         self.last_frame = None
+        self.restarted = restarted
         self.meter = FpsMeter()
 
     def start(self):
@@ -384,13 +488,30 @@ class Camera:
         alive = self.alive()
         stalled = self.stalled(now)
         fresh = self.last_frame is not None and now - self.last_frame < 3
+        # RECORDING NEEDS A FIRST FRAME. Without this, the replacement ffmpeg
+        # the watchdog starts after a kill reads REC for its whole 15 s start
+        # grace even if it is exactly as wedged as the one it replaced -- REC
+        # about 15 s of every 17 on a camera that has recorded nothing since
+        # its restart. "stalled" alone is not enough: it is only true while
+        # the killed process is still being reaped, at most a couple of
+        # seconds.
+        recording = alive and self.last_frame is not None and not stalled
+        starting = alive and not recording and not stalled
         since = self.last_frame or self.started or now
+        if stalled:
+            error = f"stalled: no picture for {int(now - since)} s"
+        elif starting:
+            waited = int(now - (self.started or now))
+            error = (f"restarting ({waited} s so far): {self.restarted}" if self.restarted
+                     else f"starting: no picture yet ({waited} s)")
+        else:
+            error = self.error
         return {"device": self.device, "mode": self.mode, "sim": self.sim,
-                "recording": alive and not stalled, "stalled": stalled,
+                "recording": recording, "stalled": stalled, "starting": starting,
                 "live": alive and fresh and not stalled,
                 "fps": self.meter.fps(now) if alive and not stalled else None,
                 "since": self.started,
-                "error": f"stalled: no picture for {int(now - since)} s" if stalled else self.error}
+                "error": error}
 
 
 # ---- the recorder --------------------------------------------------------------
@@ -416,21 +537,41 @@ class Recorder:
 
     def discover(self):
         cfg = camstore.load_config()
+        bad = invalid_patterns(cfg["patterns"])
         found = find_cameras(cfg)
+        refused = refused_cameras(cfg)
         now = time.time()
         for role in ROLES:
             cam = self.cams.get(role)
             if cam and cam.alive():
                 continue
+            replacing = cam is not None       # a Camera existed here and died: this is a restart
             if cam and cam.error:
                 self.notes[role] = cam.error
             if now < self.retry_at.get(role, 0):
                 continue
             self.retry_at[role] = now + 5          # a camera that dies is retried, not spun
+            # ONE BAD PATTERN DISABLES ONLY ITS OWN ROLE. match_roles() never
+            # raises on a bad regex, but without this check the role would
+            # just read the generic, misleading "no camera" -- and before
+            # this fix, load_config()'s promise that a bad value is "ignored
+            # rather than trusted" did not hold for patterns at all: one
+            # mistyped glob such as "*C920*" raised inside match_roles() and
+            # took discover(), overview() and `omacar cams status` down with
+            # it, for every role, not just the mistyped one.
+            if role in bad:
+                self.notes[role] = f"bad pattern in omacar-cameras.json: {bad[role]!r}"
+                self.cams.pop(role, None)
+                continue
             if not cfg["patterns"].get(role):
                 self.notes[role] = "off in omacar-cameras.json"
                 self.cams.pop(role, None)
                 continue
+            # The note this role's last Camera left behind (a stall restart,
+            # or its own ffmpeg error), carried into the new one so status()
+            # can say why while it is still in its own start grace with no
+            # picture yet -- see Camera.status().
+            restart_note = self.notes.get(role) if replacing else None
             dev = found.get(role)
             if dev:
                 mode = choose_mode(probe_modes(dev), cfg["caps"][role])
@@ -438,11 +579,14 @@ class Recorder:
                     self.notes[role] = "no mode at or under 1080p30"
                     self.cams.pop(role, None)
                     continue
-                new = Camera(role, dev, mode)
+                new = Camera(role, dev, mode, restarted=restart_note)
             elif self.sim:
-                new = Camera(role, None, SIM_MODE[role], sim=True)
+                new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note)
             else:
-                self.notes[role] = "no camera"
+                # A by-id match that exists but was refused (an IPU6 node, a
+                # non-USB one, or one below the floor with no way to tell)
+                # says so, rather than reading the same as an unplugged role.
+                self.notes[role] = refused.get(role, "no camera")
                 self.cams.pop(role, None)
                 continue
             new.start()
@@ -477,7 +621,8 @@ class Recorder:
             cam = self.cams.get(role)
             doc["roles"][role] = cam.status() if cam else {
                 "device": None, "mode": None, "sim": False, "recording": False, "stalled": False,
-                "live": False, "fps": None, "since": None, "error": self.notes.get(role)}
+                "starting": False, "live": False, "fps": None, "since": None,
+                "error": self.notes.get(role)}
         os.makedirs(run_dir(), exist_ok=True)
         tmp = status_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -562,21 +707,35 @@ def running(st):
 
 def overview():
     """GET /api/cams. Per role: device, mode, recording, real fps, clip count,
-    storage used, and the last error; and storage used of the budget."""
+    storage used, and the last error; and storage used of the budget.
+
+    Never raises, whatever omacar-cameras.json says: a bad pattern or a
+    refused camera is reported in `error`, not thrown."""
     cfg = camstore.load_config()
     st = _read_status()
     running_now = running(st)
     found = find_cameras(cfg)
+    bad = invalid_patterns(cfg["patterns"])
+    refused = refused_cameras(cfg)
     use = camstore.usage()
     roles = {}
     for role in ROLES:
         r = (st or {}).get("roles", {}).get(role, {}) if running_now else {}
-        why = r.get("error") if running_now else ("recorder off" if role in found else "no camera")
+        if running_now:
+            why = r.get("error")
+        elif role in bad:
+            why = f"bad pattern in omacar-cameras.json: {bad[role]!r}"
+        elif role in found:
+            why = "recorder off"
+        elif role in refused:
+            why = refused[role]
+        else:
+            why = "no camera"
         roles[role] = {
             "device": r.get("device") or found.get(role),
             "mode": r.get("mode"), "sim": bool(r.get("sim")),
             "recording": bool(r.get("recording")), "stalled": bool(r.get("stalled")),
-            "live": bool(r.get("live")),
+            "starting": bool(r.get("starting")), "live": bool(r.get("live")),
             "fps": r.get("fps"), "clips": use["clips"][role], "used": use["by_role"][role],
             "error": why,
         }
@@ -629,7 +788,9 @@ def _print_status():
         m = r["mode"]
         mode = f"{m['fmt']} {m['w']}x{m['h']}@{m['fps']:g}" if m else "-"
         fps = f"{r['fps']:.1f} fps" if r["fps"] else ""
-        state = "REC" if r["recording"] else ("STALLED" if r["stalled"] else "---")
+        state = ("REC" if r["recording"] else
+                 "STALLED" if r["stalled"] else
+                 "STARTING" if r["starting"] else "---")
         print(f"  {role:<6} {state:<7} {mode:<22} {fps:<9} "
               f"{r['clips']:>4} clips  {os.path.basename(r['device'] or '') or '(none)'}")
         if r["error"]:
