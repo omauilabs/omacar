@@ -43,6 +43,8 @@
 #   omacar kiosk              fullscreen drive mode, for a tablet in the car
 #   omacar cockpit [--control]
 #                             serve the gauge to any tablet on the network
+#   omacar cams status|on|off|sim
+#                             the dashcams: front, rear and cabin, in clips that loop
 #   omacar tablet [setup]     set this machine up as the in-car tablet
 #   omacar tablet awake       stop it suspending — for a tablet that lives in a car
 #   omacar power off|sleep|screen|status|allow
@@ -848,6 +850,7 @@ case "${1:-open}" in
   theme) shift; exec python3 "$ROOT/lib/themes.py" "$@" ;;
   drivemode) shift; exec python3 "$ROOT/lib/drivemode.py" "$@" ;;
   assets) shift; exec python3 "$ROOT/lib/assets.py" "$@" ;;
+  cams) shift; exec python3 "$ROOT/lib/cams.py" "$@" ;;
   daemon)
     case "${2:-status}" in
       start) daemon_start ;;

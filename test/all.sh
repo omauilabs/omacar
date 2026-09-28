@@ -8,6 +8,17 @@ ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 VENV="${XDG_DATA_HOME:-$HOME/.local/share}/omacar/venv"
 fails=0
 
+# ---- redesign/cameras ---------------------------------------------------------
+# A running camera recorder holds Home's live picture open, and headless
+# Chromium's virtual time never moves past an open request: app_test would hang
+# rather than fail. So refuse, fast, and say why.
+if systemctl --user is-active --quiet omacar-cams.service 2>/dev/null \
+   || pgrep -f "lib/cams.py (run|sim)" >/dev/null 2>&1; then
+  echo "  omacar-cams is recording on this machine; stop it first: omacar cams off"
+  exit 1
+fi
+# ---- end redesign/cameras -----------------------------------------------------
+
 "$ROOT/test/smoke.sh" || fails=$((fails + 1))
 
 if [[ -x "$VENV/bin/python" ]]; then
@@ -92,5 +103,11 @@ for suite in ima sitrep; do
     python3 "$ROOT/test/${suite}_test.py" || fails=$((fails + 1))
   fi
 done
+
+# ---- redesign/cameras ---------------------------------------------------------
+# The cameras, the audio stage and drowsy mode. Scratch folders only: none of
+# these touches ~/Videos, the real runtime directory or the speakers.
+python3 "$ROOT/test/cams_test.py" || fails=$((fails + 1))
+# ---- end redesign/cameras -----------------------------------------------------
 
 exit $((fails > 0))
