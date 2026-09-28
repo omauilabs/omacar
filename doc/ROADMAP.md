@@ -416,9 +416,9 @@ the one that is wrong.
 | QML — the Quickshell plugin | 6 | 3,135 |
 | Shell — the CLI and the installer | 6 | 1,789 |
 | Tests | 25 | 7,973 |
-| Documentation | 33 | 15,147 |
+| Documentation | 33 | 15,263 |
 | Data — codes, resets, procedures, profiles | 8 | 1,480 |
-| **Tracked in git, all of it** | | **90,890** |
+| **Tracked in git, all of it** | | **91,006** |
 
 **Tests** — 1,222 checks, all passing. Run with `test/all.sh`; none of them needs a car.
 
@@ -581,7 +581,7 @@ to you, and so it declines to quote one.
 
 On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate correlation logs, 0 learned module maps. Counts only — the field log below is the place for what those drives actually were.
 
-**The capability map, counted** — `doc/capabilities.json`: 250 capabilities across 23 domains.
+**The capability map, counted** — `doc/capabilities.json`: 254 capabilities across 23 domains.
 
 | Domain | Shipped | Building | Next | Later | Research | All |
 |---|---:|---:|---:|---:|---:|---:|
@@ -592,9 +592,9 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | 12 V electrical and charging | 4 | 0 | 0 | 2 | 1 | 7 |
 | Tyres, brakes and chassis | 1 | 1 | 1 | 5 | 2 | 10 |
 | Fuel economy, trips and costs | 6 | 1 | 0 | 2 | 1 | 10 |
-| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 1 | 4 | 2 | 13 |
+| Safety: cameras, drowsiness, events and recalls | 2 | 4 | 2 | 4 | 4 | 16 |
 | Navigation and location | 0 | 0 | 5 | 4 | 0 | 9 |
-| Phone, media, CarPlay and Android Auto | 2 | 2 | 0 | 1 | 2 | 7 |
+| Phone, media, CarPlay and Android Auto | 2 | 2 | 0 | 2 | 2 | 8 |
 | Body and comfort | 5 | 1 | 0 | 2 | 2 | 10 |
 | Ownership and paperwork | 4 | 0 | 1 | 4 | 1 | 10 |
 | Performance and track | 2 | 0 | 0 | 5 | 0 | 7 |
@@ -608,7 +608,7 @@ On this machine: 1 vehicle database, 0 drive fault-log sessions, 0 candidate cor
 | Accessibility | 7 | 0 | 0 | 3 | 0 | 10 |
 | Interface and looks | 10 | 1 | 2 | 0 | 0 | 13 |
 | Omarchy plugins in the car | 0 | 0 | 2 | 4 | 2 | 8 |
-| **All domains** | **116** | **18** | **32** | **65** | **19** | **250** |
+| **All domains** | **116** | **18** | **33** | **66** | **21** | **254** |
 
 *Shipped* means `omacar roadmap --check` found every file the entry
 names tracked by git, and every entry it stands on shipped too. It does
@@ -641,8 +641,9 @@ adapters it has actually met.
 - *Interface and looks* — Five tabs a driver would name (`share/js/main.js`) · Home (`share/js/views/home.js`) · Arrange Home by hand (`lib/homelayout.py`) · The designed palette and type (`share/css/app.css`) · Every screen says where its numbers came from (`share/js/provenance.js`) · The car's own picture, kept out of git (`lib/assets.py`) · Themes I build (`lib/themes.py`) · Effects driven by the car (`share/js/effects.js`) · Drive mode (`share/js/views/drive.js`) · A boot screen that says what it waits for (`share/js/bootscreen.js`).
 - *Omarchy plugins in the car* — nothing yet.
 
-**Shipped** — 219 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
+**Shipped** — 220 commits on `docs/living-roadmap`, not counting commits that change nothing but this file. The most recent, unedited:
 
+- `2026-09-28` The back seat: a reminder to check it, a calm word about crying, and screens for the kids
 - `2026-09-28` Every hard stop, jolt or tap becomes one package from all three cameras
 - `2026-09-28` The owner's answers: three refusals, four warnings, resets and recalls in Next
 - `2026-09-28` One byte of a suite's output that is not UTF-8 no longer kills the roadmap
@@ -650,7 +651,6 @@ adapters it has actually met.
 - `2026-09-28` Every price in the roadmap names the page it came from and the day it was read
 - `2026-09-28` The roadmap refuses a capability it cannot prove, and stops going stale on its own
 - `2026-09-28` The whole car, as a list an agent can read, with the file that proves each item
-- `2026-09-28` Home can be rearranged by hand, while parked, and a hand-edited file cannot break it
 
 **In flight** — being built right now, and not to be counted as
 shipped. Each names the file that proves it landed; git answers,
@@ -703,6 +703,12 @@ the prose looking like a measurement.
 - California Penal Code s632 makes it an offence to record a confidential communication without the consent of all parties to it; a conversation is not confidential where the parties can reasonably expect to be overheard or recorded.
   <br>Sources: <https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?lawCode=PEN&sectionNum=632>
   <br>*Asserted 2026-09-28. To re-check: Read the section on the Legislature's own site. This is why cabin audio is never recorded by default and why turning it on shows that warning; it is not legal advice, and other states differ.*
+- More than 1,000 children have died of vehicular heatstroke in the United States since 1998, by NHTSA's count. **(unverified)**
+  <br>Sources: <https://www.nhtsa.gov/campaign/heatstroke>
+  <br>*Asserted 2026-09-28. To re-check: NHTSA's page and the National Safety Council's (injuryfacts.nsc.org, hotcars) both refused automated reads on 2026-09-28 with HTTP 403, so the figure was seen only in search results summarising NHTSA. Open NHTSA's heatstroke page in a browser and confirm the count, then mark this verified. It is the reason safe.rear-seat-reminder exists, not a number the app shows.*
+- MediaPipe's Audio Classifier task uses YAMNet as its default model, an audio event classifier trained on AudioSet, and supports Python, the web, Android and iOS. YAMNet's class map includes 'Baby cry, infant cry' (index 20, /t/dd00002).
+  <br>Sources: <https://developers.google.com/edge/mediapipe/solutions/audio/audio_classifier>, <https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv>
+  <br>*Asserted 2026-09-28. To re-check: Open the task guide and the class map. A class existing is not the classifier working in a car: road noise, music and an older child's shouting all need testing before safe.child-cry says anything.*
 - The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.
   <br>Sources: <https://omarchy.org/manual/shell-plugins/>, <https://omarchyplugins.com>, <https://github.com/omacom/omarchy-plugin-marketplace>
   <br>*Asserted 2026-09-28. To re-check: Open the manual page and the marketplace repository, and count the entries in its registry.json. The compatibility analysis in the capability map starts here and at /usr/share/omarchy/shell/plugins on an Omarchy machine.*
