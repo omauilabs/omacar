@@ -39,11 +39,6 @@
 
   "inflight": [
     {
-      "title": "A three-button bar panel",
-      "evidence": [],
-      "note": "Lands inside plugin/Panel.qml, which already exists, so git cannot tell you whether it is done. Confirm by opening the panel."
-    },
-    {
       "title": "The foundation redesign: Vehicle, the looks, and review screenshots",
       "branch": "redesign/foundation",
       "evidence": ["share/js/views/vehicle.js", "share/css/vehicle.css", "tools/shoot.py"],
@@ -139,7 +134,7 @@
       "sources": [
         "https://github.com/merbanan/rtl_433"
       ],
-      "how": "Search the repository for 'Tymate'. Then settle it properly: capture the owner's TM2 sensors with an RTL-SDR at 433.92 MHz and try the flex decoder. A capture that decodes makes this claim irrelevant."
+      "how": "Search the repository for 'Tymate'. Then settle it properly, as decided on 2026-09-28: once the RTL-SDR arrives, record the owner's TM2 sensors at 433.92 MHz for about an hour with rtl_433's generic and flex decoders. A recording that decodes makes this claim irrelevant; buying sensors rtl_433 already supports is the fallback only if it does not."
     },
     {
       "text": "The RTL-SDR Blog V4 reached end of line in May 2026; its replacement, the V4L, is $37.95. The u-blox NEO-M9V does both untethered and automotive dead reckoning, and a module with a pin header sells for about EUR 70.",
@@ -162,6 +157,17 @@
         "https://github.com/OBDb"
       ],
       "how": "The organisation page, or the GitHub API's public_repos count for the OBDb org."
+    },
+    {
+      "text": "Piper's active repository, OHF-Voice/piper1-gpl, is GPL-3.0; the MIT-licensed rhasspy/piper is archived and says development has moved. OmaCar therefore does not bundle Piper: it is installed as a system package and run as its own program, and the voice clips it renders are ordinary audio files.",
+      "asserted": "2026-09-28",
+      "recheck_days": 180,
+      "verified": true,
+      "sources": [
+        "https://github.com/OHF-Voice/piper1-gpl",
+        "https://github.com/rhasspy/piper"
+      ],
+      "how": "Open both repositories and read their licence files. If the licence of the maintained version changes, the reason for not bundling it goes away; the decision of 2026-09-28 still stands until the owner revisits it."
     },
     {
       "text": "The Omarchy manual points plugin authors to omarchyplugins.com as the community plugin directory, run from a repository in the same organisation as Omarchy; its registry listed about 4,400 entries on 2026-09-28.",

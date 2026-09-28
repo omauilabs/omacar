@@ -57,8 +57,11 @@ An entry marked `shipped` must name files git is tracking, so "shipped" cannot
 mean "somebody remembers writing it". A shipped entry may only depend on
 shipped entries, so a feature cannot be done while the thing it stands on is
 not. A capability that writes to or moves the car must name the gate in
-lib/modes.py that decides it, and may not name one no mode allows: reprogramming
-and guessing routine identifiers are refusals, not roadmap items.
+lib/modes.py that decides it. The owner's decisions on the guards live beside
+the map: a gate the owner confirmed as a refusal can never be a capability, a
+guard he chose to make a warning can be planned but not shipped while the code
+still refuses it, and every action the code refuses must be one or the other,
+named word for word in the prose.
 
 WHAT IS NOT DERIVED, AND WHY THAT IS DELIBERATE.
 
@@ -619,6 +622,58 @@ def check_capabilities(doc, live=None, actions=None):
         if not isinstance(h, dict) or not (h.get("title") or "").strip():
             out.append(f"hardware {hid}: no title")
 
+    # The owner's decisions on the guards (doc/ROADMAP.md, the governing
+    # principle). Every action lib/modes.py refuses in every mode has to be
+    # one or the other, so the code cannot hold a refusal nobody decided on.
+    refused_gates, warned_gates = {}, {}
+    seen = set()
+    for key, date_key, text_key, ref_key in (
+            ("refusals", "confirmed", "why", "enforced"),
+            ("warnings", "decided", "risk", "today")):
+        items = doc.get(key)
+        if not isinstance(items, list):
+            out.append(f"`{key}` must be a list")
+            continue
+        for r in items:
+            rid = r.get("id") if isinstance(r, dict) else None
+            if not isinstance(rid, str) or not CAP_ID_RE.match(rid):
+                out.append(f"{key}: {rid!r} needs a lowercase id")
+                continue
+            where = f"{key[:-1]} {rid}"
+            if rid in seen:
+                out.append(f"{where}: id used twice")
+            seen.add(rid)
+            for k in ("title", text_key):
+                if not (isinstance(r.get(k), str) and r[k].strip()):
+                    out.append(f"{where}: `{k}` must say something")
+            try:
+                time.strptime(r.get(date_key) or "", "%Y-%m-%d")
+            except (TypeError, ValueError):
+                out.append(f"{where}: `{date_key}` is not a YYYY-MM-DD date")
+            refs = r.get(ref_key)
+            if not isinstance(refs, list) or not refs:
+                out.append(f"{where}: `{ref_key}` must name the files that "
+                           "hold the guard today")
+                refs = []
+            for p in refs:
+                if live is not None and p not in live:
+                    out.append(f"{where}: {p} is not tracked by git")
+            gate = r.get("gate")
+            if gate is not None:
+                if gate not in actions:
+                    out.append(f"{where}: gate {gate!r} is not an action in "
+                               "lib/modes.py")
+                elif gate in refused_gates or gate in warned_gates:
+                    out.append(f"{where}: gate {gate} is already decided")
+                else:
+                    (refused_gates if key == "refusals"
+                     else warned_gates)[gate] = r
+    for a, spec in actions.items():
+        if spec.get("tier") is None and a not in refused_gates \
+                and a not in warned_gates:
+            out.append(f"lib/modes.py refuses {a!r} in every mode, and no "
+                       "refusal or warning records the owner's decision on it")
+
     caps = doc.get("capabilities")
     if not isinstance(caps, list) or not caps:
         return out + ["`capabilities` must be a non-empty list"]
@@ -672,8 +727,10 @@ def check_capabilities(doc, live=None, actions=None):
                 out.append(f"{name}: needs {h!r}, which `hardware` does not define")
 
         # The gate. A write or an actuation that cannot say which rule in
-        # lib/modes.py decides it is a capability nobody has thought through;
-        # one gated by an action no mode allows is not a capability at all.
+        # lib/modes.py decides it is a capability nobody has thought through.
+        # One gated by a confirmed refusal is not a capability at all. One
+        # gated by a warning the code still refuses can be planned, and
+        # cannot be shipped until the code lets the owner accept it.
         gate = c.get("gate")
         if tier in ("write", "actuate") and not gate:
             out.append(f"{name}: a {tier} capability must name its `gate`, "
@@ -685,9 +742,15 @@ def check_capabilities(doc, live=None, actions=None):
             elif spec is None:
                 out.append(f"{name}: gate {gate!r} is not an action in "
                            "lib/modes.py")
-            elif spec.get("tier") is None:
-                out.append(f"{name}: gate {gate!r} is refused in every mode; "
-                           "that is a refusal, not a capability")
+            elif gate in refused_gates:
+                r = refused_gates[gate]
+                out.append(f"{name}: gate {gate!r} is a refusal the owner "
+                           f"confirmed on {r.get('confirmed')}; a refusal is "
+                           "not a capability")
+            elif spec.get("tier") is None and status in ("shipped", "building"):
+                out.append(f"{name}: {status}, but lib/modes.py still refuses "
+                           f"{gate!r} in every mode; it becomes a warning the "
+                           "owner can accept only when the code allows it")
 
         # Evidence. Shipped and building must point at something real, and
         # everything named must be tracked -- an untracked file has not shipped
@@ -1059,6 +1122,35 @@ def splice(text, body, today):
     return text[:b.start()] + block + text[e.end():], changed
 
 
+def prose(text):
+    """doc/ROADMAP.md with the generated block cut out: the half a person wrote."""
+    b, e = BEGIN_RE.search(text), END_RE.search(text)
+    if not b or not e or e.start() < b.end():
+        return text
+    return text[:b.start()] + text[e.end():]
+
+
+def check_prose(doc, text):
+    """Does the written half name every refusal and warning the map records?
+
+    The refusals are argued in prose and listed in data, and those two drift
+    exactly the way a hand-kept count does: a decision gets recorded in one
+    and not the other. So each title must appear, word for word, in the part
+    of doc/ROADMAP.md a person wrote. Word for word, not line for line:
+    whitespace is collapsed first, because prose wraps and a title that
+    breaks across two lines has still been said.
+    """
+    written = " ".join(prose(text).split())
+    out = []
+    for key in ("refusals", "warnings"):
+        for r in doc.get(key) or []:
+            t = (r or {}).get("title") if isinstance(r, dict) else None
+            if t and " ".join(t.split()) not in written:
+                out.append(f"{key[:-1]} {r.get('id')}: doc/ROADMAP.md never "
+                           f"says {t!r}; the prose and the map disagree")
+    return out
+
+
 def problems(cfg):
     """Everything --check refuses, before a single number is measured."""
     out = check_claims(cfg)
@@ -1066,7 +1158,13 @@ def problems(cfg):
     if doc is None:
         return out + [why]
     live = set(tracked()) if in_checkout() else None
-    return out + check_capabilities(doc, live)
+    out += check_capabilities(doc, live)
+    try:
+        with open(DOC, encoding="utf-8") as f:
+            out += check_prose(doc, f.read())
+    except OSError:
+        pass                      # main() reports a missing document itself
+    return out
 
 
 USAGE = """  usage: omacar roadmap [--check | --print | --list STATUS [DOMAIN]]

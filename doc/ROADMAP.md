@@ -91,13 +91,20 @@ it is the owner's car and the owner's right.
 
 It changes how every other rule here is read. A refusal is no longer a matter
 of this project's taste. A refusal has to be one the owner has agreed to, and
-it has to say why.
+it has to say why. Everything else the tool guards against becomes a warning:
+the risk is stated, and the owner can accept it and go ahead.
 
-### The two refusals the owner has confirmed (2026-09-28)
+The refusals and the warnings are also recorded as data, in the `refusals` and
+`warnings` lists of [doc/capabilities.json](capabilities.json).
+`omacar roadmap --check` fails if this section and that data disagree. It also
+fails if `lib/modes.py` refuses anything the owner has not decided on, and if
+the map plans a capability behind a confirmed refusal.
 
-These two stay refusals whatever mode the tool is in, and the owner has
-confirmed both as exceptions to "the owner decides". In his words, they are
-"obvious and necessary".
+### The three refusals the owner has confirmed (2026-09-28)
+
+These stay refusals whatever mode the tool is in and whatever the owner
+accepts. The owner confirmed each as an exception to "the owner decides" on
+2026-09-28. In his words, the first two are "obvious and necessary".
 
 1. **Writes that disable emissions controls.** This is federal law, not a
    preference: Clean Air Act §203(a)(3) prohibits rendering an emission control
@@ -108,28 +115,32 @@ confirmed both as exceptions to "the owner decides". In his words, they are
    produce one. An interrupted transfer leaves a module with no firmware at
    all, which means a tow truck rather than a fault code. This is a technical
    impossibility for this tool, not a judgement about the owner.
+3. **Writes to the car while it is moving.** The risk falls on other people on
+   the road, who did not choose it. No mode, warning or plugin unlocks a write
+   or an actuation while the car moves.
 
-### The other refusals in the code
+### The guards that become warnings (decided 2026-09-28)
 
-Several more guards refuse today, each with its reason written beside it in
-the code. None has yet been put to the owner under this principle, so they are
-listed under [Decisions for the owner](#decisions-for-the-owner):
+These refuse in the code today. The owner decided that each becomes a warning
+he can accept, with the risk stated first, and never silently. Until the
+`safe.accept-risk` capability lands, the code keeps refusing them. The map
+says so rather than pretending otherwise.
 
-- **No routine identifier is ever guessed.** A routine is something a module
-  *runs*, so guessing its number could spin a fan or retract a parking brake
-  with a wheel off.
-- **No write or actuation while the car is moving.** The risk falls on other
-  people on the road as well as on the owner.
-- **No write or sweep below 12.2 V.** This guard exists because a 25-minute
-  key-on sweep tripped an ABS warning.
-- **An agent cannot raise its own tier, promote its own finding to
-  `validated`, or send a write.** It queues a proposal instead, and the owner
-  runs it or declines it.
-
-The proposed reading is that these are *inform-and-confirm* guards rather than
-bans: the tool explains, and the owner chooses. The motion lock is the one
-exception, because the risk falls on people who did not choose it. That reading
-is not yet decided.
+- **Guessing a routine identifier.** The risk: a routine is something a
+  module *runs*, so a guessed number can spin a fan, cycle an ABS pump or
+  retract a parking brake with a wheel off. The map plans it as
+  `disc.routine-guess`, parked only, after the risk is accepted.
+- **Writing or sweeping below 12.2 V.** The risk: a long session on a low
+  battery can trip warning lights (a 25-minute key-on sweep tripped the ABS
+  warning, which is why the floor exists) or leave the car unable to start.
+- **An agent raising its own tier, promoting its own finding, or sending a
+  write.** The risk: an agent can be wrong with confidence, and a finding it
+  promotes itself becomes data other owners trust. Until accepted, an agent
+  queues a proposal and the owner runs it or declines it.
+- **Plugins breaking the driving-screen rules.** The risk: text entry, small
+  targets and motion on a screen in view of the driver take attention off the
+  road. Writes while moving stay refused whatever is accepted (see
+  [Plugin safety rules](#plugin-safety-rules)).
 
 ---
 
@@ -185,7 +196,7 @@ Being credible means naming what is genuinely hard, gated or off the table.
   region-regulated, and is the single most abused capability in this market.
   It is out of scope, deliberately, and not a coverage gap we intend to close.
 - **ECU reflashing** needs manufacturer-signed images and, in most markets now,
-  an OEM subscription plus a J2534 device. It is one of the two confirmed
+  an OEM subscription plus a J2534 device. It is one of the confirmed
   refusals above.
 - **Security gateways** (FCA SGW, and equivalents spreading across other makes)
   require authenticated access to write to a modern vehicle at all. Read access
@@ -240,7 +251,8 @@ underneath it, and several were learned by breaking something.
 1. **Reads are free; writes are armed.** Writing is a first-class capability,
    not a hidden one: a tool that cannot clear a code after you fixed the fault
    is a viewer. But writes disarm themselves, refuse while the car is moving,
-   refuse below 12.2 V, and state their consequences before sending.
+   and state their consequences before sending. Below 12.2 V they refuse
+   today, and they will warn instead once the owner can accept the risk.
 2. **Reprogramming stays out.** 0x34/0x36/0x37 need a manufacturer-signed image
    we cannot produce, and a partial transfer leaves a module unable to boot.
    Confirmed by the owner as an exception on 2026-09-28.
@@ -250,11 +262,10 @@ underneath it, and several were learned by breaking something.
    says so. A tile the car cannot fill says "Not on this car", never zero. A
    price in this document names its page and the day it was read.
 5. **Refuse when it matters, and say why.** Every guard names the incident
-   that caused it. Under the governing principle, "when it matters" is for the
-   owner to settle. The owner has confirmed law and impossibility (above). The
-   proposal is to add risk to somebody other than the owner, and to turn
-   everything else into a warning the owner can accept. That is not yet
-   decided.
+   that caused it. Under the governing principle, "when it matters" is the
+   owner's call, and on 2026-09-28 he settled it: law, impossibility, and risk
+   to people on the road who did not choose it. Everything else is a warning
+   that states the risk, which the owner can accept.
 6. **The car is not urgent work.** Everything in the background runs
    `Nice=10`. An unthrottled poll loop crashed the compositor on a 2-core
    machine once already.
@@ -264,8 +275,10 @@ underneath it, and several were learned by breaking something.
    path through the same gates. An agent proposes and the owner decides, and
    an agent can never award itself more trust than it was given.
 9. **Glanceable while moving.** Whatever is on screen while the car moves,
-   ours or a plugin's, follows one set of rules: few numbers, big targets, no
-   text entry, nothing new in motion, and writes greyed out with the reason.
+   ours or a plugin's, follows one set of rules by default: few numbers, big
+   targets, no text entry and nothing new in motion. The owner can accept a
+   warning to relax those. Writes stay greyed out with the reason, and that
+   cannot be relaxed.
 10. **No server of ours.** Sharing is a git repository, sync is between the
     owner's own machines over their own tailnet, and Work relays through the
     owner's own box. This follows the owner's decision of 2026-09-28 against
@@ -338,9 +351,14 @@ The map is honest by construction rather than by care. `omacar roadmap
 - a `shipped` entry depends on something that has not shipped;
 - a dependency does not exist, or dependencies form a loop;
 - a capability that writes to or moves the car does not name the
-  `lib/modes.py` action that gates it, or names one that no mode allows.
-  Reprogramming and guessing routines are refusals, and they cannot appear on
-  the map as plans.
+  `lib/modes.py` action that gates it;
+- a capability is gated by a refusal the owner confirmed. Reprogramming
+  cannot appear on the map even as a plan;
+- a capability is gated by a guard the owner made a warning, such as guessing
+  a routine, and is marked shipped while the code still refuses it;
+- `lib/modes.py` refuses an action that neither the refusals nor the warnings
+  record a decision on, or the governing principle above does not name a
+  refusal or warning the data holds.
 
 The check can prove that a file exists and is tracked. It cannot prove that
 the file works on your car, and that is what each entry's notes are for: which
@@ -370,8 +388,11 @@ agent, notes), choose the status honestly, and read the code before writing
    something that has not run.
 
 The principles above bind an agent exactly as they bind a person. An agent
-never marks its own finding validated, never sends a write the owner has not
-approved, and never states a number it cannot source.
+never states a number it cannot source. It does not mark its own finding
+validated or send a write the owner has not approved. Those limits are
+warnings the owner can accept with the risk stated, not refusals, and until
+`safe.accept-risk` lands the code holds them. No agent writes to a moving car,
+ever.
 
 <!-- omacar:status begin — generated by `omacar roadmap`. Everything between these two comments is rewritten; edit the prose outside them, and the facts in doc/roadmap.json. -->
 
@@ -708,7 +729,15 @@ has to look like one product and has to be as safe as OmaCar's own screens,
 whoever wrote the plugin. These rules are enforced **by the app, not requested
 of the plugin**. Today OmaCar's own screens follow them. Nothing yet enforces
 them on a plugin; that is the `oplug.safety-rules` capability, and it is in
-Next with the plugin contract.
+Next with the plugin contract. The contract supports Omarchy's full-screen
+`panel` kind first (approved 2026-09-28).
+
+Rule 5 is a refusal: writes to the car while it is moving are one of the three
+refusals the owner confirmed on 2026-09-28, and nothing a plugin declares or
+an owner accepts unlocks it. Every other rule is a default. The owner can
+relax it for a plugin after the app states the risk. That makes plugins
+breaking the driving-screen rules a warning, not a refusal (decided
+2026-09-28).
 
 **While the car is moving:**
 
@@ -722,7 +751,8 @@ Next with the plugin contract.
    animates for its own sake, and effects pause.
 5. **Writes and actuation are greyed out, with the reason.** A plugin reaches
    the car only through the same gates a person does: `lib/modes.py`, the write
-   arm, the motion check and the voltage floor. There is no side door.
+   arm and the motion check. There is no side door, and this rule has no
+   override.
 6. **Every number says where it came from.** A plugin that draws a reading
    carries its source, like OmaCar's tiles, and draws words rather than a zero
    when it has no value.
@@ -741,10 +771,9 @@ Next with the plugin contract.
     hostile ones. Isolating web views on their own origin is research, not a
     promise.
 
-Under the governing principle the owner can install whatever they like. What
-the app will not do is let a plugin do on the move what the owner's own
-screens refuse on the move. The owner has not yet ruled on that line (see
-[Decisions for the owner](#decisions-for-the-owner)).
+Under the governing principle the owner can install whatever they like, and
+relax any rule above except rule 5 once the risk is stated. What the app will
+not do is let any plugin write to or move the car while it is moving.
 
 ---
 
@@ -780,7 +809,7 @@ the file that will prove it landed.
 
 ### Next
 
-In this order, because each makes the ones after it cheaper.
+In this order, which is the owner's.
 
 **1. IMA and Honda data: the 2026-09-29 discovery drives.** Asymmetry 3
 claims that coverage is expensive per vendor and nearly free per community.
@@ -841,62 +870,84 @@ any of it. The procedure is model-shaped rather than Honda-shaped. If it works
 on the CR-Z, the moat in the opening argument is not knowledge. It is only that
 nobody had shared it.
 
-**2. Navigation and GPS, offline.** Decided with the owner on 2026-09-27/28:
+**2. Service resets, per make.** These run after the IMA drives (decided
+2026-09-28). They are the resets that most often force a shop visit: oil life
+over the bus, electronic parking brake service mode, steering angle
+calibration, battery registration, throttle and idle relearn, and diesel
+particulate regeneration. The routine-control path and the definition format
+already exist, and only two generic clears are defined. Every definition is
+per make and starts `unverified` until somebody runs it on a real car. None is
+found by guessing, since guessing a routine becomes a separate, risk-accepted
+act. The old roadmap called this the highest-value item per hour of work.
+
+**3. Navigation and GPS, offline.** Decided with the owner on 2026-09-27/28:
 MapLibre with Protomaps tiles for the map, Valhalla for routing and Piper for
-spoken directions, all running on the tablet. Position comes from a u-blox
-NEO-M9V receiver with a roof antenna, which also dead-reckons through tunnels.
-GNSS speed also becomes a trusted yardstick for validating discovered data.
-Location history arrives with retention the owner controls, not after it.
+spoken directions, all running on the tablet. Piper is not bundled. It is
+installed as a normal system package and run as its own program, and its
+active repository is GPL-3.0. Voice clips rendered ahead of time are just
+audio files. Position comes from a u-blox NEO-M9V receiver with a roof
+antenna, which also dead-reckons through tunnels. GNSS speed also becomes a
+trusted yardstick for validating discovered data. Location history arrives
+with retention the owner controls, not after it.
 
-**3. Tyre pressures by radio.** The owner's Tymate TM2 sensors broadcast
-pressure and temperature on 433.92 MHz. An RTL-SDR running `rtl_433` may decode
-them, but `rtl_433` has no Tymate decoder today, so the first step is a
-capture. Nothing is sent to the car. If the capture decodes, Home's single
-tyre callout becomes four, as the foundation design anticipated.
+**4. Tyre pressures by radio.** The owner's Tymate TM2 sensors broadcast
+pressure and temperature on 433.92 MHz, and `rtl_433` has no Tymate decoder
+today. The next step: once the RTL-SDR radio arrives, the owner spends about
+an hour recording the sensors with `rtl_433`'s generic and flex decoders.
+Buying sensors `rtl_433` already supports is the fallback, only if that fails.
+Nothing is sent to the car. If the recording decodes, Home's single tyre
+callout becomes four, as the foundation design anticipated.
 
-**4. The agent framework.** It is an SDK so owners' agents can build solutions
+**5. The agent framework.** It is an SDK so owners' agents can build solutions
 for their own cars: car data, CarPlay, the interface, cameras and navigation.
 It covers a documented contract, a scaffold that starts a plugin with its test,
 permissions a plugin declares and the server enforces, and more events to hook.
 The Omarchy plugin contract and the plugin safety rules are part of the same
 work, because a car screen from an Omarchy plugin and a car screen from an
-owner's agent are the same problem.
+owner's agent are the same problem. The contract supports Omarchy's
+full-screen `panel` kind first.
 
-**5. The hardware guide, especially for older cars.** It says which adapter
+**6. The hardware guide, especially for older cars.** It says which adapter
 for which car and protocol, what a clone cannot do, how to power a tablet
 without a fire risk, how to fit the GNSS antenna, and what of a Snap-on kit
 carries over. Every price is dated and sourced.
 
-**6. Onboarding, for users and for agents, on Omarchy.** For a person, it goes
+**7. Onboarding, for users and for agents, on Omarchy.** For a person, it goes
 from "I have a car and a laptop" to a first useful answer in minutes. For an
 agent, it is one guide to the principles, the tiers, the MCP tools, this
 roadmap and how to test.
 
-**7. Looks and the car in 3D.** Looks become folders (palette, logo and
+**8. Looks and the car in 3D.** Looks become folders (palette, logo and
 texture), with the owner's chrome and carbon-fibre logos. An optional 3D model
 of the owner's own car can replace the picture, and the viewer for it already
 exists. Honda-badged art stays in the private assets folder, out of git.
 
+**9. Recalls by VIN.** It checks the decoded VIN against NHTSA's free public
+recall data and cites the result. The VIN decode already asks NHTSA, so this
+is small. Moved into Next on 2026-09-28.
+
 ### Later
 
-Wanted and not yet sequenced. The map holds the full list. The larger pieces
-are:
+Wanted, and sequenced after everything in Next. The map holds the full list.
+The larger pieces are:
 
-- **Service resets per make**, over published routine definitions. The
-  framework exists and only two generic clears are defined. The old roadmap
-  called this the highest-value item per hour of work; see Decisions.
-- **Every module on more makes**, and the transports that open them: J2534,
-  SocketCAN, and the Bluetooth and Wi-Fi adapters people already own.
 - **Work**: coding sessions on the owner's Omarchy machines from the car, on
   his Claude subscription, relayed through his own box with no cloud hosting,
-  and voice-only while driving.
+  and voice-only while driving. It comes after the Next items, then OmaMenu
+  (decided 2026-09-28).
 - **OmaMenu**, a system-wide replacement for the Omarchy menu.
+- **Warnings the owner can accept** (`safe.accept-risk`): turning routine
+  guessing, the voltage floor, the agent limits and the plugin driving rules
+  from refusals into warnings, as decided on 2026-09-28. Until it lands the
+  code still refuses all four.
+- **Every module on more makes**, and the transports that open them: J2534,
+  SocketCAN, and the Bluetooth and Wi-Fi adapters people already own.
 - **Omarchy plugins in the car**, beyond the contract: a theming bridge, car
   versions of existing plugins, a review checklist and an install flow.
 - **Professional parity**: gateway handling where it is legitimately possible,
   scope integration, and fleet use for a small business.
 - **Beyond parity**: predictive alerts from your own history, the car's record
-  synced to your own machines, recalls by VIN, and cranking-voltage trends.
+  synced to your own machines, and cranking-voltage trends.
 
 ### Research
 
@@ -912,7 +963,7 @@ plugins can work in a car, and sandboxing plugins at all.
 
 | Old | Now | Why |
 |---|---|---|
-| **1.1** Service resets | Later; framework building | The routine path and the format exist, and there are no per-make definitions. Not in the owner's Next list; see Decisions. |
+| **1.1** Service resets | Next, after the IMA drives; framework building | The routine path and the format exist, and there are no per-make definitions yet. Moved into Next by the owner on 2026-09-28. |
 | **1.1b** Owner procedures | Shipped | Unchanged. |
 | **1.2** Bi-directional test UI | Building | The screen exists with a live trace. On a real car only a validated actuator reaches a button, and no car has one yet. |
 | **1.3** Live data | Shipped | Snapshot-on-trigger was listed as "not yet". It shipped: the watchdog freezes a full snapshot when a rule fires. |
@@ -976,35 +1027,30 @@ Not downloads. These:
 
 ---
 
-## Decisions for the owner
+## Decided with the owner (2026-09-28)
 
-These cannot be settled from the repository. Each is also where the
-capability map would change.
+The questions this roadmap could not settle from the repository, and the
+owner's answers. Each has changed the capability map and the text above.
 
-1. **The remaining refusals under "the owner decides".** Guessing routine
-   identifiers, writing while moving, writing or sweeping below 12.2 V, an
-   agent's inability to escalate itself or send a write, and plugins following
-   the moving-car rules. Confirm each as an exception, or say which should
-   become a warning the owner can accept. The proposal above keeps the motion
-   lock as the one hard exception, because its risk falls on other people.
-2. **Service resets.** Per-make reset definitions were called the
-   highest-value work per hour and are in Later. Promote them into Next?
-3. **Recalls by VIN.** It is cheap, since NHTSA's data is free and the VIN
-   decode already uses NHTSA, and it is safety-relevant. Promote it into Next?
-4. **Work and OmaMenu** are in Later, after the seven Next items. Is that the
-   order you want?
-5. **Piper's licence.** Its active repository is GPL-3.0 and the archived one
-   is MIT. Should it ship as a separate system package, keeping this MIT tree
-   clean, or be pinned to the archived release?
-6. **Tyre radio hardware.** The RTL-SDR Blog V4 is end of line and the V4L
-   replaces it. If a capture shows the Tymate sensors cannot be decoded, is a
-   new decoder worth writing, or should sensors `rtl_433` already knows be
-   bought?
-7. **Which plugins first.** Omarchy plugins are QML running in the shell, and
-   OmaCar's screens are browser modules. The contract has to pick a first
-   kind, or bridge both.
-8. **The three-button bar panel** has been in flight since before the
-   redesign, and git cannot tell whether it landed. Confirm it or drop it.
+1. **Refusals and warnings.** Writes to the car while it is moving join the
+   emissions and signed-reprogramming refusals as a hard refusal. Routine
+   guessing, the 12.2 V floor, the agent limits and the plugin driving rules
+   become warnings the owner can accept, with the risk stated. See
+   [the governing principle](#the-governing-principle-the-owner-decides).
+2. **Service resets per make** move into Next, after the IMA drives.
+3. **Recalls by VIN** move into Next.
+4. **Work, then OmaMenu,** come after the Next items, in that order.
+5. **Piper is not bundled.** It is installed as a normal system package and run
+   as its own program, and its active repository is GPL-3.0. Voice clips
+   rendered ahead of time are just audio files.
+6. **Tymate tyre sensors.** Once the RTL-SDR arrives, the owner spends about an
+   hour recording them with `rtl_433`'s generic and flex decoders. Buying
+   supported sensors is the fallback, only if that fails.
+7. **The plugin contract** supports Omarchy's full-screen `panel` kind first.
+8. **The three-button bar panel** is dropped from the in-flight list.
+   Nobody could say what it was for. It dates from the first generated
+   roadmap on 2026-09-03, where 1.8 asked for "a bar panel that says three
+   things instead of thirty".
 
 ---
 

@@ -51,10 +51,20 @@ def cap(id, **kw):
     return c
 
 
-def world(*caps, domains=("d",)):
+REFUSE = {"id": "no-reflash", "title": "Reprogramming", "gate": "reprogram",
+          "why": "Cannot be done safely.", "confirmed": "2026-09-28",
+          "enforced": ["lib/x.py"]}
+WARN = {"id": "guessing", "title": "Guessing a routine",
+        "gate": "guess_routine", "risk": "Something moves.",
+        "decided": "2026-09-28", "today": ["lib/x.py"]}
+
+
+def world(*caps, domains=("d",), refusals=(REFUSE,), warnings=(WARN,)):
     return {"schema": 1,
             "domains": [{"id": d, "title": d.upper()} for d in domains],
             "hardware": {"obd-usb": {"title": "An adapter"}},
+            "refusals": [dict(r) for r in refusals],
+            "warnings": [dict(w) for w in warnings],
             "capabilities": list(caps)}
 
 
@@ -87,9 +97,13 @@ if doc is not None:
     shipped = [c for c in doc["capabilities"] if c["status"] == "shipped"]
     ok("nothing shipped writes to the car without a gate",
        all(c.get("gate") for c in shipped if c["tier"] in ("write", "actuate")))
-    ok("no capability is gated by something every mode refuses",
+    refused = {r.get("gate") for r in doc.get("refusals") or []}
+    ok("nothing on the map is gated by a refusal the owner confirmed",
+       not any(c.get("gate") in refused for c in doc["capabilities"]
+               if c.get("gate")))
+    ok("nothing shipped is gated by something every mode still refuses",
        not any(modes.ACTIONS.get(c.get("gate"), {}).get("tier", "x") is None
-               for c in doc["capabilities"] if c.get("gate")))
+               for c in shipped if c.get("gate")))
 
 # ---------------------------------------------------------------------------
 head("A shipped capability has to point at something git tracks")
@@ -146,16 +160,64 @@ ok("an actuation with no gate is refused",
 ok("a gate lib/modes.py does not know is refused",
    says(world(cap("a.one", tier="write", gate="yolo")),
         "'yolo' is not an action"))
-ok("reprogramming is a refusal, not a capability",
-   says(world(cap("a.one", tier="write", gate="reprogram")),
-        "refused in every mode"))
-ok("and so is guessing a routine",
+ok("a confirmed refusal cannot be a capability, even as a plan",
+   says(world(cap("a.one", tier="write", gate="reprogram", status="later",
+                  evidence=[])), "refusal the owner confirmed on 2026-09-28"))
+ok("a guard the owner made a warning can be planned",
+   problems(world(cap("a.one", tier="actuate", gate="guess_routine",
+                      status="later", evidence=[]))) == [])
+ok("but not shipped while lib/modes.py still refuses it",
    says(world(cap("a.one", tier="actuate", gate="guess_routine")),
-        "refused in every mode"))
+        "still refuses 'guess_routine'"))
 ok("something that sends nothing has no gate",
    says(world(cap("a.one", tier="none", gate="read")), "has no gate"))
 ok("a real gate is accepted",
    problems(world(cap("a.one", tier="write", gate="clear_codes"))) == [])
+
+# ---------------------------------------------------------------------------
+head("The code refuses nothing the owner has not decided on")
+
+ok("an action every mode refuses, with no decision recorded, is flagged",
+   says(world(cap("a.one"), warnings=()),
+        "refuses 'guess_routine' in every mode, and no refusal or warning"))
+ok("and so is the other one",
+   says(world(cap("a.one"), refusals=()),
+        "refuses 'reprogram' in every mode"))
+ok("a gate cannot be both a refusal and a warning",
+   says(world(cap("a.one"), warnings=(WARN, dict(WARN, id="again"))),
+        "already decided"))
+ok("a refusal must say why",
+   says(world(cap("a.one"), refusals=(dict(REFUSE, why=""),)),
+        "`why` must say something"))
+ok("a warning must state the risk",
+   says(world(cap("a.one"), warnings=(dict(WARN, risk=" "),)),
+        "`risk` must say something"))
+ok("a decision needs a real date",
+   says(world(cap("a.one"), refusals=(dict(REFUSE, confirmed="soon"),)),
+        "`confirmed` is not a YYYY-MM-DD date"))
+ok("and names the files that hold the guard today, tracked",
+   says(world(cap("a.one"), warnings=(dict(WARN, today=["lib/gone.py"]),)),
+        "lib/gone.py is not tracked"))
+ok("a refusal with no gate is fine: not every refusal is an action",
+   problems(world(cap("a.one"), refusals=(
+       REFUSE, {"id": "moving", "title": "Writes while moving",
+                "why": "Other people.", "confirmed": "2026-09-28",
+                "enforced": ["lib/y.py"]}))) == [])
+
+block = ("prose\n<!-- omacar:status begin -->\nReprogramming\n"
+         "Guessing a routine\n<!-- omacar:status end -->\n")
+missing = R.check_prose(world(cap("a.one")), block)
+ok("a refusal the prose never names is flagged",
+   any("no-reflash" in p for p in missing))
+ok("and naming it only inside the generated block does not count",
+   any("guessing" in p for p in missing))
+wrapped = "The **Guessing a\nroutine** rule, and **Reprogramming**."
+ok("a title wrapped across two lines has still been said",
+   R.check_prose(world(cap("a.one")), wrapped) == [])
+if doc is not None:
+    with open(R.DOC, encoding="utf-8") as f:
+        ok("doc/ROADMAP.md names every refusal and warning in the map",
+           R.check_prose(doc, f.read()) == [])
 
 # ---------------------------------------------------------------------------
 head("Dependencies resolve, and shipped stands on shipped")

@@ -42,6 +42,18 @@
     "  notes     which cars and adapters it realistically works on, what it",
     "            cannot do, and anything a reader would otherwise assume.",
     "",
+    "REFUSALS AND WARNINGS",
+    "",
+    "  The owner decides; the app and the agent inform and warn before acting",
+    "  (doc/ROADMAP.md, the governing principle). `refusals` are the few",
+    "  exceptions the owner has confirmed, and `warnings` are guards the owner",
+    "  has decided to be able to accept once the risk is stated. Every action",
+    "  lib/modes.py refuses in every mode must appear in one list or the other,",
+    "  so the code and the owner's decisions cannot quietly disagree. A gate",
+    "  named by a refusal can never be a capability. A gate named by a warning",
+    "  that the code still refuses may be planned but not shipped. Each title",
+    "  must also appear in doc/ROADMAP.md's prose.",
+    "",
     "ADDING ONE. Pick the domain, write the four sentences a person and an",
     "agent would need, set status honestly (read the code before writing",
     "`shipped`), and run `omacar roadmap --check`. It names every problem."
@@ -93,6 +105,19 @@
     "home-machine": {"title": "An always-on Omarchy machine at home, on the same tailnet", "notes": "Pushes documents to the car, relays Work sessions, and is where a backup would live. No cloud host."},
     "claude": {"title": "A Claude subscription, logged in through Claude Code", "notes": "The advisor and Work run on the owner's own subscription through the local `claude` CLI. Not hardware, and listed here because it is a thing you must have."}
   },
+
+  "refusals": [
+    {"id": "emissions-defeat", "title": "Writes that disable emissions controls", "why": "Federal law: Clean Air Act s203(a)(3) prohibits rendering an emission control inoperative, and EPA's 2020 enforcement policy says that covers software.", "confirmed": "2026-09-28", "enforced": ["lib/modes.py"]},
+    {"id": "signed-reprogramming", "title": "Reprogramming that needs a manufacturer-signed image", "gate": "reprogram", "why": "This tool cannot produce a signed image, and an interrupted transfer leaves a module with no firmware at all.", "confirmed": "2026-09-28", "enforced": ["lib/modes.py"]},
+    {"id": "writes-while-moving", "title": "Writes to the car while it is moving", "why": "The risk falls on other people on the road, who did not choose it.", "confirmed": "2026-09-28", "enforced": ["lib/write.py", "share/js/main.js"]}
+  ],
+
+  "warnings": [
+    {"id": "routine-guessing", "title": "Guessing a routine identifier", "gate": "guess_routine", "risk": "A routine is something a module runs. A guessed number can spin a fan, cycle an ABS pump or retract a parking brake with a wheel off.", "decided": "2026-09-28", "today": ["lib/modes.py"]},
+    {"id": "voltage-floor", "title": "Writing or sweeping below 12.2 V", "risk": "A long session on a low battery can trip warning lights (a 25-minute key-on sweep tripped the ABS warning) or leave the car unable to start.", "decided": "2026-09-28", "today": ["lib/write.py", "lib/autodisc.py"]},
+    {"id": "agent-limits", "title": "An agent raising its own tier, promoting its own finding, or sending a write", "risk": "An agent can be wrong with confidence, and a finding it promotes itself becomes data other owners trust.", "decided": "2026-09-28", "today": ["lib/mcp.py", "lib/profile.py"]},
+    {"id": "plugin-driving-rules", "title": "Plugins breaking the driving-screen rules", "risk": "Text entry, small targets and motion on a screen in view of the driver take attention off the road. Writes while moving stay refused whatever is accepted.", "decided": "2026-09-28", "today": ["share/js/main.js"]}
+  ],
 
   "capabilities": [
     {
@@ -217,7 +242,7 @@
       "needs": ["obd-usb"],
       "depends": ["diag.read-codes"],
       "evidence": ["lib/write.py", "lib/ops.py", "share/data/resets.json"],
-      "notes": "Generic Mode 04 on any OBD-II car. Refused while moving and below 12.2 V. Clearing also resets readiness, which the screen says first."
+      "notes": "Generic Mode 04 on any OBD-II car. Refused while moving, for good. Refused below 12.2 V today; that becomes a warning the owner can accept (decided 2026-09-28). Clearing also resets readiness, which the screen says first."
     },
     {
       "id": "diag.guided",
@@ -544,13 +569,13 @@
       "title": "Reset oil life over the bus",
       "user": "Reset the service reminder from the app on cars with no button sequence.",
       "agent": "Runs the published routine for this make after the owner confirms.",
-      "status": "later",
+      "status": "next",
       "tier": "write",
       "gate": "routine",
       "needs": ["obd-usb"],
       "depends": ["maint.reset-framework"],
       "evidence": [],
-      "notes": "Per-make routine definitions, confirmed on a real car before they leave `unverified`."
+      "notes": "Next, after the IMA drives (decided 2026-09-28). Per-make routine definitions, confirmed on a real car before they leave `unverified`."
     },
     {
       "id": "maint.reset-framework",
@@ -572,7 +597,7 @@
       "title": "Electronic parking brake service mode",
       "user": "Retract the rear calipers to change pads without a scan tool.",
       "agent": "Runs the make's published retract and re-apply routines, never with a wheel off and the car unsupported.",
-      "status": "later",
+      "status": "next",
       "tier": "actuate",
       "gate": "routine",
       "needs": ["obd-usb"],
@@ -586,7 +611,7 @@
       "title": "Steering angle sensor calibration",
       "user": "Recalibrate after an alignment so stability control trusts the wheel again.",
       "agent": "Runs the published routine and checks the sensor reads centre afterwards.",
-      "status": "later",
+      "status": "next",
       "tier": "write",
       "gate": "routine",
       "needs": ["obd-usb"],
@@ -600,7 +625,7 @@
       "title": "Battery registration",
       "user": "Tell the car a new battery is fitted so it charges it correctly.",
       "agent": "Runs the make's registration routine after a battery change.",
-      "status": "later",
+      "status": "next",
       "tier": "write",
       "gate": "routine",
       "needs": ["obd-usb"],
@@ -614,7 +639,7 @@
       "title": "Throttle and idle relearn",
       "user": "Fix a hunting idle after cleaning a throttle body or disconnecting the battery.",
       "agent": "Runs the routine where one is published, or the owner procedure where it is a drive sequence.",
-      "status": "later",
+      "status": "next",
       "tier": "write",
       "gate": "routine",
       "needs": ["obd-usb"],
@@ -628,7 +653,7 @@
       "title": "Diesel particulate filter regeneration",
       "user": "Force a regeneration instead of paying for one.",
       "agent": "Runs a published regeneration routine only with the car parked, in the open, and the owner watching.",
-      "status": "later",
+      "status": "next",
       "tier": "actuate",
       "gate": "routine",
       "needs": ["obd-usb"],
@@ -876,7 +901,7 @@
       "needs": [],
       "depends": ["elec.voltage"],
       "evidence": ["lib/write.py", "lib/autodisc.py"],
-      "notes": "The 12.2 V floor exists because a 25-minute key-on sweep tripped an ABS warning."
+      "notes": "The 12.2 V floor exists because a 25-minute key-on sweep tripped an ABS warning. Decided 2026-09-28: it becomes a warning the owner can accept, with that risk stated. The code still refuses until safe.accept-risk lands."
     },
     {
       "id": "elec.battery-swap",
@@ -958,7 +983,7 @@
       "needs": ["rtl-sdr"],
       "depends": [],
       "evidence": [],
-      "notes": "For the owner's Tymate TM2 sensors on 433.92 MHz. rtl_433 has no Tymate decoder (checked 2026-09-28), so a test capture decides whether a flex decoder or a new one is needed. Nothing is sent to the car."
+      "notes": "For the owner's Tymate TM2 sensors on 433.92 MHz. rtl_433 has no Tymate decoder (checked 2026-09-28). Next step: once the RTL-SDR arrives, the owner records the sensors for about an hour with rtl_433's generic and flex decoders. Buying sensors rtl_433 already supports is the fallback only if that fails. Nothing is sent to the car."
     },
     {
       "id": "chas.tpms-oem",
@@ -1237,7 +1262,7 @@
       "needs": ["usb-camera", "aux-cable"],
       "depends": ["safe.dashcam", "safe.alert-audio"],
       "evidence": ["share/js/views/cameras.js"],
-      "notes": "Being built on redesign/cameras. Active above 30 mph only. Night needs an infrared camera. Alerts buy minutes; rest is the fix, and the copy says so."
+      "notes": "Being built on redesign/cameras. Active above 30 mph only. Night needs an infrared camera. Alerts buy minutes; rest is the fix, and the copy says so. Its voice lines are pre-rendered with Piper, which runs as its own system program (GPL-3.0) and is not bundled; the clips are just audio files."
     },
     {
       "id": "safe.alert-audio",
@@ -1271,12 +1296,12 @@
       "title": "Open recalls for this car",
       "user": "Know if the car has an open safety recall.",
       "agent": "Checks the decoded VIN against the public recall database and cites it.",
-      "status": "later",
+      "status": "next",
       "tier": "none",
       "needs": ["internet"],
       "depends": ["own.vin-decode"],
       "evidence": [],
-      "notes": "NHTSA's recall data is free and public for US vehicles; the VIN decode already uses NHTSA. Cheap to build."
+      "notes": "Moved into Next on 2026-09-28. NHTSA's recall data is free and public for US vehicles; the VIN decode already uses NHTSA. Cheap to build."
     },
     {
       "id": "safe.crash",
@@ -1305,17 +1330,30 @@
       "notes": "Written after a three-leg drive where the screen kept blanking."
     },
     {
+      "id": "safe.accept-risk",
+      "domain": "safety",
+      "title": "Override a guard, with the risk stated first",
+      "user": "When a guard is only protecting me, let me accept the risk and go ahead.",
+      "agent": "States the risk in the owner's terms, waits for an explicit acceptance, and records it.",
+      "status": "later",
+      "tier": "none",
+      "needs": [],
+      "depends": ["safe.moving-locks"],
+      "evidence": ["lib/modes.py", "lib/write.py"],
+      "notes": "Decided 2026-09-28: routine guessing, the 12.2 V floor, the agent limits and the plugin driving rules become warnings the owner can accept. Until this lands the code still refuses all four. Writes while moving stay refused for good."
+    },
+    {
       "id": "safe.moving-locks",
       "domain": "safety",
       "title": "Screens that change while driving",
-      "user": "Write screens grey out with the reason, targets grow, nothing reflows under a finger.",
+      "user": "Write screens grey out with the reason, targets grow, nothing reflows under a finger. No write reaches the car while it moves.",
       "agent": "Reads the driving state and never offers a write while moving.",
       "status": "shipped",
       "tier": "none",
       "needs": [],
       "depends": ["diag.live-data"],
       "evidence": ["share/js/main.js", "share/js/views/drive.js", "lib/write.py"],
-      "notes": ""
+      "notes": "Writes while moving are one of the three refusals the owner confirmed on 2026-09-28; no mode and no warning unlocks them."
     },
     {
       "id": "safe.srs-read",
@@ -1368,7 +1406,7 @@
       "needs": ["aux-cable"],
       "depends": ["nav.routing", "safe.alert-audio"],
       "evidence": [],
-      "notes": "Piper, rendered on the device. Its active repository is GPL-3.0 (checked 2026-09-28), which matters for how it is shipped."
+      "notes": "Piper is not bundled (decided 2026-09-28). It is installed as a normal system package and run as its own program; its active repository is GPL-3.0 (checked 2026-09-28). Pre-rendered voice clips are just audio files."
     },
     {
       "id": "nav.gps",
@@ -2170,6 +2208,20 @@
       "notes": "Written from the ELM327 datasheet and the ISO documents. Never run against a pre-CAN car: a standing claim."
     },
     {
+      "id": "disc.routine-guess",
+      "domain": "discovery",
+      "title": "Try an unpublished routine, with the risk accepted",
+      "user": "Explore my own car's routines when nobody has published them, knowing what can happen.",
+      "agent": "States what an unknown routine could move, and runs one only after the owner accepts that risk, parked.",
+      "status": "later",
+      "tier": "actuate",
+      "gate": "guess_routine",
+      "needs": ["obd-usb"],
+      "depends": ["safe.accept-risk", "disc.prospect"],
+      "evidence": [],
+      "notes": "Decided 2026-09-28: a warning the owner can accept, not a refusal. The risk: a routine is something a module runs, so a guessed number can spin a fan or retract a parking brake with a wheel off. lib/modes.py refuses it in every mode until safe.accept-risk lands."
+    },
+    {
       "id": "disc.j1939",
       "domain": "discovery",
       "title": "Trucks: J1939",
@@ -2221,7 +2273,7 @@
       "needs": [],
       "depends": ["agent.mcp"],
       "evidence": ["lib/mcp.py", "lib/write.py"],
-      "notes": "`omacar write queue` lists them. Judged against the tier before queueing."
+      "notes": "`omacar write queue` lists them. Judged against the tier before queueing. That an agent cannot send the write itself becomes a warning the owner can accept (decided 2026-09-28); the code still holds it."
     },
     {
       "id": "agent.advisor",
@@ -2352,7 +2404,7 @@
       "needs": ["obd-usb"],
       "depends": ["agent.proposals", "agent.permissions"],
       "evidence": [],
-      "notes": "The owner decides; the agent informs first. Moving-car and voltage locks still apply."
+      "notes": "The owner decides; the agent informs first. Writes while moving stay refused. The agent limits become warnings the owner can accept (decided 2026-09-28)."
     },
     {
       "id": "agent.work",
@@ -3262,7 +3314,7 @@
       "needs": [],
       "depends": ["agent.sdk", "ui.frame"],
       "evidence": ["doc/PLUGINS.md"],
-      "notes": "Omarchy shell plugins are QML with a manifest of kinds (bar, bar-widget, panel, overlay, menu, service); OmaCar screens are ES modules. The contract has to bridge the two."
+      "notes": "Supports Omarchy's full-screen `panel` kind first (approved 2026-09-28). Omarchy shell plugins are QML with a manifest of kinds (bar, bar-widget, panel, overlay, menu, service); OmaCar screens are ES modules, so the contract bridges the two for that kind before any other."
     },
     {
       "id": "oplug.safety-rules",
@@ -3275,7 +3327,7 @@
       "needs": [],
       "depends": ["oplug.contract", "safe.moving-locks"],
       "evidence": ["lib/modes.py", "share/js/main.js"],
-      "notes": "Enforced by the host, not requested of the plugin. See 'Plugin safety rules' in doc/ROADMAP.md."
+      "notes": "Enforced by the host, not requested of the plugin. Writes and actuation while moving are refused for good; the other rules are defaults the owner can accept a warning to relax (decided 2026-09-28). See 'Plugin safety rules' in doc/ROADMAP.md."
     },
     {
       "id": "oplug.theming",
