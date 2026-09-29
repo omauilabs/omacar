@@ -9,11 +9,12 @@ It starts the recorder and the server on scratch folders, then checks:
 - a finished one-minute clip per role that starts on a keyframe;
 - playback with Range;
 - the locks both events leave behind.
-Then it takes screenshots of the Cameras tab and Home through tools/shoot.py.
+Then it takes screenshots of the Cameras tab and Home through tools/shoot.py,
+at the tablet's real sizes (shoot.SIZES).
 
 Every wait is a poll with a deadline, so a slow machine takes longer rather
-than failing. About three minutes. Not in test/all.sh, because it needs a
-camera.
+than failing. About 80 seconds on the box. Not in test/all.sh, because it
+needs a camera.
 
     python3 tools/cams_e2e.py OUT_DIR
 """
@@ -180,9 +181,9 @@ def main(argv):
 
         print("\n  on screen")
         os.environ.update(env)      # shoot.py's server reads the same scratch folders
-        pngs, doms = shoot.shoot(out, [("cameras-landscape", "?still=1#cameras", (1368, 968)),
-                                       ("cameras-portrait", "?still=1#cameras", (912, 1424)),
-                                       ("home-landscape", "?still=1#home", (1368, 968))],
+        pngs, doms = shoot.shoot(out, [("cameras-landscape", "?still=1#cameras", shoot.SIZES["landscape"]),
+                                       ("cameras-portrait", "?still=1#cameras", shoot.SIZES["portrait"]),
+                                       ("home-landscape", "?still=1#home", shoot.SIZES["landscape"])],
                                  doms=["?still=1#cameras"])
         for name, png in pngs.items():
             check(f"screenshot {name}", bool(png))
