@@ -65,7 +65,11 @@
 .rc-flag[hidden] { display: none; }
 .rc-tile[data-state="error"] .rc-flag { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 
-.rc-cap { padding: 10px 12px 12px; display: grid; gap: 4px; min-width: 0; }
+/* One track, no wider than the tile: an implicit grid track sizes itself to
+   its widest unbreakable line, and a long age line pushed the whole caption
+   out past the tile's edge. */
+.rc-cap { padding: 10px 12px 12px; display: grid; grid-template-columns: minmax(0, 1fr);
+          gap: 4px; min-width: 0; }
 .rc-name { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .rc-route {
   flex: none; font-size: .7rem; font-weight: 700; letter-spacing: .06em; color: var(--accent);
@@ -113,6 +117,8 @@
 .rc-embed[data-estate="offline"] .rc-poster-t { color: var(--warn); }
 .rc-poster:focus-visible { outline: 2px solid var(--info); outline-offset: -4px; }
 .rc-own { color: var(--ink-2); }
+.rc-embed .rc-meta { flex-wrap: wrap; }
+.rc-embed .rc-age { white-space: normal; }
 .rc-enote { font-size: .78rem; color: var(--dim); line-height: 1.4; }
 .rc-estate { font-size: .8rem; color: var(--ink-2); }
 .rc-embed[data-estate="failed"] .rc-estate,
