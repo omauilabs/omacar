@@ -1,5 +1,5 @@
 {
-  "_comment": "Drowsy mode's numbers, from doc/design/2026-09-28-cameras-drowsy.md. Read through GET /api/drowsy, which lays ~/.config/omarchy/omacar-drowsy.json over these (lib/drowsycfg.py). Seconds, degrees, and PERCLOS as a fraction. Sensitive lowers every trigger threshold by 20% (share/js/ladder.js, scaled()). alert_continues_below_gate: true (the default the controller recommended, 2026-09-28) lets an alert already sounding carry on, repeats and all, below the 30 mph gate until 'I'm awake' or a stopped car; false silences it there while its card stays. The gate always decides whether a NEW alert may start. The owner's answer is this one line. level2: each rotation sound has a turn of repeat_secs, the voice a turn of voice_slot_secs so its line is heard whole after its rise; voice false keeps the voice to Levels 1 and 3 (pending the owner's answer, 2026-09-28).",
+  "_comment": "Drowsy mode's numbers, from doc/design/2026-09-28-cameras-drowsy.md. Read through GET /api/drowsy, which lays ~/.config/omarchy/omacar-drowsy.json over these (lib/drowsycfg.py). Seconds, degrees, and PERCLOS as a fraction. Sensitive lowers every trigger threshold by 20% (share/js/ladder.js, scaled()). alert_continues_below_gate: true (the default the controller recommended, 2026-09-28) lets an alert already sounding carry on, repeats and all, below the 30 mph gate until 'I'm awake' or a stopped car; false silences it there while its card stays. The gate always decides whether a NEW alert may start. The owner's answer is this one line. level2: each rotation sound has a turn of repeat_secs, the voice a turn of voice_slot_secs so its line is heard whole after its rise; voice false keeps the voice to Levels 1 and 3 (pending the owner's answer, 2026-09-28). level1.perclos_every_secs: a Level 1 notice raised by PERCLOS comes at most once in this many seconds (300, the owner's default on the 2026-09-29 morning list), so PERCLOS sitting between 15% and 25% gives a notice every 5 minutes rather than every 70 s; 0 turns the spacing off. It spaces nothing else: Level 2 at 25%, the closures, yawns, nods and Level 3 are as they were.",
   "enabled": true,
   "sensitivity": "standard",
   "name": "James",
@@ -14,7 +14,7 @@
   "stop": { "still_secs": 300 },
   "level1": { "perclos": 0.15, "yawns": 3, "nods": 3, "count_window_secs": 300,
               "since_stop_secs": 7200, "night_from_hour": 2, "night_to_hour": 6,
-              "camera_free_every_secs": 3600 },
+              "camera_free_every_secs": 3600, "perclos_every_secs": 300 },
   "level2": { "closed_secs": 1.0, "perclos": 0.25, "repeat_secs": 5, "voice_slot_secs": 7, "voice": true },
   "level3": { "closed_secs": 2.0, "level2_count": 2, "level2_window_secs": 300, "voice_repeat_secs": 15 },
   "release": { "open_secs": 5 },

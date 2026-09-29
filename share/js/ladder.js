@@ -2,8 +2,9 @@
 // signals that need no camera, and released by the driver. Pure, with the
 // clock injected: step() is handed the time, and nothing here reads Date.now().
 //
-//   1 · Notice     PERCLOS >= 15%, 3 yawns or 3 nods in 5 min, 2 h since a
-//                  stop, or night hours (once an hour)
+//   1 · Notice     PERCLOS >= 15% (at most once every 5 min, row 42), 3
+//                  yawns or 3 nods in 5 min, 2 h since a stop, or night
+//                  hours (once an hour)
 //   2 · Wake       eyes closed >= 1.0 s, or PERCLOS >= 25%
 //   3 · Pull over  eyes closed >= 2.0 s, or two Level 2 alerts within 5 min
 //
@@ -314,6 +315,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   const seenYawns = [], seenNods = [];
   const l2Times = [];
   const lastFree = {};
+  let lastPerclosNotice = null;   // row 42: when perclos1 last raised Level 1, on step()'s t
 
   function rotation() {
     let list = L2.voice === false ? rota.filter((x) => x !== "voice") : rota;
@@ -538,11 +540,25 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
       const eligible = (v, k) => v && !quiet && (!has(lastFree[k]) || t - lastFree[k] >= L1.camera_free_every_secs);
       const s1 = eligible(inp.sinceStop >= L1.since_stop_secs, "since-stop");
       const nt = eligible(isNight(inp.hour, cfg), "night");
+      // Row 42 (final review; the owner's default): a Level 1 notice raised
+      // by PERCLOS comes at most once every level1.perclos_every_secs (300 s;
+      // 0, or none set, is no spacing). Without it PERCLOS sitting between
+      // 15% and 25% raised one about every 70 s: each release latches
+      // perclos1 (NR3), the latch expires as the window turns over (NR5),
+      // and the 3 s hold raises again. Checked here, at the raise, like the
+      // camera-free limit, and spent only when perclos1 actually raises
+      // Level 1 (below). An armed perclos1 held back by it is still used up
+      // by use() above, without a latch, so it re-arms after the usual 3 s
+      // hold and is looked at again then. Nothing else is spaced: Level 2 at
+      // 25%, the closures, yawns, nods, the camera-free notices and Level 3
+      // are as they were.
+      const p1Every = Number.isFinite(L1.perclos_every_secs) ? L1.perclos_every_secs : 0;
+      const p1Due = p1 && !(p1Every > 0 && lastPerclosNotice !== null && t - lastPerclosNotice < p1Every);
 
       let to = 0, why = null, whyKey = null;
       if (c3) { to = 3; why = "closed"; }
       else if (c2 || p2) { to = 2; why = c2 ? "closed" : "perclos"; if (p2 && !c2) whyKey = "perclos2"; }
-      else if (p1) { to = 1; why = "perclos"; whyKey = "perclos1"; }
+      else if (p1Due) { to = 1; why = "perclos"; whyKey = "perclos1"; }
       else if (y1) { to = 1; why = "yawns"; }
       else if (n1) { to = 1; why = "nods"; }
       else if (s1) { to = 1; why = "since-stop"; }
@@ -559,6 +575,9 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
         // that actually raises, not one merely seen while another won.
         if (why === "since-stop") lastFree["since-stop"] = t;
         if (why === "night") lastFree.night = t;
+        // Row 42: the PERCLOS notice spacing is spent only by a Level 1 that
+        // perclos1 itself raised.
+        if (whyKey === "perclos1") lastPerclosNotice = t;
         // N1: only a trigger that actually raised something latches its gate.
         if (whyKey) perclosLatch(perc, whyKey, mt);
         raise(to, why, t, out);
