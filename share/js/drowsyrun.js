@@ -91,11 +91,16 @@ export function gateOf(sample, cfg) {
 // "Stopped · face tracker error" (Task 9 fix round 1, I3): the tracker
 // failed on three frames in a row and has not yet come back. Drowsy mode is
 // not watching, and must not say "Can't see you" with a face in view.
-export function chipOf({ enabled, gate, measures, cabinLive, trackerFailed = false }) {
+// "Paused · parked" also covers a creep of MOVING_KPH or less that has not
+// ended a stop (rolling false: after a long stop, or at app start), when the
+// watch is deliberately off (Task 9 fix round 1): ruling 1 counts such a
+// creep as still stopped, and "Can't see you" would blame the driver.
+export function chipOf({ enabled, gate, measures, cabinLive, trackerFailed = false, rolling = true }) {
   if (!enabled || (gate && gate.simulated)) return "Off";
   if (trackerFailed) return "Stopped · face tracker error";
   if (!gate || !gate.connected || gate.kph === null || gate.kph === undefined) return "Paused · no car data";
   if (!gate.moving) return "Paused · parked";
+  if (!rolling && gate.kph <= MOVING_KPH) return "Paused · parked";
   if (!cabinLive || !measures || measures.faceLost) return "Can't see you";
   return "Watching";
 }
@@ -160,6 +165,8 @@ export const STOP_RESTART_SECS = 10;
 // until "I'm awake", as for a dropped link.
 export const LIVE_TIMEOUT_MS = 5000;
 export const LIVE_STALE_SECS = 2;
+// /api/cams misses in a row before the cabin picture counts as gone.
+export const CAMS_MISSES = 2;
 
 // The engine. The page has one, `drowsy`, below; a test builds its own with
 // every outside thing handed in: the clock, the server, the player, the
@@ -194,7 +201,7 @@ export function createDrowsy(opts = {}) {
   let rolling = false, stopSince = null, restartOwed = true;
   let logBuf = [], lastLogT = -Infinity;
   let testing = null;
-  let started = false, cfgRetryAt = -Infinity, liveBusy = false, camsBusy = false;
+  let started = false, cfgRetryAt = -Infinity, liveBusy = false, camsBusy = false, camsMisses = 0;
   // st.error is the tracker's trouble, else the settings'. A load failure
   // clears once a tracker starts; a frame failure once a frame goes through.
   let settingsError = null, trackerError = null, trackerLoadFailed = false, trackerFailed = false;
@@ -221,7 +228,7 @@ export function createDrowsy(opts = {}) {
     st.aux = aux;
     st.error = trackerError || settingsError;
     st.chip = chipOf({ enabled: !!(cfg && cfg.enabled), gate, cabinLive, measures: { faceLost: faceLost() },
-                       trackerFailed });
+                       trackerFailed, rolling: rolling && !stoppedLong() });
     for (const fn of listeners) { try { fn(st); } catch (e) { console.error(e); } }
   }
 
@@ -525,13 +532,24 @@ export function createDrowsy(opts = {}) {
         tick(false);
       } finally { liveBusy = false; }
     },
+    // The recorder's overview, every 5 s. An answer is acted on at once. A
+    // request that fails, or hangs past LIVE_TIMEOUT_MS, is a miss, and it
+    // takes CAMS_MISSES in a row to call the cabin picture gone: one server
+    // hiccup must not stop the watch, which restarts the measures and
+    // empties PERCLOS (Task 9 fix round 1).
     async pollCams() {
       if (camsBusy) return;
       camsBusy = true;
+      const ctl = new AbortController();
+      const bail = d.later(() => ctl.abort(), LIVE_TIMEOUT_MS);
       try {
-        const ov = await d.getJSON("/api/cams");
+        const ov = await d.getJSON("/api/cams", { signal: ctl.signal });
+        camsMisses = 0;
         cabinLive = !!(ov && ov.running && ov.roles && ov.roles.cabin && ov.roles.cabin.live);
-      } catch { cabinLive = false; } finally { camsBusy = false; }
+      } catch {
+        camsMisses++;
+        if (camsMisses >= CAMS_MISSES) cabinLive = false;
+      } finally { d.cancel(bail); camsBusy = false; }
       syncWatch();
       publish();
     },

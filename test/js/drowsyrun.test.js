@@ -23,7 +23,7 @@ async function rig(over = {}) {
     settings: Object.assign(await CFG(), over.settings || {}),
     installed: over.installed || (() => false), asked: [], posts: [], log: [],
     timers: [], nextId: 1, onFrame: null, watches: 0, stops: 0, audio: null,
-    liveCalls: 0, hang: false, fail: false, drops: 0,
+    liveCalls: 0, hang: false, fail: false, drops: 0, camsFail: false, camsHang: false,
   };
   const fake = {
     play(cues, out) { r.log.push(["play", cues.map(kind), out.level]); return Promise.resolve(); },
@@ -45,7 +45,15 @@ async function rig(over = {}) {
         }
         return r.live;
       }
-      if (p === "/api/cams") return r.cams;
+      if (p === "/api/cams") {
+        if (r.camsFail) throw new Error("500");
+        if (r.camsHang) {
+          return new Promise((_, no) => {
+            if (opts && opts.signal) opts.signal.addEventListener("abort", () => no(new Error("aborted")));
+          });
+        }
+        return r.cams;
+      }
       if (p === "/api/drowsy") return JSON.parse(JSON.stringify(r.settings));
       throw new Error("404 " + p);
     },
@@ -586,6 +594,65 @@ export default [
     const failed = r.eng.state.error;
     await r.polls(61);
     eq([/did not load: no wasm/.test(failed || ""), n, r.eng.state.error], [true, 2, null]);
+  }],
+
+  // ---- fix round 1 minors
+  ["one failed /api/cams answer is a hiccup, not a camera gap; two in a row stop the watch", async () => {
+    const r = await rig();
+    await r.calibrate();
+    r.camsFail = true;
+    await r.eng.pollCams();
+    const once = [r.eng.state.cabinLive, r.stops];
+    await r.eng.pollCams();
+    eq([once, [r.eng.state.cabinLive, r.stops]], [[true, 0], [false, 1]]);
+  }],
+  ["a hung /api/cams is given up after 5 s and counts as a miss; an answer resets the count", async () => {
+    const r = await rig();
+    await r.drive(100);
+    r.camsHang = true;
+    let done = false;
+    r.eng.pollCams().then(() => { done = true; });
+    r.advance(5);
+    await turns(() => done);
+    const one = [done, r.eng.state.cabinLive];
+    r.camsHang = false;
+    await r.eng.pollCams();                       // an answer: the count starts again
+    r.camsFail = true;
+    await r.eng.pollCams();
+    eq([one, r.eng.state.cabinLive, r.stops], [[true, true], true, 0]);
+  }],
+  ["at a creep of 3 km/h or less, with the watch deliberately off, the chip says paused, not 'Can't see you'", async () => {
+    const r = await rig();
+    await r.drive(2);                             // the app starts at a creep: not rolling
+    const start = r.eng.state.chip;
+    await r.drive(0);
+    await r.polls(11);
+    await r.drive(3);                             // creeping after a long stop
+    const creep = r.eng.state.chip;
+    await r.drive(4);                             // moving: the watch starts
+    eq([start, creep, r.eng.state.chip, r.watches], ["Paused · parked", "Paused · parked", "Watching", 1]);
+  }],
+  ["the creep's chip, pure: 3 km/h not rolling is paused; rolling, or over 3 km/h, it is watched", () => {
+    const at = (kph) => gateOf({ connected: true, values: { SPEED: kph } }, cfg);
+    const chip = (kph, rolling) => chipOf({ enabled: true, gate: at(kph), cabinLive: true, measures: { faceLost: true }, rolling });
+    eq([chip(3, false), chip(3, true), chip(3.5, false), chip(0.5, false)],
+       ["Paused · parked", "Can't see you", "Can't see you", "Paused · parked"]);
+  }],
+  ["an alert raised above the gate carries on below 30 mph: it repeats there, and clears after 5 s of open eyes", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(35);                           // PERCLOS is available, so open eyes can release
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    eq(r.eng.state.level, 2);
+    const n = r.plays().length;
+    await r.drive(40);                            // below the gate
+    // 0.8 s closures between open frames: no new Level 2 edge, and no release
+    await r.frames(12, (i) => ({ blink: i % 10 === 0 ? 0.1 : 0.9 }));
+    const below = r.plays().slice(n);
+    const still = r.eng.state.level;
+    await r.frames(6);                            // eyes open, still below the gate
+    ok(below.length >= 2 && !below.some((c) => c.includes("fade")), `below the gate: ${JSON.stringify(below)}`);
+    eq([still, r.eng.state.level, r.plays().at(-1), r.eng.state.gate.active], [2, 0, ["fade"], false]);
   }],
 
   // ---- 6. one scaled config, to the measures and the ladder alike

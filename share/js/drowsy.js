@@ -88,11 +88,11 @@ export function createMeasures(cfg) {
     // exactly the spurious alert a driver must never get startled by.
     //
     // A frame marked `restart` is one too, however short the pause before
-    // it: drowsyrun.js stops feeding while parked, or below the gate with
-    // nothing sounding, and marks the first frame it feeds again. Frames it
-    // chose not to feed are frames nobody measured, so nothing is held over
-    // them -- and a PERCLOS reading after moving off is never built from the
-    // minute before the stop.
+    // it: drowsyrun.js marks the first frame it feeds after 10 s stopped, a
+    // dropped link, or a camera restart (it feeds at any speed while the car
+    // rolls). Frames it did not feed are frames nobody measured, so nothing
+    // is held over them -- and a PERCLOS reading after moving off is never
+    // built from a long stop.
     const discontinuity = lastT !== null && (!!f.restart || t < lastT || t - lastT > 1);
     lastT = t;
     if (discontinuity) {

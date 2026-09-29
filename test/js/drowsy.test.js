@@ -151,9 +151,9 @@ export default [
     const jump = m.feed({ t: 40, face: true, blink: 0.1, jaw: 0.1, pitch: 0, gated: true });
     eq(jump.discontinuity, true, "a real backward jump still resets");
   }],
-  // Task 9: drowsyrun.js stops feeding while parked, or below the gate with
-  // nothing sounding, and marks the first frame it feeds again `restart`. The
-  // frames it did not feed are a gap however short: nothing held over it.
+  // Task 9: drowsyrun.js marks `restart` the first frame it feeds after 10 s
+  // stopped, a dropped link or a camera restart. The frames it did not feed
+  // are a gap however short: nothing is held over it.
   ["a frame marked restart is a discontinuity, however short the pause", async () => {
     const m = await calibrated();
     run(m, 61, 40, (t) => ({ blink: t >= 90 ? 0.9 : 0.1 }));  // 0.9 closed from t=90
