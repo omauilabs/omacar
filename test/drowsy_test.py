@@ -137,15 +137,31 @@ os.remove(drowsycfg.user_path())
 check("with no file at all a save still works", drowsycfg.save({"enabled": True})["enabled"], True)
 
 head("fix round 1 minors: an event's speed and measures, and the owner's sounds")
-for wrong in ({"speed_kph": "fast"}, {"speed_kph": True}, {"speed_kph": -5}, {"speed_kph": 1000},
-              {"speed_kph": float("nan")}, {"measures": "x"}, {"measures": [0.2]}):
+import contextlib  # noqa: E402
+import io  # noqa: E402
+for wrong in ({"measures": "x"}, {"measures": [0.2]}):
     check(f"an event with {wrong!r} is refused",
           raises(lambda w=wrong: drowsycfg.log_event(dict({"level": 2, "trigger": "closed"}, **w))), True)
 ok_ids = [drowsycfg.log_event({"level": 2, "trigger": "closed", "speed_kph": v, "measures": m})["id"]
           for v, m in ((None, None), (0, {}), (104.6, {"perclos": 0.2}))]
 check("an unknown speed (None), 0 and 104.6 km/h, and an object or no measures, are written", len(ok_ids), 3)
-import contextlib  # noqa: E402
-import io  # noqa: E402
+
+head("fix round 2: a bad speed never loses the event record; only the speed goes")
+for kph in (1000, -5, "fast", True, float("nan"), float("inf")):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        try:
+            out = drowsycfg.log_event({"level": 3, "trigger": "closed", "speed_kph": kph,
+                                       "measures": {"perclos": 0.31}})
+        except ValueError as e:
+            out = {"refused": str(e)}
+    row = (sqlite3.connect(records.DB).execute("SELECT payload FROM records WHERE id = ?", (out["id"],)).fetchone()
+           if "id" in out else None)
+    payload = json.loads(row[0]) if row else {}
+    check(f"speed_kph {kph!r}: the record is saved, with speed null, the rest intact, and a warning",
+          ("id" in out, payload.get("speed_kph", "missing"), payload.get("level"), payload.get("measures"),
+           "speed_kph" in err.getvalue()),
+          (True, None, 3, {"perclos": 0.31}, True))
 with open(drowsycfg.user_path(), "w", encoding="utf-8") as f:
     json.dump({"sounds": ["bark", "horn", 5, "alarm", "bark"]}, f)
 err = io.StringIO()

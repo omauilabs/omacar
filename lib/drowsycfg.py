@@ -146,12 +146,16 @@ def log_event(data):
     t = data.get("t")
     if isinstance(t, bool) or not isinstance(t, (int, float)) or not t:
         t = time.time()
-    # The speed is unknown (None) or a real one; the measures an object
-    # (Task 9 fix round 1). Anything else is refused, not written as-is.
+    # The speed is unknown (None) or a real one (Task 9 fix round 1). A bad
+    # one -- out of range, not a number, NaN -- never costs the alert its
+    # record (fix round 2): only the speed goes, stored as null, with a
+    # warning. The measures must be an object, or the event is refused.
     kph = data.get("speed_kph")
     if kph is not None and (isinstance(kph, bool) or not isinstance(kph, (int, float))
                             or not math.isfinite(kph) or not 0 <= kph <= MAX_KPH):
-        raise ValueError(f"speed_kph must be a speed from 0 to {MAX_KPH} km/h, or null")
+        print(f"drowsycfg: event speed_kph {kph!r} is not a speed from 0 to {MAX_KPH} km/h; "
+              "recorded as null", file=sys.stderr)
+        kph = None
     measures = data.get("measures")
     if measures is None:
         measures = {}
