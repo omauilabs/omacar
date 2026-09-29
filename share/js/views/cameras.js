@@ -17,11 +17,12 @@
 // data", and no alert can start. So WHILE A CLIP PLAYS THE FEEDS LET GO OF
 // THEIR STREAMS (final review, I2): the main feed's under the video and both
 // side feeds, which say "Paused while a clip plays" instead. They take them
-// up again when playback ends, and leaving the tab ends it. Drowsy mode's
-// cabin stream is never let go of for playback: it is the safety feature.
-// Live, the tab holds three, and with drowsy mode and the phone layer that is
-// five, one left for every poll on the page; playing, the tab holds one, and
-// three are left. Do not add a stream.
+// up again when playback ends, when the clip cannot be played (m3), and when
+// the tab is left. Drowsy mode's cabin stream is never let go of for
+// playback: it is the safety feature. Live, the tab holds three, and with
+// drowsy mode and the phone layer that is five, one left for every poll on
+// the page; playing, the tab holds one, and three are left. Do not add a
+// stream.
 
 import { h, clear, icon, toast } from "../core.js";
 import { ICONS } from "../icons.js";
@@ -51,13 +52,14 @@ const pct = (x) => (x * 100).toFixed(3) + "%";
 // What a side feed says in place of its picture while a clip plays.
 const PAUSED_FOR_CLIP = "Paused while a clip plays";
 
-// `get`, `post`, `every`, `later` and `stopEvery` are for the tests
+// `get`, `post`, `every`, `later`, `stopEvery` and `clipSrc` are for the tests
 // (test/js/cameras.test.js); the page uses the defaults. clearTimeout and
 // clearInterval share one list of ids, so `stopEvery` stops either kind.
 export default function camerasView(root, { get = getJSON, post = postJSON,
                                             every = (fn, ms) => setInterval(fn, ms),
                                             later = (fn, ms) => setTimeout(fn, ms),
-                                            stopEvery = (id) => clearInterval(id) } = {}) {
+                                            stopEvery = (id) => clearInterval(id),
+                                            clipSrc = clipUrl } = {}) {
   let alive = true;
   let ov = null;
   let clips = [], events = [];
@@ -266,7 +268,7 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
     const f = feeds[role];
     f.node.appendChild(video);
     f.node.classList.add("is-playing");
-    video.src = clipUrl(role, file);
+    video.src = clipSrc(role, file);
     video.addEventListener("loadedmetadata", () => {
       video.currentTime = Math.max(0, Math.min(at, (video.duration || at) - 0.1));
       video.play().catch(() => {});
@@ -312,6 +314,18 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
 
   video.addEventListener("play", paintPlay);
   video.addEventListener("pause", paintPlay);
+  // A CLIP THAT WILL NOT PLAY (final review, m3): a 404, a file the janitor
+  // removed since the list was read, a decode error. While it plays the side
+  // feeds have let go of their streams (see the header), so without this the
+  // owner would be left with a black or frozen slot and feeds that stay
+  // paused until Live, a tap or leaving the tab. It goes back to live, which
+  // takes the feeds' streams up again, and says why. `playing` is null by the
+  // time anything goLive() itself provokes is heard, so it is said once.
+  video.addEventListener("error", () => {
+    if (!playing) return;
+    goLive();
+    toast("That clip could not be played.", "bad");
+  });
   // On to the next minute, or back to live after the newest.
   video.addEventListener("ended", () => {
     if (!playing) return;

@@ -1,6 +1,7 @@
 // The Cameras tab (share/js/views/cameras.js): what it holds open while a
-// clip plays (final review, I2), and that its polls never pile up on a server
-// that stops answering (final review, m2).
+// clip plays (final review, I2), that its polls never pile up on a server that
+// stops answering (final review, m2), and that a clip which will not play gives
+// the feeds their streams back and says so (final review, m3).
 //
 // serve.py speaks HTTP/1.1, so Chromium allows six connections to it. The
 // three feeds, drowsy mode's cabin stream and a playing clip took five, and
@@ -12,9 +13,15 @@
 // playback.
 //
 // The view is mounted on a scripted server and hand-held timers, so nothing
-// polls unless a test fires the tab's timer (`v.fire(ms)`). Its <img> and <video> sources get a 404 from the runner's static
-// server; no test looks at what the browser does with that, only at which
-// elements hold a source.
+// polls unless a test fires the tab's timer (`v.fire(ms)`). Its <img> sources
+// get a 404 from the runner's static server; no test looks at what the browser
+// does with that, only at which elements hold a source.
+//
+// A <video> source is different since m3: the tab acts on the video's `error`,
+// and the runner's 404 is one. So a test that only wants a clip playing hands
+// the tab a source the browser attaches and then waits on, a MediaSource's
+// object URL: no request, no error, no metadata. One test leaves the 404 in
+// place, to see the browser's own error reach the tab.
 import { eq } from "./assert.js";
 import camerasView from "../js/views/cameras.js";
 import { LIVE_TIMEOUT_MS } from "../js/drowsyrun.js";
@@ -24,7 +31,15 @@ const role = (o) => Object.assign({ device: "/dev/v4l/by-id/x", mode: { fmt: "MJ
 const OV = { running: true, storage: { used: 12.34e9, budget: 40e9 },
              roles: { front: role({}), rear: role({}), cabin: role({ mode: { fmt: "MJPG", w: 640, h: 480, fps: 30 } }) } };
 const PAUSED = "Paused while a clip plays";
+const COULD_NOT_PLAY = "That clip could not be played.";
 const settle = () => new Promise((r) => setTimeout(r, 0));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Polling with a deadline, never a bare sleep that assumes how fast the box is.
+async function until(fn, what) {
+  for (let i = 0; i < 400 && !fn(); i++) await wait(5);
+  if (!fn()) throw new Error("timed out waiting for " + what);
+}
 
 // The front camera's last two clips: Play, from live, goes back ten seconds,
 // into the older one (a); the newer one (b) runs on past now.
@@ -62,16 +77,39 @@ function hung() {
   return s;
 }
 
-async function mount({ get, post = async () => ({}) } = {}) {
+// A source for a playing clip that neither loads nor fails. Each is a MediaSource
+// of its own, since one can be attached to one element only once.
+function quietClips() {
+  const q = { files: [], urls: [] };
+  q.src = (role, file) => {
+    const url = URL.createObjectURL(new MediaSource());
+    q.files.push(file);
+    q.urls.push(url);
+    return url;
+  };
+  q.free = () => { for (const u of q.urls) URL.revokeObjectURL(u); };
+  return q;
+}
+
+// `real404`: leave the clip's source as the page builds it, which the runner
+// answers with a 404.
+async function mount({ get, post = async () => ({}), real404 = false } = {}) {
+  if (!document.getElementById("toasts")) {
+    const d = document.createElement("div");
+    d.id = "toasts";
+    document.body.appendChild(d);
+  }
   const root = document.createElement("div");
   document.body.appendChild(root);
   const t = timers();
   get = get || (async (path) => (path.startsWith("/api/cams/clips") ? { clips: clips(), events: [] } : OV));
-  const stop = camerasView(root, { get, post, every: t.every, later: t.later, stopEvery: t.stop });
+  const q = quietClips();
+  const stop = camerasView(root, { get, post, every: t.every, later: t.later, stopEvery: t.stop,
+                                   clipSrc: real404 ? undefined : q.src });
   await settle();
   const $ = (sel) => root.querySelector(sel);
   const v = {
-    root, stop, t,
+    root, stop, t, q,
     // The tab's repeating poll that asked for this interval, fired once.
     fire: (ms) => t.ticks.find((k) => k.ms === ms).fn(),
     // Every element in the tab that holds a source, as "img:front" or "video".
@@ -85,8 +123,15 @@ async function mount({ get, post = async () => ({}) } = {}) {
     play: async () => { $("button.cam-btn.play").click(); await settle(); await settle(); },
     ended: async () => { $("video.cam-video").dispatchEvent(new Event("ended")); await settle(); },
     live: async () => { $("button.cam-live").click(); await settle(); },
+    // The playing <video> reports that its clip cannot be played (a 404, a file
+    // the janitor removed, a decode error).
+    fail: async (video = $("video.cam-video")) => { video.dispatchEvent(new Event("error")); await settle(); },
+    // Every toast on the page, in the order it was raised.
+    toasts: () => [...document.getElementById("toasts").children].map((t) => t.textContent),
+    // Whether the tab says it is live: no Live button, and the clock reads LIVE.
+    isLive: () => $("button.cam-live").hidden && $(".cam-when").textContent === "LIVE",
     tap: async (r) => { root.querySelector(`.cam-feed[data-role="${r}"]`).click(); await settle(); },
-    done: () => { stop(); root.remove(); },
+    done: () => { stop(); root.remove(); q.free(); },
   };
   return v;
 }
@@ -109,9 +154,9 @@ export default [
     try {
       await v.play();                             // the older clip, a
       await v.ended();                            // on into b
-      const next = [v.held(), v.root.querySelector("video").getAttribute("src").includes("b.mp4")];
+      const next = [v.held(), v.q.files, v.root.querySelector("video").getAttribute("src") === v.q.urls[1]];
       await v.ended();                            // past the newest: live again
-      eq([next, v.held(), v.words()], [[["video"], true], LIVE, NONE]);
+      eq([next, v.held(), v.words()], [[["video"], ["a.mp4", "b.mp4"], true], LIVE, NONE]);
     } finally { v.done(); }
   }],
   ["Live brings the feeds back, and so does tapping a paused feed, which becomes the main one", async () => {
@@ -132,6 +177,7 @@ export default [
     v.stop();
     const held = v.held();
     v.root.remove();
+    v.q.free();
     eq(held, []);
   }],
   ["a feed with no picture keeps its own reason while a clip plays", async () => {
@@ -192,5 +238,38 @@ export default [
     const after = srv.out();
     v.root.remove();
     eq([before, after], [[1, 1], [0, 0]]);
+  }],
+
+  // ---- a clip that will not play (final review, m3)
+  ["a clip that fails to play gives the feeds their streams back and says in words that it could not play", async () => {
+    const v = await mount();
+    try {
+      await v.play();
+      const during = [v.held(), v.words(), v.isLive()];
+      const said = v.toasts().length;
+      await v.fail();
+      eq([during, v.held(), v.words(), v.isLive(), v.root.querySelector("video"), v.toasts().slice(said)],
+         [[["video"], { front: "", rear: PAUSED, cabin: PAUSED }, false], LIVE, NONE, true, null, [COULD_NOT_PLAY]]);
+    } finally { v.done(); }
+  }],
+  ["a clip the server cannot serve, a real 404, does the same once the browser reports it", async () => {
+    const v = await mount({ real404: true });
+    try {
+      const said = v.toasts().length;
+      await v.play();
+      await until(() => v.isLive(), "the browser's error to bring the tab back to live");
+      eq([v.held(), v.words(), v.toasts().slice(said)], [LIVE, NONE, [COULD_NOT_PLAY]]);
+    } finally { v.done(); }
+  }],
+  ["the message comes once: a second error from the clip it gave up on says nothing more", async () => {
+    const v = await mount();
+    try {
+      await v.play();
+      const video = v.root.querySelector("video");
+      const said = v.toasts().length;
+      await v.fail(video);
+      await v.fail(video);
+      eq([v.held(), v.toasts().slice(said)], [LIVE, [COULD_NOT_PLAY]]);
+    } finally { v.done(); }
   }],
 ];
