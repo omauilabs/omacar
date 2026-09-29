@@ -17,7 +17,16 @@ const SOC_WINDOW_MS = 12000;   // a few live samples, not a trend line
 const SOC_MOVED = 0.4;         // a resting pack jitters less than this between reads
 const socTrail = [];
 // What the IMA tile last said, handed back while a hand-off pauses it.
-let lastIma = { v: "—", n: "no pack reading" };
+const NO_IMA = { v: "—", n: "no pack reading" };
+let lastIma = NO_IMA;
+
+// Both of the above are module-wide, as trail.js's series are, so a test
+// that reads the IMA tile starts from here -- as trail.js's reset() is for
+// sparklines -- rather than from whatever an earlier test left behind.
+export function resetIma() {
+  socTrail.length = 0;
+  lastIma = NO_IMA;
+}
 
 // ---------------------------------------------------------------- the catalogue
 //

@@ -429,9 +429,21 @@ const warnings = [
       dimmedAs(num, "color", "--bad");
       dimmedAs(bar.querySelector(".g-bar-v"), "color", "--bad");
       dimmedAs(arc.querySelector(".g-value"), "fill", "--bad");
+      dimmedAs(arc.querySelector(".g-arc-fill"), "stroke", "--bad");
+      dimmedAs(bar.querySelector(".g-bar-fill"), "backgroundColor", "--bad");
       eq(root.querySelector(".drive-state").textContent, "Paused · adapter in use", "and says why");
     }, { hero: "speed", heroKind: "digital", columns: 3, footer: "none",
          tiles: ["coolant", "volts", "fuel"], kinds: { volts: "bar", fuel: "arc" } }))],
+
+  ["Gauges: the hero keeps its warning too, dimmed", () =>
+    withCss(() => withGauges(() => feed(LIVE({ RPM: 5800 })), async (root) => {
+      feed(HANDOVER(LIVE({ RPM: 5800 })));
+      const hero = root.querySelector(".drive-speed");
+      eq([root.querySelector(".drive-hero-slot").dataset.state, hero.textContent,
+          hero.classList.contains("warn")], ["paused", "5,800", true]);
+      dimmedAs(hero, "color", "--warn");
+    }, { hero: "rpm", heroKind: "digital", columns: 1, footer: "none",
+         tiles: ["odometer"], kinds: {} }))],
 
   ["and a warning drawn live is still full strength, not the dimmed tint", () =>
     withCss(() => withHome(() => feed(HOT()), async (root) => {
@@ -497,6 +509,31 @@ const deadDaemon = [
           cool.querySelector(".sig-note").textContent], ["waiting", "", "Waiting for the car"], "after 91 s");
       eq(root.querySelector(".dial-rpm").textContent, "No data", "the dial's words");
     })],
+];
+
+// ---------------------------------------------------------------- what the locks read
+//
+// store.shown draws held values through a bare hand-off and none through a
+// stopped one. Neither may leak into what a lock reads: store.values,
+// store.state and store.connected stay the sample's own.
+const lockInputs = [
+  ["store.values, state and connected are the sample's own, whatever store.shown draws", () => {
+    const seen = [];
+    const look = (what) => seen.push([what, store.values, store.state, store.connected,
+                                      Object.keys(store.shown.values || {}).length]);
+    feed(LIVE()); look("live");
+    feed(BARE); look("bare hand-off");
+    feed(HANDOVER()); look("hand-off");
+    feed(QUIET(40)); look("stopped hand-off");
+    forget();
+    const v = LIVE().values;
+    eq(seen, [
+      ["live", v, "driving", true, 7],
+      ["bare hand-off", {}, "offline", false, 7],      // shown holds; the sample does not
+      ["hand-off", v, "offline", false, 7],
+      ["stopped hand-off", v, "offline", false, 0],    // shown drops; the sample does not
+    ]);
+  }],
 ];
 
 // ---------------------------------------------------------------- the locks
@@ -569,10 +606,14 @@ const locks = [
 const soc = (x, extra) => Object.assign(LIVE({ HYBRID_BATTERY_REMAINING: x }), extra || {});
 const imaSays = (s) => READINGS.ima.get(s.values || {}, s).v;
 
+// The IMA tile's window and last state are module-wide, so every test here
+// starts from R.resetIma() rather than from whatever an earlier test left.
 const direction = [
   ["the charge/assist state never reaches back across a hand-off", () => {
+    R.resetIma();
+    eq(imaSays(soc(58)), "…", "a fresh window settles first");
     // Charging before it...
-    for (const x of [58, 59, 60, 61]) imaSays(soc(x));
+    for (const x of [59, 60, 61]) imaSays(soc(x));
     eq(imaSays(soc(61.5)), "Charging", "regen before the hand-off");
     // ...the adapter lent out for a while, and the motor assisting after it.
     for (let i = 0; i < 8; i++) imaSays(HANDOVER(soc(61.5)));
@@ -581,6 +622,8 @@ const direction = [
     eq(after[2], "Assist", "and it says what is happening now");
   }],
   ["during the hand-off it shows the last state it had, for the renderer to dim", () => {
+    R.resetIma();
+    eq(imaSays(HANDOVER(soc(47))), "—", "with nothing read yet there is no state to show");
     for (const x of [50, 49, 48, 47]) imaSays(soc(x));
     eq(imaSays(HANDOVER(soc(47))), "Assist");
     eq(readingState(READINGS.ima, HANDOVER(soc(47))), "paused");
@@ -677,5 +720,5 @@ const onBattery = [
     })],
 ];
 
-export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...deadDaemon, ...locks, ...direction,
+export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...deadDaemon, ...lockInputs, ...locks, ...direction,
                 ...onCluster, ...onMusic, ...onRail, ...onBattery];
