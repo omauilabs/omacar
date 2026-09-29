@@ -88,6 +88,7 @@ class FakeElm:
         return True
 
     def raw(self, cmd):
+        FakeElm.events.append(("raw", str(cmd)))
         if str(cmd).upper().startswith("ATSP"):
             self.setting = str(cmd)[4:]
         return "OK"
@@ -97,6 +98,7 @@ class FakeElm:
 
     def monitor(self, command="ATMA", seconds=8.0, on_line=None, limit=200000,
                 should_stop=None):
+        FakeElm.events.append(("monitor", command, seconds, should_stop is not None))
         plan = FakeElm.plan
         n = 0
         deadline = time.time() + min(seconds, plan.get("cap_seconds", 30))
@@ -125,6 +127,9 @@ class FakeElm:
 
 
 FakeElm.plan = {"probe": {}, "frames": []}
+# Everything listen() does to the adapter, in order: ("raw", cmd) and
+# ("monitor", command, seconds, handed should_stop). A test may add its own.
+FakeElm.events = []
 
 
 def install_fakes():
@@ -484,6 +489,59 @@ check("without OMACAR_FASTBAUD a capture still says the rate",
       _ld.get("link_baud") == 115200)
 check("and that no raise was asked for, rather than leaving it out",
       "fastbaud" in _ld and _ld["fastbaud"] is None)
+
+# ------------------------------------------------------------------------
+head("on_ready comes right before the capture's own ATMA, and only that ATMA asks should_stop")
+
+# THE CONTRACT THE RECORDER'S QUIET CLOCK RESTS ON, pinned against the real
+# listen(). drivelog restarts a leg's quiet clock in on_ready, and its stop
+# test is only safe to ask once the monitor is running. So on_ready must come
+# after the protocol probe and immediately before the final ATMA, and the
+# probe must never ask should_stop. Move on_ready earlier -- to announce
+# before the probe, say -- and the probe's seconds are back inside the quiet
+# clock: on 29 September, with QUIET=10, that was every leg saving nothing.
+# The drivelog tests use a fake listen() that assumes this order; this is
+# where the order itself is checked.
+
+reset()
+FakeElm.events = []
+FakeElm.plan = {"probe": {"8": ["17C 01"] * 12},   # heard on the third setting
+                "frames": [f"17C 0{i % 8} 02" for i in range(40)],
+                "gap": 0.001, "cap_seconds": 1}
+
+
+def _order_ready(c):
+    FakeElm.events.append(("on_ready",))
+
+
+def _order_stop():
+    FakeElm.events.append(("should_stop",))
+    return False
+
+
+listen.listen(seconds=3, note="order", on_ready=_order_ready,
+              should_stop=_order_stop)
+_ev = list(FakeElm.events)
+_kinds = [e[0] for e in _ev]
+_ready_at = _kinds.index("on_ready") if "on_ready" in _kinds else -1
+_mons = [i for i, e in enumerate(_ev) if e[0] == "monitor"]
+_probes = [i for i in _mons if _ev[i][2] <= 2.5]
+_finals = [i for i in _mons if _ev[i][2] > 2.5]
+check("on_ready fired", _ready_at >= 0)
+check(f"the probe tried more than one setting ({len(_probes)} probe monitors)",
+      len(_probes) >= 2)
+check("on_ready fires after the last probe monitor",
+      bool(_probes) and _ready_at > max(_probes))
+check("and the very next thing sent to the adapter is the capture's own ATMA",
+      0 <= _ready_at < len(_ev) - 1
+      and _ev[_ready_at + 1][:3] == ("monitor", "ATMA", 3))
+check("there is exactly one capture monitor", len(_finals) == 1)
+check("no probe monitor is handed should_stop",
+      not any(_ev[i][3] for i in _probes))
+check("the capture's monitor is", bool(_finals) and _ev[_finals[0]][3])
+check("should_stop is never asked before on_ready",
+      _ready_at >= 0
+      and all(i > _ready_at for i, k in enumerate(_kinds) if k == "should_stop"))
 
 shutil.rmtree(_TMP, ignore_errors=True)
 print()
