@@ -535,13 +535,21 @@ def save_pins(data):
     cams = cameras(doc) if doc else []
     embs = embeds()
     known = {c["id"]: c["name"] for c in cams + embs}
+    # A PIN ALREADY SAVED IS NEVER A REASON TO REFUSE A SAVE. A pinned camera
+    # that has since left Caltrans' list stays pinned, under the name it had,
+    # until the owner unpins it; refusing every later save because of it made
+    # a reorder fail with a reason that did not say why. Only a NEW pin has to
+    # be in the list.
+    was = _read_pins() or {}
+    before = {p for p in was.get("pins") or [] if isinstance(p, str) and ID.match(p)}
+    old = was.get("labels") if isinstance(was.get("labels"), dict) else {}
     out = []
     for cid in pins:
         if not isinstance(cid, str) or not ID.match(cid):
             raise ValueError(f"{cid!r} is not a camera id")
         if cid in out:
             continue
-        if cid not in known:
+        if cid not in known and cid not in before:
             if doc is None:
                 raise ValueError(f"the Caltrans camera list is not available, so "
                                  f"{cid} cannot be checked. Try again with a connection.")
@@ -550,7 +558,8 @@ def save_pins(data):
     body = {"_comment": "Road cameras pinned in OmaCar's Navigation tab, in the "
                         "order shown. Edit them in the app: Navigation, Road "
                         "cameras, Edit pins. Delete this file for the defaults.",
-            "pins": out, "labels": {cid: known[cid] for cid in out}}
+            "pins": out,
+            "labels": {cid: str(known.get(cid) or old.get(cid) or cid) for cid in out}}
     _write(PINS_CFG, (json.dumps(body, indent=2) + "\n").encode("utf-8"))
     return listing()
 

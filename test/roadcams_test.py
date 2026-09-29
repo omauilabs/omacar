@@ -578,6 +578,15 @@ def main():
     check("and is named as missing, by the name it had",
           left["pins_missing"], [{"id": "sr68yorkroad", "name": "SR-68 : York Road"}])
 
+    moved = roadcams.save_pins({"pins": ["imjin-2", "sr68yorkroad", "us101airportblvd"]})
+    check("and it never blocks a later save: a reorder with a new pin is saved",
+          moved["pins"], ["imjin-2", "sr68yorkroad", "us101airportblvd"])
+    check("keeping the name the missing pin had",
+          json.load(open(roadcams.PINS_CFG))["labels"]["sr68yorkroad"], "SR-68 : York Road")
+    check("while a NEW pin that is not in the list is still refused",
+          bool(raises(ValueError, roadcams.save_pins,
+                      {"pins": ["sr68yorkroad", "sr68nowhere"]})), True)
+
     check("reset goes back to the commute",
           roadcams.save_pins({"action": "reset"})["pins_default"], True)
     check("and removes the file", os.path.exists(roadcams.PINS_CFG), False)

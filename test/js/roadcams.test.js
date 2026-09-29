@@ -313,6 +313,24 @@ export default [
       eq(root.querySelectorAll(".rc-driving .rc-tile").length, 1);
     })],
 
+  ["a pin that left Caltrans' list is shown as no longer in it, and saved with the rest", () => {
+    let sent = null;
+    return withScreen({ over: { pins: ["sr68yorkroad", "sr1imjinparkway"], pins_default: false,
+                                pins_missing: [{ id: "sr68yorkroad", name: "SR-68 : York Road" }] },
+                        save: async (pins) => { sent = pins; return listing({ pins, pins_default: false }); } },
+      async (root) => {
+        const gone = tileIn(root, "pinned", "sr68yorkroad");
+        ok(/No longer in Caltrans' list/.test(gone.textContent), "said plainly");
+        ok(/SR-68 : York Road/.test(gone.textContent), "under the name it had");
+        root.querySelector(".rc-editbtn").click();
+        const pin = tileIn(root, "US-101", "us101airportblvd").querySelector(".rc-pinbtn");
+        pin.click();
+        [...root.querySelectorAll(".rc-actions .btn")].find((b) => b.textContent === "Done").click();
+        await until(() => sent !== null);
+        eq(sent, ["sr68yorkroad", "sr1imjinparkway", "us101airportblvd"], "the missing pin goes with the rest");
+      });
+  }],
+
   ["pins are edited while parked, and saved only on Done", () => {
     let sent = null;
     return withScreen({ save: async (pins) => { sent = pins; return listing({ pins, pins_default: false }); } },

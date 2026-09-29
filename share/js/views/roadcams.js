@@ -333,11 +333,13 @@ export default function roadcamsView(root) {
   function missingTile(p) {
     const edit = h("div.rc-edit");
     const node = h("figure.rc-tile.rc-missing", { data: { id: p.id || "", kind: "missing" } },
-      h("div.rc-pic.rc-gone", h("span.rc-none", "Not in Caltrans' list right now")),
+      h("div.rc-pic.rc-gone", h("span.rc-none",
+        p.id ? "No longer in Caltrans' list" : "Not in the list yet")),
       h("figcaption.rc-cap",
         h("div.rc-name", h("span.rc-nm", p.name)),
         h("div.rc-meta", h("span.rc-where",
-          p.id ? "Out of service, or taken off the list. It stays pinned until you unpin it."
+          p.id ? "Out of service, or taken off the list. It stays pinned until you "
+                 + "unpin it, and saving the pins keeps it."
                : "The camera list has not been downloaded yet."))),
       edit);
     return { kind: "missing", node, edit, id: p.id };
