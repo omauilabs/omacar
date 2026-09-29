@@ -69,16 +69,59 @@ function played(s) {
   return { env, end, start: s.v.start };
 }
 const gateAt = (st, t) => st.gateEvents.reduce((g, [et, val]) => (et <= t ? val : g), 0);
-// Everything the alert bus carries at t, summed in amplitude through the gate,
-// from silence up.
+// Everything the alert bus carries at t, summed through the gate, EACH SOUND
+// COUNTED ONLY ABOVE ITS OWN SILENCE (fix round 2): silence (-48 dBFS,
+// ramps.js) plus what every sound adds over it. Counted from zero instead,
+// two sounds sitting at silence read as -42 dBFS and several releases ending
+// together as a jump, though none of it is anything but silence; counted
+// this way the bus is silent when everything on it is, and a single sound
+// reads exactly as its own envelope.
+const SIL = 10 ** (SILENCE_DB / 20);
 function heard(st, t) {
-  let amp = 0;
+  if (!gateAt(st, t)) return SILENCE_DB;
+  let over = 0;
   for (const s of st.sounds) {
     const p = played(s);
-    if (t >= p.start && t <= p.end) amp += 10 ** (dbAt(p.env, t) / 20);
+    if (t >= p.start && t <= p.end) over += Math.max(0, 10 ** (dbAt(p.env, t) / 20) - SIL);
   }
-  return Math.max(SILENCE_DB, 20 * Math.log10(amp * gateAt(st, t) || 1e-9));
+  return 20 * Math.log10(SIL + over);
 }
+// The words a voice actually says: those begun before it was let go, which
+// is all sounds.js lets it say (its own rendered test holds it to that).
+function said(s) {
+  const r = s.releases.find((x) => Number.isFinite(x.end));
+  const says = s.v.says || (s.v.plays || []).map((p) => [s.v.start + p, s.v.start + p + s.buffer.duration]);
+  return says.filter(([f]) => !r || f < r.at);
+}
+// A drive: [t, cues, level] in order, each played at its time.
+async function drive(events, clips = CLIPS) {
+  const st = fakeStage(clips), p = createAlertPlayer(st.stage);
+  for (const [t, cues, level] of events) { st.t = t; await p.play(cues, { level }); }
+  return st;
+}
+// The heard bus and the peak sum on a 10 ms grid from `from` to `to`: the
+// worst 100 ms of the one, the loudest point of the other, and where.
+function sweepCheck(st, from, to) {
+  const n = Math.round((to - from) * 100), h = [];
+  let loud = -Infinity, loudAt = from;
+  for (let i = 0; i <= n; i++) {
+    const t = from + i / 100;
+    h.push(heard(st, t));
+    const pk = peakSum(st, t);
+    if (pk > loud) { loud = pk; loudAt = t; }
+  }
+  let worst = 0, worstAt = from;
+  for (let i = 0; i + 10 < h.length; i++) {
+    const d = Math.abs(h[i + 10] - h[i]);
+    if (d > worst) { worst = d; worstAt = from + i / 100; }
+  }
+  return { worst, loud, say: `worst 100 ms ${worst.toFixed(2)} dB at ${worstAt.toFixed(2)} s, peaks ${loud.toFixed(2)} dBFS at ${loudAt.toFixed(2)} s` };
+}
+const L1 = [{ kind: "chime" }, { kind: "voice", clip: "l1" }, { kind: "swell" }];
+const L2 = [{ kind: "duck" }, { kind: "bark" }];
+const L3 = [{ kind: "duck" }, { kind: "alarm", hold: true }, { kind: "voice", clip: "l3" }];
+const FADE = [{ kind: "fade" }];
+const steps = (a, b, d) => { const r = []; for (let t = a; t <= b + 1e-9; t = +(t + d).toFixed(6)) r.push(t); return r; };
 // THE PEAK BUDGET (fix round 1). Every heard peak at t added up: each sound's
 // envelope times the loudest its own content gets (sounds.js PEAK), through
 // the gate, plus the music as if the radio itself peaked at full scale. It
@@ -274,25 +317,46 @@ export default [
       ok(Number.isFinite(p.end) && dbAt(p.env, p.end) === SILENCE_DB, `${s.v.kind} ${s.v.level} ends at silence`);
     }
   }],
-  // Summed from silence up, with the ONE exception named (fix round 1): the
-  // chime's second note entering, as every sound does, at -48 dBFS, while the
-  // first note is itself only at about -36 dBFS and rising. The 100 ms that
-  // ends as it enters moves the sum 3.91 dB, from -36.0 to -32.1 dBFS: 8 dB
-  // and more under even ducked music (the review's 3.93 dB, -34.7 to -30.8,
-  // was the same moment with the notes at -9). Each note on its own moves
-  // 2.6 dB. Nothing else anywhere, at any level, exceeds 3 dB.
-  ["and all of them together, through the gate, never jump: but for the chime's second note entering", async () => {
-    const { st } = await escalation();
-    const note2 = st.sounds.filter((s) => s.v.kind === "chime")[1].v.start;
-    const over = [];
-    for (let t = 0; t + 0.1 <= 50; t += 0.01) {
-      const a = heard(st, t), b = heard(st, t + 0.1);
-      if (Math.abs(b - a) > 3 + 1e-6) over.push({ t: +t.toFixed(2), d: +Math.abs(b - a).toFixed(2), a: +a.toFixed(1), b: +b.toFixed(1) });
+  // THE SUMMED BUS, ACROSS TIMINGS (fix round 2). Counted above silence (see
+  // heard), nothing on the alert bus moves more than 3 dB in any 100 ms and
+  // nothing adds up past the limiter, on every drive below: Begin's chime
+  // (its second note entering is 2.79 dB this way, and needs no exception),
+  // Level 1 to 2 at every 0.1 s of Level 1, Level 2 to 3 at every 0.2 s of
+  // Level 2's first three turns, "I'm awake" at every 0.5 s of the whole
+  // escalation, and a tap at every 0.1 s of the voice's turn. Only the
+  // sounds' own envelopes are summed, so it is a bound on what is heard.
+  ["and all of them together, through the gate, never jump: Begin's chime", async () => {
+    const c = sweepCheck(await drive([[0, [{ kind: "chime" }], 1]]), 0, 8);
+    ok(c.worst <= 3 + 1e-6 && c.loud <= LIMIT + 1e-9, c.say);
+  }],
+  ["nor from Level 1 to 2, whenever Level 2 comes", async () => {
+    for (const T of steps(0.3, 6, 0.1)) {
+      const st = await drive([[0, L1, 1], [T, L2, 2], [T + 5, [{ kind: "voice", clip: "l2" }], 2], [T + 12, [{ kind: "alarm" }], 2]]);
+      const c = sweepCheck(st, Math.max(0, T - 1), T + 14);
+      ok(c.worst <= 3 + 1e-6 && c.loud <= LIMIT + 1e-9, `Level 2 at ${T}: ${c.say}`);
     }
-    const other = over.filter((o) => !(o.t <= note2 + 1e-9 && o.t + 0.1 >= note2 - 1e-9));
-    eq(other, [], "no other 100 ms moves more than 3 dB");
-    const named = over.reduce((m, o) => (o.d > m.d ? o : m), { d: 0 });
-    ok(named.d <= 3.92 && named.b <= MUSIC_DB + DUCK_DB - 8, `the chime's second note: ${JSON.stringify(named)}`);
+  }],
+  ["nor from Level 2 to 3, whenever Level 3 comes, voice turn included", async () => {
+    const l2 = [[0, L2, 2], [5, [{ kind: "voice", clip: "l2" }], 2], [12, [{ kind: "alarm" }], 2]];
+    for (const T of steps(0.2, 16, 0.2)) {
+      const st = await drive([...l2.filter(([t]) => t < T), [T, L3, 3], [T + 15, [{ kind: "voice", clip: "l3" }], 3]]);
+      const c = sweepCheck(st, Math.max(0, T - 1), T + 8);
+      ok(c.worst <= 3 + 1e-6 && c.loud <= LIMIT + 1e-9, `Level 3 at ${T}: ${c.say}`);
+    }
+  }],
+  ["nor when 'I'm awake' comes, anywhere in the escalation", async () => {
+    const esc = [[0, L1, 1], [3.9, L2, 2], [8.9, [{ kind: "alarm" }], 2], [9.5, L3, 3], [24.5, [{ kind: "voice", clip: "l3" }], 3]];
+    for (const T of steps(0.5, 40, 0.5)) {
+      const st = await drive([...esc.filter(([t]) => t < T), [T, FADE, 0]]);
+      const c = sweepCheck(st, Math.max(0, T - 1), T + 4);
+      ok(c.worst <= 3 + 1e-6 && c.loud <= LIMIT + 1e-9, `'I'm awake' at ${T}: ${c.say}`);
+    }
+  }],
+  ["nor when 'I'm awake' comes during the voice's turn", async () => {
+    for (const T of steps(0.1, 7, 0.1)) {
+      const c = sweepCheck(await drive([[0, [{ kind: "voice", clip: "l2" }], 2], [T, FADE, 0]]), 0, T + 4);
+      ok(c.worst <= 3 + 1e-6 && c.loud <= LIMIT + 1e-9, `'I'm awake' at ${T}: ${c.say}`);
+    }
   }],
   ["Level 1 to 2: Level 1's voice is let go as the bark rises, and its chime was already falling", async () => {
     const { st } = await escalation();
@@ -546,5 +610,57 @@ export default [
     await p.play([{ kind: "swell" }], { level: 1 });
     eq(st.musicCalls.map((c) => c.append), [false], "the swell was asked for, refused, and nothing followed it");
     eq(dbAt(st.music, 60), MUSIC_DB);
+  }],
+
+  // ---- fix round 2 ---------------------------------------------------------
+  // N1: a Level 2 sound that enters a step late, after Level 1 has turned to
+  // fall, still ends with its turn.
+  ["after Level 1, the first Level 2 sound still ends with its turn, and the turns never overlap", async () => {
+    for (const T of steps(0.3, 6, 0.05)) {
+      const st = await drive([[0, L1, 1], [T, L2, 2], [T + 5, [{ kind: "voice", clip: "l2" }], 2], [T + 12, [{ kind: "alarm" }], 2]]);
+      const l2 = st.sounds.filter((s) => s.v.level === 2).map(played).sort((a, b) => a.start - b.start);
+      const ends = [T + LEAD_SECS + 5 - 0.1, T + 5 + LEAD_SECS + 7 - 0.1];
+      eq(l2.length, 3, `Level 2 at ${T}`);
+      for (let i = 0; i < 2; i++) {
+        ok(l2[i].end <= ends[i] + 1e-9, `Level 2 at ${T}: turn ${i + 1} silent at ${l2[i].end.toFixed(3)}, ends at ${ends[i].toFixed(3)}`);
+        ok(l2[i].end <= l2[i + 1].start + 1e-9, `Level 2 at ${T}: turn ${i + 1} overlaps the next`);
+      }
+    }
+  }],
+
+  // N2: a sound let go says nothing new.
+  ["a voice let go keeps only the sayings already begun: the plan says what sounds.js will play", () => {
+    const v = voicesFor({ kind: "voice", clip: "l3" }, 3, 0, 1.0)[0];   // sayings at 0, 1.4, 2.8, 4.2
+    const [r] = releaseVoices([v], 2.0);
+    eq([v.plays, r.plays, r.says, r.line], [[0, 1.4, 2.8, 4.2], [0, 1.4], [[0, 1], [1.4, 2.4]], [0, 2.4]]);
+  }],
+  ["'I'm awake' during Level 2's voice turn: no word begins after it", async () => {
+    for (const T of steps(0.1, 7, 0.1)) {
+      const st = await drive([[0, [{ kind: "voice", clip: "l2" }], 2], [T, FADE, 0]]);
+      for (const s of st.sounds) {
+        for (const [f] of said(s)) ok(f < T + LEAD_SECS + 0.1, `'I'm awake' at ${T}: a line begins at ${f.toFixed(2)}`);
+      }
+    }
+  }],
+  ["nor during Level 1's or Level 3's lines: their next sayings are never said", async () => {
+    for (const [events, span] of [[[[0, L1, 1]], [2.6, 12]], [[[0, L3, 3]], [1.2, 9.5]]]) {
+      for (const T of steps(span[0], span[1], 0.2)) {
+        const st = await drive([...events, [T, FADE, 0]]);
+        for (const s of st.sounds) {
+          for (const [f] of said(s)) ok(f < T + LEAD_SECS + 0.1, `'I'm awake' at ${T}: a saying begins at ${f.toFixed(2)}`);
+        }
+      }
+    }
+  }],
+  ["Level 2 to 3 during the voice's turn: 'James, are you with me?' never overlaps 'Pull over now'", async () => {
+    for (const T of steps(0.1, 6.5, 0.1)) {
+      const st = await drive([[0, [{ kind: "voice", clip: "l2" }], 2], [T, L3, 3]]);
+      const l2 = st.sounds.filter((s) => s.v.kind === "voice" && s.v.level === 2).flatMap(said);
+      const l3 = st.sounds.filter((s) => s.v.kind === "voice" && s.v.level === 3).flatMap(said);
+      ok(l3.length >= 1, `Level 3 at ${T}: 'Pull over now' is said`);
+      for (const [, to] of l2) {
+        for (const [f] of l3) ok(to <= f + 1e-9, `Level 3 at ${T}: Level 2's line runs to ${to.toFixed(2)}, over 'Pull over now' at ${f.toFixed(2)}`);
+      }
+    }
   }],
 ];

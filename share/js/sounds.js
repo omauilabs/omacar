@@ -77,7 +77,7 @@ function run(src, v, sources) {
   src.start(v.start);
   const stopAt = Number.isFinite(v.end) ? v.end + TAIL_SECS : Infinity;
   if (Number.isFinite(stopAt)) src.stop(stopAt);
-  sources.push({ node: src, stopAt });
+  sources.push({ node: src, startAt: v.start, stopAt });
   return src;
 }
 
@@ -91,6 +91,14 @@ function run(src, v, sources) {
 // level exactly where the envelope has it; the release ramps on from there.
 // Cancelling in the middle of a ramp would drop the ramp's end and put the
 // level back where that ramp began.
+//
+// A SOUND LET GO SAYS NOTHING NEW (fix round 2). Every source that has not
+// started by `at` -- a line's next saying, a bark's next call, a Level 2 line
+// waiting for its rise -- is stopped at its own start, so it never plays: no
+// "James, are you with me?" after "I'm awake", and none under "Pull over
+// now". What has started fades on the release, as it did. `end` Infinity is a
+// re-plan of a held sound (the Level 3 alarm stepping aside), not a release,
+// and stops nothing.
 function held(g, sources) {
   return {
     release(at, points, end) {
@@ -98,6 +106,12 @@ function held(g, sources) {
       if (p.cancelAndHoldAtTime) p.cancelAndHoldAtTime(at);
       else p.cancelScheduledValues(at + KEEP_SECS);
       for (const [t, db] of points) p.linearRampToValueAtTime(dbToGain(db), t);
+      if (Number.isFinite(end)) {
+        for (const s of sources) {
+          if (s.startAt < at || s.stopAt <= s.startAt) continue;
+          try { s.node.stop(s.startAt); s.stopAt = s.startAt; } catch { /* already gone */ }
+        }
+      }
       const stopAt = end + TAIL_SECS;
       for (const s of sources) {
         // A later stop() replaces an earlier one, so a source already due to
@@ -195,7 +209,7 @@ export function playBark(v, stage = alertStage()) {
     for (const s of [o, n]) {
       s.start(t);
       s.stop(stopAt);
-      sources.push({ node: s, stopAt });
+      sources.push({ node: s, startAt: t, stopAt });
     }
   }
   return held(g, sources);
@@ -243,7 +257,7 @@ export function playVoice(v, buffer, stage = alertStage()) {
     s.connect(trim);
     s.start(v.start + p);
     if (Number.isFinite(stopAt)) s.stop(stopAt);
-    sources.push({ node: s, stopAt });
+    sources.push({ node: s, startAt: v.start + p, stopAt });
   }
   return held(g, sources);
 }

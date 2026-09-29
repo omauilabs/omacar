@@ -126,14 +126,21 @@ export function voicesFor(cue, level, at, clipSecs = 2, slots = slotsOf()) {
       const lineAt = rise.points.find(([, d]) => d >= target - LINE_WITHIN_DB)[0];
       const env = envelopePlan(2, target, Math.max(0, lineAt + clipSecs - rise.rise));
       if (env.secs > slots.voice - SLOT_SPARE_SECS) return voicesFor({ kind: "alarm" }, 2, at, clipSecs, slots);
-      return [voice("voice", at, env, { plays: [lineAt], clip: cue.clip, line: [at + lineAt, at + lineAt + clipSecs] })];
+      return [voice("voice", at, env, sayings(at, [lineAt], clipSecs, cue.clip))];
     }
     // Levels 1 and 3: said again until one saying falls wholly after the rise.
     const plays = voicePlays(clipSecs, rise.rise);
     const env = envelopePlan(lv, target, Math.max(0, plays[plays.length - 1] + clipSecs - rise.rise));
-    return [voice("voice", at, env, { plays, clip: cue.clip, line: [at, at + plays[plays.length - 1] + clipSecs] })];
+    return [voice("voice", at, env, sayings(at, plays, clipSecs, cue.clip))];
   }
   return [];
+}
+
+// A voice's sayings: `plays` (offsets from its start), `says` (each one's
+// [from, to] in context time) and `line` (from the first word to the last).
+function sayings(start, plays, clipSecs, clip) {
+  const says = plays.map((p) => [start + p, start + p + clipSecs]);
+  return { plays, says, clip, clipSecs, line: [says[0][0], says[says.length - 1][1]] };
 }
 
 // Pure: sounds cut so that each is silent by `deadline`: one that would run
@@ -193,11 +200,19 @@ export function releaseVoices(voices, now) {
     if (Number.isFinite(v.end) && now >= v.end - RELEASE_SECS) { out.push(v); continue; }
     const at = releaseAt(v.env, now);
     const r = releasePlan(dbAt(v.env, at));
-    out.push(Object.assign({}, v, {
+    const cut = Object.assign({}, v, {
       env: [...v.env.filter(([t]) => t < at), ...r.points.map(([t, d]) => [at + t, d])],
       end: at + r.secs,
       released: at,
-    }));
+    });
+    // A saying not begun by then is never said (sounds.js stops it): only
+    // the one in progress fades on the release.
+    if (v.says) {
+      const keep = v.says.map(([f]) => f < at);
+      Object.assign(cut, { plays: v.plays.filter((_, i) => keep[i]), says: v.says.filter((_, i) => keep[i]) });
+      cut.line = cut.says.length ? [cut.says[0][0], cut.says[cut.says.length - 1][1]] : null;
+    }
+    out.push(cut);
   }
   return out;
 }
@@ -313,14 +328,16 @@ export function createAlertPlayer(stage) {
   }
 
   // The same sounds, dt later.
-  function later(vs, dt) {
+  function delayed(vs, dt) {
     const at = (t) => t + dt;
     return vs.map((v) => Object.assign({}, v, {
       start: at(v.start), end: at(v.end), env: v.env.map(([t, d]) => [at(t), d]),
-    }, v.line ? { line: v.line.map(at) } : {}));
+    }, v.line ? { line: v.line.map(at) } : {}, v.says ? { says: v.says.map((x) => x.map(at)) } : {}));
   }
 
-  function sound(vs, buffer) {
+  // `turnEnd`: a Level 2 sound's turn ends then, and it is silent by then
+  // whatever happens below.
+  function sound(vs, buffer, turnEnd) {
     if (!vs.length) return;
     let start = Math.min(...vs.map((v) => v.start));
     const level = Math.max(...vs.map((v) => v.level));
@@ -333,10 +350,13 @@ export function createAlertPlayer(stage) {
     if (lower.length) {
       const turned = letGo(lower, start);
       if (turned > -Infinity && turned + STEP_SECS > start) {
-        vs = later(vs, turned + STEP_SECS - start);
+        vs = delayed(vs, turned + STEP_SECS - start);
         start = turned + STEP_SECS;
       }
     }
+    // Moved later, it still ends with its turn (fix round 2): cut, gently.
+    if (turnEnd !== undefined) vs = fitTurn(vs, turnEnd);
+    if (!vs.length) return;
     for (const v of vs) { v.id = ++nextId; voices.push(v); }
     stage.gate(start, gateCloseAt(voices));
     for (const v of vs) {
@@ -410,16 +430,30 @@ export function createAlertPlayer(stage) {
     const now = stage.now();
     if (now + LEAD_SECS > at + STALE_SECS) return;
     // At Level 3 the alarm needs DIP_LEAD_SECS to step aside first.
-    const start = Math.max(at, now + LEAD_SECS + (lv === 3 ? DIP_LEAD_SECS : 0));
+    let start = Math.max(at, now + LEAD_SECS + (lv === 3 ? DIP_LEAD_SECS : 0));
     let vs = [];
-    if (buffer) vs = voicesFor(cue, lv, start, buffer.duration, slots);
+    if (buffer) {
+      vs = voicesFor(cue, lv, start, buffer.duration, slots);
+      // NO LINE OVER A LOWER ONE STILL BEING SAID (fix round 2). A lower
+      // voice is let go as this one starts, and says nothing new after that
+      // (sounds.js), but a saying already under way finishes as it fades:
+      // this line's first words wait for it. "Pull over now" never starts
+      // over "James, are you with me?".
+      const busy = Math.max(-Infinity, ...voices.filter((v) => v.level < lv && v.says && v.end > now)
+        .flatMap((v) => v.says.filter(([f]) => f < start + STEP_SECS).map(([, to]) => to)));
+      if (vs[0].says && busy > vs[0].says[0][0]) {
+        start += busy - vs[0].says[0][0];
+        vs = voicesFor(cue, lv, start, buffer.duration, slots);
+      }
+    }
     // No clip at all: Level 2's rotation keeps its turn with the alarm
     // rather than going quiet. Levels 1 and 3 have their other sounds.
     else if (lv === 2) vs = voicesFor({ kind: "alarm" }, 2, start, undefined, slots);
-    if (lv === 2) vs = fitTurn(vs, at + slots.voice - SLOT_SPARE_SECS);
+    const turnEnd = lv === 2 ? at + slots.voice - SLOT_SPARE_SECS : undefined;
+    if (turnEnd !== undefined) vs = fitTurn(vs, turnEnd);
     const line = vs.length && vs[0].kind === "voice" ? vs[0].line : null;
     if (lv === 3 && line) stepAside(line);
-    sound(vs, buffer);
+    sound(vs, buffer, turnEnd);
   }
 
   function now(cues, out) {
@@ -431,7 +465,7 @@ export function createAlertPlayer(stage) {
       else if (cue.kind === "swell") swell(at);
       else if (cue.kind === "duck") duck(at, level);
       else if (cue.kind === "voice") later.push(say(cue, level, at + (VOICE_AFTER[level] || 0)));
-      else sound(voicesFor(cue, level, at, undefined, slots));
+      else sound(voicesFor(cue, level, at, undefined, slots), null, level === 2 ? at + slots.repeat - SLOT_SPARE_SECS : undefined);
     }
     return Promise.all(later).then(() => {});
   }

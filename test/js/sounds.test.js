@@ -2,7 +2,8 @@ import { eq, ok } from "./assert.js";
 import { CHIME, ALARM, BARK, alarmModulation, barkCalls } from "../js/sounds.js";
 import { playChimeNote, playAlarm, playBark, playVoice } from "../js/sounds.js";
 import { PEAK, VOICE_PEAK_DB, clipTrim } from "../js/sounds.js";
-import { voicesFor, releaseVoices, ALERT_DB, CHIME_NOTE_DB } from "../js/alertplayer.js";
+import { voicesFor, releaseVoices, ALERT_DB, CHIME_NOTE_DB, createAlertPlayer } from "../js/alertplayer.js";
+import { MUSIC_DB } from "../js/audiobus.js";
 import { SILENCE_DB, dbAt } from "../js/ramps.js";
 
 // ---- rendered, not played ----------------------------------------------------
@@ -25,12 +26,16 @@ async function render(secs, rate, build, during) {
   const ctx = new OfflineAudioContext(1, Math.ceil(secs * rate), rate);
   build({ ctx, out: ctx.destination });
   if (during) during(ctx);
+  const buf = await rendered(ctx);
+  return { data: buf.getChannelData(0), rate };
+}
+async function rendered(ctx) {
   let buf = null, err = null;
   ctx.startRendering().then((b) => { buf = b; }, (e) => { err = e; });
   for (let i = 0; !buf && !err && i < 500000; i++) await yieldOnce();
   if (err) throw err;
   if (!buf) throw new Error("the offline render never finished");
-  return { data: buf.getChannelData(0), rate };
+  return buf;
 }
 const db = (x) => (x > 0 ? 20 * Math.log10(x) : -Infinity);
 // The loudest sample in [from, to) seconds, in dBFS.
@@ -197,4 +202,71 @@ export default [
     eq([+dbAt(v.env, held).toFixed(6), +peakDb(r, held, held + 0.2).toFixed(2)], [-7, -7 + VOICE_PEAK_DB],
        "a full-scale line plays at its level less 2 dB");
   }],
+
+  // ---- fix round 2: a sound let go says nothing new, rendered ---------------
+  // The page's real player, driven on a stage whose sounds are the real
+  // players rendered offline, each kind and level on its own channel, the
+  // lines flat so any sample that is not zero is a word being said.
+  ["'I'm awake' in a Level 2 line's rise: the line is never said", async () => {
+    for (const tap of [1.0, 1.36]) {
+      const r = await played2([[0, [{ kind: "voice", clip: "l2" }], 2], [tap, [{ kind: "fade" }], 0]], ["voice2"], 5);
+      eq(peakDb(r.voice2, 0, 5), -Infinity, `'I'm awake' at ${tap}: not a sample of it`);
+    }
+  }],
+  ["Level 2 to 3 during the voice's turn: its line never sounds under 'Pull over now'", async () => {
+    for (const T of [1.0, 2.0]) {
+      const r = await played2([[0, [{ kind: "voice", clip: "l2" }], 2],
+        [T, [{ kind: "duck" }, { kind: "alarm", hold: true }, { kind: "voice", clip: "l3" }], 3]], ["voice2", "voice3", "alarm3"], 9);
+      const l3 = firstSound(r.voice3);
+      ok(l3 < 9, `Level 3 at ${T}: 'Pull over now' is said, from ${l3.toFixed(2)} s`);
+      eq(peakDb(r.voice2, l3, 9), -Infinity, `Level 3 at ${T}: nothing of Level 2's line from ${l3.toFixed(2)} s`);
+      if (T === 1.0) eq(peakDb(r.voice2, 0, 9), -Infinity, "a line not yet begun is never said at all");
+    }
+  }],
+  ["'I'm awake' during 'Pull over now': the sayings still to come are never said", async () => {
+    const r = await played2([[0, [{ kind: "duck" }, { kind: "alarm", hold: true }, { kind: "voice", clip: "l3" }], 3],
+      [3.0, [{ kind: "fade" }], 0]], ["voice3", "alarm3"], 9);
+    ok(peakDb(r.voice3, 2.9, 3.4) > -Infinity, "the saying under way when it came fades out");
+    eq(peakDb(r.voice3, 3.5, 9), -Infinity, "and no saying begins after it");
+  }],
 ];
+
+// The player on a stage that renders: `events` are [t, cues, level], `kinds`
+// the channels ("voice2" is Level 2's voice). Returns each channel's samples.
+async function played2(events, kinds, secs) {
+  const rate = 3200;
+  const ctx = new OfflineAudioContext(kinds.length, Math.ceil(secs * rate), rate);
+  const merge = ctx.createChannelMerger(kinds.length);
+  merge.connect(ctx.destination);
+  const outs = kinds.map((_, k) => { const g = ctx.createGain(); g.connect(merge, 0, k); return g; });
+  const clips = { "voice-l2-james": flat(ctx, 1.8), "voice-l3": flat(ctx, 1.0) };
+  let t = 0;
+  const sink = ctx.createGain();
+  const stage = {
+    now: () => t,
+    running: () => true,
+    resume: async () => "running",
+    whenRunning: async () => {},
+    music: () => true,
+    musicAt: () => MUSIC_DB,
+    gate: () => {},
+    render(v, buffer) {
+      const k = kinds.indexOf(`${v.kind}${v.level}`);
+      const st = { ctx, out: k >= 0 ? outs[k] : sink };
+      if (v.kind === "chime") return playChimeNote(v, st);
+      if (v.kind === "bark") return playBark(v, st);
+      if (v.kind === "alarm") return playAlarm(v, st);
+      return playVoice(v, buffer, st);
+    },
+    clip: async (name) => clips[name] || null,
+  };
+  const p = createAlertPlayer(stage);
+  for (const [at, cues, level] of events) { t = at; await p.play(cues, { level }); }
+  const buf = await rendered(ctx);
+  return Object.fromEntries(kinds.map((k, i) => [k, { data: buf.getChannelData(i), rate }]));
+}
+// When a channel first carries anything, in seconds (Infinity if never).
+function firstSound({ data, rate }) {
+  const i = data.findIndex((x) => x !== 0);
+  return i < 0 ? Infinity : i / rate;
+}
