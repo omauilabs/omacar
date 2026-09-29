@@ -189,7 +189,12 @@ const MAKERS = {
   dashcam: () => {
     const node = tappable(h("div.card.hc.hc-cam"), "cameras");
     let card = null, gone = false;
-    import("../dashcard.js").then((m) => { if (!gone) card = m.dashcamCard(node); });
+    import("../dashcard.js").then((m) => { if (!gone) card = m.dashcamCard(node); })
+      .catch((e) => {
+        // Words, never a black card: whatever it had drawn is replaced.
+        console.warn("Dashcams card:", e);
+        if (!gone) { clear(node); node.appendChild(h("div.dc-why", "The Dashcams card could not load")); }
+      });
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };
   },

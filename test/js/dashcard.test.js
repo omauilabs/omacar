@@ -8,7 +8,7 @@
 import { eq, ok } from "./assert.js";
 import { dashcamCard } from "../js/dashcard.js";
 import { mountDrowsyUI, TONE } from "../js/drowsyui.js";
-import { LIVE_TIMEOUT_MS, CAMS_MISSES } from "../js/drowsyrun.js";
+import { LIVE_TIMEOUT_MS, CAMS_MISSES, drowsy } from "../js/drowsyrun.js";
 import { audio, applyAudio } from "../js/audiostate.js";
 import { liveUrl } from "../js/camapi.js";
 import home from "../js/views/home.js";
@@ -101,7 +101,7 @@ async function until(fn, what) {
 
 // Home, mounted for real: the runner's static server answers 404 to every /api/
 // route, so Home falls back to the catalogue's default layout.
-async function withHome(fn) {
+async function withHome(fn, ready = '[data-card="dashcam"] .dc-stage') {
   for (const id of ["toasts", "modal-host"]) {
     if (!document.getElementById(id)) { const d = document.createElement("div"); d.id = id; document.body.appendChild(d); }
   }
@@ -109,7 +109,7 @@ async function withHome(fn) {
   document.body.appendChild(root);
   const unmount = home(root);
   try {
-    await until(() => root.querySelector('[data-card="dashcam"] .dc-stage'), "the Dashcams card to be built");
+    await until(() => root.querySelector(ready), "the Dashcams card to be built");
     await fn(root);
   } finally { unmount(); root.remove(); }
 }
@@ -393,6 +393,23 @@ export default [
         /soonCard\(ICONS\.camera/.test(src), src.includes('nav: () => soonCard(ICONS.nav, "Navigation"'),
         (src.match(/redesign\/cameras/g) || []).length],
        [true, true, true, false, true, 2]);
+  }],
+  // The card is loaded with import() where it is made. If that import, or
+  // dashcamCard itself, throws, the card must say so, not sit black. A cached
+  // module cannot be made to fail its import here, so the failure is made
+  // inside the same chain: the engine's `on`, which dashcamCard calls after it
+  // has already drawn part of itself.
+  ["if the card cannot be built, Home's card says so in words instead of sitting black", async () => {
+    const real = drowsy.on, warn = console.warn, warned = [];
+    drowsy.on = () => { throw new Error("no engine"); };
+    console.warn = (...a) => warned.push(a.map(String).join(" "));
+    try {
+      await withHome((root) => {
+        const card = root.querySelector('[data-card="dashcam"]');
+        eq([[...card.children].map((c) => c.className), card.textContent, warned.length],
+           [["dc-why"], "The Dashcams card could not load", 1]);
+      }, '[data-card="dashcam"] .dc-why');
+    } finally { drowsy.on = real; console.warn = warn; }
   }],
   ["Home's Dashcams card is the live one: a tap opens Cameras, and with no answer yet it says so in words", () =>
     withHome(async (root) => {
