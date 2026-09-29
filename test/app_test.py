@@ -477,9 +477,19 @@ window.__st = store;
     stage: stage(),
     tap: shortest(),
   };
-  // Back to parked, so the frames are put up again after being taken down.
-  s.live = { connected: true, values: { SPEED: 0, RPM: 0 } };
-  s.emit("live");
+  // A red light: stopped, and 40 s on it is still the one tile (store.moving
+  // waits a minute). The store's clock is moved rather than waited out.
+  let ahead = 0;
+  s.clock = () => Date.now() + ahead;
+  const stopped = () => { s.live = { connected: true, values: { SPEED: 0, RPM: 800 } }; s.emit("live"); };
+  stopped();
+  ahead = 40000;
+  stopped();
+  await wait(300);
+  out.redLight = document.querySelector(".rc-parked").hidden;
+  // A minute stopped: parked again, and the grid comes back.
+  ahead = 61000;
+  stopped();
   await wait(800);
   out.parkedAgain = !document.querySelector(".rc-parked").hidden;
   out.errs = window.__rcErrs;
@@ -559,7 +569,8 @@ def roadcams_check(exe):
               d.get("edit") == [True, "Available when you stop"])
         check(f"{orient}: and every button is still at least 56 px (shortest {d.get('tap')})",
               (d.get("tap") or 0) >= 56)
-        check(f"{orient}: stopping brings the grid back", g.get("parkedAgain") is True)
+        check(f"{orient}: a 40 s red light is still the one tile", g.get("redLight") is True)
+        check(f"{orient}: a minute stopped brings the grid back", g.get("parkedAgain") is True)
         check(f"{orient}: and nothing threw on the way (got {g.get('errs')})", g.get("errs") == [])
 
 

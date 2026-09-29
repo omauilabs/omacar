@@ -14,14 +14,12 @@
 // Whatever it says, browsing, editing the pins and the construction cameras'
 // frames are parked-only unless it says "all", and they grey out with the
 // reason rather than vanish.
+//
+// WHETHER THE CAR IS MOVING is not decided here: it is store.moving in
+// core.js, the one rule Begin uses too -- a stop at a red light, and a
+// hand-off of the adapter, still count as moving until the car has sat
+// connected and still for a minute.
 export const WHILE_MOVING = "one";
-
-// Moving, or last seen moving before the adapter dropped out: a car that loses
-// its link mid-drive is still being driven (core.js, lastMoving). The same
-// test Begin uses, less the DTC hand-off, which says nothing about motion.
-export function carMoving(s) {
-  return s.state === "driving" || (!s.connected && !!s.lastMoving);
-}
 
 // "one", "none" or "all" for the car as it is now.
 export function layoutFor(moving, rule = WHILE_MOVING) {

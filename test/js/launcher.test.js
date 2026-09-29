@@ -8,13 +8,28 @@ import { store, api } from "../js/core.js";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A fresh motion latch and a clock the test can move: store.moving waits a
+// minute of stopped-and-connected before it calls a car parked.
+const clock = { t: 1e12 };
+const realClock = store.clock;
 function mount(before) {
+  store.clock = () => clock.t;
+  store.motionLatched = false;
+  store.stillSince = null;
+  store.lastMoving = false;
   before();
   const root = document.createElement("div");
   document.body.appendChild(root);
   const un = launcher(root);
   return { root, btn: root.querySelector(".launch-go"),
-           done: () => { un(); root.remove(); store.live = null; store.emit("live"); } };
+           done: () => {
+             un(); root.remove();
+             store.clock = realClock;
+             store.live = null;
+             store.motionLatched = false;
+             store.stillSince = null;
+             store.emit("live");
+           } };
 }
 const live = (values, connected = true, extra) => {
   store.live = Object.assign({ connected, values }, extra);
@@ -36,7 +51,20 @@ export default [
       live({}, false);
       eq(m.btn.disabled, true, "disabled after the drop");
       live({ SPEED: 0, RPM: 0 });
-      eq(m.btn.disabled, false, "and free again once the car is seen stopped");
+      eq(m.btn.disabled, true, "back and stopped is a red light until a minute has passed");
+      clock.t += 60000;
+      live({ SPEED: 0, RPM: 0 });
+      eq(m.btn.disabled, false, "and free again after a minute stopped");
+    } finally { m.done(); }
+  }],
+
+  ["a 40 s red light keeps it grey", () => {
+    const m = mount(() => live({ SPEED: 60, RPM: 2500 }));
+    try {
+      live({ SPEED: 0, RPM: 800 });
+      clock.t += 40000;
+      live({ SPEED: 0, RPM: 800 });
+      eq([m.btn.disabled, m.btn.title], [true, "Available when you stop"]);
     } finally { m.done(); }
   }],
 
@@ -49,7 +77,10 @@ export default [
       eq([m.btn.disabled, m.btn.title], [true, "Available when you stop"],
          "locked for the hand-off, not just for a real drop while last seen moving");
       live({ SPEED: 0, RPM: 0 });
-      eq(m.btn.disabled, false, "free again once the sweep ends and the car answers as stopped");
+      eq(m.btn.disabled, true, "still locked just after: the car may have moved during the sweep");
+      clock.t += 60000;
+      live({ SPEED: 0, RPM: 0 });
+      eq(m.btn.disabled, false, "free again once it has sat still and connected for a minute");
     } finally { m.done(); }
   }],
 

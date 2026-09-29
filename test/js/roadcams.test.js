@@ -5,7 +5,7 @@
 import { eq, ok } from "./assert.js";
 import roadcams from "../js/views/roadcams.js";
 import { store, api } from "../js/core.js";
-import { WHILE_MOVING, WHY_PARKED, carMoving, layoutFor, ageText, isStale, nextRefreshMs,
+import { WHILE_MOVING, WHY_PARKED, layoutFor, ageText, isStale, nextRefreshMs,
          arrange, firstPinnedStill, netState, feedLine } from "../js/roadcams.js";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -86,6 +86,12 @@ async function withScreen(opts, fn) {
       document.body.appendChild(d);
     }
   }
+  const clock = { t: 1e12 };
+  const wasClock = store.clock;
+  store.clock = () => clock.t;
+  store.motionLatched = false;
+  store.stillSince = null;
+  store.lastMoving = false;
   store.live = opts.live || { connected: true, values: { SPEED: 0, RPM: 0 } };
   store.emit("live");
   const root = document.createElement("div");
@@ -94,13 +100,16 @@ async function withScreen(opts, fn) {
   const unmount = roadcams(root);
   try {
     for (let i = 0; i < 60 && !root.querySelector(".rc-sec[data-sec='SR-1'] .rc-tile"); i++) await wait(50);
-    await fn(root, { asked, net });
+    await fn(root, { asked, net, clock });
   } finally {
     unmount();
     root.remove();
     Object.assign(api, was);
+    store.clock = wasClock;
     store.live = null;
     store.lastMoving = false;
+    store.motionLatched = false;
+    store.stillSince = null;
     store.emit("live");
   }
 }
@@ -119,12 +128,6 @@ export default [
     eq(WHILE_MOVING, "one");
     eq([layoutFor(false), layoutFor(true), layoutFor(true, "none"), layoutFor(true, "all")],
        ["all", "one", "none", "all"]);
-  }],
-  ["a car is moving when driving, or when it dropped out while moving", () => {
-    eq(carMoving({ state: "driving", connected: true, lastMoving: true }), true);
-    eq(carMoving({ state: "parked", connected: true, lastMoving: false }), false);
-    eq(carMoving({ state: "offline", connected: false, lastMoving: true }), true, "dropped mid-drive");
-    eq(carMoving({ state: "offline", connected: false, lastMoving: false }), false, "no car at all");
   }],
   ["an age is said from the timestamp, and never as live", () => {
     eq([ageText(20), ageText(120), ageText(59 * 60), ageText(3 * 3600), ageText(3 * 86400), ageText(null)],
@@ -266,11 +269,40 @@ export default [
          [["All cameras", true, WHY_PARKED], ["Edit pins", true, WHY_PARKED],
           ["Imjin Parkway cameras", true, WHY_PARKED]]);
       ok(root.querySelector(".rc-driving").textContent.includes(WHY_PARKED), "the reason is on screen");
-      // Stopping brings the grid back.
-      store.live = { connected: true, values: { SPEED: 0, RPM: 0 } };
+    })],
+
+  ["a 40 s red light keeps the one tile; a minute stopped brings the grid back", () =>
+    withScreen({}, async (root, { clock }) => {
+      const at = (secs, speed) => {
+        clock.t = 1e12 + secs * 1000;
+        store.live = { connected: true, values: { SPEED: speed, RPM: speed ? 2200 : 800 } };
+        store.emit("live");
+      };
+      at(0, 50);
+      const tile = root.querySelector(".rc-driving .rc-tile");
+      at(1, 0);
+      at(41, 0);
+      eq(root.querySelector(".rc-parked").hidden, true, "40 s at the light: still the driving layout");
+      ok(root.querySelector(".rc-driving .rc-tile") === tile, "the same tile, not rebuilt at the stop");
+      eq(root.querySelectorAll("iframe").length, 0, "and no players");
+      eq(root.querySelector(".rc-editbtn").disabled, true, "Edit pins still greyed");
+      at(61, 0);
+      eq(root.querySelector(".rc-parked").hidden, false, "a minute stopped: the grid is back");
+      eq(root.querySelector(".rc-editbtn").disabled, false);
+    })],
+
+  ["a hand-off while stopped counts as moving", () =>
+    withScreen({}, async (root, { clock }) => {
+      eq(root.querySelector(".rc-parked").hidden, false, "parked, never seen moving");
+      clock.t += 5000;
+      store.live = { connected: false, values: {}, handover: true, status: "yielded" };
       store.emit("live");
-      eq(root.querySelector(".rc-parked").hidden, false);
-      eq(edit.disabled, false);
+      eq(root.querySelector(".rc-parked").hidden, true, "the adapter is lent out: motion unknown");
+      eq(root.querySelectorAll(".rc-driving .rc-tile").length, 1);
+      clock.t += 15000;
+      store.live = { connected: true, values: { SPEED: 0, RPM: 800 } };
+      store.emit("live");
+      eq(root.querySelector(".rc-parked").hidden, true, "and for a minute after it ends");
     })],
 
   ["an adapter that drops out mid-drive keeps the driving layout", () =>

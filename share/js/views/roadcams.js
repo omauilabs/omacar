@@ -13,12 +13,12 @@
 // minutes on a phone's hotspot is a data plan, not a feature.
 //
 // WHILE THE CAR MOVES the screen follows WHILE_MOVING in share/js/roadcams.js,
-// which is the one place the rule lives. The controls it parks grey out with
-// the reason; they never vanish. The layout changes on a transition only,
-// never on every sample.
+// which is the one place the rule lives, and "moving" is store.moving in
+// core.js. The controls it parks grey out with the reason; they never vanish.
+// The layout changes on a transition only, never on every sample.
 import { h, clear, icon, store, api, toast } from "../core.js";
 import { ICONS } from "../icons.js";
-import { WHILE_MOVING, WHY_PARKED, carMoving, layoutFor, ageText, isStale,
+import { WHILE_MOVING, WHY_PARKED, layoutFor, ageText, isStale,
          nextRefreshMs, arrange, firstPinnedStill, netState, feedLine } from "../roadcams.js";
 
 // Chromium fires `load` on a frame even when what loaded is an error page, so
@@ -504,7 +504,10 @@ export default function roadcamsView(root) {
 
   // ---- parked, or moving -------------------------------------------------------------
   function applyLayout() {
-    const next = layoutFor(carMoving(store), WHILE_MOVING);
+    // store.moving: a red light or a hand-off stays "moving" until the car
+    // has sat still and connected for a minute, so the grid and the players
+    // do not come back at every stop.
+    const next = layoutFor(store.moving, WHILE_MOVING);
     if (next === layout) return;
     layout = next;
     rc.dataset.layout = next;
