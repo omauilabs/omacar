@@ -1895,3 +1895,25 @@ def handle_post(path, body):
             return 503, {"error": str(e)}
         return 200, {"id": job["id"], "state": job["state"]}
     return None
+
+
+# ---- redesign/cameras ---------------------------------------------------------
+# Cameras, the audio stage and drowsy mode route through lib/camroutes.py,
+# tried before everything above. One block at the end of this file, so the
+# branch that added them meets the foundation branch's edits here in one place
+# (doc/design/2026-09-28-cameras-drowsy-plan.md, "Merging with the foundation
+# branch").
+_base_get, _base_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    import camroutes
+    out = camroutes.handle_get(path, query)
+    return out if out is not None else _base_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    import camroutes
+    out = camroutes.handle_post(path, body)
+    return out if out is not None else _base_post(path, body)
+# ---- end redesign/cameras -----------------------------------------------------
