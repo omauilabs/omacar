@@ -12,15 +12,20 @@
 # short captures (never more than 20s each), decides which recorder preset
 # gives the most telemetry today, and offers to install it. A trap always
 # leaves the recorder the way it found it, on every exit path, including
-# Ctrl-C. Everything it prints is saved under
+# Ctrl-C, a terminal hang-up and a kill. Everything it prints is saved under
 # ~/.local/state/omacar/driveway-checks/<timestamp>/, alongside a
 # summary.json with the same facts in a form a script can read.
 #
-# WHAT THIS WILL NEVER DO, BY CONSTRUCTION. It sends nothing to the car
-# beyond what `omacar listen capture` already does — ATMA, a passive monitor
-# that does not even acknowledge the frames it hears. No `omacar write`, no
-# clear, no prospect, no mcp, no ATCSM0, no AT command of its own at all.
-# test/guards_test.py reads this file and fails if any of those would run.
+# WHAT THIS WILL NEVER DO, BY CONSTRUCTION. It sends nothing to the car of
+# its own. `omacar listen capture` listens to the bus (ATMA, which does not
+# even acknowledge the frames it hears); the adapter set-up around it is the
+# usual one and does send the adapter's own set-up commands and one 0100
+# request (ATZ, the baud raise, ATSP0, ATE0/L0/S0/H1 -- see Elm.init() in
+# lib/elm.py), exactly as every other omacar command does. This script adds
+# nothing to that: no `omacar write`, no clear, no prospect, no mcp, no
+# ATCSM0, no AT command of its own at all. test/guards_test.py reads this
+# file and fails if any other omacar command, any systemctl but the two
+# below, or anything that opens the adapter would run.
 #
 # omarchy:summary=One-command driveway test for full-bus telemetry
 # omarchy:group=car
@@ -34,18 +39,34 @@ export OMACAR_LIB="$ROOT/lib"
 # The CLI this script drives. The tablet's `omacar` on PATH does resolve to
 # this checkout's bin/omacar, but naming it from ROOT means this script
 # always runs the drivelog.py/listen.py it was tested against, not whatever
-# else might be earlier on PATH. Overridable so the tests below can point it
-# at a script that only logs what it was asked to run, the same technique
-# test/guards_test.py already uses for tools/ima-session.sh's --dry-run
-# check.
+# else might be earlier on PATH. Overridable so the tests can point it at a
+# stand-in that only logs what it was asked to run.
 OMACAR_BIN="${OMACAR_BIN:-$ROOT/bin/omacar}"
+# The one systemctl this script uses, only ever as `--user daemon-reload` and
+# `--user restart omacar-drivelog`. Overridable so the tests can never restart
+# the real recorder unit -- on the tablet or anywhere else.
+SYSTEMCTL="${OMACAR_SYSTEMCTL:-systemctl}"
 VERDICT_PY="$ROOT/tools/driveway_verdict.py"
 
 # Where the systemd drop-in goes. A real run never sets this and gets
 # ~/.config/systemd/user/omacar-drivelog.service.d, exactly like the doc's
-# own manual steps. Overridable for the tests below, which have no systemd
-# user session to write into.
+# own manual steps.
 DROPIN_DIR="${OMACAR_DROPIN_DIR:-$HOME/.config/systemd/user/omacar-drivelog.service.d}"
+
+# Seconds. Every one of these is overridable from the environment FOR THE
+# TESTS ONLY (a test that waits 30 real seconds per scenario is a test that
+# stops being run); a real run never sets them.
+#   WAIT_SECS     how long the gauges get to come back after a capture
+#   GRACE_SECS    extra, after a capture that hung: how long its port lease can
+#                 outlive it (lib/connect.py's YIELD_GRACE, read from there)
+#   PROMPT_SECS   how long the "Install it now?" question waits
+#   CAPTURE_TIMEOUT  the doc's own `timeout 90`
+#   VERIFY_SECS   how long to poll the recorder's status after a restart
+WAIT_SECS="${OMACAR_DRIVEWAY_WAIT_SECS:-30}"
+GRACE_SECS_OVERRIDE="${OMACAR_DRIVEWAY_GRACE_SECS:-}"
+PROMPT_SECS="${OMACAR_DRIVEWAY_PROMPT_SECS:-60}"
+CAPTURE_TIMEOUT="${OMACAR_DRIVEWAY_TIMEOUT_SECS:-90}"
+VERIFY_SECS="${OMACAR_DRIVEWAY_VERIFY_SECS:-10}"
 
 BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'; RESET=$'\033[0m'
 
@@ -71,7 +92,8 @@ usage() {
     tools/driveway-check.sh -h|--help
 
   Have the engine running and the car in P before you start. It asks you to
-  confirm before it sends anything.
+  confirm before it sends anything. The recorder is paused while this runs
+  and is given back when it ends, however it ends.
 EOF
 }
 
@@ -125,15 +147,24 @@ exec > >(tee -a "$LOG") 2>&1
 
 # -- state carried across the whole run, for the trap and the summary ------
 STARTED=0          # did we stand the recorder down ourselves
-WAS_ON=1            # was it running before we touched it (so cleanup knows
-                    # whether to give it back)
+PLAN_STOOD=0       # will (or did) this run stand it down -- for the --dry-run plan
+WAS_ON=1           # was it running before we touched it (so cleanup knows
+                   # whether to give it back)
+STOOD_AT=""        # time.time() when `drive off` returned
 APPLIED=0
 CHOSEN_PRESET=""
 CHOSEN_ENV=""
 ABORTED_REASON=""
-CAP_A_PATH=""; CAP_A_FRAMES=""; CAP_A_SPAN=""
-RECONNECT_A=""; RECONNECT_B=""
-CAP_B_PATH=""
+INSTALL_STATE=""   # installed | failed | (empty: not attempted)
+INSTALL_VERIFIED=""
+INSTALL_DETAIL=""
+OTHER_CONFS=""
+CHILD_PID=""       # a capture in flight, so a signal can wait for it
+WL_OK=""; WL_SECS=""; WL_STATUS=""; WL_CONNECTED=""
+CAP_A_PATH=""; CAP_A_EXIT=""; CAP_A_RESULT=""; CAP_A_PASSED=0; CAP_A_WHY=""
+CAP_A_GEAR=""; CAP_A_FRAMES=""; CAP_A_SPAN=""; CAP_A_BACK=""
+CAP_B_PATH=""; CAP_B_EXIT=""; CAP_B_RESULT=""; CAP_B_PASSED=0; CAP_B_WHY=""
+CAP_B_GEAR=""; CAP_B_FRAMES=""; CAP_B_SPAN=""; CAP_B_BACK=""
 
 abort() {
   # Recorded into summary.json too (see write_summary below), not just
@@ -147,13 +178,27 @@ abort() {
   exit 1
 }
 
-# Every command that would touch the wire or the recorder's service goes
-# through this, in both modes — so the plan --dry-run prints is never a
-# second copy of what a real run does, only a report of the same calls with
-# the last one held back. Unlike tools/ima-session.sh's run_step, this
-# returns the command's real exit code: the driveway test branches on
-# whether a step passed (does capture B run at all?), it does not just log a
-# failure and keep going.
+setv() { printf -v "$1" '%s' "$2"; }
+
+# time.time(), with sub-second precision. GNU date has it; anything else
+# (there is no such thing on the tablet, but the --dry-run tests run on a
+# Mac) asks the helper.
+now() {
+  local t
+  t="$(date +%s.%N 2>/dev/null)"
+  if [[ "$t" =~ ^[0-9]+\.[0-9]+$ ]]; then printf '%s' "$t"; else "$OMACAR_PY" "$VERDICT_PY" now; fi
+}
+
+# The interpreter for a lookup that has no side effects at all, so that even
+# --dry-run can show real values (the preset's Environment= line) on a
+# machine with no venv.
+helper_py() { if [[ -x "$OMACAR_PY" ]]; then printf '%s' "$OMACAR_PY"; else printf 'python3'; fi; }
+
+# Every command that would touch the recorder's service goes through this, in
+# both modes — so the plan --dry-run prints is never a second copy of what a
+# real run does, only a report of the same calls with the last one held back.
+# Unlike tools/ima-session.sh's run_step, this returns the command's real
+# exit code: the driveway test branches on whether a step worked.
 run_cmd() {
   local label="$1"; shift
   if (( DRY_RUN )); then
@@ -173,11 +218,37 @@ run_cmd() {
   return $rc
 }
 
-# Runs one tools/driveway_verdict.py subcommand — the judgement helper — and
-# leaves its `key=value` stdout lines in $VERDICT_OUT for kv() below to read.
-# Narration goes straight to the terminal (and the transcript, via this
-# script's own tee); only the python subprocess's own stdout is captured, so
-# the narration lines never leak into $VERDICT_OUT.
+# The same, for a capture -- run in the background and waited for, so that a
+# signal reaches this script at once (a foreground child would hold the trap
+# back until the capture ended, and there would be nothing to say meanwhile).
+# See on_signal below.
+run_capture() {
+  local label="$1"; shift
+  if (( DRY_RUN )); then
+    echo "  [dry-run] $label"
+    echo "            $*"
+    return 0
+  fi
+  echo "  -> $label"
+  echo "     $*"
+  "$@" &
+  CHILD_PID=$!
+  wait "$CHILD_PID"
+  local rc=$?
+  CHILD_PID=""
+  if (( rc == 0 )); then
+    echo "     ${GREEN}ok${RESET}"
+  else
+    echo "     ${YELLOW}exit $rc${RESET}"
+  fi
+  return $rc
+}
+
+# Runs one tools/driveway_verdict.py subcommand — the judgement helper, and
+# every read of live.json, drivelog.json and the captures folder — and leaves
+# its `key=value` stdout lines in $VERDICT_OUT for kv() below. Narration goes
+# straight to the terminal (and the transcript, via this script's own tee);
+# only the python subprocess's own stdout is captured.
 VERDICT_OUT=""
 verdict_call() {
   local label="$1"; shift
@@ -199,169 +270,332 @@ kv() {
   sed -n "s/^$1=//p" <<<"$VERDICT_OUT" | head -1
 }
 
-# The one live-data read this script uses, read the same way lib/drivelog.py
-# itself decides whether to capture — literally calling its own _live()
-# rather than re-guessing the freshness window in a second place. Read-only:
-# it opens live.json, never the adapter.
-read_live() {
-  "$OMACAR_PY" - <<'PY'
-import os, sys
-sys.path.insert(0, os.environ["OMACAR_LIB"])
-import drivelog
-live = drivelog._live()
-if live is None:
-    print("fresh=0")
-    raise SystemExit(0)
-values = live.get("values") or {}
-rpm = values.get("RPM")
-print("fresh=1")
-print(f"connected={1 if live.get('connected') else 0}")
-print(f"rpm={'' if rpm is None else rpm}")
-PY
-}
+add_secs() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%g", a + b }'; }
 
-# live.json's own "t" field, for the reconnect check below. Same file
-# read_live() reads; split out because wait_reconnect() polls it in a loop
-# and only needs the one field.
-live_t() {
-  "$OMACAR_PY" - <<'PY'
-import json, os, sys
-sys.path.insert(0, os.environ["OMACAR_LIB"])
-import records
-try:
-    with open(records.LIVE, encoding="utf-8") as f:
-        doc = json.load(f)
-except (OSError, ValueError):
-    print("")
-    raise SystemExit(0)
-print(doc.get("t") or "")
-PY
-}
+# -- the recorder, the port and the gauges ---------------------------------
 
-# Polls live.json until its timestamp moves past `before`, or 30s pass.
-# Prints the seconds it took and returns 0, or returns 1 on a timeout — an
-# empty result IS the failure, the same shape ima-session.sh's PRECHECK_OUT
-# parsing already uses elsewhere in this tree.
-wait_reconnect() {
-  local before="$1" start now cur
-  start=$(date +%s)
-  while true; do
-    cur="$(live_t)"
-    if [[ -n "$cur" && "$cur" != "$before" ]]; then
-      echo $(( $(date +%s) - start ))
-      return 0
+# Was the recorder already stood down before this run touched it? The marker
+# file says so and nothing else does: `omacar drive status` also prints the
+# supervisor's last published state NAME, and a supervisor that has only just
+# been told `drive on` keeps saying "stood down" for up to its 15s poll --
+# which is exactly the state this script's own trap leaves behind, so
+# re-running it straight after a run would leave the recorder off for good.
+# The same path as drivelog.OFFFILE; reading it is all that is done here.
+recorder_marker() { [[ -e "$OMACAR_STATE/drivelog-off" ]]; }
+
+# Stand the recorder down, remembering whether it was on. Used by every mode
+# that is about to do something the recorder's own legs would collide with.
+stand_down() {
+  PLAN_STOOD=1
+  if (( ! DRY_RUN )); then
+    if recorder_marker; then
+      WAS_ON=0
+      echo "  the recorder was already stood down — this check will leave it that way."
+    else
+      WAS_ON=1
     fi
-    now=$(date +%s)
-    (( now - start >= 30 )) && return 1
-    sleep 1
+  fi
+  run_cmd "stand the recorder down, so nothing else holds the port" "$OMACAR_BIN" drive off \
+    || abort "could not stand the recorder down"
+  if (( ! DRY_RUN )); then
+    STARTED=1
+    STOOD_AT="$(now)"
+  fi
+}
+
+# wait_live connected|released SINCE TIMEOUT LABEL -> WL_OK, WL_SECS, WL_STATUS
+#   connected: the gauges are alive (connected, and not mid hand-over)
+#   released:  no recorder leg is holding the port (the car may be off)
+# Always judged by a `t` LATER than SINCE: the daemon stamps a fresh `t` on
+# every snapshot it publishes while it has lent the adapter out, so a `t` that
+# has merely changed proves nothing.
+wait_live() {
+  local mode="$1" since="$2" timeout="$3" label="$4"
+  verdict_call "$label" wait-live "$mode" "$since" "$timeout" \
+    || abort "could not read the daemon's status (the helper failed)"
+  WL_OK="$(kv ok)"; WL_SECS="$(kv seconds)"; WL_STATUS="$(kv status)"
+  WL_CONNECTED="$(kv connected)"
+}
+
+# After `drive off`: wait for a recorder leg that was in progress to hand the
+# adapter back, so capture A does not meet "the daemon is holding the port".
+wait_port_free() {
+  local mode="$1"
+  if (( DRY_RUN )); then
+    echo "  [dry-run] wait up to ${WAIT_SECS}s for the adapter to be free"
+    return 0
+  fi
+  echo "  waiting for the adapter to be free…"
+  wait_live "$mode" "$STOOD_AT" "$WAIT_SECS" "watching the daemon"
+  if [[ "$WL_OK" == "1" ]]; then
+    echo "  ${GREEN}the adapter is free${RESET} (${WL_SECS} s)"
+    return 0
+  fi
+  if [[ "$WL_STATUS" == "yielded" ]]; then
+    abort "the adapter is still being used by something else (a recorder leg or another command). Wait a minute and run this again."
+  elif [[ "$mode" == "connected" ]]; then
+    abort "the daemon says the adapter is not connected — check the OBDLink is plugged in and the ignition is on."
+  fi
+  abort "could not tell that the adapter was free within ${WAIT_SECS}s."
+}
+
+grace_secs() {
+  if [[ -n "$GRACE_SECS_OVERRIDE" ]]; then
+    printf '%s' "$GRACE_SECS_OVERRIDE"
+  else
+    "$OMACAR_PY" "$VERDICT_PY" yield-grace
+  fi
+}
+
+# Names of any active drop-in that turns the fast link on.
+fast_dropins() {
+  local f names=""
+  for f in "$DROPIN_DIR"/*.conf; do
+    [[ -e "$f" ]] || continue
+    grep -q 'OMACAR_FASTBAUD=1' "$f" 2>/dev/null && names="$names ${f##*/}"
+  done
+  printf '%s' "${names# }"
+}
+
+# The gauges did not come back: stop, loudly. Nothing is recommended or
+# installed on the strength of a run that just showed the port is not coming
+# back cleanly, and the setting that just failed is named.
+gauges_failed() {
+  local letter="$1" waited="$2" fast
+  ABORTED_REASON="the gauges did not come back within ${waited}s after capture $letter (daemon status: ${WL_STATUS:-none})"
+  echo
+  echo "  ${RED}The gauges did not come back within ${waited}s after capture $letter.${RESET}"
+  if [[ "$WL_STATUS" == "yielded" ]]; then
+    echo "  The daemon is still waiting to get the adapter back."
+  else
+    echo "  The daemon is not reporting a connection."
+  fi
+  echo "  Stopping here — nothing was recommended and nothing was installed."
+  fast="$(fast_dropins)"
+  if [[ -n "$fast" ]]; then
+    echo "  ${YELLOW}A fast-link drop-in is still installed: $fast${RESET}"
+    echo "  It may be what is costing the gauges. Put the safe setting back with:"
+  else
+    echo "  If the gauges stay dead, put the safe recorder setting on with:"
+  fi
+  echo "    tools/driveway-check.sh --apply-preset fallback"
+  exit 1
+}
+
+# -- one capture, start to judged ------------------------------------------
+# capture_step LETTER NOTE DESCRIPTION [VAR=1 ...]
+# Sets CAP_<LETTER>_{EXIT,RESULT,PATH,PASSED,WHY,GEAR,FRAMES,SPAN,BACK}.
+# Any non-zero exit means that capture did not work; only a file this very
+# run saved is ever judged; and the gauges have to come back before going on.
+capture_step() {
+  local L="$1" note="$2" desc="$3"; shift 3
+  local start rc ret_at wait_t path vcmd
+  echo
+  echo "  Capture $L — $desc (20s)"
+  if (( DRY_RUN )); then
+    run_capture "capture $L: $desc" timeout "$CAPTURE_TIMEOUT" env "$@" \
+      "$OMACAR_BIN" listen capture --seconds 20 --save --note "$note"
+    return 0
+  fi
+  case "$L" in A) vcmd=verdict-a ;; *) vcmd=verdict-b ;; esac
+  start="$(now)"
+  run_capture "capture $L: $desc" timeout "$CAPTURE_TIMEOUT" env "$@" \
+    "$OMACAR_BIN" listen capture --seconds 20 --save --note "$note"
+  rc=$?
+  ret_at="$(now)"
+  setv "CAP_${L}_EXIT" "$rc"
+
+  if (( rc == 124 )); then
+    setv "CAP_${L}_RESULT" "hung — the ${CAPTURE_TIMEOUT}s timeout fired (exit 124)"
+    echo "  ${RED}capture $L hung — the ${CAPTURE_TIMEOUT}s timeout fired.${RESET}"
+  elif (( rc != 0 )); then
+    setv "CAP_${L}_RESULT" "did not run (exit $rc)"
+    echo "  ${RED}capture $L did not run (exit $rc) — nothing was saved to judge.${RESET}"
+  else
+    verdict_call "finding the file capture $L saved" latest-capture "$note" "$start" \
+      || abort "could not look for capture $L's file"
+    path="$(kv path)"
+    if [[ -z "$path" ]]; then
+      setv "CAP_${L}_RESULT" "ran, but saved no file"
+      echo "  ${RED}capture $L ran but saved no file — nothing to judge.${RESET}"
+    else
+      setv "CAP_${L}_PATH" "$path"
+      verdict_call "judging capture $L" "$vcmd" "$path" \
+        || abort "could not judge capture $L"
+      setv "CAP_${L}_FRAMES" "$(kv frames)"
+      setv "CAP_${L}_SPAN" "$(kv span)"
+      setv "CAP_${L}_WHY" "$(kv why)"
+      setv "CAP_${L}_GEAR" "$(kv gear)"
+      if [[ "$(kv passed)" == "1" ]]; then
+        setv "CAP_${L}_PASSED" 1
+        setv "CAP_${L}_RESULT" "passed"
+        echo "  ${GREEN}capture $L passed${RESET} — $(kv why)"
+      else
+        setv "CAP_${L}_RESULT" "failed"
+        echo "  ${YELLOW}capture $L failed${RESET} — $(kv why)"
+      fi
+    fi
+  fi
+
+  # The gauges. A capture that hung (or was killed) was cut off before it
+  # could hand the port back; its lease outlives it, and the daemon only takes
+  # the port back when that runs out.
+  wait_t="$WAIT_SECS"
+  if (( rc == 124 || rc >= 128 )); then
+    wait_t="$(add_secs "$(grace_secs)" "$WAIT_SECS")"
+  fi
+  echo "  waiting for the gauges to come back…"
+  wait_live connected "$ret_at" "$wait_t" "watching the daemon"
+  if [[ "$WL_OK" == "1" ]]; then
+    setv "CAP_${L}_BACK" "$WL_SECS"
+    echo "  ${GREEN}gauges back in ${WL_SECS} s${RESET}"
+  else
+    gauges_failed "$L" "$wait_t"
+  fi
+}
+
+# -- installing a preset ---------------------------------------------------
+
+# A name for a file being switched off: <name>.off, or .off.1, .off.2 … --
+# never one that already exists, so an earlier .off is never overwritten.
+off_name() {
+  local n="$1.off" i=1
+  while [[ -e "$n" ]]; do n="$1.off.$i"; i=$((i + 1)); done
+  printf '%s' "$n"
+}
+
+# systemd reads EVERY *.conf in the drop-in folder, so any active one other
+# than ours can change the recorder's numbers underneath the preset. Only the
+# three names the doc's own manual steps create are switched off (below);
+# anything else is left alone and named here.
+warn_other_confs() {
+  local f base
+  OTHER_CONFS=""
+  for f in "$DROPIN_DIR"/*.conf; do
+    [[ -e "$f" ]] || continue
+    base="${f##*/}"
+    [[ "$base" == "driveway-preset.conf" ]] && continue
+    OTHER_CONFS="${OTHER_CONFS:+$OTHER_CONFS,}$base"
+    echo "  ${YELLOW}another drop-in is active: $base${RESET} — it is left alone, and it may change the recorder's numbers."
   done
 }
 
-# The most recently saved capture whose `note` field matches, under
-# listen.CAPTURES. Capture filenames are timestamps (see lib/listen.py's
-# Capture.save()) so the note is the only way to find the one this run just
-# made; sorted iteration keeps the last (most recent) match.
-latest_capture_for_note() {
-  "$OMACAR_PY" - "$1" <<'PY'
-import glob, json, os, sys
-sys.path.insert(0, os.environ["OMACAR_LIB"])
-import listen
-note = sys.argv[1]
-best = ""
-for path in sorted(glob.glob(os.path.join(listen.CAPTURES, "*.json"))):
-    try:
-        with open(path, encoding="utf-8") as f:
-            doc = json.load(f)
-    except (OSError, ValueError):
-        continue
-    if doc.get("note") == note:
-        best = path
-print(best)
-PY
+# daemon-reload && restart: the restart is not attempted if the reload failed.
+reload_restart() {
+  run_cmd "reload systemd user units" "$SYSTEMCTL" --user daemon-reload || return 1
+  run_cmd "restart the recorder" "$SYSTEMCTL" --user restart omacar-drivelog
 }
 
-# The numeric tokens worth grepping for in `omacar drive status`'s text,
-# from a preset's `Environment=` line — drivelog.py's report() prints these
-# with Python's :.0f, an integer with no trailing ".0", so "10" is what to
-# look for, not "10.0".
-preset_status_tokens() {
-  local tok key val
-  for tok in $1; do
-    key="${tok%%=*}"; val="${tok#*=}"
-    case "$key" in
-      OMACAR_DRIVELOG_BETWEEN|OMACAR_DRIVELOG_LEG_LINES|OMACAR_DRIVELOG_QUIET)
-        printf '%s\n' "${val%.*}"
-        ;;
-    esac
-  done
+# Restart the recorder and check, from the supervisor's own status file, that
+# the NEW supervisor is the one running with the preset's numbers. Sets
+# INSTALL_STATE (installed | failed), INSTALL_VERIFIED (1 | 0) and APPLIED.
+# What it cannot check: the supervisor never publishes OMACAR_FASTBAUD or
+# OMACAR_CAF0, so those two are said to be unverifiable, not assumed.
+restart_and_verify() {
+  local env_line="$1" restart_at
+  if (( DRY_RUN )); then
+    reload_restart
+    echo "  [dry-run] check the recorder's own status file (up to ${VERIFY_SECS}s): restarted, with the preset's numbers"
+    return 0
+  fi
+  restart_at="$(now)"
+  if ! reload_restart; then
+    INSTALL_STATE="failed"
+    echo
+    echo "  ${RED}NOT installed${RESET} — systemd would not restart the recorder, so it is still running"
+    echo "  its old numbers. To take the drop-in back out:  tools/driveway-check.sh --remove-preset"
+    return 1
+  fi
+  INSTALL_STATE="installed"
+  APPLIED=1
+  echo "  restarted — checking the recorder came back with these numbers…"
+  verdict_call "reading the recorder's own status file" verify-running "$env_line" "$restart_at" "$VERIFY_SECS" \
+    || abort "could not read the recorder's status file (the helper failed)"
+  if [[ "$(kv ok)" == "1" ]]; then
+    INSTALL_VERIFIED=1
+    echo "  ${GREEN}pass${RESET} — the recorder restarted with: between legs $(kv between)s," \
+         "leg cap $(kv leg_lines) lines, quiet $(kv quiet)s$([[ "$(kv end_on_overflow)" == "1" ]] && echo ', ends on overflow')."
+  else
+    INSTALL_VERIFIED=0
+    INSTALL_DETAIL="$(kv detail)"
+    echo "  ${YELLOW}could not confirm${RESET} the recorder is running with these numbers ($INSTALL_DETAIL)."
+    echo "  Check it by hand:  omacar drive status"
+  fi
+  echo "  ${DIM}(The fast link and CAF0 cannot be seen from status; the recorder's first leg will show them.)${RESET}"
+  return 0
 }
 
 # Writes the drop-in and restarts the recorder. Shared by the main test's
 # apply step and --apply-preset, which is the same action without a test
-# first.
+# first. The caller has already stood the recorder down.
 apply_preset() {
-  local name="$1" env_line="$2"
+  local name="$1" env_line="$2" legacy f target
+  INSTALL_STATE=""; INSTALL_VERIFIED=""; INSTALL_DETAIL=""
   echo
   echo "  Installing preset: $name"
-  run_cmd "make sure the drop-in directory exists" mkdir -p "$DROPIN_DIR"
+  run_cmd "make sure the drop-in folder exists" mkdir -p "$DROPIN_DIR"
 
-  # systemd reads every *.conf in this directory, so an older drop-in left
-  # over from the doc's own manual steps would apply ALONGSIDE this one --
-  # renamed to .off, never deleted, and each rename is printed.
-  local legacy f
+  # An older drop-in left over from the doc's own manual steps would apply
+  # ALONGSIDE this one -- renamed to .off, never deleted, and each rename is
+  # printed.
   for legacy in fullbus balanced telemetry-first; do
     f="$DROPIN_DIR/$legacy.conf"
     if [[ -f "$f" ]]; then
-      run_cmd "disable the old $legacy.conf (renamed, never deleted)" mv "$f" "$f.off"
+      target="$(off_name "$f")"
+      run_cmd "switch off the old $legacy.conf (renamed to ${target##*/}, never deleted)" mv "$f" "$target"
     fi
   done
+  f="$DROPIN_DIR/driveway-preset.conf"
+  if [[ -f "$f" ]]; then
+    echo "  replacing the earlier driveway-preset.conf ($(grep '^Environment=' "$f" | head -1))"
+  fi
+  warn_other_confs
 
   if (( DRY_RUN )); then
-    echo "  [dry-run] write $DROPIN_DIR/driveway-preset.conf:"
+    echo "  [dry-run] write $f:"
     echo "            [Service]"
     echo "            Environment=$env_line"
   else
-    { echo "[Service]"; echo "Environment=$env_line"; } > "$DROPIN_DIR/driveway-preset.conf"
-    echo "  wrote $DROPIN_DIR/driveway-preset.conf"
+    { echo "[Service]"; echo "Environment=$env_line"; } > "$f"
+    echo "  wrote $f"
   fi
-
-  run_cmd "reload systemd user units" systemctl --user daemon-reload
-  run_cmd "restart the recorder" systemctl --user restart omacar-drivelog
-
-  if (( ! DRY_RUN )); then
-    sleep 1
-    local status_text all_found=1 tok
-    status_text="$("$OMACAR_BIN" drive status || true)"
-    echo "$status_text"
-    while read -r tok; do
-      [[ -z "$tok" ]] && continue
-      grep -qE "(^|[^0-9.])${tok}([^0-9.]|$)" <<<"$status_text" || all_found=0
-    done <<<"$(preset_status_tokens "$env_line")"
-    if (( all_found )); then
-      echo "  ${GREEN}pass${RESET} — the running supervisor reports this preset's numbers."
-    else
-      echo "  ${YELLOW}check by hand${RESET} — the running supervisor's numbers don't obviously" \
-           "match. Run \`omacar drive status\` yourself."
-    fi
-  fi
+  restart_and_verify "$env_line"
 }
 
+remove_preset() {
+  local f="$DROPIN_DIR/driveway-preset.conf" target
+  INSTALL_STATE=""; INSTALL_VERIFIED=""; INSTALL_DETAIL=""
+  target="$(off_name "$f")"
+  run_cmd "switch off driveway-preset.conf (renamed to ${target##*/}, never deleted)" mv "$f" "$target"
+  warn_other_confs
+  restart_and_verify ""
+}
+
+# -- the summary, and giving the recorder back -----------------------------
+
 # Always run from cleanup(), on every exit path — a session directory that
-# has a transcript and no summary.json is exactly the failure item 11 of the
-# brief this script was written against exists to prevent. Safe in
-# --dry-run (no captures, so no --capture-a/--capture-b flags) and safe
-# after an abort (ABORTED_REASON is just another string field).
+# has a transcript and no summary.json is exactly the failure the brief this
+# script was written against exists to prevent. Safe in --dry-run (no
+# captures) and after an abort (ABORTED_REASON is just another field).
 write_summary() {
   local args=(write-summary --out "$SESSION_DIR" --stamp "$STAMP" --mode "$MODE"
               --dry-run "$DRY_RUN" --parked "$PARKED" --applied "$APPLIED")
   [[ -n "$ABORTED_REASON" ]] && args+=(--aborted "$ABORTED_REASON")
   [[ -n "$CAP_A_PATH" ]] && args+=(--capture-a "$CAP_A_PATH")
   [[ -n "$CAP_B_PATH" ]] && args+=(--capture-b "$CAP_B_PATH")
-  [[ -n "$RECONNECT_A" ]] && args+=(--reconnect-a "$RECONNECT_A")
-  [[ -n "$RECONNECT_B" ]] && args+=(--reconnect-b "$RECONNECT_B")
+  [[ -n "$CAP_A_EXIT" ]] && args+=(--exit-a "$CAP_A_EXIT")
+  [[ -n "$CAP_B_EXIT" ]] && args+=(--exit-b "$CAP_B_EXIT")
+  [[ -n "$CAP_A_RESULT" ]] && args+=(--result-a "$CAP_A_RESULT")
+  [[ -n "$CAP_B_RESULT" ]] && args+=(--result-b "$CAP_B_RESULT")
+  [[ -n "$CAP_A_BACK" ]] && args+=(--reconnect-a "$CAP_A_BACK")
+  [[ -n "$CAP_B_BACK" ]] && args+=(--reconnect-b "$CAP_B_BACK")
   [[ -n "$CHOSEN_PRESET" ]] && args+=(--preset "$CHOSEN_PRESET")
   [[ -n "$CHOSEN_ENV" ]] && args+=(--env "$CHOSEN_ENV")
-  "$OMACAR_PY" "$VERDICT_PY" "${args[@]}" >/dev/null 2>>"$LOG" || \
+  [[ -n "$INSTALL_STATE" ]] && args+=(--install-state "$INSTALL_STATE"
+                                      --install-verified "$INSTALL_VERIFIED"
+                                      --install-detail "$INSTALL_DETAIL")
+  [[ -n "$OTHER_CONFS" ]] && args+=(--other-confs "$OTHER_CONFS")
+  "$(helper_py)" "$VERDICT_PY" "${args[@]}" >/dev/null 2>>"$LOG" || \
     echo "  ${YELLOW}could not write summary.json — see $LOG${RESET}" >&2
 }
 
@@ -375,15 +609,32 @@ print_summary() {
       echo "  real run would send, in order."
     elif [[ -n "$ABORTED_REASON" ]]; then
       echo "  ${RED}stopped early${RESET} — $ABORTED_REASON"
-      echo "  nothing was recommended and nothing was installed."
+      if [[ "$INSTALL_STATE" == "installed" ]]; then
+        echo "  the preset had already been installed."
+      else
+        echo "  nothing was recommended and nothing was installed."
+      fi
+    elif [[ "$INSTALL_STATE" == "installed" && "$MODE" == "remove-preset" ]]; then
+      if [[ "$INSTALL_VERIFIED" == "1" ]]; then
+        echo "  removed — the recorder restarted at its own defaults."
+      else
+        echo "  removed and restarted, but I could not confirm the recorder is at its"
+        echo "  own defaults — check it by hand."
+      fi
+    elif [[ "$INSTALL_STATE" == "installed" ]]; then
+      [[ -n "$CHOSEN_PRESET" ]] && echo "  preset    $CHOSEN_PRESET"
+      if [[ "$INSTALL_VERIFIED" == "1" ]]; then
+        echo "  installed — the recorder restarted with the numbers it asked for."
+      else
+        echo "  installed, but I could not confirm the recorder restarted with the"
+        echo "  numbers it asked for — check it by hand."
+      fi
+    elif [[ "$INSTALL_STATE" == "failed" ]]; then
+      echo "  ${RED}NOT installed${RESET} — systemd would not restart the recorder."
     elif [[ -n "$CHOSEN_PRESET" ]]; then
       echo "  preset    $CHOSEN_PRESET"
-      if (( APPLIED )); then
-        echo "  installed — the recorder is running with it now."
-      else
-        echo "  not installed. Install later with:"
-        echo "    tools/driveway-check.sh --apply-preset $CHOSEN_PRESET"
-      fi
+      echo "  not installed. Install later with:"
+      echo "    tools/driveway-check.sh --apply-preset $CHOSEN_PRESET"
     elif [[ "$MODE" != "test" ]]; then
       echo "  $MODE done."
     fi
@@ -392,18 +643,20 @@ print_summary() {
   } | tee -a "$SESSION_DIR/summary.txt"
 }
 
+# Whatever ends this script, the recorder goes back the way it was found. A
+# second Ctrl-C during the hand-back is ignored: it must finish.
 cleanup() {
   local rc=$?
-  trap - EXIT INT TERM
-  # MODE=test is the only mode that ever calls "drive off" (see step 3
-  # below), so it is the only one whose dry-run plan should show this — an
-  # --apply-preset or --remove-preset dry run never touched the recorder's
-  # on/off state and must not claim it will turn it back on.
-  if (( DRY_RUN )) && [[ "$MODE" == "test" ]]; then
-    echo
-    echo "  [dry-run] let the recorder run again"
-    echo "            $OMACAR_BIN drive on"
-  elif (( STARTED )) && (( ! DRY_RUN )); then
+  trap '' INT TERM HUP
+  trap - EXIT
+  # Only the modes that stand the recorder down have anything to give back.
+  if (( DRY_RUN )); then
+    if (( PLAN_STOOD )); then
+      echo
+      echo "  [dry-run] let the recorder run again"
+      echo "            $OMACAR_BIN drive on"
+    fi
+  elif (( STARTED )); then
     if (( WAS_ON )); then
       echo
       echo "  letting the recorder run again (omacar drive on)…"
@@ -417,7 +670,42 @@ cleanup() {
   print_summary
   exit "$rc"
 }
-trap cleanup EXIT INT TERM
+
+# A signal (Ctrl-C, a terminal hang-up, a kill) ends the run -- but never
+# with a capture still holding the adapter: `timeout` puts the capture in its
+# own process group, so it does not get the signal, and it is waited for
+# here before the recorder is given back.
+on_signal() {
+  trap '' INT TERM HUP
+  ABORTED_REASON="interrupted (SIG$1)"
+  echo
+  if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
+    echo "  finishing the capture, then giving the recorder back…"
+    wait "$CHILD_PID" 2>/dev/null
+  else
+    echo "  stopping — giving the recorder back…"
+  fi
+  exit 130
+}
+trap cleanup EXIT
+# A terminal that hangs up takes the log's `tee` with it; without this the
+# next line this script prints would kill it with SIGPIPE, before the
+# recorder was given back. A write to a dead pipe just fails quietly instead.
+trap '' PIPE
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
+trap 'on_signal HUP' HUP
+
+# One run at a time: the owner in the car and one over SSH must not overlap.
+take_lock() {
+  (( DRY_RUN )) && return 0
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"$OMACAR_STATE/driveway-check.lock"
+    flock -n 9 || abort "another driveway check is already running — wait for it to finish."
+  else
+    echo "  (no flock on this machine — nothing stops a second run at the same time)"
+  fi
+}
 
 echo
 echo "  ${BOLD}OmaCar driveway check${RESET}  ${DIM}$STAMP${RESET}"
@@ -433,37 +721,36 @@ if (( DRY_RUN )); then
   echo "  ${DIM}--dry-run: printing the plan; nothing is opened, nothing is sent.${RESET}"
 else
   omacar_need_env
+  take_lock
 fi
 
 # ------------------------------------------------------- --apply-preset
+# Same care as the test: stand the recorder down, wait for a leg in progress
+# to hand the port back, THEN restart it -- restarting a supervisor that is
+# mid-leg kills the leg, and neither drivelog.py nor listen.py handles the
+# signal, leaving a stale port lease and an adapter still on the fast link.
 if [[ "$MODE" == "apply-preset" ]]; then
-  verdict_call "looking up the $PRESET_NAME preset" preset-for "$PRESET_NAME"
+  # A pure lookup: it runs even in --dry-run, so the plan shows the real line.
+  VERDICT_OUT="$("$(helper_py)" "$VERDICT_PY" preset-for "$PRESET_NAME")" \
+    || abort "could not look up the '$PRESET_NAME' preset"
   CHOSEN_PRESET="$(kv preset)"
   CHOSEN_ENV="$(kv env)"
-  if (( ! DRY_RUN )) && [[ -z "$CHOSEN_ENV" ]]; then
-    abort "could not look up preset '$PRESET_NAME'"
-  fi
-  apply_preset "${CHOSEN_PRESET:-$PRESET_NAME}" "$CHOSEN_ENV"
-  (( ! DRY_RUN )) && APPLIED=1
+  stand_down
+  wait_port_free released
+  apply_preset "$CHOSEN_PRESET" "$CHOSEN_ENV" || exit 1
   exit 0
 fi
 
 # ------------------------------------------------------- --remove-preset
 if [[ "$MODE" == "remove-preset" ]]; then
-  F="$DROPIN_DIR/driveway-preset.conf"
-  if (( DRY_RUN )); then
-    echo "  [dry-run] rename $F to $F.off, if it exists"
-    echo "  [dry-run] systemctl --user daemon-reload"
-    echo "  [dry-run] systemctl --user restart omacar-drivelog"
-  else
-    if [[ -f "$F" ]]; then
-      run_cmd "disable driveway-preset.conf (renamed, never deleted)" mv "$F" "$F.off"
-    else
-      echo "  no driveway-preset.conf to remove — already at defaults."
-    fi
-    run_cmd "reload systemd user units" systemctl --user daemon-reload
-    run_cmd "restart the recorder" systemctl --user restart omacar-drivelog
+  if [[ ! -f "$DROPIN_DIR/driveway-preset.conf" ]]; then
+    echo "  nothing to remove — there is no driveway-preset.conf in $DROPIN_DIR,"
+    echo "  so there is nothing of this script's to undo. The recorder is untouched."
+    exit 0
   fi
+  stand_down
+  wait_port_free released
+  remove_preset || exit 1
   exit 0
 fi
 
@@ -485,235 +772,138 @@ EOF
   [[ "$REPLY" == "parked" ]] || abort "not confirmed — nothing was sent."
 fi
 
-# Step 2 — preflight: the daemon running, live data fresh. Refuse plainly if
-# not; print RPM if it is known.
+# Step 2 — preflight: the daemon is running and its live data is fresh, read
+# the way the recorder itself reads it. A snapshot that says "yielded" counts:
+# the daemon is alive and has only lent the adapter to a recorder leg.
 if (( ! DRY_RUN )); then
-  echo "  checking the recorder can see a live car…"
-  LIVE_OUT="$(read_live)"
-  FRESH="$(sed -n 's/^fresh=\(.*\)$/\1/p' <<<"$LIVE_OUT")"
-  [[ "$FRESH" == "1" ]] || abort "no live data from the daemon — is it running? Check \`omacar daemon status\`."
-  CONNECTED="$(sed -n 's/^connected=\(.*\)$/\1/p' <<<"$LIVE_OUT")"
-  [[ "$CONNECTED" == "1" ]] || abort "live data says the adapter is not connected — plug in the OBDLink and try again."
-  RPM="$(sed -n 's/^rpm=\(.*\)$/\1/p' <<<"$LIVE_OUT")"
-  if [[ -n "$RPM" ]]; then
-    echo "  live data is fresh — ${RPM} rpm"
-  else
-    echo "  live data is fresh — rpm not reported"
+  echo "  checking the daemon is publishing live data…"
+  verdict_call "reading live.json" live-state || abort "could not read live.json (the helper failed)"
+  [[ "$(kv alive)" == "1" ]] \
+    || abort "no live data from the daemon — nothing fresh in the last 90 s. Is the engine running and the daemon up?"
+  RPM="$(kv rpm)"
+  if [[ -n "$RPM" ]]; then echo "  live data is fresh — ${RPM} rpm"; else echo "  live data is fresh — rpm not reported"; fi
+  if [[ "$(kv status)" == "yielded" ]]; then
+    echo "  the recorder is capturing right now — it is stood down first, then waited for."
   fi
 fi
 
-# Step 3 — stop the recorder, remembering whether it was on. `omacar drive
-# status` prints "stood down" (and its own report() returns rc=1) when the
-# owner had already stood it down by hand; this check is what lets the trap
-# below leave it that way instead of turning it back on behind their back.
-if (( ! DRY_RUN )); then
-  STATUS_BEFORE="$("$OMACAR_BIN" drive status || true)"
-  if grep -q "stood down" <<<"$STATUS_BEFORE"; then
-    WAS_ON=0
-    echo "  the recorder was already stood down — this check will leave it that way."
-  else
-    WAS_ON=1
-  fi
-fi
+# Step 3 — stand the recorder down (remembering whether it was on), then wait
+# for a leg in progress to hand the adapter back.
+stand_down
+wait_port_free connected
 
-run_cmd "stand the recorder down, so nothing else holds the port" "$OMACAR_BIN" drive off
-(( ! DRY_RUN )) && STARTED=1
-
-# Step 4 — capture A: the fast link alone. Exactly doc/drive-day.md's
-# command. `timeout 90` turns a hang into exit 124, which is checked before
-# anything is asked of the file it may or may not have saved.
-echo
-echo "  Capture A — the fast link alone (20s)"
-CAP_A_NOTE="fastbaud-test"
-(( ! DRY_RUN )) && BEFORE_T_A="$(live_t)"
-run_cmd "capture A: fast link" timeout 90 env OMACAR_FASTBAUD=1 \
-  "$OMACAR_BIN" listen capture --seconds 20 --save --note "$CAP_A_NOTE"
-CAP_A_RC=$?
-
-A_PASSED=0
-CAP_A_WHY=""
-CAP_A_GEAR=""
-if (( ! DRY_RUN )); then
-  if (( CAP_A_RC == 124 )); then
-    echo "  ${RED}capture A hung — the 90s timeout fired.${RESET}"
-    CAP_A_WHY="timed out (hang)"
-  else
-    CAP_A_PATH="$(latest_capture_for_note "$CAP_A_NOTE")"
-    if [[ -z "$CAP_A_PATH" ]]; then
-      echo "  ${RED}capture A did not save a file — cannot judge it.${RESET}"
-      CAP_A_WHY="no capture file found"
-    else
-      verdict_call "judging capture A" verdict-a "$CAP_A_PATH"
-      CAP_A_FRAMES="$(kv frames)"; CAP_A_SPAN="$(kv span)"
-      CAP_A_WHY="$(kv why)"; CAP_A_GEAR="$(kv gear)"
-      [[ "$(kv passed)" == "1" ]] && A_PASSED=1
-      if (( A_PASSED )); then
-        echo "  ${GREEN}capture A passed${RESET} — $CAP_A_WHY"
-      else
-        echo "  ${YELLOW}capture A failed${RESET} — $CAP_A_WHY"
-      fi
-    fi
-  fi
-
-  # Step 5 — the daemon reconnects. A failure here is reported loudly and
-  # the rest is skipped: it means the port did not come back cleanly, which
-  # makes every capture and every preset recommendation from this run
-  # suspect, not just the one just taken. Safer to stop and say so than to
-  # install anything on the strength of a run that just proved the port
-  # itself is not behaving.
-  echo "  waiting for the daemon to reconnect…"
-  if RECONNECT_A="$(wait_reconnect "$BEFORE_T_A")"; then
-    echo "  ${GREEN}reconnected${RESET} in ${RECONNECT_A}s"
-  else
-    echo
-    echo "  ${RED}the daemon did not reconnect within 30s after capture A.${RESET}"
-    ABORTED_REASON="the daemon did not reconnect within 30s after capture A"
-  fi
-fi
-
-# Step 6 — capture B, only if A passed. In --dry-run there is no real A to
-# have passed, so the plan always shows both captures; a real run gates on
-# A_PASSED, matching the doc: "do not add OMACAR_CAF0 on top of a link that
-# has not proven itself."
+# Steps 4-6 — the captures. B only if A passed: the doc says "do not add
+# OMACAR_CAF0 on top of a link that has not proven itself." In --dry-run
+# there is no real A to have passed, so the plan always shows both.
+capture_step A fastbaud-test "the fast link alone" OMACAR_FASTBAUD=1
 RUN_B=1
-(( ! DRY_RUN )) && RUN_B=$A_PASSED
-B_PASSED=0
-CAP_B_WHY=""
-CAP_B_GEAR=""
-
-if [[ -z "$ABORTED_REASON" ]]; then
-  if (( RUN_B )); then
-    echo
-    echo "  Capture B — fast link plus ATCAF0 (20s)"
-    CAP_B_NOTE="caf0-test"
-    (( ! DRY_RUN )) && BEFORE_T_B="$(live_t)"
-    run_cmd "capture B: fast link + ATCAF0" timeout 90 env OMACAR_FASTBAUD=1 OMACAR_CAF0=1 \
-      "$OMACAR_BIN" listen capture --seconds 20 --save --note "$CAP_B_NOTE"
-    CAP_B_RC=$?
-
-    if (( ! DRY_RUN )); then
-      if (( CAP_B_RC == 124 )); then
-        echo "  ${RED}capture B hung — the 90s timeout fired.${RESET}"
-        CAP_B_WHY="timed out (hang)"
-      else
-        CAP_B_PATH="$(latest_capture_for_note "$CAP_B_NOTE")"
-        if [[ -z "$CAP_B_PATH" ]]; then
-          echo "  ${RED}capture B did not save a file — cannot judge it.${RESET}"
-          CAP_B_WHY="no capture file found"
-        else
-          verdict_call "judging capture B" verdict-b "$CAP_B_PATH"
-          CAP_B_WHY="$(kv why)"; CAP_B_GEAR="$(kv gear)"
-          [[ "$(kv passed)" == "1" ]] && B_PASSED=1
-          if (( B_PASSED )); then
-            echo "  ${GREEN}capture B passed${RESET} — $CAP_B_WHY"
-          else
-            echo "  ${YELLOW}capture B failed${RESET} — $CAP_B_WHY"
-          fi
-        fi
-      fi
-
-      # Same reconnect check, same reasoning: a failure here stops the run
-      # just as hard as one after capture A.
-      echo "  waiting for the daemon to reconnect…"
-      if RECONNECT_B="$(wait_reconnect "$BEFORE_T_B")"; then
-        echo "  ${GREEN}reconnected${RESET} in ${RECONNECT_B}s"
-      else
-        echo
-        echo "  ${RED}the daemon did not reconnect within 30s after capture B.${RESET}"
-        ABORTED_REASON="the daemon did not reconnect within 30s after capture B"
-      fi
-    fi
-  else
-    echo
-    echo "  ${DIM}capture A did not pass — skipping capture B (the doc: never add" \
-         "ATCAF0 on top of a link that has not proven itself).${RESET}"
-  fi
+(( ! DRY_RUN )) && RUN_B=$CAP_A_PASSED
+if (( RUN_B )); then
+  capture_step B caf0-test "fast link plus ATCAF0" OMACAR_FASTBAUD=1 OMACAR_CAF0=1
+else
+  echo
+  echo "  ${DIM}capture A did not pass — skipping capture B (the doc: never add" \
+       "ATCAF0 on top of a link that has not proven itself).${RESET}"
 fi
 
 # Step 7 — gear position heard in each capture, information only. A free
 # cross-check that the car was in P throughout; never a pass/fail gate.
-if [[ -n "$CAP_A_GEAR" || -n "$CAP_B_GEAR" ]]; then
+if (( ! DRY_RUN )); then
   echo
-  echo "  Gear position heard (0x191 byte 0; 0x01 = P) — information only:"
-  [[ -n "$CAP_A_GEAR" && "$CAP_A_GEAR" != "none" ]] && echo "    capture A: ${CAP_A_GEAR//;/, }"
-  [[ -n "$CAP_B_GEAR" && "$CAP_B_GEAR" != "none" ]] && echo "    capture B: ${CAP_B_GEAR//;/, }"
-fi
-
-# Step 8 — verdict and preset. Skipped if step 5 or 6 aborted; in --dry-run
-# there are no real verdicts, so this only prints the shape of the call.
-if [[ -z "$ABORTED_REASON" ]]; then
-  if (( DRY_RUN )); then
-    echo
-    echo "  [dry-run] pick a preset from today's two verdicts and estimate the telemetry share:"
-    echo "            $OMACAR_PY $VERDICT_PY preset <A_PASSED> <B_PASSED>"
-    echo "            $OMACAR_PY $VERDICT_PY telemetry <preset> <env> <measured-rate-or-none>"
+  if [[ -n "$CAP_A_GEAR$CAP_B_GEAR" && "$CAP_A_GEAR$CAP_B_GEAR" != "none" && "$CAP_A_GEAR$CAP_B_GEAR" != "nonenone" ]]; then
+    echo "  Gear position heard (0x191 byte 0; 0x01 = P) — information only:"
+    [[ -n "$CAP_A_GEAR" && "$CAP_A_GEAR" != "none" ]] && echo "    capture A: ${CAP_A_GEAR//;/, }"
+    [[ -n "$CAP_B_GEAR" && "$CAP_B_GEAR" != "none" ]] && echo "    capture B: ${CAP_B_GEAR//;/, }"
   else
-    B_ARG=0
-    (( RUN_B )) && B_ARG=$B_PASSED
-    verdict_call "picking today's preset" preset "$A_PASSED" "$B_ARG"
-    CHOSEN_PRESET="$(kv preset)"
-    CHOSEN_ENV="$(kv env)"
-
-    RATE_ARG="none"
-    if (( A_PASSED )) && [[ -n "$CAP_A_FRAMES" && -n "$CAP_A_SPAN" ]]; then
-      RATE_ARG="$("$OMACAR_PY" -c "print($CAP_A_FRAMES/$CAP_A_SPAN)" 2>/dev/null || echo none)"
-    fi
-    verdict_call "estimating today's telemetry share" telemetry "$CHOSEN_PRESET" "$CHOSEN_ENV" "$RATE_ARG"
-    TELEMETRY_PCT="$(kv pct)"
-    TELE_MEASURED="$(kv measured)"
-    TELE_LEG_HOLD="$(kv leg_hold)"
-    TELE_CYCLE="$(kv cycle)"
-
-    echo
-    echo "  ${BOLD}Verdict${RESET}"
-    if (( A_PASSED )); then echo "    capture A: pass — $CAP_A_WHY"
-    else echo "    capture A: fail — $CAP_A_WHY"; fi
-    if (( RUN_B )); then
-      if (( B_PASSED )); then echo "    capture B: pass — $CAP_B_WHY"
-      else echo "    capture B: fail — $CAP_B_WHY"; fi
-    else
-      echo "    capture B: not run"
-    fi
-    echo "    preset:    $CHOSEN_PRESET"
-    echo "    would set: $CHOSEN_ENV"
-    if [[ "$TELE_MEASURED" == "1" ]]; then
-      echo "    expected telemetry: about ${TELEMETRY_PCT}% (measured today: leg holds the" \
-           "port ~${TELE_LEG_HOLD}s, cycle ~${TELE_CYCLE}s)"
-    else
-      echo "    expected telemetry: about ${TELEMETRY_PCT}% (estimated from" \
-           "doc/drive-day.md's own numbers, not measured this session:" \
-           "leg ~${TELE_LEG_HOLD}s, cycle ~${TELE_CYCLE}s)"
-    fi
+    echo "  Gear position: no 0x191 frames were heard in the captures."
   fi
 fi
 
-# Step 9 — apply, only with --apply, or interactively if the person types
-# "yes" to "Install it now?".
-DO_APPLY=0
-if [[ -z "$ABORTED_REASON" && -n "$CHOSEN_PRESET" ]]; then
-  if (( APPLY )); then
-    DO_APPLY=1
-  elif (( ! DRY_RUN )); then
-    read -r -p "  Install it now? [yes/N] " INSTALL_REPLY || true
-    [[ "${INSTALL_REPLY:-}" == "yes" ]] && DO_APPLY=1
+# Step 8 — verdict and preset. In --dry-run there are no real verdicts, so
+# this only prints the shape of the call.
+if (( DRY_RUN )); then
+  echo
+  echo "  [dry-run] pick a preset from today's two verdicts and estimate the telemetry share:"
+  echo "            $OMACAR_PY $VERDICT_PY preset <A_PASSED> <B_PASSED>"
+  echo "            $OMACAR_PY $VERDICT_PY telemetry <preset> <env> <frame-rate> <gauges-back-seconds>"
+  CHOSEN_PRESET="<the chosen preset>"
+  CHOSEN_ENV="<the chosen preset's Environment= line>"
+else
+  B_ARG=0
+  (( RUN_B )) && B_ARG=$CAP_B_PASSED
+  verdict_call "picking today's preset" preset "$CAP_A_PASSED" "$B_ARG" \
+    || abort "could not pick a preset (the helper failed)"
+  CHOSEN_PRESET="$(kv preset)"
+  CHOSEN_ENV="$(kv env)"
+
+  RATE_ARG="none"
+  if (( CAP_A_PASSED )) && [[ -n "$CAP_A_FRAMES" && -n "$CAP_A_SPAN" ]]; then
+    RATE_ARG="$(awk -v n="$CAP_A_FRAMES" -v s="$CAP_A_SPAN" 'BEGIN { if (s > 0) printf "%g", n / s; else print "none" }')"
   fi
+  # The gauges' time away after the fast-link capture this preset is judged
+  # on: B's for the CAF0 row, A's for the other. (Never for the fallback.)
+  BACK_ARG="none"
+  if [[ "$CHOSEN_PRESET" == "telemetry-first-caf0" ]]; then BACK_ARG="${CAP_B_BACK:-none}"
+  elif [[ "$CHOSEN_PRESET" == "telemetry-first" ]]; then BACK_ARG="${CAP_A_BACK:-none}"; fi
+  verdict_call "estimating today's telemetry share" telemetry "$CHOSEN_PRESET" "$CHOSEN_ENV" "$RATE_ARG" "$BACK_ARG" \
+    || abort "could not estimate the telemetry share (the helper failed)"
+
+  echo
+  echo "  ${BOLD}Verdict${RESET}"
+  if (( CAP_A_PASSED )); then echo "    capture A: pass — $CAP_A_WHY"
+  else echo "    capture A: fail — ${CAP_A_WHY:-$CAP_A_RESULT}"; fi
+  if (( RUN_B )); then
+    if (( CAP_B_PASSED )); then echo "    capture B: pass — $CAP_B_WHY"
+    else echo "    capture B: fail — ${CAP_B_WHY:-$CAP_B_RESULT}"; fi
+  else
+    echo "    capture B: not run"
+  fi
+  echo "    preset:    $CHOSEN_PRESET"
+  echo "    would set: $CHOSEN_ENV"
+  if [[ "$(kv rate_measured)" == "1" ]]; then
+    echo "    expected telemetry: about $(kv pct)% (estimated from today's frame rate:" \
+         "a leg holds the port ~$(kv leg_hold)s of a ~$(kv cycle)s cycle)"
+  else
+    echo "    expected telemetry: about $(kv pct)% (estimated from doc/drive-day.md's own" \
+         "numbers, not from today's capture: a leg holds the port ~$(kv leg_hold)s of a ~$(kv cycle)s cycle)"
+  fi
+  if [[ "$(kv reconnect_counted)" == "1" ]]; then
+    echo "    ${DIM}includes the $BACK_ARG s of hand-over the gauges took to come back after today's capture.${RESET}"
+  else
+    echo "    ${DIM}this does not count the few seconds of hand-over each leg costs.${RESET}"
+  fi
+fi
+
+# Step 9 — install, only with --apply, or if the person types "yes". The
+# recorder stays stood down until this run ends, so it is installed while
+# nothing is running to be killed by the restart, and only then given back.
+# A question nobody answers must not keep the recorder paused: it waits a
+# minute, and no answer is no.
+DO_APPLY=0
+if (( APPLY )); then
+  DO_APPLY=1
+elif (( ! DRY_RUN )); then
+  echo
+  echo "  the recorder is paused until you answer (no answer in ${PROMPT_SECS}s means no)."
+  INSTALL_REPLY=""
+  read -r -t "$PROMPT_SECS" -p "  Install it now? [yes/N] " INSTALL_REPLY
+  READ_RC=$?
+  echo
+  case "$(printf '%s' "$INSTALL_REPLY" | tr '[:upper:]' '[:lower:]')" in
+    y|yes) DO_APPLY=1 ;;
+    *)
+      if (( READ_RC > 128 )); then echo "  no answer — not installing."; else echo "  not installing."; fi
+      ;;
+  esac
 fi
 
 if (( DRY_RUN )); then
   echo
   echo "  [dry-run] install the chosen preset, if asked (--apply, or 'yes' at the prompt):"
-  echo "            mkdir -p $DROPIN_DIR"
-  echo "            write $DROPIN_DIR/driveway-preset.conf"
-  echo "            systemctl --user daemon-reload"
-  echo "            systemctl --user restart omacar-drivelog"
-  echo "            $OMACAR_BIN drive status"
-elif (( DO_APPLY )); then
   apply_preset "$CHOSEN_PRESET" "$CHOSEN_ENV"
-  APPLIED=1
-elif [[ -n "$CHOSEN_PRESET" ]]; then
-  echo
-  echo "  not installed. Install later with:"
-  echo "    tools/driveway-check.sh --apply-preset $CHOSEN_PRESET"
+  CHOSEN_PRESET=""; CHOSEN_ENV=""
+elif (( DO_APPLY )); then
+  apply_preset "$CHOSEN_PRESET" "$CHOSEN_ENV" || exit 1
 fi
 
 exit 0
