@@ -6,8 +6,28 @@ const M = (o) => Object.assign({ face: true, calibrated: true, closed: false, cl
   perclos: 0.02, yawns: 0, nods: 0, faceLost: false }, o);
 const go = (o) => Object.assign({ active: true, parked: false, sinceStop: 0, stoppedFor: 0, hour: 14, tap: false }, o);
 // Step a ladder through [t, measures, extra] rows; every output comes back.
-const drive = (lad, rows) => rows.map(([t, m, x]) => lad.step(go(Object.assign({ t, m: M(m) }, x))));
+// m.t defaults to the row's own t (a genuine new frame every row, as in
+// every test but P2b/I2, which overrides it to freeze a stale snapshot).
+const drive = (lad, rows) => rows.map(([t, m, x]) => lad.step(go(Object.assign({ t, m: M(Object.assign({ t }, m)) }, x))));
 const kinds = (out) => out.cues.map((c) => (c.clip ? `${c.kind}:${c.clip}` : c.kind));
+// N4: drives a Level 2 ladder through an open-eye run, an embedded closure
+// given as concrete [t, closed, closedFor] frames (a real 10 fps sequence,
+// simulated outside the ladder -- not drowsy.js), and checks release exactly
+// 5 s after the run started. Tolerated (a blink) -> cleared by then, since
+// the run was never broken; a real closure breaks the run, which restarts
+// only once the closure ends, so it is not yet cleared by that same time.
+const closureTolerated = async (frames) => {
+  const lad = createLadder(await CFG());
+  const R = 0.2;
+  drive(lad, [[0, { closed: true, closedFor: 1.0 }]]); // raises Level 2
+  lad.step(go({ t: R, m: M({ t: R }) }));               // eyes open -- the run starts at R
+  const base = R + 1.0;
+  for (const [dt, closed, closedFor] of frames) {
+    lad.step(go({ t: base + dt, m: M({ t: base + dt, closed, closedFor }) }));
+  }
+  const checked = lad.step(go({ t: R + 5.1, m: M({ t: R + 5.1 }) })); // just past 5 s since R
+  return checked.level === 0;
+};
 
 export default [
   ["the spec's ladder is the default", async () => {
@@ -40,25 +60,33 @@ export default [
   ["nothing is raised below 30 mph, even with eyes closed", async () => {
     eq(drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 2.5 }, { active: false }]])[0].level, 0);
   }],
-  ["a condition that became true below 30 mph raises once the car passes it", async () => {
-    // PERCLOS must hold continuously for 3 s before it arms (C1/I1), below
-    // the gate or above it, and the raise fires the moment it is both armed
-    // and above 30 mph.
+  ["evidence below the gate never arms; only genuinely active time counts (I4, fix round 2)", async () => {
+    // Round 1 had this raise the moment the car passed 30 mph, crediting
+    // hold time gathered below the gate. I4's round 2 ruling reverses that:
+    // evidence gathered while not active never arms or counts at all, so
+    // the hold cannot even start until the car is genuinely active.
     const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }, { active: false }],
-      [1, { perclos: 0.16 }, { active: false }], [2, { perclos: 0.16 }, { active: false }], [3, { perclos: 0.16 }]]);
-    eq(out.map((o) => o.level), [0, 0, 0, 1]);
+      [1, { perclos: 0.16 }, { active: false }], [2, { perclos: 0.16 }, { active: false }],
+      [3, { perclos: 0.16 }, { active: false }], // 3 s below the gate -- still nothing armed
+      [4, { perclos: 0.16 }], [5, { perclos: 0.16 }], [6, { perclos: 0.16 }], // active -- hold starts fresh at t=4
+      [7, { perclos: 0.16 }]]);                                                // 3 s genuinely active -- raises now
+    eq(out.map((o) => o.level), [0, 0, 0, 0, 0, 0, 0, 1]);
   }],
-  ["hovering around 30 mph with the same evidence raises once, never again", async () => {
-    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }, { active: false }], [1, { perclos: 0.16 }],
-      [2, { perclos: 0.16 }, { active: false }], [3, { perclos: 0.16 }], [4, { perclos: 0.16 }, { tap: true }],
-      [5, { perclos: 0.16 }, { active: false }], [6, { perclos: 0.16 }]]);
-    eq(out.map((o) => !!o.raised), [false, false, false, true, false, false, false]);
+  ["toggling active on and off resets the hold each time; only a sustained run raises (I4)", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }], [1, { perclos: 0.16 }],
+      [2, { perclos: 0.16 }, { active: false }],                          // inactive -- resets the hold
+      [3, { perclos: 0.16 }], [4, { perclos: 0.16 }], [5, { perclos: 0.16 }], // active again -- hold restarts at t=3
+      [6, { perclos: 0.16 }]]);                                             // 3 s since the restart -- raises
+    eq(out.map((o) => !!o.raised), [false, false, false, false, false, false, true]);
   }],
-  ["crossing the gate never builds two Level 2s into Level 3", async () => {
-    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.26 }, { active: false }],
-      [1, { perclos: 0.26 }, { active: false }], [2, { perclos: 0.26 }, { active: false }], [3, { perclos: 0.26 }],
-      [4, { perclos: 0.26 }, { tap: true }], [5, { perclos: 0.26 }, { active: false }], [6, { perclos: 0.26 }]]);
-    eq(out.map((o) => o.level), [0, 0, 0, 2, 0, 0, 0]);
+  ["crossing the gate repeatedly with sustained evidence still raises Level 2 only once", async () => {
+    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.26 }, { active: false }], // nothing armed
+      [1, { perclos: 0.26 }], [2, { perclos: 0.26 }], [3, { perclos: 0.26 }],
+      [4, { perclos: 0.26 }],                          // 3 s active from t=1 -- raises Level 2
+      [5, { perclos: 0.26 }, { tap: true }],            // "I'm awake" clears it
+      [6, { perclos: 0.26 }, { active: false }], [7, { perclos: 0.26 }]]);
+    eq(out.map((o) => o.level), [0, 0, 0, 0, 2, 0, 0, 0]);
+    eq(out.every((o) => !o.raised || o.raised.trigger !== "repeat-l2"), true);
   }],
   ["PERCLOS 15% is Level 1: a chime, the voice, the radio rising", async () => {
     const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }], [1, { perclos: 0.16 }],
@@ -182,11 +210,18 @@ export default [
     eq(out.slice(5).some((o) => !!o.raised), false);
   }],
   ["a cleared Level 2 cannot re-raise from the same ~25% PERCLOS until it has re-armed (I1)", async () => {
+    // 0.26 also clears Level 1's own 15% threshold, and that gate is
+    // independent: once Level 2 clears (t=9), Level 1's own hold has by then
+    // separately run a fresh 3+ s (from t=4, when the open run -- and so a
+    // fresh perclos1 hold, freed by its own use() at t=3 -- began), so it
+    // legitimately raises Level 1 on real, still-current evidence. What must
+    // not happen is a second Level 2 (why:"perclos") from the same episode.
     const lad = createLadder(await CFG());
     const out = drive(lad, [[0, { perclos: 0.26 }], [1, { perclos: 0.26 }], [2, { perclos: 0.26 }],
       [3, { perclos: 0.26 }], [4, { perclos: 0.26 }], [9, { perclos: 0.26 }], [10, { perclos: 0.26 }]]);
-    eq(out.map((o) => o.level), [0, 0, 0, 2, 2, 0, 0]);
-    eq(!!out[6].raised, false);
+    eq(out.map((o) => o.level), [0, 0, 0, 2, 2, 1, 1]);
+    eq(out.map((o) => o.raised && o.raised.trigger), [null, null, null, "perclos", null, "perclos", null]);
+    eq(out.every((o) => !o.raised || o.raised.level !== 2 || o.t === 3), true);
   }],
   ["a discontinuity snapshot never raises and never counts as evidence on its own", async () => {
     const lad = createLadder(await CFG());
@@ -228,6 +263,125 @@ export default [
     eq([first.level, first.cleared], [2, false]);
     eq([again.level, again.cleared], [2, false]);
     eq([later.level, later.cleared], [0, true]);
+  }],
+  ["a stale snapshot (frozen m.t) never advances a release, however much wall time passes (P2b, I2, fix round 2)", async () => {
+    const lad = createLadder(await CFG());
+    drive(lad, [[0, { closed: true, closedFor: 1.0 }]]); // raises Level 2 (m.t defaults to 0)
+    const open = lad.step(go({ t: 1, m: M({ t: 1 }) }));   // a genuine new frame -- the run starts at m.t=1
+    const stale3 = lad.step(go({ t: 3, m: M({ t: 1 }) })); // the SAME frame re-fed on the wall clock
+    const stale6 = lad.step(go({ t: 6, m: M({ t: 1 }) })); // still m.t=1 -- 5 s of wall time, 0 s of camera time
+    eq([open.level, stale3.level, stale6.level, stale6.cleared], [2, 2, 2, false]);
+    // A genuine new frame, however late on the wall clock, with 5 real
+    // camera-seconds since the run started (m.t 1 -> 6): now it releases.
+    const fresh = lad.step(go({ t: 100, m: M({ t: 6 }) }));
+    eq([fresh.level, fresh.cleared], [0, true]);
+  }],
+  ["N1a: a PERCLOS hold that arms unused (Level 3 wins that step) still raises Level 2 once Level 3 clears", async () => {
+    const lad = createLadder(await CFG());
+    // closed3 and perclos2's own 3 s hold complete together; closed3 wins,
+    // so perclos2's arm is consumed but never latched (C1/N1).
+    const out1 = drive(lad, [[0, { perclos: 0.26 }], [1, { perclos: 0.26 }], [2, { perclos: 0.26 }],
+      [3, { closed: true, closedFor: 2.0, perclos: 0.26 }]]);
+    eq(out1.map((o) => o.level), [0, 0, 0, 3]);
+    const out2 = drive(lad, [[4, {}, { tap: true }]]); // "I'm awake" clears Level 3
+    eq(out2[0].level, 0);
+    // Sustained again: must raise Level 2 within about 3 s, not stay stuck
+    // waiting out a 10 s recovery it never actually needed.
+    const out3 = drive(lad, [[5, { perclos: 0.27 }], [6, { perclos: 0.27 }], [7, { perclos: 0.27 }],
+      [8, { perclos: 0.27 }]]);
+    eq(out3.map((o) => o.level), [0, 0, 0, 2]);
+  }],
+  ["N1b: a single parked step does not discard an unused arm; sustained evidence still raises promptly", async () => {
+    const lad = createLadder(await CFG());
+    const out1 = drive(lad, [[0, { perclos: 0.26 }], [1, { perclos: 0.26 }], [2, { perclos: 0.26 }],
+      [3, { closed: true, closedFor: 2.0, perclos: 0.26 }]]); // Level 3; perclos2 arms unused, as in N1a
+    eq(out1[3].level, 3);
+    // One short parked step -- clears the level (a stopped car always does),
+    // but is not a discard (I4): it is not a 5 min stop, and not a tap.
+    const out2 = drive(lad, [[4, {}, { active: false, parked: true }]]);
+    eq(out2[0].level, 0);
+    const out3 = drive(lad, [[5, { perclos: 0.27 }], [6, { perclos: 0.27 }], [7, { perclos: 0.27 }],
+      [8, { perclos: 0.27 }]]);
+    eq(out3.map((o) => o.level), [0, 0, 0, 2]);
+  }],
+  ["N1c: PERCLOS crossing 25% during a short (under 5 min) stop, with a Level 1 already up, escalates rather than getting lost", async () => {
+    const lad = createLadder(await CFG());
+    const out1 = drive(lad, [[0, { yawns: 3 }]]); // raises Level 1
+    eq(out1[0].level, 1);
+    // A 40 s traffic light: inactive, well under the 5 min discard threshold,
+    // so the escalation evidence is not thrown away (M8's carve-out applies
+    // to arming too, since Level 1 is already up).
+    const out2 = drive(lad, [[1, { perclos: 0.26 }, { active: false }], [2, { perclos: 0.26 }, { active: false }],
+      [3, { perclos: 0.26 }, { active: false }], [4, { perclos: 0.26 }, { active: false }]]);
+    eq(out2.map((o) => o.level), [1, 1, 1, 2]);
+    // After the light: a tap, then (well outside the 300 s repeat-l2 window,
+    // so this is a fresh episode, not a second alert) sustained PERCLOS
+    // above the gate reaches Level 2 again within about 3 s, not stuck.
+    const out3 = drive(lad, [[400, {}, { tap: true }], [401, { perclos: 0.28 }], [402, { perclos: 0.28 }],
+      [403, { perclos: 0.28 }], [404, { perclos: 0.28 }]]);
+    eq(out3.map((o) => o.level), [0, 0, 0, 0, 2]);
+  }],
+  ["P13x: PERCLOS held below the gate through a tap never arms, and does not raise once active (I4)", async () => {
+    const out = drive(createLadder(await CFG()), [
+      [0, { perclos: 0.16 }, { active: false }], [1, { perclos: 0.16 }, { active: false }],
+      [2, { perclos: 0.16 }, { active: false }], [3, { perclos: 0.16 }, { active: false, tap: true }],
+      [4, { perclos: 0.16 }, { active: false }], [5, { perclos: 0.16 }]]);
+    eq(out.map((o) => o.level), [0, 0, 0, 0, 0, 0]);
+  }],
+  ["an open run that began with PERCLOS null can release once PERCLOS appears (N3)", async () => {
+    const out = drive(createLadder(await CFG()), [
+      [0, { closed: true, closedFor: 1.0 }],   // raises Level 2
+      [1, { perclos: null }],                   // eyes open, PERCLOS not available yet -- the run starts here
+      [4, { perclos: null }],                   // still no baseline, and under 5 s anyway -- not yet
+      [6, { perclos: 0.02 }]]);                  // PERCLOS appears, 5 s into the run -- baseline == current, clears
+    eq(out.map((o) => o.level), [2, 2, 2, 0]);
+  }],
+  ["a real 0.45 s closure at 10 fps is always tolerated as a blink (N4)", async () => {
+    // Concrete 10 fps frame sequences ([t, closed, closedFor]), not random:
+    // an aligned run and two phase-shifted, jittered ones.
+    const cases = [
+      [[0, true, 0], [0.1, true, 0.1], [0.2, true, 0.2], [0.3, true, 0.3], [0.4, true, 0.4], [0.5, false, 0], [0.6, false, 0]],
+      [[0.045, true, 0], [0.155, true, 0.11], [0.245, true, 0.2], [0.355, true, 0.31], [0.445, true, 0.4], [0.555, false, 0], [0.645, false, 0]],
+      [[0.025, true, 0], [0.125, true, 0.1], [0.225, true, 0.2], [0.325, true, 0.3], [0.425, true, 0.4], [0.525, false, 0], [0.625, false, 0]],
+    ];
+    for (const frames of cases) eq(await closureTolerated(frames), true);
+  }],
+  ["a real 0.6 s closure at 10 fps is never tolerated as a blink (N4)", async () => {
+    // These three (phase, jitter) combinations land the reported closedFor
+    // at 0.49 s -- below the plain 0.5 s cutoff (which would wrongly read
+    // this as a blink) but at or above the frame-compensated one.
+    const cases = [
+      [[0.025, true, 0], [0.115, true, 0.09], [0.225, true, 0.2], [0.315, true, 0.29], [0.425, true, 0.4], [0.515, true, 0.49], [0.625, false, 0], [0.715, false, 0]],
+      [[0.055, true, 0], [0.145, true, 0.09], [0.255, true, 0.2], [0.345, true, 0.29], [0.455, true, 0.4], [0.545, true, 0.49], [0.655, false, 0], [0.745, false, 0]],
+      [[0.065, true, 0], [0.155, true, 0.09], [0.265, true, 0.2], [0.355, true, 0.29], [0.465, true, 0.4], [0.555, true, 0.49], [0.665, false, 0], [0.755, false, 0]],
+    ];
+    for (const frames of cases) eq(await closureTolerated(frames), false);
+  }],
+  ["a camera-free Level 1 notice is quiet for 10 min after a tap; new closure/PERCLOS evidence still raises as normal (N8)", async () => {
+    const out = drive(createLadder(await CFG()), [
+      [0, {}, { hour: 3, tap: true }],  // a tap while nothing is sounding, at a night hour
+      [1, {}, { hour: 3 }],              // immediately after -- the night notice must NOT fire here
+      [599, {}, { hour: 3 }],            // still under 10 min since the tap
+      [601, {}, { hour: 3 }],            // 10 min since the tap -- night can raise again
+    ]);
+    eq(out.map((o) => o.raised && o.raised.trigger), [null, null, null, "night"]);
+    // A real closure right after the tap is not gated by the quiet period.
+    const out2 = drive(createLadder(await CFG()), [[0, {}, { tap: true }],
+      [1, { closed: true, closedFor: 1.0 }]]);
+    eq(out2[1].level, 2);
+  }],
+  ["setConfig while an alert is sounding keeps the level and the Level 2 history (M9)", async () => {
+    const c = await CFG();
+    const lad = createLadder(c);
+    const out1 = drive(lad, [[0, { closed: true, closedFor: 1.0 }]]); // raises Level 2 (l2Times = [0])
+    eq(out1[0].level, 2);
+    lad.setConfig(scaled(c, "sensitive")); // a settings change WHILE Level 2 is still sounding
+    eq(lad.level, 2); // the level survived the call itself
+    const out2 = drive(lad, [[1, {}, { tap: true }], [100, { closed: true, closedFor: 0.2 }],
+      [101, { closed: true, closedFor: 0.9 }]]);
+    // The Level 2 history survived too: a second Level 2 in the (scaled)
+    // window becomes Level 3 via repeat-l2, not just another Level 2.
+    eq([out2[2].level, out2[2].trigger], [3, "repeat-l2"]);
   }],
   ["a dropped link freezes sinceStop and does not grow stoppedFor; a reconnect restarts stoppedFor (I3)", async () => {
     const s = createStopClock(await CFG());
@@ -292,7 +446,8 @@ export default [
       [1, {}, { active: false }], [2, {}, { active: false }], [3, {}]]);
     eq(kinds(out[1]), ["fade"]);
     eq(kinds(out[2]), []);
-    eq(kinds(out[3]), ["alarm"]);
+    // N6: the restart re-sends duck and voice:l3 too, not a bare alarm.
+    eq(kinds(out[3]), ["duck", "alarm", "voice:l3"]);
     eq(out.map((o) => o.level), [3, 3, 3, 3]);
   }],
   ["Level 3's held alarm keeps sounding below the gate by default (M2)", async () => {

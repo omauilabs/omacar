@@ -42,43 +42,87 @@
 // RELEASE. Every level clears on "I'm awake" or once the car is stationary.
 // Levels 1 and 2 also clear once the eyes have been open, continuously, for
 // 5 s with PERCLOS not rising against the value it read when that open run
-// began. "Continuously" tolerates a blink: closures under 0.5 s do not reset
-// the run, only ones of 0.5 s or more do (M7) -- an ordinary blink cadence of
-// one every 2-5 s must not make Levels 1 and 2 clear only on the tap. Because
-// the measures module resets its own m.openFor on every blink (drowsy.js),
-// the ladder tracks the open run itself from m.closed/m.closedFor rather than
-// trusting m.openFor. Release also requires a non-null PERCLOS, no
-// m.discontinuity on the step, and the step's own t strictly after the last
-// one seen: a repeated or stale snapshot is never evidence for a release,
-// any more than it is for a raise. Level 3 has no time cap and does not
-// clear on open eyes: it ends on "I'm awake" or a stopped car.
+// began -- or against the first value read once PERCLOS becomes available,
+// if the run started before it did (N3, fix round 2): a run is never stuck
+// unreleasable just because it began in the 30 s after a discontinuity or
+// right after calibration. "Continuously" tolerates a blink: closures under
+// 0.5 s do not reset the run, only ones of 0.5 s or more do (M7) -- an
+// ordinary blink cadence of one every 2-5 s must not make Levels 1 and 2
+// clear only on the tap. Because the measures module resets its own
+// m.openFor on every blink (drowsy.js), the ladder tracks the open run
+// itself from m.closed/m.closedFor rather than trusting m.openFor -- and
+// because that module samples the cabin feed at 10 fps, a real closure's
+// reported length undercounts its true one by up to about a frame interval,
+// so the 0.5 s cutoff is applied a half frame interval early (N4).
+//
+// THE SNAPSHOT'S OWN CLOCK (fix round 2, I2). Release timing, and the
+// "strictly advancing" check that guards it, run on m.t -- the measures
+// snapshot's own timestamp -- never on step()'s own t. The real caller
+// steps on a wall clock and can re-feed the same stale snapshot twice a
+// second while no new camera frame has arrived; keyed on the step's own t,
+// that reads as the eyes having stayed open for however long the wall clock
+// ran, with no new frame in evidence. Keyed on m.t, a snapshot whose time
+// has not moved since the last step is never evidence for a release, no
+// matter how much wall-clock time passed around it. Everything else --
+// PERCLOS's hold and re-arm timers, repeat and voice scheduling, the
+// Level 2 history -- still runs on step()'s own t, since those are the
+// app's own timing, not the camera's.
+//
+// Level 3 has no time cap and does not clear on open eyes: it ends on
+// "I'm awake" or a stopped car.
 
 const has = (v) => v !== null && v !== undefined;
 
 const BLINK_SECS = 0.5;          // M7: closures shorter than this are a blink,
                                   // not a break in the open-eye release run.
+const CABIN_FPS = 10;            // N4: the plan's cabin feed rate.
+const FRAME_SECS = 1 / CABIN_FPS;
+// N4: drowsy.js times a closure from its first closed frame to whenever it
+// is next read while still closed, so at CABIN_FPS its reported closedFor
+// undercounts a real closure's true length by up to about a frame interval.
+// Comparing against BLINK_SECS itself would let some real closures at or
+// above it read under 0.5 s and be tolerated as a blink; a half frame
+// interval early still tolerates a real ~0.45 s blink.
+const EFFECTIVE_BLINK_SECS = BLINK_SECS - FRAME_SECS / 2;
 const PERCLOS_HOLD_SECS = 3;     // C1/I1: continuous time at/above threshold
 const PERCLOS_MARGIN = 0.03;     // ...to arm, and below (threshold - margin)
 const PERCLOS_REARM_SECS = 10;   // ...for this long, to re-arm.
+const TAP_QUIET_SECS = 600;      // N8: camera-free Level 1 notices are quiet
+                                  // for this long after "I'm awake".
 
-// A PERCLOS trigger arms exactly once, on the step where a continuous run at
-// or above threshold reaches PERCLOS_HOLD_SECS (C1/I1). It then stays
-// blocked -- a single episode cannot arm twice -- until PERCLOS has read
-// below (threshold - PERCLOS_MARGIN) continuously for PERCLOS_REARM_SECS,
-// after which it must hold above threshold again before it can arm.
-function perclosGate(perc, key, threshold, value, t) {
+// A PERCLOS trigger arms once the current step is eligible (evidenceOK: the
+// car is active, or an alert is already sounding -- I4, fix round 2) and a
+// continuous run at or above threshold reaches PERCLOS_HOLD_SECS (C1/I1); a
+// run while ineligible never counts toward that hold at all, so it cannot
+// be "finished" by evidence gathered below the gate or while parked.
+// Latching -- the PERCLOS_REARM_SECS recovery this trigger must then wait
+// out -- happens only when the caller confirms the arm was actually used
+// for a raise, via perclosLatch (N1, fix round 2): an episode that arms and
+// is then discarded unused must return to fresh, not get stuck blocked
+// forever with no way to read below its own threshold again.
+function perclosGate(perc, key, threshold, value, t, evidenceOK) {
   const st = perc[key] || (perc[key] = { holdSince: null, belowSince: null, blocked: false });
-  const above = has(value) && value >= threshold;
+  const above = evidenceOK && has(value) && value >= threshold;
   const belowMargin = has(value) && value < threshold - PERCLOS_MARGIN;
   st.holdSince = above ? (st.holdSince === null ? t : st.holdSince) : null;
   st.belowSince = belowMargin ? (st.belowSince === null ? t : st.belowSince) : null;
   if (st.blocked && st.belowSince !== null && t - st.belowSince >= PERCLOS_REARM_SECS) st.blocked = false;
   if (!st.blocked && above && st.holdSince !== null && t - st.holdSince >= PERCLOS_HOLD_SECS) {
-    st.blocked = true;
     st.holdSince = null;
     return true;
   }
   return false;
+}
+
+// N1: block a gate only once its arm is actually spent on a raise.
+function perclosLatch(perc, key) {
+  if (perc[key]) perc[key].blocked = true;
+}
+
+// I4: a discard (a tap, or a stop of 5 min or more) returns a gate fully to
+// fresh -- unarmed and unblocked -- not merely clearing the outer armed flag.
+function perclosReset(perc, key) {
+  perc[key] = { holdSince: null, belowSince: null, blocked: false };
 }
 
 // Sensitive lowers every trigger threshold by 20%: the closed-eye margin and
@@ -168,19 +212,23 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   // and the rotation only when sounds is actually passed (M5): setConfig(c)
   // alone must keep the current list rather than falling back to c.sounds
   // and re-adding "voice" after a caller filtered it out for missing clips.
+  // N5: the very first call must still leave a usable rotation -- ["alarm"]
+  // -- even when the config carries no sounds list at all, so a ladder built
+  // from a bare config does not throw on its first Level 2.
   function setConfig(c, sounds) {
     cfg = c;
     L1 = c.level1;
     L2 = c.level2;
     L3 = c.level3;
     if (sounds !== undefined) rota = sounds && sounds.length ? [...sounds] : ["alarm"];
+    else if (rota === undefined) rota = ["alarm"];
   }
   setConfig(cfg0, sounds0);
 
   let level = 0, trigger = null, banner = false;
   let rot = 0, nextRepeat = null, nextVoice = null, alarmSilenced = false;
   let openStreakStart = null, perclosAtOpenStreak = null;
-  let lastStepT = null;
+  let lastMT = null, lastTapT = null;
   const was = {}, armed = {};
   const perc = {};               // PERCLOS hysteresis state, per trigger key
   const l2Times = [];
@@ -227,41 +275,62 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     const t = inp.t, m = inp.m || {};
     const out = { t, level, trigger, raised: null, cleared: false, cues: [], banner };
 
-    // I2's last clause, scoped to release: t strictly after the last step, or
-    // a repeated/stale call is not evidence that the eyes have stayed open.
-    const advanced = lastStepT === null || t > lastStepT;
-    lastStepT = t;
+    // I2 (fix round 2): release timing runs on the snapshot's OWN clock,
+    // m.t, not step()'s t -- see the header. Falls back to t only if a
+    // caller's snapshot genuinely carries no t of its own.
+    const mt = has(m.t) ? m.t : t;
+    const advanced = lastMT === null || mt > lastMT;
+    lastMT = mt;
 
     // Release first: "I'm awake", a stationary car, or (Levels 1 and 2) eyes
-    // that have stayed open. A blink under BLINK_SECS does not break the open
-    // run (M7); m.discontinuity always does (I2) -- a camera gap is never
-    // credited as time the driver's eyes were seen open.
+    // that have stayed open. A blink under BLINK_SECS (effectively half a
+    // frame interval early -- N4) does not break the open run (M7);
+    // m.discontinuity always does (I2) -- a camera gap is never credited as
+    // time the driver's eyes were seen open.
     if (level > 0) {
       if (level < 3) {
         if (m.discontinuity || !m.face || !m.calibrated) {
           openStreakStart = null;
           perclosAtOpenStreak = null;
         } else if (m.closed) {
-          if (m.closedFor >= BLINK_SECS) { openStreakStart = null; perclosAtOpenStreak = null; }
+          if (m.closedFor >= EFFECTIVE_BLINK_SECS) { openStreakStart = null; perclosAtOpenStreak = null; }
         } else if (openStreakStart === null) {
-          openStreakStart = t;
+          openStreakStart = mt;
           perclosAtOpenStreak = has(m.perclos) ? m.perclos : null;
+        } else if (perclosAtOpenStreak === null && has(m.perclos)) {
+          // N3: a run that began before PERCLOS was available is kept, not
+          // discarded -- the baseline is simply taken once a value appears.
+          perclosAtOpenStreak = m.perclos;
         }
       }
       const steady = level < 3 && !m.discontinuity && advanced && openStreakStart !== null
-        && t - openStreakStart >= cfg.release.open_secs
+        && mt - openStreakStart >= cfg.release.open_secs
         && has(m.perclos) && perclosAtOpenStreak !== null && m.perclos <= perclosAtOpenStreak;
       if (inp.tap || steady || inp.parked) clear(out);
     }
     if (banner && inp.stoppedFor >= cfg.banner_stopped_secs) banner = false;
 
+    // I4 (fix round 2): evidence only arms or counts while the car is
+    // active, or an alert is already sounding (the same "escalation below
+    // the gate is fine" carve-out M8 needs) -- never merely while parked or
+    // below the gate with nothing up. Computed once, after release may have
+    // just cleared the level, and reused for both arming and consumption.
+    const evidenceOK = inp.active || level > 0;
+
+    // N8: the tap's own step already falls inside its own quiet period.
+    if (inp.tap) lastTapT = t;
+
     // Evidence, on every step: armed on its rising edge, disarmed when it
-    // goes false, used up by a raise. A discontinuity snapshot never counts
-    // as evidence on its own (I2) -- skipped outright, not merely trusted to
+    // goes false, used up by a raise. was[] always tracks the real reading,
+    // evidenceOK or not, so a value that turns true while ineligible and
+    // simply stays true never produces a pent-up rising edge the moment the
+    // car goes active -- that would be evidence gathered while not active,
+    // arming late instead of never. A discontinuity snapshot never counts as
+    // evidence on its own (I2) -- skipped outright, not merely trusted to
     // read as "false" because Task 5 already reset its numbers.
-    if (!m.discontinuity) {
+    if (!m.discontinuity && advanced) {
       const see = (k, v) => {
-        if (v && !was[k]) armed[k] = true;
+        if (v && !was[k] && evidenceOK) armed[k] = true;
         if (!v) armed[k] = false;
         was[k] = !!v;
       };
@@ -269,27 +338,32 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
       see("closed2", m.closedFor >= L2.closed_secs);
       see("yawns", m.yawns >= L1.yawns);
       see("nods", m.nods >= L1.nods);
-      // PERCLOS triggers use their own hold/re-arm hysteresis (C1/I1),
-      // not a plain rising edge.
-      if (perclosGate(perc, "perclos2", L2.perclos, m.perclos, t)) armed.perclos2 = true;
-      if (perclosGate(perc, "perclos1", L1.perclos, m.perclos, t)) armed.perclos1 = true;
+      // PERCLOS triggers use their own hold/re-arm hysteresis (C1/I1), not a
+      // plain rising edge; evidenceOK gates whether time counts toward the
+      // hold at all, not just whether the result is kept.
+      if (perclosGate(perc, "perclos2", L2.perclos, m.perclos, t, evidenceOK)) armed.perclos2 = true;
+      if (perclosGate(perc, "perclos1", L1.perclos, m.perclos, t, evidenceOK)) armed.perclos1 = true;
     }
 
     // M8: no NEW alert starts below the gate, but new evidence on one already
-    // sounding may still escalate it -- it is the same episode. So evidence
-    // is consumed here whenever the car is active, or an alert is already up.
-    if (inp.active || level > 0) {
+    // sounding may still escalate it -- it is the same episode. evidenceOK
+    // is the same flag arming used above.
+    if (evidenceOK) {
       const use = (k) => { const a = !!armed[k]; armed[k] = false; return a; };
       const c3 = use("closed3"), c2 = use("closed2"), p2 = use("perclos2");
       const p1 = use("perclos1"), y1 = use("yawns"), n1 = use("nods");
-      const eligible = (v, k) => v && (!has(lastFree[k]) || t - lastFree[k] >= L1.camera_free_every_secs);
+      // N8: a camera-free Level 1 notice (night or since-stop) is quiet for
+      // TAP_QUIET_SECS after "I'm awake" -- new closure or PERCLOS evidence
+      // still raises as normal, since it is not gated by this at all.
+      const quiet = lastTapT !== null && t - lastTapT < TAP_QUIET_SECS;
+      const eligible = (v, k) => v && !quiet && (!has(lastFree[k]) || t - lastFree[k] >= L1.camera_free_every_secs);
       const s1 = eligible(inp.sinceStop >= L1.since_stop_secs, "since-stop");
       const nt = eligible(isNight(inp.hour, cfg), "night");
 
-      let to = 0, why = null;
+      let to = 0, why = null, whyKey = null;
       if (c3) { to = 3; why = "closed"; }
-      else if (c2 || p2) { to = 2; why = c2 ? "closed" : "perclos"; }
-      else if (p1) { to = 1; why = "perclos"; }
+      else if (c2 || p2) { to = 2; why = c2 ? "closed" : "perclos"; if (p2 && !c2) whyKey = "perclos2"; }
+      else if (p1) { to = 1; why = "perclos"; whyKey = "perclos1"; }
       else if (y1) { to = 1; why = "yawns"; }
       else if (n1) { to = 1; why = "nods"; }
       else if (s1) { to = 1; why = "since-stop"; }
@@ -306,16 +380,22 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
         // that actually raises, not one merely seen while another won.
         if (why === "since-stop") lastFree["since-stop"] = t;
         if (why === "night") lastFree.night = t;
+        // N1: only a trigger that actually raised something latches its gate.
+        if (whyKey) perclosLatch(perc, whyKey);
         raise(to, why, t, out);
       }
     }
 
-    // I4: a stop or a tap discards any evidence still armed and unused. This
-    // runs after arming and after a possible raise, on purpose: evidence
-    // that completes its hold WHILE parked (a doze at a rest stop) must not
-    // survive, unconsumed, into the drive that follows -- only evidence a
-    // step actually used to raise something is safe from this.
-    if (inp.tap || inp.parked) for (const k in armed) armed[k] = false;
+    // I4 (fix round 2): a discard fires on a tap, or a stop of 5 min or
+    // more -- never merely on a parked step, which by itself now arms
+    // nothing anyway. It returns every PERCLOS gate fully to fresh, not just
+    // the outer armed flag, so an episode discarded unused can read below
+    // its own threshold and arm again like new (N1).
+    if (inp.tap || inp.stoppedFor >= cfg.stop.still_secs) {
+      for (const k in armed) armed[k] = false;
+      perclosReset(perc, "perclos1");
+      perclosReset(perc, "perclos2");
+    }
 
     const mayRepeat = inp.active || cfg.alert_continues_below_gate !== false;
     // M2: below the gate with alert_continues_below_gate false, Level 3's
@@ -327,7 +407,12 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
         out.cues.push({ kind: "fade" });
         alarmSilenced = true;
       } else if (mayRepeat && alarmSilenced) {
-        out.cues.push({ kind: "alarm", hold: true });
+        // N6: the restart re-sends duck and voice:l3 too, exactly as raise()
+        // does -- Task 7's own fade (crossing back above the gate) already
+        // ramps the music back up, so a bare alarm(hold) would return at
+        // full volume over un-ducked music, with "Pull over now" not due
+        // again for another voice_repeat_secs.
+        out.cues.push({ kind: "duck" }, { kind: "alarm", hold: true }, { kind: "voice", clip: "l3" });
         nextVoice = t + L3.voice_repeat_secs;
         alarmSilenced = false;
       }
