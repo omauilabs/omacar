@@ -10,7 +10,7 @@
 import { h } from "./core.js";
 import { getJSON, liveUrl } from "./camapi.js";
 import { dashState } from "./camlogic.js";
-import { LIVE_TIMEOUT_MS, drowsy } from "./drowsyrun.js";
+import { LIVE_TIMEOUT_MS, CAMS_MISSES, drowsy } from "./drowsyrun.js";
 import { chipTone, chipHint } from "./drowsyui.js";
 import { showAux } from "./audiostate.js";
 
@@ -54,7 +54,7 @@ export function dashcamCard(node, {
   // here, so Home, Begin and drowsy mode's own screens agree.
   const offAux = showAux(aux);
 
-  let streaming = false, dead = false, busy = false, inflight = null;
+  let streaming = false, dead = false, busy = false, inflight = null, misses = 0;
   img.addEventListener("error", () => { streaming = false; });
 
   // With no picture to show, the picture goes, and its address with it: that
@@ -67,6 +67,7 @@ export function dashcamCard(node, {
   }
 
   function checking() {
+    misses = 0;
     dropPicture();
     rec.hidden = true;
     sim.hidden = true;
@@ -77,8 +78,14 @@ export function dashcamCard(node, {
   // ONE POLL AT A TIME, AND GIVEN UP. A server that stops answering must not
   // collect a request every 3 s: the browser lets a host have six, and the
   // live picture and every other poll on this page share them
-  // (audiostate.js, drowsyrun.js pollCams). A request that is given up reads
-  // as no server, which is what the card then says.
+  // (audiostate.js, drowsyrun.js pollCams). A request that is given up is a
+  // miss, like one that fails.
+  //
+  // AN ANSWER IS ACTED ON AT ONCE; A MISS ONLY AFTER CAMS_MISSES IN A ROW, the
+  // drowsy engine's own rule for this same endpoint. One dropped poll must not
+  // swap a playing picture for "cannot reach its server" and close and reopen
+  // the stream, and the two readers of /api/cams must not disagree about when
+  // the server is gone. Until then the card shows what it showed.
   //
   // A CARD THAT IS NOT IN THE DOCUMENT HAS NOTHING TO SHOW. Home takes a card
   // that is not in the layout out of the grid and keeps it, and only destroys
@@ -94,10 +101,12 @@ export function dashcamCard(node, {
     const ctl = inflight = new AbortController();
     const bail = later(() => ctl.abort(), LIVE_TIMEOUT_MS);
     try { ov = await poll("/api/cams", { signal: ctl.signal }); }
-    catch { /* dashState says so */ }
+    catch { /* a miss */ }
     finally { cancel(bail); busy = false; inflight = null; }
     if (dead) return;
     if (!node.isConnected) { checking(); return; }      // taken out while the request was out
+    if (ov) misses = 0;
+    else if (++misses < CAMS_MISSES) return;
     const s = dashState(ov);
     rec.hidden = !s.rec;
     sim.hidden = !s.sim;

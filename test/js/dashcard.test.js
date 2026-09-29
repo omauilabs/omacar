@@ -8,7 +8,7 @@
 import { eq, ok } from "./assert.js";
 import { dashcamCard } from "../js/dashcard.js";
 import { mountDrowsyUI, TONE } from "../js/drowsyui.js";
-import { LIVE_TIMEOUT_MS } from "../js/drowsyrun.js";
+import { LIVE_TIMEOUT_MS, CAMS_MISSES } from "../js/drowsyrun.js";
 import { audio, applyAudio } from "../js/audiostate.js";
 import { liveUrl } from "../js/camapi.js";
 import home from "../js/views/home.js";
@@ -132,9 +132,28 @@ export default [
     const m = await mount({ first: ov({}, false) });
     try { eq(seen(m.node), { img: false, src: null, why: "Recorder off", rec: false, sim: false }); } finally { m.done(); }
   }],
-  ["with no server it says that, not a blank", async () => {
+  ["with no server it says that, after the drowsy engine's number of misses in a row, and words until then", async () => {
     const m = await mount({ first: "down" });
-    try { eq(seen(m.node), { img: false, src: null, why: "OmaCar cannot reach its server", rec: false, sim: false }); } finally { m.done(); }
+    try {
+      const soon = seen(m.node).why;
+      for (let i = 1; i < CAMS_MISSES; i++) await m.tick();
+      eq([soon, seen(m.node)],
+         ["Checking the front camera…", { img: false, src: null, why: "OmaCar cannot reach its server", rec: false, sim: false }]);
+    } finally { m.done(); }
+  }],
+  ["a failed poll keeps the picture; misses in a row drop it, and an answer in between starts the count again", async () => {
+    const m = await mount();
+    try {
+      const live = seen(m.node);
+      for (let i = 1; i < CAMS_MISSES; i++) await m.tick("down");   // one short of giving up
+      const held = seen(m.node);
+      await m.tick(ov({}));                                          // an answer: the count starts over
+      for (let i = 1; i < CAMS_MISSES; i++) await m.tick("down");
+      const heldAgain = seen(m.node);
+      await m.tick("down");                                          // CAMS_MISSES in a row
+      eq([CAMS_MISSES, held, heldAgain, seen(m.node)],
+         [2, live, live, { img: false, src: null, why: "OmaCar cannot reach its server", rec: false, sim: false }]);
+    } finally { m.done(); }
   }],
   ["a camera that has not sent a frame yet is REC and says it is waiting, over no picture", async () => {
     const m = await mount({ first: ov({ front: role({ live: false }) }) });
@@ -224,12 +243,17 @@ export default [
       await m.tick(); await m.tick(); await m.tick();
       const stacked = m.asked.length;
       eq([m.t.laters.map((l) => l.ms), LIVE_TIMEOUT_MS], [[LIVE_TIMEOUT_MS], 5000]);
-      m.t.laters[0].fn();                               // five seconds pass
+      m.t.laters[0].fn();                               // five seconds pass: one miss
       await settle();
-      const said = seen(m.node).why;
+      const one = seen(m.node).why;
+      await m.tick();                                   // the next poll hangs too
+      m.t.laters[1].fn();
+      await settle();
+      const two = seen(m.node).why;
       m.next = ov({});
       await m.tick();
-      eq([stacked, said, m.asked.length, seen(m.node).src], [1, "OmaCar cannot reach its server", 2, liveUrl("front")]);
+      eq([stacked, one, two, m.asked.length, seen(m.node).src],
+         [1, "Checking the front camera…", "OmaCar cannot reach its server", 3, liveUrl("front")]);
     } finally { m.done(); }
   }],
   ["each poll's abort timer is cleared once it has answered", async () => {
