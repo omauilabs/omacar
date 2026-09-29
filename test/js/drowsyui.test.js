@@ -84,7 +84,7 @@ export default [
     eq([chipTitle({ chip: "Watching", gate: { active: false } }),
         chipTitle({ chip: "Watching", gate: { active: false }, cfg: { min_speed_mph: 25 } }),
         chipTitle({ chip: "Watching", gate: { active: true } }),
-        chipTitle({ chip: "Off", gate: { simulated: true } })],
+        chipTitle({ chip: "Off", gate: { simulated: true }, cfg: { enabled: true } })],
        ["Watching. New alerts start above 30 mph.", "Watching. New alerts start above 25 mph.",
         "Drowsy mode: Watching", "Drowsy mode: Off. It ignores simulated driving."])],
 
@@ -125,6 +125,17 @@ export default [
           + "The face tracker did not load: 404.",
         "Drowsy mode: Watching. The face tracker failed on a frame: busy."]);
   }],
+  // Review minor 2: switched off wins over the simulator. "It ignores
+  // simulated driving" is the reason only when drowsy mode is on.
+  ["switched off, the title says so even with the simulator running", () =>
+    eq([chipTitle({ chip: "Off", gate: { simulated: true }, cfg: { enabled: false } }),
+        chipTitle({ chip: "Off", gate: { simulated: true }, cfg: null, error: "No settings from the server" }),
+        chipTitle({ chip: "Off", gate: { simulated: true }, cfg: { enabled: true } }),
+        chipTitle({ chip: "Off", gate: { simulated: true }, cfg: { enabled: true }, error: "The face tracker failed on a frame: busy" })],
+       ["Drowsy mode: Off. Tap for its settings.",
+        "Drowsy mode: Off. No settings from the server.",
+        "Drowsy mode: Off. It ignores simulated driving.",
+        "Drowsy mode: Off. It ignores simulated driving. The face tracker failed on a frame: busy."])],
 
   // ---- the preview says only what is true (Task 9's carry-forward)
   // The measures are fed only while the car rolls, so a snapshot left from the
@@ -400,7 +411,7 @@ export default [
       seen.push(look());
       rowNamed(host, "Test the alerts").click();
       eq([seen, e.tests, host.hidden], [[
-        [true, "Only while parked", "Play"],
+        [true, "Only while stopped", "Play"],
         [false, "Level 1, 2 and 3 in turn, about half a minute. Stops if the car moves", "Play"]], 1, true]);
       close();
     } finally { host.remove(); }
@@ -419,6 +430,68 @@ export default [
       await tick();
       eq([before, e.asks, e.tests, host.hidden], [[false, "Only in Park. Tap to check the gear"], 1, 1, true]);
     } finally { host.remove(); }
+  }],
+  // Review minor 1: with a test running, canTest() is false, and the row used
+  // to show "Only while parked", greyed out. It shows the test instead.
+  ["while a test is running, the row says so and stops it, rather than a greyed-out rule", () => {
+    const host = document.createElement("div");
+    host.hidden = true;
+    document.body.appendChild(host);
+    const e = fake({ chip: "Paused · stopped", testing: true, testLevel: 1 }, { canTest: false });
+    try {
+      const close = openDrowsySheet({ engine: e, host });
+      const r = rowNamed(host, "Test the alerts");
+      const got = [r.disabled, r.querySelector(".sheet-note").textContent, r.querySelector(".sheet-v").textContent];
+      r.click();
+      const stops = e.stops;
+      e.set({ testing: false, testLevel: 0 });
+      const r2 = rowNamed(host, "Test the alerts");
+      eq([got, stops, [r2.disabled, r2.querySelector(".sheet-note").textContent]],
+         [[false, "Testing now", "Stop"], 1, [true, "Only while stopped"]]);
+      close();
+    } finally { host.remove(); }
+  }],
+  // Review minor 3: each sound row used to toggle the list it was drawn with,
+  // so a second tap before the first save came back posted a stale list and
+  // undid the first. Saves now go one at a time, each from the settings the
+  // one before left: the engine's, reloaded, or else the server's answer.
+  ["two quick taps on the sound rows both land, whether or not the reload after each save works", async () => {
+    const seen = [];
+    for (const reloads of [true, false]) {
+      const host = document.createElement("div");
+      host.hidden = true;
+      document.body.appendChild(host);
+      const server = { cfg: { enabled: true, sensitivity: "standard", name: "James", min_speed_mph: 30,
+                              sounds: ["bark", "voice", "alarm"] } };
+      const posted = [];
+      const post = async (path, change) => {
+        await tick();
+        posted.push([path, change]);
+        server.cfg = { ...server.cfg, ...change };
+        return { ...server.cfg };
+      };
+      const e = fake({ chip: "Paused · stopped", cfg: { ...server.cfg } });
+      let reloaded = 0;
+      e.reload = async () => {
+        await tick();
+        reloaded++;
+        if (reloads) e.set({ cfg: { ...server.cfg } });
+        return reloads;
+      };
+      try {
+        const close = openDrowsySheet({ engine: e, host, post });
+        rowNamed(host, "The bark").click();
+        rowNamed(host, "The voice").click();
+        for (let i = 0; i < 200 && reloaded < 2; i++) await tick();
+        await tick();
+        const shown = ["The bark", "The voice", "The two-tone alarm"]
+          .map((l) => rowNamed(host, l).querySelector(".sheet-v").textContent);
+        close();
+        seen.push([reloads, posted, server.cfg.sounds, reloads ? shown : null]);
+      } finally { host.remove(); }
+    }
+    const both = [["/api/drowsy", { sounds: ["voice", "alarm"] }], ["/api/drowsy", { sounds: ["alarm"] }]];
+    eq(seen, [[true, both, ["alarm"], ["Off", "Off", "On"]], [false, both, ["alarm"], null]]);
   }],
 
   // ---- the wiring: alertness.js and main.js, read as text

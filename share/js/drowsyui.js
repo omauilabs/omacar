@@ -78,7 +78,9 @@ const sentence = (s) => (s ? String(s).replace(/\.+$/, "") + "." : "");
 export function chipTitle(st) {
   const mph = (st.cfg && st.cfg.min_speed_mph) || 30;
   const why = sentence(st.error);
-  if (st.chip === "Off" && st.gate && st.gate.simulated) return "Drowsy mode: Off. It ignores simulated driving.";
+  // Switched off wins: the simulator is the reason only when drowsy mode is on.
+  const on = !!(st.cfg && st.cfg.enabled);
+  if (st.chip === "Off" && on && st.gate && st.gate.simulated) return says("Drowsy mode: Off", "It ignores simulated driving.", why);
   if (st.chip === "Off" && why) return says("Drowsy mode: Off", why);
   if (st.chip === "Watching" && st.gate && !st.gate.active) return says("Watching", `New alerts start above ${mph} mph.`, why);
   return says(`Drowsy mode: ${st.chip}`, CHIP_NOTE[st.chip], why);
@@ -213,7 +215,7 @@ export function mountDrowsyUI({
 // asks for (rest is the fix; keep the radio on AUX). Opening it turns the
 // engine's preview on, so the cabin camera is watched while it is open;
 // closing it turns the preview off. Returns close().
-export function openDrowsySheet({ engine = drowsy, host = document.getElementById("modal-host") } = {}) {
+export function openDrowsySheet({ engine = drowsy, host = document.getElementById("modal-host"), post = postJSON } = {}) {
   const offs = [];
   let open = true;
   const close = () => {
@@ -235,22 +237,43 @@ export function openDrowsySheet({ engine = drowsy, host = document.getElementByI
   const unplugged = h("div.aux-warn", { hidden: true });
   const audioNote = h("div.dz-aux");
 
-  async function save(change) {
-    try { await postJSON("/api/drowsy", change); await engine.reload(); redraw(); }
-    catch (e) { toast("Could not save: " + e.message, "bad"); }
+  // SAVES GO ONE AT A TIME, EACH FROM THE SETTINGS THE ONE BEFORE LEFT. A row
+  // hands save() a function of the settings, not a finished change, and it is
+  // worked out only when its turn comes: from the engine's settings once a
+  // reload has brought them in, or else from the server's answer to the last
+  // save (POST /api/drowsy answers with the whole merged file). So two quick
+  // taps on two sounds both land; neither posts the list the rows were drawn
+  // with and undoes the other.
+  let saving = Promise.resolve();
+  let answered = null;
+  function save(make) {
+    saving = saving.then(async () => {
+      const c = answered || engine.state.cfg;
+      const change = c ? make(c) : null;
+      if (!change) return;
+      try {
+        const saved = await post("/api/drowsy", change);
+        answered = (await engine.reload()) ? null : saved;
+        redraw();
+      } catch (e) { toast("Could not save: " + e.message, "bad"); }
+    });
+    return saving;
   }
 
   // "Test the alerts" follows the test gate (drowsyrun.js): it plays while the
   // car is stopped; where the gate wants Park and can ask the gear, it asks
-  // first (the parked-confirm plan's row); otherwise it is greyed out.
+  // first (the parked-confirm plan's row); otherwise it is greyed out. The
+  // gate is "connected, 0 km/h" until that plan merges, so the rule says
+  // stopped, as the chip does. While a test runs the row says so, and stops it.
   function testRow() {
+    if (engine.state.testing) return row("Test the alerts", "Testing now", "Stop", () => engine.stopTest());
     const may = engine.canTest(), ask = !may && engine.canAsk();
     return row("Test the alerts",
       may ? "Level 1, 2 and 3 in turn, about half a minute. Stops if the car moves"
-        : ask ? "Only in Park. Tap to check the gear" : "Only while parked",
+        : ask ? "Only in Park. Tap to check the gear" : "Only while stopped",
       "Play", async () => {
         if (!engine.canTest() && engine.canAsk()) await engine.askTest();
-        if (engine.test()) close(); else toast("Only while parked.");
+        if (engine.test()) close(); else toast("Only while stopped.");
       }, !may && !ask);
   }
 
@@ -264,18 +287,22 @@ export function openDrowsySheet({ engine = drowsy, host = document.getElementByI
     const val = (s) => (known ? s : "–");
     const setting = (label, note, value, onclick) => row(label, note, val(value), onclick, !known);
     clear(rows);
+    // Each toggle is of the settings save() hands it (`now`), never of `c`,
+    // the settings these rows were drawn with (see save()).
     rows.append(
       setting("Drowsy mode", "Watches your eyes above 30 mph and wakes you gently", c.enabled ? "On" : "Off",
-        () => save({ enabled: !c.enabled })),
+        () => save((now) => ({ enabled: !now.enabled }))),
       setting("Sensitivity", "Sensitive lowers every threshold by 20%", c.sensitivity === "sensitive" ? "Sensitive" : "Standard",
-        () => save({ sensitivity: c.sensitivity === "sensitive" ? "standard" : "sensitive" })),
+        () => save((now) => ({ sensitivity: now.sensitivity === "sensitive" ? "standard" : "sensitive" }))),
       setting("The name the voice uses", "Only a name the voice was recorded with", c.name ? c.name : "No name",
-        () => save({ name: c.name ? "" : "James" })),
-      ...["bark", "voice", "alarm"].map((s) => setting(SOUND_LABEL[s], "In the Level 2 rotation", sounds.includes(s) ? "On" : "Off", () => {
-        const next = sounds.includes(s) ? sounds.filter((x) => x !== s) : [...sounds, s];
-        if (!next.length) { toast("At least one sound has to stay in the rotation."); return; }
-        save({ sounds: next });
-      })),
+        () => save((now) => ({ name: now.name ? "" : "James" }))),
+      ...["bark", "voice", "alarm"].map((s) => setting(SOUND_LABEL[s], "In the Level 2 rotation", sounds.includes(s) ? "On" : "Off",
+        () => save((now) => {
+          const had = now.sounds || [];
+          const next = had.includes(s) ? had.filter((x) => x !== s) : [...had, s];
+          if (!next.length) { toast("At least one sound has to stay in the rotation."); return null; }
+          return { sounds: next };
+        }))),
       testRow());
   }
 
