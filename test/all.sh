@@ -80,6 +80,13 @@ python3 "$ROOT/test/driveway_test.py" || fails=$((fails + 1))
 # recorder unit. Needs the venv, and says so and skips without one.
 python3 "$ROOT/test/driveway_e2e_test.py" || fails=$((fails + 1))
 
+# The loopback server the kiosk's screen is served from: its output is kept,
+# and kept small, where the next death can be read, and the kiosk brings it back
+# on the same port when it goes. A signal that ends it says so. Real server,
+# real shell; Chromium is a stand-in and every port and directory is a scratch
+# one.
+python3 "$ROOT/test/srvwatch_test.py" || fails=$((fails + 1))
+
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
 #

@@ -28,11 +28,14 @@ Two modes, and the difference between them is the whole security model.
       read this, because it is plain HTTP on a LAN, and pretending otherwise
       would be worse than saying so.
 """
+import faulthandler
 import hmac
 import json
 import os
 import re
+import signal
 import sys
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -619,7 +622,52 @@ def parse_args(argv):
     return port, root, host, token, control
 
 
+def _said_so(signum, _frame):
+    """Say which signal is ending the process, then let it end it.
+
+    On 29 September this server died in the middle of a drive and left nothing
+    to say why. Nothing in its request handling can end the process -- a fault
+    in a request only ends that request's thread -- so what is left is being
+    ended from outside, and a signal it does not handle ends a Python process
+    without a word. Now SIGTERM and SIGHUP, which is what stopping a service or
+    a plain kill sends, leave a line saying which and when.
+
+    The signal is not swallowed and shutdown is not changed. The default action
+    is put back and the same signal is sent to ourselves, so the process dies of
+    it exactly as it did before there was a handler: no unwinding, no atexit
+    handlers, no daemon threads torn down live, and a status that says "killed
+    by SIGTERM" rather than an exit code that a service manager would call a
+    failure.
+
+    The line is best effort, and the signal does not wait on it. A stderr that
+    cannot be written (the disk that is full is the likeliest reason a server
+    is dying at all) would otherwise raise out of here, the signal would never
+    be re-sent, and the process would go on, or leave by some other route with
+    the wrong status.
+
+    A death with NO line is an answer too: SIGKILL, which is what the kernel's
+    out-of-memory killer sends, or another signal that is not handled here
+    (SIGQUIT, SIGUSR1, SIGALRM), and no process can announce SIGKILL.
+    """
+    try:
+        print(f"{time.strftime('%F %T')} serve.py: {signal.Signals(signum).name} "
+              f"received; exiting", file=sys.stderr, flush=True)
+    except Exception:                                # noqa: BLE001
+        pass
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
 if __name__ == "__main__":
+    # A crash from inside the interpreter, which is not an exception and so is
+    # not caught by anything above, leaves its stack in the log.
+    faulthandler.enable()
+    for _sig in (signal.SIGTERM, signal.SIGHUP):
+        # Not where the signal was already being ignored when this started,
+        # which is what `nohup` does to SIGHUP: that is a decision somebody
+        # made about this process, and installing a handler would undo it.
+        if signal.getsignal(_sig) is not signal.SIG_IGN:
+            signal.signal(_sig, _said_so)
     port, root, host, TOKEN, ALLOW_CONTROL = parse_args(sys.argv[1:])
     LOOPBACK_ONLY = host in ("127.0.0.1", "localhost", "::1")
     if not LOOPBACK_ONLY and not TOKEN:
