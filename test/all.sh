@@ -124,6 +124,7 @@ python3 "$ROOT/test/cams_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/camserve_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/audio_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 
 exit $((fails > 0))

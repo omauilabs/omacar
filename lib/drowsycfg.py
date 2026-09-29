@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Drowsy mode's settings, and where its events and measures are written.
+
+    GET  /api/drowsy          share/data/drowsy.json with the owner's
+                              ~/.config/omarchy/omacar-drowsy.json laid over it
+    POST /api/drowsy          what the app may change: on or off, sensitivity,
+                              the name the voice uses, which sounds rotate
+    POST /api/drowsy/event    one alert, into the records book as kind=drowsy
+    POST /api/drowsy/log      per-second measures, appended to
+                              $XDG_STATE_HOME/omacar/drowsy/YYYY-MM-DD.jsonl
+
+Thresholds are not changed from the app. They are changed by hand, in the
+file, which is where Wednesday's tuning in the Los Banos office happens: the
+measures log beside the recorded cabin clips.
+"""
+
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULTS = os.path.join(ROOT, "share", "data", "drowsy.json")
+SENSITIVITIES = ("standard", "sensitive")
+# The names the voice can say are the ones there are clips for
+# (tools/render_voice.py). "" is the clips with no name.
+NAMES = ("James", "")
+SOUNDS = ("bark", "voice", "alarm")
+
+
+def user_path():
+    return os.path.join(os.path.expanduser(os.environ.get("XDG_CONFIG_HOME", "~/.config")),
+                        "omarchy", "omacar-drowsy.json")
+
+
+def _read(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _overlay(base, over):
+    """`over` laid on `base` key by key, keeping only keys `base` has and values
+    of the same kind, so a hand-edited typo cannot turn a threshold into a
+    string."""
+    out = {}
+    for k, v in base.items():
+        o = over.get(k, v)
+        if k.startswith("_"):
+            out[k] = v
+        elif isinstance(v, dict):
+            out[k] = _overlay(v, o if isinstance(o, dict) else {})
+        elif isinstance(v, bool):
+            out[k] = o if isinstance(o, bool) else v
+        elif isinstance(v, (int, float)):
+            out[k] = o if isinstance(o, (int, float)) and not isinstance(o, bool) else v
+        elif isinstance(v, str):
+            out[k] = o if isinstance(o, str) else v
+        elif isinstance(v, list):
+            out[k] = o if isinstance(o, list) else v
+        else:
+            out[k] = v
+    return out
+
+
+def load():
+    return _overlay(_read(DEFAULTS), _read(user_path()))
+
+
+def save(changes):
+    if not isinstance(changes, dict):
+        raise ValueError("the settings must be an object")
+    user = _read(user_path())
+    for k, v in changes.items():
+        if k == "enabled" and isinstance(v, bool):
+            user[k] = v
+        elif k == "sensitivity" and isinstance(v, str) and v in SENSITIVITIES:
+            user[k] = v
+        elif k == "name" and isinstance(v, str) and v in NAMES:
+            user[k] = v
+        elif k == "sounds" and isinstance(v, list) and v and all(isinstance(s, str) and s in SOUNDS for s in v):
+            user[k] = list(dict.fromkeys(v))
+        else:
+            raise ValueError(f"{k!r} cannot be set to {v!r} from the app")
+    os.makedirs(os.path.dirname(user_path()), exist_ok=True)
+    tmp = user_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(user, f, indent=2)
+    os.replace(tmp, user_path())
+    return load()
+
+
+def log_event(data):
+    import records
+    level, trigger = data.get("level"), data.get("trigger")
+    # isinstance(True, int) holds in Python, and True == 1, so a bool is
+    # refused by name rather than read as Level 1.
+    if isinstance(level, bool) or level not in (1, 2, 3) or not isinstance(trigger, str):
+        raise ValueError("an event needs a level of 1, 2 or 3 and a trigger")
+    t = data.get("t")
+    if isinstance(t, bool) or not isinstance(t, (int, float)) or not t:
+        t = time.time()
+    payload = {"t": t, "level": level, "trigger": trigger,
+               "speed_kph": data.get("speed_kph"), "measures": data.get("measures") or {}}
+    return {"id": records.write_record("drowsy", f"Drowsy · Level {level} · {trigger}", payload)}
+
+
+def log_dir():
+    return os.path.join(os.path.expanduser(os.environ.get("XDG_STATE_HOME", "~/.local/state")),
+                        "omacar", "drowsy")
+
+
+def log_measures(rows):
+    if not isinstance(rows, list):
+        raise ValueError("rows must be a list")
+    os.makedirs(log_dir(), exist_ok=True)
+    path = os.path.join(log_dir(), time.strftime("%Y-%m-%d") + ".jsonl")
+    kept = [r for r in rows[:600] if isinstance(r, dict)]
+    with open(path, "a", encoding="utf-8") as f:
+        for r in kept:
+            f.write(json.dumps(r, separators=(",", ":")) + "\n")
+    return {"written": len(kept), "file": path}

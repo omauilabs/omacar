@@ -8,6 +8,8 @@ redesign/cameras block at the end of that file).
     POST /api/cams/mark                    Mark event: 30 s either side of now
     POST /api/cams/lock                    Save clip: 30 s either side of `t` (the
                                            playhead), or of now
+    GET  /api/drowsy, POST /api/drowsy, POST /api/drowsy/event,
+    POST /api/drowsy/log                   drowsy mode (lib/drowsycfg.py)
 
 Two more are served by lib/serve.py itself, because neither is JSON:
     GET  /api/cams/<role>/live             multipart MJPEG, 10 fps
@@ -72,6 +74,9 @@ def handle_get(path, query):
     if path == "/api/audio":
         import audio
         return 200, audio.status()
+    if path == "/api/drowsy":
+        import drowsycfg
+        return 200, drowsycfg.load()
     return None
 
 
@@ -94,4 +99,17 @@ def handle_post(path, body):
         if data is None or data.get("action") != "apply":
             return 400, {"error": 'the one action is {"action": "apply"}'}
         return 200, audio.apply()
+    if path in ("/api/drowsy", "/api/drowsy/event", "/api/drowsy/log"):
+        import drowsycfg
+        data = _body(body)
+        if data is None:
+            return 400, {"error": "the body must be a JSON object"}
+        try:
+            if path == "/api/drowsy":
+                return 200, drowsycfg.save(data)
+            if path == "/api/drowsy/event":
+                return 200, drowsycfg.log_event(data)
+            return 200, drowsycfg.log_measures(data.get("rows"))
+        except ValueError as e:
+            return 400, {"error": str(e)}
     return None
