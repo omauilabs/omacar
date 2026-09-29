@@ -15,6 +15,10 @@ import { chipTone, chipHint } from "./drowsyui.js";
 import { showAux } from "./audiostate.js";
 
 export const POLL_MS = 3000;
+// What the card says while it does not yet know: before its first answer, and
+// again when it is put back after being out of the layout. Words, so it is
+// never an empty or black rectangle.
+const CHECKING = "Checking the front camera…";
 
 // `engine`, `poll` and the timers are the page's unless a test hands in its
 // own. clearTimeout and clearInterval share one list of timers, so `cancel`
@@ -62,13 +66,29 @@ export function dashcamCard(node, {
     streaming = false;
   }
 
+  function checking() {
+    dropPicture();
+    rec.hidden = true;
+    sim.hidden = true;
+    why.hidden = false;
+    why.textContent = CHECKING;
+  }
+
   // ONE POLL AT A TIME, AND GIVEN UP. A server that stops answering must not
   // collect a request every 3 s: the browser lets a host have six, and the
   // live picture and every other poll on this page share them
   // (audiostate.js, drowsyrun.js pollCams). A request that is given up reads
   // as no server, which is what the card then says.
+  //
+  // A CARD THAT IS NOT IN THE DOCUMENT HAS NOTHING TO SHOW. Home takes a card
+  // that is not in the layout out of the grid and keeps it, and only destroys
+  // it when Home unmounts, so a removed card would go on holding a stream open
+  // and asking every 3 s for a picture nobody sees. It drops the picture (which
+  // closes the stream) and asks for nothing; when place() puts the same node
+  // back, the next tick picks it up again.
   async function refresh() {
     if (dead || busy) return;
+    if (!node.isConnected) { checking(); return; }
     busy = true;
     let ov = null;
     const ctl = inflight = new AbortController();
@@ -77,6 +97,7 @@ export function dashcamCard(node, {
     catch { /* dashState says so */ }
     finally { cancel(bail); busy = false; inflight = null; }
     if (dead) return;
+    if (!node.isConnected) { checking(); return; }      // taken out while the request was out
     const s = dashState(ov);
     rec.hidden = !s.rec;
     sim.hidden = !s.sim;
@@ -88,6 +109,7 @@ export function dashcamCard(node, {
       dropPicture();
     }
   }
+  checking();
   refresh();
   const timer = every(refresh, POLL_MS);
 

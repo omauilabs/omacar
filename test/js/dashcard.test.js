@@ -140,6 +140,17 @@ export default [
     const m = await mount({ first: ov({ front: role({ live: false }) }) });
     try { eq(seen(m.node), { img: false, src: null, why: "Waiting for the picture", rec: true, sim: false }); } finally { m.done(); }
   }],
+  ["before the first poll answers the card says it is checking, never an empty rectangle", async () => {
+    const m = await mount({ first: "hold" });          // the request is out and has not answered
+    try {
+      const waiting = seen(m.node);
+      m.answer(ov({}));
+      await settle();
+      eq([waiting, seen(m.node)],
+         [{ img: false, src: null, why: "Checking the front camera…", rec: false, sim: false },
+          { img: true, src: liveUrl("front"), why: null, rec: true, sim: false }]);
+    } finally { m.done(); }
+  }],
   ["the picture goes when the recorder stops, and comes back when it does", async () => {
     const m = await mount();
     try {
@@ -162,6 +173,35 @@ export default [
       img.dispatchEvent(new Event("error"));
       await m.tick(ov({}, false));
       eq([again, img.getAttribute("src"), img.hidden], [liveUrl("front"), null, true]);
+    } finally { m.done(); }
+  }],
+  // Home's place() takes a card that is not in the layout out of the grid and
+  // keeps it (a card the owner removed, or one only the other orientation has),
+  // and puts the same node back if it is wanted again. destroy() comes only
+  // when Home unmounts, so the card has to notice for itself.
+  ["a card taken out of Home's layout drops its picture and asks for nothing, and resumes when it is put back", async () => {
+    const m = await mount();
+    try {
+      const img = q(m.node, ".dc-img");
+      const live = [img.getAttribute("src"), m.asked.length];
+      m.node.remove();
+      await m.tick(); await m.tick();
+      const away = [img.getAttribute("src"), img.hidden, m.asked.length, seen(m.node)];
+      document.body.appendChild(m.node);
+      await m.tick();
+      eq([live, away, [seen(m.node), m.asked.length]],
+         [[liveUrl("front"), 1],
+          [null, true, 1, { img: false, src: null, why: "Checking the front camera…", rec: false, sim: false }],
+          [{ img: true, src: liveUrl("front"), why: null, rec: true, sim: false }, 2]]);
+    } finally { m.done(); }
+  }],
+  ["an answer that arrives after the card was taken out opens no stream", async () => {
+    const m = await mount({ first: "hold" });
+    try {
+      m.node.remove();
+      m.answer(ov({}));
+      await settle();
+      eq(seen(m.node), { img: false, src: null, why: "Checking the front camera…", rec: false, sim: false });
     } finally { m.done(); }
   }],
   ["the caption row carries the title, SIMULATED, REC and the drowsy chip; the AUX line is below it", async () => {
@@ -330,10 +370,10 @@ export default [
         (src.match(/redesign\/cameras/g) || []).length],
        [true, true, true, false, true, 2]);
   }],
-  ["Home's Dashcams card is the live one: a tap opens Cameras, and it says why with no server", () =>
+  ["Home's Dashcams card is the live one: a tap opens Cameras, and with no answer yet it says so in words", () =>
     withHome(async (root) => {
       const card = root.querySelector('[data-card="dashcam"]');
-      await until(() => q(card, ".dc-why") && !q(card, ".dc-why").hidden && q(card, ".dc-why").textContent, "the card's first answer");
+      await until(() => q(card, ".dc-why") && !q(card, ".dc-why").hidden && q(card, ".dc-why").textContent, "the card's first words");
       const was = location.hash;
       location.hash = "";
       card.click();
@@ -341,6 +381,6 @@ export default [
       location.hash = was;
       eq([card.classList.contains("hc-cam"), card.getAttribute("role"), q(card, ".dc-why").textContent, went,
           q(card, ".hc-ph"), card.querySelectorAll("[data-state]").length, card.hasAttribute("data-state")],
-         [true, "button", "OmaCar cannot reach its server", "#cameras", null, 0, false]);
+         [true, "button", "Checking the front camera…", "#cameras", null, 0, false]);
     })],
 ];
