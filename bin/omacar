@@ -65,8 +65,9 @@
 #   omacar demo start|stop|status|trash
 #                             a throwaway OmaCar with its own data, for showing
 #                             somebody. Cannot touch your real car.
-#   omacar server status|stop
-#                             the loopback server the app is served from
+#   omacar server status|stop|watch PORT
+#                             the loopback server the app is served from; `watch`
+#                             restarts it on PORT if it dies, and the kiosk runs it
 #   omacar help               this text
 #
 # omarchy:summary=Live OBD-II diagnostics for your car
@@ -145,6 +146,8 @@ app_base() {
   echo "file://$APP"
 }
 
+# A kiosk that is up starts the server again within seconds (see serve_watch),
+# so it is the kiosk that has to be stopped first.
 server_stop() {
   local p pid n=0
   for p in $PORTS; do
@@ -153,6 +156,48 @@ server_stop() {
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null && n=$((n + 1))
   done
   echo "stopped $n server(s)"
+}
+
+# Keep the server up on port $1, for as long as process $2 is, if one is given.
+#
+# THE KIOSK WATCHES THE SERVER BECAUSE NOTHING ELSE DID. It is started once,
+# detached, by whichever command first needed it. On 29 September at 11:49 it
+# died in the middle of a drive: Chromium was still pointed at 127.0.0.1:7560,
+# nothing was listening, and the screen stayed blank until somebody started it
+# again by hand. The page recovers by itself the moment something answers on
+# the same port, so restarting it THERE is the whole job -- never on another.
+#
+# It only starts one when nothing is listening on the port. Something that is
+# listening but does not answer as ours, another program or ours stuck for
+# longer than a second, would refuse a second server anyway, so it is left
+# alone and said once.
+#
+# It ends with $2. The kiosk stops it in its own exit trap; the check here is
+# for the way out that has no trap, a kiosk killed outright.
+serve_watch() {
+  local p="${1:?usage: omacar server watch PORT [PARENT_PID]}" parent="${2:-}"
+  local every="${OMACAR_WATCH_EVERY:-10}" told=0
+  while sleep "$every"; do
+    [[ -z "$parent" ]] || kill -0 "$parent" 2>/dev/null || return 0
+    log_trim "$OMACAR_STATE/serve.log"
+    if ours "$p"; then told=0; continue; fi
+    if port_taken "$p"; then
+      (( told )) || serve_note "port $p is held by something that is not the OmaCar server; leaving it alone"
+      told=1
+      continue
+    fi
+    told=0
+    serve_note "nothing is listening on port $p; restarting serve.py"
+    if serve_start "$p"; then serve_note "serve.py restarted on port $p"
+    else serve_note "serve.py did not come back on port $p; see serve.log"; fi
+  done
+}
+
+# One line, with the time, in serve-watch.log.
+serve_note() {
+  local f="$OMACAR_STATE/serve-watch.log"
+  log_trim "$f"
+  printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$f"
 }
 
 # --- demo mode --------------------------------------------------------------
@@ -484,6 +529,13 @@ kiosk_idle_release() {
   rm -f "$KIOSK_IDLE_MARK"
 }
 
+# Not local to kiosk(): it is read by the exit trap, after kiosk() has returned.
+KIOSK_WATCH=""
+
+kiosk_watch_stop() {
+  [[ -z "$KIOSK_WATCH" ]] || kill "$KIOSK_WATCH" 2>/dev/null || true
+}
+
 kiosk() {
   # The hub, matching the app's own HOME. This defaulted to "drive" while the
   # app landed on the hub, so which screen the tablet showed first depended on
@@ -498,7 +550,14 @@ kiosk() {
 
   mkdir -p "$KIOSK_PROFILE"
   kiosk_idle_hold
-  trap kiosk_idle_release EXIT INT TERM
+  trap 'kiosk_watch_stop; kiosk_idle_release' EXIT INT TERM
+
+  # The server is watched for as long as the screen is, and on the port the
+  # page was pointed at (see serve_watch). A separate process rather than a
+  # background function, so it can be run and tested without a browser.
+  local port="${base#http://127.0.0.1:}"
+  "$ROOT/bin/omacar" server watch "${port%%/*}" "$$" &
+  KIOSK_WATCH=$!
 
   # --app puts it in an undecorated window and --kiosk makes that window the
   # whole screen. Note Chromium derives the Wayland app_id from the URL and
@@ -1077,7 +1136,12 @@ print()
   mode) shift; exec python3 "$ROOT/lib/modes.py" "$@" ;;
   card) shift; exec "$OMACAR_PY" "$ROOT/lib/card.py" "$@" ;;
   state) state ;;
-  server) case "${2:-status}" in stop) server_stop ;; *) server_status ;; esac ;;
+  server)
+    case "${2:-status}" in
+      stop) server_stop ;;
+      watch) serve_watch "${3:-}" "${4:-}" ;;
+      *) server_status ;;
+    esac ;;
   help | --help | -h) usage ;;
   # A plugin may claim an unknown name. Checked LAST, so no plugin can shadow
   # a built-in command -- somebody else's directory must never be able to

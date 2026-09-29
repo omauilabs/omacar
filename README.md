@@ -398,10 +398,15 @@ dashboard does not blank halfway through a drive.
 **Kiosk.** `omacar kiosk` is drive mode fullscreen with no browser chrome, its
 own Chromium profile (so it cannot restore yesterday's tabs over the gauge),
 and Omarchy's own stay-awake switch held for the duration and put back exactly
-as it was on the way out. `omacar-kiosk.service` is installed but deliberately
-NOT enabled: a unit that puts a fullscreen gauge over your desktop the moment
-you log in is correct on a tablet in a car and wrong on the machine you write
-code on. Enable it on the tablet.
+as it was on the way out. It also watches the loopback server the page is
+served from: if that dies, the kiosk starts it again on the same port within
+about ten seconds and the page recovers without a reload. What the server
+printed is in `serve.log`, and each restart is a line in `serve-watch.log`,
+both in the state directory and each kept to its last megabyte.
+`omacar-kiosk.service` is installed but deliberately NOT enabled: a unit that
+puts a fullscreen gauge over your desktop the moment you log in is correct on a
+tablet in a car and wrong on the machine you write code on. Enable it on the
+tablet.
 
 **It switches to drive mode on its own.** When the adapter answers — or when
 the car actually starts rolling, if you would rather — the app takes itself to

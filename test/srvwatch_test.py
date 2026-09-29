@@ -26,6 +26,7 @@ Linux only, because the thing under test is bash on Linux (setsid, ss).
 """
 
 import http.client
+import http.server
 import os
 import re
 import resource
@@ -35,6 +36,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -240,6 +242,195 @@ def test_log():
         s.clean()
 
 
+# ---- the watcher --------------------------------------------------------------
+
+def start_server(s):
+    """A server on the scratch port, as app_base() would have started it."""
+    server = subprocess.Popen([PY, SERVE, str(s.port), SHARE], env=s.env,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, start_new_session=True)
+    if wait_for(lambda: answers(s.port), 5) is None:
+        raise RuntimeError("the scratch server never came up")
+    return server
+
+
+def start_watcher(s, *extra):
+    return subprocess.Popen([OMACAR, "server", "watch", str(s.port), *extra],
+                            env=s.env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+
+
+def stamped(port, what):
+    """A log line that begins with a date and a time and says `what`."""
+    return re.compile(rf"^\d{{4}}-\d\d-\d\d \d\d:\d\d:\d\d {what} on port {port}$")
+
+
+def test_restart():
+    print("\n  A server that dies comes back on the same port\n")
+    every = 1
+    port = free_port()
+    s = Scratch(port, every=every)
+    server = watcher = None
+    try:
+        server = start_server(s)
+        watcher = start_watcher(s)
+        time.sleep(every * 2.5)
+        check("while the server is healthy, the watcher leaves it alone",
+              watcher.poll() is None and server.poll() is None
+              and server_pids(port) == [server.pid]
+              and not read(s.path("serve-watch.log")))
+
+        for n in (1, 2):
+            pids = server_pids(port)
+            if not pids:
+                bad(f"kill {n}: there is no server left to kill")
+                break
+            pid = pids[0]
+            os.kill(pid, signal.SIGKILL)
+            if pid == server.pid:
+                server.wait()
+            wait_for(lambda: not alive(pid), 2)
+            check(f"kill {n}: the port really is dead", not answers(port))
+            t = wait_for(lambda: answers(port), every + 4)
+            check(f"kill {n}: back on the same port within the interval"
+                  f" ({'never' if t is None else f'{t:.1f}s'} against {every}s"
+                  f" and a start)", t is not None and t <= every + 3)
+            now = server_pids(port)
+            check(f"kill {n}: as one new process", len(now) == 1 and now[0] != pid)
+
+            def restarts():
+                return [ln for ln in read(s.path("serve-watch.log")).splitlines()
+                        if "restarted" in ln]
+
+            # The watcher writes its line after it has seen the server answer,
+            # which is a moment after this test has. Waiting for it also keeps
+            # the next kill out of the watcher's own confirmation of this one.
+            wait_for(lambda: len(restarts()) >= n, 3)
+            said = restarts()
+            check(f"kill {n}: the restart is in the log, with its time"
+                  f" ({len(said)} line{'s' * (len(said) != 1)})",
+                  len(said) == n and stamped(port, r"serve\.py restarted").match(said[-1]))
+            check(f"kill {n}: and the new server's output has a log to go to",
+                  read(s.path("serve.log")).count(
+                      f"serve.py starting on port {port}") == n)
+    finally:
+        for proc in (watcher, server):
+            if proc and proc.poll() is None:
+                proc.kill()
+        s.clean()
+
+
+def test_foreign_port():
+    print("\n  A port held by something that is not ours is left alone\n")
+    every = 0.5
+    port = free_port()
+    s = Scratch(port, every=every)
+
+    class NotOurs(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b"some other program"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    other = http.server.ThreadingHTTPServer(("127.0.0.1", port), NotOurs)
+    threading.Thread(target=other.serve_forever, daemon=True).start()
+    watcher = None
+    try:
+        watcher = start_watcher(s)
+        time.sleep(every * 8)
+        said = read(s.path("serve-watch.log"))
+        # A second server could not bind, so it would die at once and leave no
+        # process to find. What it would leave is its banner in serve.log.
+        check("no second server was started, or even tried",
+              not server_pids(port)
+              and "serve.py starting" not in read(s.path("serve.log")))
+        check("the watcher is still running, and still watching", watcher.poll() is None)
+        check("it says so once, not once an interval",
+              said.count("not the OmaCar server") == 1)
+        check("and never claims to have restarted anything", "restarted" not in said)
+    finally:
+        if watcher and watcher.poll() is None:
+            watcher.kill()
+        other.shutdown()
+        other.server_close()
+        s.clean()
+
+
+def test_parent_exit():
+    print("\n  The watcher ends with the process that started it\n")
+    every = 1
+    port = free_port()
+    s = Scratch(port, every=every)
+    parent = server = watcher = None
+    try:
+        server = start_server(s)
+        parent = subprocess.Popen(["sleep", "300"])
+        watcher = start_watcher(s, str(parent.pid))
+        time.sleep(every * 2.5)
+        check("it carries on while that process is alive", watcher.poll() is None)
+        # SIGKILL, so that no trap of the parent's gets to run: this is the
+        # route a kiosk takes when something kills it outright.
+        parent.kill()
+        parent.wait()
+        t = wait_for(lambda: watcher.poll() is not None, every + 3)
+        check(f"it stops within an interval of the parent going"
+              f" ({'never' if t is None else f'{t:.1f}s'})", t is not None)
+        check("and nothing of it is left running",
+              not pgrep(f"{OMACAR} server watch {port}"))
+    finally:
+        for proc in (watcher, parent, server):
+            if proc and proc.poll() is None:
+                proc.kill()
+        s.clean()
+
+
+def test_kiosk():
+    print("\n  The kiosk starts it on its own port, and stops it on the way out\n")
+    # An interval far longer than this test, so that the ONLY thing that can
+    # have stopped the watcher early is the kiosk's own exit trap.
+    every = 30
+    port = free_port()
+    s = Scratch(port, every=every)
+    kiosk = None
+    try:
+        with open(os.path.join(s.dir, "kiosk.err"), "w") as err:
+            kiosk = subprocess.Popen([OMACAR, "kiosk", "hub"], env=s.env,
+                                     stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=err,
+                                     start_new_session=True)
+        up = wait_for(lambda: os.path.exists(os.path.join(s.marks, "chromium.pid")), 10)
+        check("the kiosk got as far as starting the browser", up is not None)
+        check("pointed at the server on the scratch port",
+              f"--app=http://127.0.0.1:{port}/app.html#hub" in s.mark("chromium.args"))
+        check("and that server is up", answers(port))
+        mine = f"{OMACAR} server watch {port} {kiosk.pid}$"
+        check("it started one watcher, for that port, tied to itself",
+              len(pgrep(mine)) == 1)
+        check("and held the screen awake", s.mark("idle.calls").split() == ["stay-awake"])
+
+        open(os.path.join(s.marks, "stop"), "w").close()      # the browser exits
+        try:
+            kiosk.wait(10)
+        except subprocess.TimeoutExpired:
+            pass
+        check("the kiosk ends when the browser does", kiosk.poll() is not None)
+        t = wait_for(lambda: not pgrep(mine), 2)
+        check(f"and the watcher goes with it, well inside its {every}s interval"
+              f" ({'never' if t is None else f'{t:.1f}s'})", t is not None)
+        check("in the same trap that puts the screen's idle switch back",
+              s.mark("idle.calls").split() == ["stay-awake", "allow-idle"])
+    finally:
+        if kiosk and kiosk.poll() is None:
+            os.killpg(kiosk.pid, signal.SIGKILL)
+        s.clean()
+
+
 def main():
     # A crash test that leaves a core file per run is not a kindness to the box.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -247,7 +438,12 @@ def main():
         print("    (skipping: this drives bash, setsid and ss, which are Linux)")
         return 0
 
-    test_log()
+    for test in (test_log, test_restart, test_foreign_port, test_parent_exit,
+                 test_kiosk):
+        try:
+            test()
+        except Exception as e:                       # noqa: BLE001
+            bad(f"{test.__name__} stopped early: {e!r}")
 
     print()
     left = pgrep(f"{ROOT}/(bin/omacar|lib/serve.py)")
