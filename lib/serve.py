@@ -482,20 +482,30 @@ def parse_args(argv):
 
 
 def _said_so(signum, _frame):
-    """Say which signal is ending the process, and end it.
+    """Say which signal is ending the process, then let it end it.
 
     On 29 September this server died in the middle of a drive and left nothing
     to say why. Nothing in its request handling can end the process -- a fault
     in a request only ends that request's thread -- so what is left is being
     ended from outside, and a signal it does not handle ends a Python process
     without a word. Now SIGTERM and SIGHUP, which is what stopping a service or
-    a plain kill sends, leave a line saying which and when. A death with NO
-    line is an answer too: SIGKILL, which is what the kernel's out-of-memory
-    killer sends and no process can announce.
+    a plain kill sends, leave a line saying which and when.
+
+    The signal is not swallowed and shutdown is not changed. The default action
+    is put back and the same signal is sent to ourselves, so the process dies of
+    it exactly as it did before there was a handler: no unwinding, no atexit
+    handlers, no daemon threads torn down live, and a status that says "killed
+    by SIGTERM" rather than an exit code that a service manager would call a
+    failure.
+
+    A death with NO line is an answer too: SIGKILL, which is what the kernel's
+    out-of-memory killer sends, or another signal that is not handled here
+    (SIGQUIT, SIGUSR1, SIGALRM), and no process can announce SIGKILL.
     """
     print(f"{time.strftime('%F %T')} serve.py: {signal.Signals(signum).name} "
           f"received; exiting", file=sys.stderr, flush=True)
-    raise SystemExit(128 + signum)
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
 
 
 if __name__ == "__main__":

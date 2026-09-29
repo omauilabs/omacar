@@ -528,8 +528,11 @@ def test_says_so():
     # As the real one runs: nothing has turned Python's fault handler on.
     env = {k: v for k, v in s.env.items() if k != "PYTHONFAULTHANDLER"}
     try:
-        for name, sig, status in (("SIGTERM", signal.SIGTERM, 143),
-                                  ("SIGHUP", signal.SIGHUP, 129),
+        # A status of -N is Popen's way of saying "killed by signal N", which is
+        # how this process has always ended. It says so first, then dies of the
+        # same signal with the default action, so nothing about shutdown changes.
+        for name, sig, status in (("SIGTERM", signal.SIGTERM, -signal.SIGTERM),
+                                  ("SIGHUP", signal.SIGHUP, -signal.SIGHUP),
                                   ("SIGABRT", signal.SIGABRT, None)):
             errpath = os.path.join(s.dir, f"{name}.err")
             with open(errpath, "w") as err:
@@ -555,8 +558,8 @@ def test_says_so():
             held.close()
             text = read(errpath)
             if status is not None:
-                check(f"{name}: it exits with the conventional status {status}"
-                      f" (got {code})", code == status)
+                check(f"{name}: it still ends by the signal itself, not by exiting"
+                      f" (status {status}, got {code})", code == status)
                 check(f"{name}: and says which signal, with the time",
                       re.search(rf"^\d{{4}}-\d\d-\d\d \d\d:\d\d:\d\d "
                                 rf"serve\.py: {name} received", text, re.M)
