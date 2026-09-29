@@ -1,0 +1,13 @@
+/* Drowsy mode on screen (drowsyui.js), its line on Home's Dashcams card, and
+   Begin's note about AUX (views/launcher.js). Linked from the redesign/cameras
+   block at the end of app.html. */
+
+.launch-aux { max-width: 34rem; margin: 4px auto 0; text-align: center; font-size: .85rem;
+              line-height: 1.45; color: var(--dim); }
+
+/* "AUX disconnected": shown wherever sound matters -- Begin, and drowsy
+   mode's own screen -- only while the port is the tablet's speakers
+   (audiostate.js showAux). */
+.aux-warn { max-width: 34rem; margin: 0 auto; padding: 6px 12px; border-radius: var(--r);
+            text-align: center; font-size: .9rem; color: var(--warn); background: var(--warn-bg); }
+.aux-warn[hidden] { display: none; }

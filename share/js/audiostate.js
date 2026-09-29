@@ -50,3 +50,16 @@ export async function applyAudio() {
 export function auxLine(a) {
   return a && a.aux === false ? "AUX disconnected — sound is on the tablet's speakers" : "";
 }
+
+// Keep `el` saying "AUX disconnected ..." for exactly as long as the port is
+// known to be the tablet's speakers, and hidden the rest of the time. Begin
+// shows it; so should drowsy mode's own screen, where it matters most: an
+// alert on the tablet's speakers is one the car's speakers never carry.
+// Returns off().
+export function showAux(el) {
+  return onAudio((a) => {
+    const s = auxLine(a);
+    el.hidden = !s;
+    el.textContent = s;
+  });
+}
