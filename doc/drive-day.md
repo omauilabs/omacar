@@ -1,7 +1,7 @@
-# Drive day — Marina to Los Banos, Thursday and Friday
+# Drive day — Marina ↔ Los Banos, Tuesday 2026-09-29
 
-Four legs, roughly ninety minutes each. This is the one resource this project
-cannot buy, so everything below is here to stop a leg being wasted.
+Two legs, out and back. This is the one resource this project cannot buy, so
+everything below is here to stop a leg being wasted.
 
 Written 9 September after an adversarial read of the whole capture path found
 nine defects, every one of which cost at least a leg. They are fixed; this is
@@ -62,6 +62,196 @@ This exercises almost everything that cannot be tested without a car.
 
 If step 1 never leaves `waiting`, the engine gate is not seeing RPM. If it says
 `not running`, the unit did not enable and the whole trip is gauges only.
+
+## If nobody can drive this remotely: the parked IMA session
+
+If the tablet has no connection for anyone to run this from outside the car,
+one command runs the whole parked, read-only IMA hunt (the leads writeup is
+`2026-09-28-ima-findings.md`, section 4, in the notes repo) — the passive
+probes, the negative-response learning, the 0x2xxx positive control, the
+HV-battery DIDs, and the 0x21 sweep, each already built with the safety gates
+that section calls for:
+
+```
+~/Projects/omacar/tools/ima-session.sh
+```
+
+Have the engine running, the car in P, and the handbrake on before you start
+it — it checks for an adapter, asks you to confirm you are parked, checks
+road speed and battery voltage, and only then sends anything. It stands the
+recorder down first and always brings it back, prints each step as it goes,
+time-boxes itself to 25 minutes of sending, and saves everything under
+`~/.local/state/omacar/ima-sessions/`. Add `--full` to also run the optional
+block sweep (section 4 step 5); add `--dry-run` first to see every command it
+would run without sending anything.
+
+## Then, if there's time: the full-bus driveway check
+
+Two more opt-ins exist, each one line in the environment, both off by default,
+and both change what a capture actually records. Try them here, ignition on,
+parked, never on the road for the first time.
+
+`OMACAR_FASTBAUD=1` raises the adapter's own link from 115200 to 500000 baud.
+Measured on this car: at 115200 the bus overflows the adapter every time — one
+~111-frame buffer, about 75ms — and it stops. At 500000 the same adapter held
+1,907 frames a second, sustained, for fifteen seconds straight. It is already
+in this tree (commits 603fe09 and 52cc8ba); it is not new tonight, it is just
+untested end to end on this car.
+
+`OMACAR_CAF0=1` turns off the ELM's own CAN auto-formatting for the capture.
+Left on — the default, forever, until this flag says otherwise — it censors
+frames two ways: any frame whose first data byte is 0x01–0x07 gets CUT to
+that many bytes plus one (measured on 636 of 636 such frames — 0x164 shows as
+five bytes, `0400003C72`, when parked, and the full eight when byte0=00; 0x161
+shows `05BF05BF2008`, six bytes, with its counter and checksum simply never
+sent), and any frame whose first byte is 0x08–0x0F or ≥0x20 comes back with
+" <DATA ERROR" appended, which the old parser threw the whole line away for —
+818 lines out of 3,554 on one drive, 23% of everything the adapter sent.
+Gear position (0x191: 0x01=P, 0x08=D) was invisible in every moving capture
+because of exactly this. The host-side half of that fix — recovering a
+`<DATA ERROR` line's real bytes, which are already on the wire and cost
+nothing to strip out of the reply — is always on now and needs no flag.
+`OMACAR_CAF0` is the other half, and the only one that changes what is SENT to
+the adapter, which is why it stays opt-in until it has been driven.
+
+`omacar drive off` first, always — a capture and the recorder both want the
+one port. Then, in order:
+
+1. Raised baud alone:
+
+   ```
+   timeout 90 env OMACAR_FASTBAUD=1 \
+     omacar listen capture --seconds 20 --save --note fastbaud-test
+   ```
+
+   **Pass:** well over 20,000 frames, the raw timestamps span about 20s, the
+   command returns on its own (`timeout` never has to fire), and afterwards
+   the daemon reconnects — live data updates again.
+   **Fail:** a hang (the 90s `timeout` fires), or about 120 frames. Either one
+   means stop here; do not add `OMACAR_CAF0` on top of a link that has not
+   proven itself.
+
+2. Both opt-ins together:
+
+   ```
+   timeout 90 env OMACAR_FASTBAUD=1 OMACAR_CAF0=1 \
+     omacar listen capture --seconds 20 --save --note caf0-test
+   ```
+
+   **Pass:** identifiers 097, 1AA, 1CF and 374 all show up, and the 0x161 and
+   0x164 frames are the full 8 bytes each — not the truncated 6 and 5 bytes
+   (respectively) ATCAF1 leaves them at.
+
+3. If both pass, turn them on for the recorder itself with a user drop-in —
+   nothing in this repo needs editing:
+
+   ```
+   mkdir -p ~/.config/systemd/user/omacar-drivelog.service.d
+   cat > ~/.config/systemd/user/omacar-drivelog.service.d/fullbus.conf <<'EOF'
+   [Service]
+   Environment=OMACAR_FASTBAUD=1 OMACAR_CAF0=1
+   EOF
+   systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
+   ```
+
+   To undo: delete `fullbus.conf` and run the same `daemon-reload` and
+   `restart`.
+
+4. **What actually changes, in the recorder itself.** `lib/drivelog.py` leases
+   the port in `LEG_MINUTES`-long (20 min) legs with `BETWEEN_LEGS` (90s)
+   between them for the daemon to reconnect, and ends a leg early if
+   `QUIET_TIMEOUT` (120s) passes with nothing heard. `listen.DEFAULT_LIMIT`
+   caps any one capture at 60,000 lines.
+
+   Today, without either opt-in, a leg's ~75ms burst is followed by silence,
+   the 120s quiet timeout ends it, and the 90s gap follows: **75ms of the bus
+   every 3.5 minutes** (120 + 90 = 210s).
+
+   With both opt-ins, the bus keeps arriving fast enough that the leg instead
+   runs until the 60,000-line cap — at the measured ~1,900 frames/s that is
+   about 60000 / 1900 ≈ 31s — then the same 90s gap: **about 31s of the full
+   bus every 2 minutes** (31 + 90 ≈ 122s), instead of 75ms every 3.5 minutes.
+   That is about a quarter of all bus time instead of under a
+   thousandth of it (31/122 ≈ 25%, against 0.075/210 ≈ 0.04%): some
+   seven hundred times as much of the bus, recorded uncensored, for the
+   same drive.
+
+## Telemetry versus capture
+
+The number above (31/122 ≈ 25%) is how much of the drive is a full-bus
+*capture*. The number that matters for a demo is the other side of the same
+cycle: how much of the drive the daemon has the port back and the gauges are
+alive — *telemetry*. A leg that captures more leaves less of that, and the
+trade is now three independent knobs, each an environment override read (and
+bounds-checked) at start-up in `lib/drivelog.py`, unset by default, no
+different in kind from `OMACAR_FASTBAUD` and `OMACAR_CAF0` above:
+
+- `OMACAR_DRIVELOG_BETWEEN` — seconds between legs (default `BETWEEN_LEGS`,
+  90s).
+- `OMACAR_DRIVELOG_LEG_LINES` — the line cap for one leg, passed straight to
+  `listen()` as `limit=` (default `listen.DEFAULT_LIMIT`, 60,000).
+- `OMACAR_DRIVELOG_QUIET` — the quiet timeout (default `QUIET_TIMEOUT`,
+  120s). It counts from when the adapter starts listening, not from when the
+  leg starts: set-up (ATZ, the protocol search and the probe) took about
+  11.5s at 115200 on 29 September, and until that was fixed a 10s QUIET
+  ended every leg before its first frame.
+- `OMACAR_DRIVELOG_END_ON_OVERFLOW=1` — end a leg the moment the adapter
+  itself says `BUFFER FULL` or `STOPPED` (`Capture.overflowed()`), instead of
+  waiting out the full quiet timeout afterwards. Off by default; see below.
+
+A bad value for any of the first three (unparseable, or outside a sane
+floor/ceiling) is logged and the default used instead — it costs the
+override, never the leg. `omacar drive status` shows whichever numbers a
+running supervisor actually started with, and the same line is written once
+to the day's trip log at start-up.
+
+| Setup | A leg holds the port for | Then the gap is | Cycle | Telemetry |
+|---|---|---|---|---|
+| Default (nothing set) | ~120s — a 75ms burst, then the 120s quiet timeout waits out the silence | 90s | ~210s | **~43%** |
+| Fast link alone, default gap — this is also the **balanced** preset below | ~31s — the 60,000-line default cap at the ~1,900 lines/s measured above | 90s | ~121s | **~74%** |
+| **Telemetry-first** preset below | ~5s — a 10,000-line cap at the same ~1,900 lines/s, plus a few seconds of hand-over | 240s | ~250s | **roughly 95%** |
+
+**Balanced** — the fast link, the gap left at its default:
+
+```
+mkdir -p ~/.config/systemd/user/omacar-drivelog.service.d
+cat > ~/.config/systemd/user/omacar-drivelog.service.d/balanced.conf <<'EOF'
+[Service]
+Environment=OMACAR_FASTBAUD=1
+EOF
+systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
+```
+
+**Telemetry-first** — the fast link, a 10,000-line cap (~5s of bus) and a
+240s gap, for roughly 95% telemetry and a ~5s CAN snapshot every 4 minutes or
+so. It also ends a leg the moment the adapter overflows, with a 10s quiet
+timeout, so a link that cannot keep up costs seconds rather than two minutes a
+leg (without those two, one overflowing leg holds the port ~2 minutes, and
+telemetry falls to about two thirds):
+
+```
+mkdir -p ~/.config/systemd/user/omacar-drivelog.service.d
+cat > ~/.config/systemd/user/omacar-drivelog.service.d/telemetry-first.conf <<'EOF'
+[Service]
+Environment=OMACAR_FASTBAUD=1 OMACAR_DRIVELOG_LEG_LINES=10000 OMACAR_DRIVELOG_BETWEEN=240 OMACAR_DRIVELOG_END_ON_OVERFLOW=1 OMACAR_DRIVELOG_QUIET=10
+EOF
+systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
+```
+
+Next to `fullbus.conf` above (both opt-ins, the default duty cycle): that
+drop-in is the "fast link alone" row in the table, still at its own default
+gap — `OMACAR_CAF0` changes what is recovered from each frame, not how long
+a leg runs, so it composes with any of the drop-ins here. systemd reads
+every `.conf` file in `omacar-drivelog.service.d/`, so two of them left in
+place at once both apply — remove whichever is no longer wanted before
+adding another, then `daemon-reload` and `restart` as above.
+
+**Or let the driveway check choose.** `tools/driveway-check.sh`, parked with
+the engine running, runs both test captures above, waits for the gauges to
+really come back after each, picks one of three presets (`telemetry-first-caf0`,
+`telemetry-first`, or `fallback` when the fast link fails), and with `--apply`
+installs it as the single drop-in `driveway-preset.conf`, renaming the others
+here to `.off`. `--dry-run` shows what it would do; `--remove-preset` undoes it.
 
 ## On the road — the recorder
 

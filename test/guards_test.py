@@ -1183,6 +1183,60 @@ for junk in ("STOPPED", "BUFFER FULL", "CAN ERROR", "?", "", "7E8 06 41 0C 1A F"
              "NODATA", "7E8"):
     check(f"{junk!r} is not a frame", listen.parse(junk), None)
 
+# ATCAF1's OTHER CENSORSHIP: A LINE ENDING " <DATA ERROR" STILL CARRIES THE
+# REAL FRAME. Measured on a real drive: 818 of 3,554 lines, 23% of everything
+# the adapter sent, and every one carried the full, correct bytes ahead of the
+# suffix -- gear frame 0x191 (0x01 = P, 0x08 = D) vanished from every moving
+# capture this way, because D is 0x08, exactly the byte this suffix marks.
+check("a DATA ERROR line recovers its full frame (0x1AA)",
+      listen.parse("1AA 7F FF 00 00 00 00 68 2F <DATA ERROR"),
+      ("1AA", [0x7F, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x68, 0x2F]))
+check("and a second one, 8 bytes, not truncated",
+      listen.parse("097 80 00 07 E6 0B 00 00 0A <DATA ERROR"),
+      ("097", [0x80, 0x00, 0x07, 0xE6, 0x0B, 0x00, 0x00, 0x0A]))
+check("a line that is only the suffix is still not a frame",
+      listen.parse("<DATA ERROR"), None)
+check("nor is a line of only words with the suffix stuck on",
+      listen.parse("SEARCHING... <DATA ERROR"), None)
+check("a run-together line still falls back to a width, unaffected",
+      listen.parse("7E80641", 3), ("7E8", [6, 65]))
+
+_recov = listen.Capture()
+check("recovering a frame still adds it to the capture",
+      _recov.add_line("1AA 7F FF 00 00 00 00 68 2F <DATA ERROR"), True)
+check("counted as recovered, not rejected",
+      (_recov.recovered, _recov.rejected), (1, 0))
+check("and carried in asdict, so a capture from before this existed and one "
+      "from after can be compared honestly",
+      _recov.asdict()["recovered"], 1)
+_recov.add_line("17C 00 12 34")
+check("an ordinary frame added afterwards leaves the count where it was",
+      _recov.recovered, 1)
+
+# ADAPTER_SAID'S TEN SLOTS ARE FOR THE ADAPTER'S WORDS, NOT ITS PUNCTUATION.
+# Before parse() recovered DATA ERROR lines, distinct truncations of that one
+# censorship filled every slot on seven captures in a row, and BUFFER FULL and
+# STOPPED -- the words overflowed() exists to find -- never got recorded. This
+# guards both halves: no "<...>" annotation may take a slot, ever, and the
+# overflow words are kept beyond the cap even when ten other words got there
+# first.
+_ov = listen.Capture()
+for _i in range(15):
+    check(f"garbled data-error noise {_i} is not a frame",
+          _ov.add_line(f"NOISE {_i} <DATA ERROR"), False)
+check("none of the 15 distinct DATA ERROR lines took a slot",
+      _ov.adapter_said, [])
+for _i in range(12):
+    _ov.add_line(f"CHATTER {_i}")
+check("the cap holds at ten for ordinary words",
+      len(_ov.adapter_said), 10)
+_ov.add_line("BUFFER FULL")
+_ov.add_line("STOPPED")
+check("BUFFER FULL and STOPPED are both kept, past the cap",
+      sorted(_ov.overflowed()), ["BUFFER FULL", "STOPPED"])
+check("...twelve slots now, not stuck at ten",
+      len(_ov.adapter_said), 12)
+
 # The monitor primitive is behind the same AT guard raw() is, because it writes
 # to the port directly and would otherwise be the hole raw() was closed to stop.
 class _Port:
@@ -2549,10 +2603,530 @@ _e3 = _fresh_elm(brd=False)
 check("an adapter without ATBRD is left where it was", _e3.raise_baud(500000), False)
 check("at the rate it started on", (_e3.ser.baudrate, _e3.ser.rate), (115200, 115200))
 
+# ------------------------------------------ the handshake says what it did
+head("the link handshake records which step it reached and what the adapter said")
+
+# MEASURED ON THE CAR, 29 SEPTEMBER. With OMACAR_FASTBAUD=1 capture A took 142
+# frames in a third of a second and then BUFFER FULL -- exactly the 115200
+# shape -- and nothing anywhere said whether the raise was attempted, what the
+# adapter answered, or which step gave up. raise_baud() returned False
+# silently. It now leaves the whole attempt on the connection, for the capture
+# and the link log to keep.
+
+
+class _HandshakeElm(EchoingElm):
+    """EchoingElm, able to fail at any step, and closer to the datasheet in
+    two ways that decide what a failure looks like afterwards: a byte written
+    while the two ends are on different rates is noise the adapter ignores,
+    and an adapter that switched and did not get its carriage return goes
+    back to the old rate on its own (ATBRD fails closed)."""
+
+    def __init__(self, fail=None, **kw):
+        super().__init__(**kw)
+        self.fail = fail
+        self.old_rate = None             # set while waiting for the confirming CR
+
+    @property
+    def in_waiting(self):
+        n = 0
+        for rate, data in self.segs:
+            if rate != self.baudrate:
+                break
+            n += len(data)
+        return n
+
+    def read(self, n=1):
+        out = b""
+        while len(out) < n:
+            got = self._take(n - len(out))
+            if not got:
+                break
+            out += got
+        return out
+
+    def write(self, data):
+        cmd = data.decode("ascii", "replace").strip().upper()
+        if self.old_rate is not None:
+            old, self.old_rate = self.old_rate, None
+            if not (cmd == "" and self.baudrate == self.rate):
+                self.rate = old          # no CR in time: back where it was
+                self._put(b">", old)
+                return                   # and what arrived was noise to it
+        if self.baudrate != self.rate:
+            return
+        if cmd == "ATE0" and self.fail == "echo-off":
+            raise sys.modules["serial"].SerialException("[Errno 5] Input/output error")
+        if cmd == "ATE0" and self.fail == "echo-off ignored":
+            return                       # mid-reset: nothing said, echo stays on
+        was = self.rate
+        super().write(data)
+        if cmd.startswith("ATBRD") and self.rate != was:
+            self.old_rate = was
+            if self.fail == "ident":     # the identification never reaches the host
+                self.segs = [s for s in self.segs if s[0] == was]
+
+
+def _stepped(**kw):
+    e = elm.Elm.__new__(elm.Elm)
+    e.ser = _HandshakeElm(**kw)
+    return e
+
+
+def _said(e, step):
+    for s in (getattr(e, "fastbaud", None) or {}).get("steps") or []:
+        if s.get("step") == step:
+            return s.get("answered")
+    return None
+
+
+# Raised.
+_h = _stepped()
+check("the raise succeeds against a well-behaved adapter", _h.raise_baud(500000), True)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("and says so", (_hf.get("outcome"), _hf.get("failed_at")), ("raised", None))
+check("with the rate in force afterwards", _hf.get("link_baud"), 500000)
+check("and every step it took, in order",
+      [s.get("step") for s in _hf.get("steps") or []],
+      ["echo-off", "ATBRD OK", "ident", "final OK"])
+check("the echo-off's reply is read before it is thrown away",
+      _said(_h, "echo-off"), "ATE0\rOK\r")
+check("the identification is what the adapter sent at the new rate",
+      _said(_h, "ident"), "ELM327 v1.4b\r")
+check("each step says how long its answer took",
+      bool(_hf.get("steps"))
+      and all(isinstance(s.get("ms"), int) for s in _hf["steps"]), True)
+
+# The echo-off itself raised.
+_h = _stepped(fail="echo-off")
+check("a write that fails at the echo-off does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at the echo-off", (_hf.get("outcome"), _hf.get("failed_at")),
+      ("failed", "echo-off"))
+check("and keeps the error, in words", "SerialException" in (_hf.get("why") or ""), True)
+check("the link stays at 115200", _hf.get("link_baud"), 115200)
+
+# ATBRD's OK: an adapter that has no ATBRD.
+_h = _stepped(brd=False)
+check("an adapter that refuses ATBRD does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at ATBRD's OK", _hf.get("failed_at"), "ATBRD OK")
+check("and keeps what it said instead", _said(_h, "ATBRD OK"), "?\r")
+check("the link stays at 115200", _hf.get("link_baud"), 115200)
+
+# ATBRD's OK: the echo-off never took (an adapter still busy with ATZ), so the
+# adapter repeats ATBRD back before its OK -- the bug this shipped with.
+_h = _stepped(fail="echo-off ignored")
+check("an adapter that ignored the echo-off does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at ATBRD's OK", _hf.get("failed_at"), "ATBRD OK")
+check("which heard its own command echoed back", _said(_h, "ATBRD OK"), "ATBRD 08\r")
+check("and the echo-off before it heard nothing at all", _said(_h, "echo-off"), "")
+check("the adapter fell back, and so did the link", (_hf.get("link_baud"), _h.ser.rate),
+      (115200, 115200))
+
+# The ident at the new rate.
+_h = _stepped(fail="ident")
+check("an identification that never arrives does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at the ident", _hf.get("failed_at"), "ident")
+check("which heard nothing", _said(_h, "ident"), "")
+check("the adapter fell back, and so did the link", (_hf.get("link_baud"), _h.ser.rate),
+      (115200, 115200))
+
+# The final OK. The adapter switched and never confirmed, and _settle() finds
+# it at the new rate: the call returns False and the link is 500000 anyway,
+# which is why the rate in force is read off the handle, not inferred.
+_h = _stepped(confirm=False)
+check("a switch that is never confirmed does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at the final OK", _hf.get("failed_at"), "final OK")
+check("and the rate in force is the one the handle really ended on",
+      (_hf.get("link_baud"), _hf.get("settled")), (500000, 500000))
+
+# NOT ASKED FOR IS NOT A FAILURE, and not a guess either.
+os.environ.pop("OMACAR_FASTBAUD", None)
+_h = _stepped()
+_h.raise_baud(500000)
+check("with OMACAR_FASTBAUD unset there is no attempt to record",
+      getattr(_h, "fastbaud", "missing"), None)
+check("and nothing was sent", _h.ser.segs, [])
+os.environ["OMACAR_FASTBAUD"] = "1"
+
+# NOTHING NEW ON THE WIRE. Recording the attempt adds no command: every byte
+# written is one raise_baud() already wrote.
+_h = _stepped()
+_writes = []
+_orig_write = _h.ser.write
+_h.ser.write = lambda d: (_writes.append(d), _orig_write(d))[1]
+_h.raise_baud(500000)
+check("the handshake writes exactly ATE0, ATBRD and the confirming CR",
+      _writes, [b"ATE0\r", b"ATBRD 08\r", b"\r"])
+
+# NOR NEW TIME IN THE ONE WINDOW THAT MATTERS. Between reading ATBRD's OK and
+# switching the host's rate, the adapter may already be sending its
+# identification at the new rate -- that gap is one of the report's two
+# leading reasons the raise fails on the car. So the record of ATBRD's answer
+# is written after the switch, and the window holds what it always held.
+
+
+class _SwitchWatch(_HandshakeElm):
+    """Notes what the record held at the moment the host switched to 500000."""
+
+    def __setattr__(self, name, value):
+        owner = self.__dict__.get("owner")
+        if (name == "baudrate" and value == 500000 and owner is not None
+                and "at_switch" not in self.__dict__):
+            trail = getattr(owner, "fastbaud", None) or {}
+            self.__dict__["at_switch"] = (
+                [s.get("step") for s in trail.get("steps") or []],
+                trail.get("failed_at"))
+        object.__setattr__(self, name, value)
+
+
+_h = elm.Elm.__new__(elm.Elm)
+_h.ser = _SwitchWatch()
+_h.ser.owner = _h
+check("the watched handshake still raises", _h.raise_baud(500000), True)
+check("nothing is recorded between reading ATBRD's OK and the host's switch",
+      _h.ser.__dict__.get("at_switch"), (["echo-off"], "ATBRD OK"))
+check("ATBRD's answer is still recorded, just after the switch",
+      _said(_h, "ATBRD OK"), "OK\r")
+
+# --------------------------------- the handshake's answers get time to arrive
+head("the link handshake gives each answer the time connect.raise_baud() gave it")
+
+# 142 FRAMES AND BUFFER FULL, WITH OMACAR_FASTBAUD=1, ON 29 SEPTEMBER. listen()
+# opens its Elm with the constructor's 50 ms read timeout, and pyserial 3.5's
+# read_until() gets that long for the whole call: ATBRD's OK and the
+# identification at the new rate each had 50 ms to reach the host.
+# connect.raise_baud() -- the handshake behind the 1,907 frames/s measured on
+# 28 September -- reads the same exchange with 0.8 s. Every fake above answers
+# instantly, so no test could tell the two apart. This one is on a clock.
+import time as _hs_time  # noqa: E402
+
+
+class _Lagging(_HandshakeElm):
+    """_HandshakeElm on a real clock, read the way pyserial 3.5 reads.
+
+    ATBRD's OK becomes readable `ok_lag` seconds after ATBRD is written, and
+    the identification `ident_lag` after that. `silent` answers nothing at
+    all; `trickle` is a silent adapter that lets one stray byte through that
+    long after ATBRD. read() and read_until() follow serialposix/serialutil
+    3.5: read(n) waits up to `timeout` for n bytes, and read_until() gives the
+    whole call one `timeout`, stops at the first empty read(1), and checks
+    expiry only after a byte. Every read, write and setting is logged in order,
+    with the timeout it ran under and how long it took."""
+
+    CAP = 5.0            # whatever the code under test does, the suite goes on
+
+    def __init__(self, ok_lag=0.0, ident_lag=0.0, silent=False, trickle=None, **kw):
+        self.__dict__["events"] = None
+        super().__init__(**kw)
+        self.ok_lag, self.ident_lag = ok_lag, ident_lag
+        self.silent, self.trickle = silent, trickle
+        self.timeout = 0.05              # listen()'s handle: Elm's default
+        self.events = []                 # from here on
+
+    def __setattr__(self, name, value):
+        if name in ("timeout", "baudrate") and self.__dict__.get("events") is not None:
+            self.events.append((name, value))
+        object.__setattr__(self, name, value)
+
+    def _put(self, data, rate=None):
+        self.segs.append((rate if rate is not None else self.rate, data,
+                          _hs_time.monotonic()))
+
+    def write(self, data):
+        self.events.append(("write", data))
+        brd = data.strip().upper().startswith(b"ATBRD")
+        if self.silent:
+            if brd and self.trickle is not None:
+                self.segs.append((self.baudrate, b"\xfe",
+                                  _hs_time.monotonic() + self.trickle))
+            return
+        n = len(self.segs)
+        super().write(data)
+        if brd:
+            t0 = _hs_time.monotonic()
+            for i in range(n, len(self.segs)):
+                rate, seg, _ = self.segs[i]
+                lag = (self.ok_lag if seg.startswith(b"OK") else
+                       self.ok_lag + self.ident_lag if b"ELM" in seg else 0.0)
+                self.segs[i] = (rate, seg, t0 + lag)
+
+    def _ready(self):
+        """The front segment's bytes the host can read now, and when more come."""
+        while self.segs and not self.segs[0][1]:
+            self.segs.pop(0)
+        if not self.segs:
+            return b"", None
+        rate, data, at = self.segs[0]
+        if rate != self.baudrate:
+            return b"", None             # noise to this host, never a byte
+        return (data, None) if at <= _hs_time.monotonic() else (b"", at)
+
+    def _front(self):
+        return self._ready()[0]
+
+    def _take(self, n):
+        data = self._front()[:n]
+        if data:
+            rate, buf, at = self.segs[0]
+            self.segs[0] = (rate, buf[len(data):], at)
+        return data
+
+    @property
+    def in_waiting(self):
+        now, n = _hs_time.monotonic(), 0
+        for rate, data, at in self.segs:
+            if rate != self.baudrate or at > now:
+                break
+            n += len(data)
+        return n
+
+    def _budget(self):
+        return self.CAP if self.timeout is None else min(self.timeout, self.CAP)
+
+    def _read(self, n):
+        deadline = _hs_time.monotonic() + self._budget()
+        out = b""
+        while len(out) < n:
+            got = self._take(n - len(out))
+            if got:
+                out += got
+            else:
+                _, nxt = self._ready()
+                now = _hs_time.monotonic()
+                if now >= deadline:
+                    break
+                if nxt is None or nxt >= deadline:
+                    _hs_time.sleep(deadline - now)     # select() times out
+                    break
+                _hs_time.sleep(max(0.0, nxt - now))
+                continue
+            if _hs_time.monotonic() >= deadline:
+                break
+        return out
+
+    def read(self, n=1):
+        t0 = _hs_time.monotonic()
+        out = self._read(n)
+        self.events.append(("read", self.timeout, _hs_time.monotonic() - t0))
+        return out
+
+    def read_until(self, term=b"\r"):
+        t0 = _hs_time.monotonic()
+        deadline = t0 + self._budget()
+        line = b""
+        while True:
+            c = self._read(1)
+            if not c:
+                break
+            line += c
+            if line.endswith(term):
+                break
+            if _hs_time.monotonic() >= deadline:
+                break
+        self.events.append(("read_until", self.timeout, _hs_time.monotonic() - t0))
+        return line
+
+
+def _lagging(**kw):
+    e = elm.Elm.__new__(elm.Elm)
+    e.ser = _Lagging(**kw)
+    return e
+
+
+def _reads(e):
+    return [ev for ev in e.ser.events if ev[0] in ("read", "read_until")]
+
+
+# THE CASE ITSELF: the OK and the identification each take 200 ms. With 50 ms
+# per read the host gives up on an adapter that was about to say yes.
+_lg = _lagging(ok_lag=0.2, ident_lag=0.2)
+check("an adapter whose OK and identification each take 200 ms is raised",
+      _lg.raise_baud(500000), True)
+_lgf = getattr(_lg, "fastbaud", None) or {}
+check("both ends end up on 500000", (_lg.ser.baudrate, _lg.ser.rate), (500000, 500000))
+check("and the record says so", (_lgf.get("outcome"), _lgf.get("failed_at")),
+      ("raised", None))
+check("every read in the handshake had 0.8 s, not the handle's 50 ms",
+      sorted({ev[1] for ev in _reads(_lg)}), [0.8])
+check("the record keeps the budget the reads really had", _lgf.get("read_timeout"), 0.8)
+check("the handle has its own 50 ms back afterwards", _lg.ser.timeout, 0.05)
+_tev = _lg.ser.events
+check("the budget is set once, before ATE0, and put back once, at the end",
+      ([ev[1] for ev in _tev if ev[0] == "timeout"],
+       ("timeout", 0.8) in _tev
+       and _tev.index(("timeout", 0.8)) < _tev.index(("write", b"ATE0\r")),
+       _tev[-1:]),
+      ([0.8, 0.05], True, [("timeout", 0.05)]))
+# The one time-critical window: from reading ATBRD's OK to the host's switch.
+_sw = _tev.index(("baudrate", 500000)) if ("baudrate", 500000) in _tev else 0
+check("nothing is done between reading ATBRD's OK and the host's switch",
+      _tev[_sw - 1][0] if _sw else None, "read_until")
+check("and the wire still carries exactly ATE0, ATBRD and the confirming CR",
+      [ev[1] for ev in _lg.ser.events if ev[0] == "write"],
+      [b"ATE0\r", b"ATBRD 08\r", b"\r"])
+
+# Hypothesis 1 exactly: the OK is prompt and the identification is not.
+_lg = _lagging(ident_lag=0.2)
+check("an identification 200 ms behind a prompt OK is raised too",
+      (_lg.raise_baud(500000), (getattr(_lg, "fastbaud", None) or {}).get("failed_at")),
+      (True, None))
+
+# BOUNDED, NOT JUST LONGER. The raise's comments remember a capture that sat in
+# a serial read for seven minutes. An adapter that never answers must fail the
+# raise inside the budget: 0.8 s for ATBRD's OK, then _settle()'s two tries.
+_lg = _lagging(silent=True)
+_t0 = _hs_time.monotonic()
+_lg_r = _lg.raise_baud(500000)
+_lg_took = _hs_time.monotonic() - _t0
+_lgf = getattr(_lg, "fastbaud", None) or {}
+check("an adapter that never answers fails the raise", _lg_r, False)
+check("at ATBRD's OK, having heard nothing",
+      (_lgf.get("failed_at"), _said(_lg, "ATBRD OK")), ("ATBRD OK", ""))
+check("no single read waits more than 1 s (longest %.2fs)"
+      % max([ev[2] for ev in _reads(_lg)] or [0]),
+      max([ev[2] for ev in _reads(_lg)] or [0]) < 1.0, True)
+check("and the whole raise gives up in under 4 s (took %.2fs)" % _lg_took,
+      _lg_took < 4.0, True)
+check("the link stays at 115200, with the handle's timeout back",
+      (_lgf.get("link_baud"), _lg.ser.timeout), (115200, 0.05))
+
+# THE LONGEST ONE READ CAN TAKE. read_until() checks its budget only after a
+# byte, so a stray byte just before the 0.8 s runs out buys one more read(1):
+# under two budgets, and never more. A silent adapter (above) never does this.
+_lg = _lagging(silent=True, trickle=0.7)
+_t0 = _hs_time.monotonic()
+_lg.raise_baud(500000)
+_lg_took = _hs_time.monotonic() - _t0
+_lg_long = max([ev[2] for ev in _reads(_lg)] or [0])
+check("a stray byte at 0.7 s stretches a read to under two budgets (%.2fs)" % _lg_long,
+      _lg_long < 1.7, True)
+check("and the raise still gives up in under 5 s (took %.2fs)" % _lg_took,
+      _lg_took < 5.0, True)
+
+# BACK ON EVERY PATH. Whichever step gives up, the reads had 0.8 s and the
+# handle leaves raise_baud() with the timeout it came in with.
+_back = []
+for _kw in ({}, {"fail": "echo-off"}, {"brd": False}, {"fail": "ident"},
+            {"confirm": False}):
+    _h = _stepped(**_kw)
+    _h.ser.timeout = 0.05
+    _h.raise_baud(500000)
+    _hf = getattr(_h, "fastbaud", None) or {}
+    _back.append((_hf.get("failed_at") or _hf.get("outcome"),
+                  _hf.get("read_timeout"), _h.ser.timeout))
+check("the handle's own timeout is back after a raise and after each step that gives up",
+      _back, [("raised", 0.8, 0.05), ("echo-off", 0.8, 0.05), ("ATBRD OK", 0.8, 0.05),
+              ("ident", 0.8, 0.05), ("final OK", 0.8, 0.05)])
+
+
+# A RESTORE THAT CANNOT HAPPEN IS NOT A RAISE THAT FAILED. pyserial's timeout
+# setter starts with tcgetattr, which raises once the device has gone; init()
+# and everything above it rely on raise_baud() returning, never raising.
+class _GoneOnRestore(_HandshakeElm):
+    def __setattr__(self, name, value):
+        if name == "timeout" and self.__dict__.get("armed") and value != 0.8:
+            raise sys.modules["serial"].SerialException("[Errno 5] Input/output error")
+        object.__setattr__(self, name, value)
+
+
+_h = elm.Elm.__new__(elm.Elm)
+_h.ser = _GoneOnRestore()
+_h.ser.timeout = 0.05
+_h.ser.armed = True
+check("a timeout that cannot be put back does not raise out of the handshake",
+      _raises(lambda: _h.raise_baud(500000), Exception), False)
+
+# ONE PLACE, AND THE KNOWN-GOOD NUMBER. The budget is changed inside
+# raise_baud() only, and it is the one connect.raise_baud() reads with.
+_elm_now = open(os.path.join(ROOT, "lib", "elm.py"), encoding="utf-8").read()
+_rb = _elm_now[_elm_now.index("def raise_baud(self"):]
+_rb = _rb[:_rb.index("\n    def ", 10)]
+check("the handle's timeout is changed only inside raise_baud()",
+      _elm_now.count("self.ser.timeout =") == _rb.count("self.ser.timeout =") > 0, True)
+check("and the budget is connect.raise_baud()'s",
+      "timeout=%s)" % getattr(elm.Elm, "HANDSHAKE_TIMEOUT", None)
+      in open(os.path.join(ROOT, "lib", "connect.py"), encoding="utf-8").read(), True)
+
 if _keep_env is None:
     os.environ.pop("OMACAR_FASTBAUD", None)
 else:
     os.environ["OMACAR_FASTBAUD"] = _keep_env
+
+# ------------------------------------------------ full-bus formatting, opt-in
+head("ATCAF0 is asked for only when OMACAR_CAF0 says so, and ATCAF1 always comes back")
+
+
+class _CafElm:
+    """Records every raw() command; monitor() answers with lines keyed to
+    whatever ATSP was sent most recently, the way a real probe depends on it."""
+
+    def __init__(self, hits=None):
+        self.sent = []
+        self.hits = hits or {}
+        self._proto = None
+
+    def raw(self, cmd):
+        self.sent.append(str(cmd).upper())
+        if str(cmd).upper().startswith("ATSP"):
+            self._proto = str(cmd).upper()[4:]
+        return ["OK"]
+
+    def monitor(self, command="ATMA", seconds=2.0, on_line=None, limit=200000,
+                should_stop=None):
+        lines = self.hits.get(self._proto, [])
+        for ln in lines:
+            if on_line:
+                on_line(ln)
+        return len(lines)
+
+
+_keep_caf0 = os.environ.get("OMACAR_CAF0")
+os.environ.pop("OMACAR_CAF0", None)
+
+# TEN-PLUS FRAMES ON THE FIRST PROTOCOL TRIED, SO THE PROBE STOPS THERE. That
+# is what makes the counts below exact: one pass through the per-protocol try
+# block, then the one final settle onto whichever protocol won.
+_heard = ["17C 00 12 34 00 00 00 00 00"] * 12
+_el_off = _CafElm(hits={"6": _heard})
+_chosen = listen._pick_monitor_protocol(_el_off, probe=0.01)
+check("a protocol is still chosen with the env var unset", _chosen, "6")
+check("and no ATCAF0 is sent without it",
+      any(c.startswith("ATCAF0") for c in _el_off.sent), False)
+
+os.environ["OMACAR_CAF0"] = "1"
+_el_on = _CafElm(hits={"6": _heard})
+listen._pick_monitor_protocol(_el_on, probe=0.01)
+# BOTH PLACES: the per-protocol probe has to run under the same formatting the
+# real capture will use, or a protocol that only works with ATCAF0 on could
+# lose to one that does not need it -- and the final settle onto the winner
+# has to leave the adapter in that state for the capture that follows.
+check("ATCAF0 is sent once per protocol probed and once on the final settle",
+      _el_on.sent.count("ATCAF0"), 2)
+
+# _restore_protocol() SENDS ATCAF1 UNCONDITIONALLY, EVEN WHEN THE PROBE FOUND
+# NOTHING. python-obd's PID parsing depends on ATCAF1's formatted replies, so
+# skipping it because no monitor protocol was found -- exactly the run whose
+# very next event is handing the port back to the daemon -- would break
+# ordinary telemetry for a reason nobody watching the dashboard could see.
+_el_restore = _CafElm()
+listen._restore_protocol(_el_restore, "7")
+check("ATCAF1 is sent on restore", "ATCAF1" in _el_restore.sent, True)
+
+_el_norestore = _CafElm()
+listen._restore_protocol(_el_norestore, None)
+check("...and also when no protocol was found to restore",
+      "ATCAF1" in _el_norestore.sent, True)
+check("with nothing else sent in that case (there is nothing to restore to)",
+      _el_norestore.sent, ["ATCAF1"])
+
+if _keep_caf0 is None:
+    os.environ.pop("OMACAR_CAF0", None)
+else:
+    os.environ["OMACAR_CAF0"] = _keep_caf0
 
 # ---------------------------------------------------- history rows are objects
 head("a chart reads history rows by name, because that is what they are")
@@ -2727,6 +3301,582 @@ check("nothing rate-limits the restart that keeps it alive",
       any(d.startswith("StartLimitBurst") for d in _directives), False)
 check("and the restart itself is still unconditional",
       any(d == "Restart=always" for d in _directives), True)
+
+# ------------------------------------------------------- the duty-cycle knobs
+head("the leg duty cycle is overridable, validated, bounded, and shown")
+
+_DUTY_ENV = ("OMACAR_DRIVELOG_BETWEEN", "OMACAR_DRIVELOG_LEG_LINES",
+             "OMACAR_DRIVELOG_QUIET", "OMACAR_DRIVELOG_END_ON_OVERFLOW")
+_duty_kept = {k: os.environ.get(k) for k in _DUTY_ENV}
+
+
+def _duty_restore():
+    for k, v in _duty_kept.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+try:
+    for k in _DUTY_ENV:
+        os.environ.pop(k, None)
+    _ov = _dl.read_overrides()
+    check("unset, between keeps its default", _ov["between"], _dl.BETWEEN_LEGS)
+    check("unset, the leg cap keeps listen's own default",
+          _ov["leg_lines"], _ln.DEFAULT_LIMIT)
+    check("unset, quiet keeps its default", _ov["quiet"], _dl.QUIET_TIMEOUT)
+    check("unset, ending on overflow is off", _ov["end_on_overflow"], False)
+    check("and nothing was overridden", _ov["notes"], [])
+
+    os.environ["OMACAR_DRIVELOG_BETWEEN"] = "240"
+    os.environ["OMACAR_DRIVELOG_LEG_LINES"] = "10000"
+    os.environ["OMACAR_DRIVELOG_QUIET"] = "30"
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "1"
+    _ov = _dl.read_overrides()
+    check("a good BETWEEN is honoured", _ov["between"], 240.0)
+    check("a good LEG_LINES is honoured", _ov["leg_lines"], 10000)
+    check("a good QUIET is honoured", _ov["quiet"], 30.0)
+    check("the overflow flag is exactly \"1\"", _ov["end_on_overflow"], True)
+    check("and every good override is noted for the start-up log",
+          len(_ov["notes"]), 3)
+
+    os.environ["OMACAR_DRIVELOG_BETWEEN"] = "not a number"
+    os.environ["OMACAR_DRIVELOG_LEG_LINES"] = "0"           # below the floor
+    os.environ["OMACAR_DRIVELOG_QUIET"] = "100000"          # above the ceiling
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "yes"   # only "1" counts
+    _ov = _dl.read_overrides()
+    check("a value that does not parse falls back to the default",
+          _ov["between"], _dl.BETWEEN_LEGS)
+    check("a value below the floor falls back to the default",
+          _ov["leg_lines"], _ln.DEFAULT_LIMIT)
+    check("a value above the ceiling falls back to the default",
+          _ov["quiet"], _dl.QUIET_TIMEOUT)
+    check("only the exact flag turns overflow-ending on",
+          _ov["end_on_overflow"], False)
+    # A GUARD THAT CANNOT FAIL IS NOT A GUARD. Confirmed by hand: disabling
+    # the `if not (lo <= val <= hi):` bounds check in _env_number() (so an
+    # out-of-range value is accepted rather than falling back) turned the two
+    # bounds checks above into FAILs -- "wanted 60000, got 0" for LEG_LINES
+    # and "wanted 120.0, got 100000.0" for QUIET -- while the unparseable-
+    # BETWEEN check kept passing, since that one is caught earlier, by the
+    # cast() itself. Restoring the check made every one of them pass again.
+    check("every fallback is still logged as an override attempt",
+          len(_ov["notes"]), 3)
+finally:
+    _duty_restore()
+
+head("a leg is capped by OMACAR_DRIVELOG_LEG_LINES, passed to listen() as limit=")
+
+_seen_kwargs = {}
+_orig_listen_call = _ln.listen
+
+
+def _fake_listen(**kw):
+    _seen_kwargs.update(kw)
+    cap = kw.get("cap")
+    if cap is not None:
+        cap.protocol = "6"
+    return cap
+
+
+_ln.listen = _fake_listen
+try:
+    _sup_leg = _dl.Supervisor(once=True, leg_lines=12345)
+    _sup_leg.say = lambda *a, **k: None
+    _sup_leg.leg()
+    check("the configured cap reaches listen() as limit=",
+          _seen_kwargs.get("limit"), 12345)
+finally:
+    _ln.listen = _orig_listen_call
+
+head("`omacar drive status` shows the duty cycle a running supervisor is using")
+
+_duty_tmp = tempfile.mkdtemp()
+_duty_state_kept = _dl.STATE
+_dl.STATE = os.path.join(_duty_tmp, "drivelog.json")
+try:
+    _sup_status = _dl.Supervisor(once=True, between=240.0, leg_lines=10000,
+                                 quiet=30.0, end_on_overflow=True)
+    _sup_status.publish()
+    _status_text, _ = _dl.report()
+    check("the gap between legs is shown", "240" in _status_text, True)
+    check("the leg's line cap is shown", "10000" in _status_text, True)
+    check("the quiet timeout is shown", "30" in _status_text, True)
+    check("and that ending on overflow is on",
+          "overflow" in _status_text.lower(), True)
+finally:
+    _dl.STATE = _duty_state_kept
+    shutil.rmtree(_duty_tmp, ignore_errors=True)
+
+head("an overflowed adapter can end the leg without waiting out the quiet timeout")
+
+_orig_listen_ov = _ln.listen
+
+
+def _fake_listen_overflow(**kw):
+    """Feeds the words a real overflow produces, then stays silent."""
+    cap = kw["cap"]
+    on_ready = kw.get("on_ready")
+    should_stop = kw["should_stop"]
+    if on_ready:
+        on_ready(cap)
+    cap.add_line("13A 0013000000000024")
+    cap.add_line("BUFFER FULL")
+    cap.add_line("STOPPED")
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if should_stop():
+            break
+        time.sleep(0.02)
+    return cap
+
+
+_ln.listen = _fake_listen_overflow
+try:
+    _sup_off = _dl.Supervisor(once=True, quiet=120.0, end_on_overflow=False)
+    _sup_off.say = lambda *a, **k: None
+    _t0 = time.time()
+    _sup_off.leg()
+    _took_off = time.time() - _t0
+    check("with the flag off, the overflow does not shorten the leg",
+          _took_off >= 5.0, True)
+
+    _sup_on = _dl.Supervisor(once=True, quiet=120.0, end_on_overflow=True)
+    _sup_on.say = lambda *a, **k: None
+    _t0 = time.time()
+    _sup_on.leg()
+    _took_on = time.time() - _t0
+    check(f"with the flag on, the leg ends on the overflow, not the 120s "
+          f"quiet timeout ({_took_on:.1f}s)", _took_on < 3.0, True)
+finally:
+    _ln.listen = _orig_listen_ov
+
+head("a leg's quiet timeout counts from when the adapter is listening, not from set-up")
+
+# MEASURED ON THE CAR, 29 SEPTEMBER. With the fallback preset (QUIET=10,
+# END_ON_OVERFLOW=1) every leg from 11:58 to 13:17 saved ZERO frames. The last
+# leg on default settings got its first frame 11.47s after the capture began:
+# ATZ, the protocol search and the monitor probe, at 115200. The quiet clock
+# started at leg set-up, and done() -- only ever asked once the monitor is
+# running -- found eleven seconds of "silence" on its very first call and
+# ended every leg about a second and a half before its first frame.
+
+
+class _LegClock:
+    """drivelog's clock, so eleven seconds of adapter set-up take none."""
+
+    def __init__(self):
+        self.t = time.time()
+
+    def time(self):
+        return self.t
+
+    def __getattr__(self, name):                 # strftime, sleep, ...
+        return getattr(time, name)
+
+
+def _slow_setup_listen(clock, ready_at, first_at, lines, backstop=120.0):
+    """A listen() whose adapter reaches the monitor `ready_at` seconds after
+    the leg began, and whose first line arrives at `first_at` -- then the
+    `lines`, one per hundredth of a second, then silence. should_stop is
+    asked before every read and never during set-up, which is what the real
+    listen() does: it only reaches Elm.monitor() for the final ATMA."""
+    out = {}
+
+    def fake(**kw):
+        cap, should_stop = kw["cap"], kw["should_stop"]
+        t0 = clock.t
+        clock.t = t0 + ready_at
+        if kw.get("on_ready"):
+            kw["on_ready"](cap)
+        todo = list(lines)
+        while clock.t - t0 < backstop:
+            if should_stop():
+                break
+            clock.t += 0.01
+            if todo and clock.t - t0 >= first_at:
+                cap.add_line(todo.pop(0))
+        out["ended_at"] = clock.t - t0
+        return cap
+    return fake, out
+
+
+_orig_listen_slow = _ln.listen
+_orig_dl_time = _dl.time
+_today = ["13A 0013000000000024"] * 128 + ["BUFFER FULL"]
+try:
+    _clk = _LegClock()
+    _dl.time = _clk
+
+    # Today's leg, on today's fallback preset.
+    _ln.listen, _slow = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                           lines=_today)
+    _sup_slow = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=True)
+    _sup_slow.say = lambda *a, **k: None
+    _sup_slow.leg()
+    check("QUIET=10 with 11.4s of set-up: the leg keeps the frames it heard",
+          (_sup_slow.last_leg or {}).get("frames"), 128)
+    check("and still ends on the overflow, not the quiet timeout "
+          f"({_slow.get('ended_at', 0):.1f}s after it began)",
+          12.5 <= _slow.get("ended_at", 0) < 15.0, True)
+
+    # The same set-up, without END_ON_OVERFLOW: the quiet timeout ends it,
+    # counted from the last frame.
+    _ln.listen, _slow2 = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                            lines=_today)
+    _sup_slow2 = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=False)
+    _sup_slow2.say = lambda *a, **k: None
+    _sup_slow2.leg()
+    check("QUIET=10, overflow-ending off: the frames are kept too",
+          (_sup_slow2.last_leg or {}).get("frames"), 128)
+
+    # A SILENT BUS STILL ENDS THE LEG, quiet seconds after listening began --
+    # not before (the old clock ended it at once) and not never.
+    _ln.listen, _silent = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                             lines=[])
+    _sup_silent = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=True)
+    _sup_silent.say = lambda *a, **k: None
+    _sup_silent.leg()
+    check("a silent bus ends the leg QUIET seconds after listening began "
+          f"({_silent.get('ended_at', 0):.2f}s after the leg began)",
+          21.4 <= _silent.get("ended_at", 0) < 21.6, True)
+finally:
+    _ln.listen = _orig_listen_slow
+    _dl.time = _orig_dl_time
+
+# --------------------------------------------------------- the parked session
+head("tools/ima-session.sh sends only read-only prospect/listen/mcp calls")
+
+import re as _ima_re              # noqa: E402
+import shutil as _ima_shutil      # noqa: E402
+import subprocess as _ima_sp      # noqa: E402
+import tempfile as _ima_tempfile  # noqa: E402
+
+_IMA_SH = os.path.join(ROOT, "tools", "ima-session.sh")
+_ima_src = open(_IMA_SH, encoding="utf-8").read()
+# Comments say what this must never do, in words -- "the guard checks
+# tools/ima-session.sh reads this file and fails if any of those appear as
+# something it would send" cannot itself be the trigger for its own failure.
+# Only the code, with comment lines stripped, is what could actually run.
+_ima_code = "\n".join(ln for ln in _ima_src.splitlines()
+                      if not ln.strip().startswith("#"))
+
+check("the script exists and is executable",
+      os.access(_IMA_SH, os.X_OK), True)
+check("never runs `omacar write`", "omacar write" in _ima_code, False)
+check("never sends a clear", bool(_ima_re.search(r"clear", _ima_code, _ima_re.I)), False)
+check("never sends ATCSM0", "atcsm0" in _ima_code.lower(), False)
+
+# Every 0x-prefixed service byte named anywhere in the executable text -- in a
+# --service flag, in a raw request string, or in a label a human reads -- has
+# to be one of the two read-only services section 4 uses. Checking the whole
+# text rather than just the --service flags also catches one built by string
+# concatenation instead.
+_FORBIDDEN_SERVICES = {"10", "11", "14", "27", "28", "2E", "2F", "31", "34",
+                       "36", "37", "3E", "85"}
+_ALLOWED_SERVICES = {"21", "22"}
+_services = [m.upper() for m in _ima_re.findall(r"0x([0-9A-Fa-f]{2})\b", _ima_code)]
+check("service bytes were found (the checks below are not vacuous)",
+      len(_services) > 0, True)
+check("every 0x service byte in the script is 0x21 or 0x22",
+      [s for s in _services if s not in _ALLOWED_SERVICES], [])
+check("and none of them is one of the forbidden services",
+      [s for s in _services if s in _FORBIDDEN_SERVICES], [])
+
+# Step 0b's "HEADER:REQUEST" pairs are the one place a raw request hex string
+# is assembled by hand, checked the same way car_request itself would refuse
+# one: by its first byte.
+_pairs = _ima_re.findall(r'"(18DA[0-9A-Fa-f]{2}F1):([0-9A-Fa-f]{4,6})"', _ima_code)
+check("step 0b's requests were found (the check below is not vacuous)",
+      len(_pairs) > 0, True)
+check("every step 0b request's service byte is 0x21 or 0x22",
+      [r for _h, r in _pairs if r[:2].upper() not in _ALLOWED_SERVICES], [])
+
+# Every 8-hex-digit token anywhere in the script -- every place a header could
+# be spelled out, in a --headers flag or a HEADER:REQUEST pair -- has to be a
+# tester address, never a header naming live control traffic.
+_HEADER_RE = _ima_re.compile(r"^(?:18DA|18DB)[0-9A-F]{2}F1$")
+_headers = _ima_re.findall(r"\b([0-9A-Fa-f]{8})\b", _ima_code)
+check("header-shaped tokens were found (the check below is not vacuous)",
+      len(_headers) > 0, True)
+check("every 8-hex-digit token in the script is 18DAxxF1 or 18DBxxF1",
+      [h for h in _headers if not _HEADER_RE.match(h.upper())], [])
+
+# Section 4 built each 0x22 range to stay under 24 ids on purpose:
+# prospect.sweep() abandons a header after 24 consecutive silences, which
+# could understate a wider range on a module that answers nothing for an
+# unmapped DID instead of refusing it.
+_prospect_calls = _ima_re.findall(
+    r'run_prospect\s+"[^"]*"\s+0x([0-9A-Fa-f]{2})\s+"([^"]*)"\s+"([^"]*)"\s+(\d+)',
+    _ima_code)
+check("prospect calls were found (the check below is not vacuous)",
+      len(_prospect_calls) > 0, True)
+for _svc, _hdrs, _rng, _rounds in _prospect_calls:
+    if _svc.upper() == "22":
+        _lo, _hi = _rng.split("-")
+        _span = int(_hi, 16) - int(_lo, 16) + 1
+        check(f"0x22 range {_rng} ({_hdrs}) is 24 ids or fewer", _span <= 24, True)
+
+# A GUARD THAT CANNOT FAIL IS NOT A GUARD. Confirmed by hand: a line
+#   run_prospect "x" 0x2E "18DA03F1" "0000-0000" 1
+# inserted above made "every 0x service byte ... is 0x21 or 0x22" and "none
+# of them is one of the forbidden services" both report FAIL; removing it
+# made every check here pass again. See the commit message for the exact
+# before/after run.
+
+head("`--dry-run` prints the plan and sends nothing")
+
+_ima_bin = _ima_tempfile.mkdtemp()
+_fake_omacar = os.path.join(_ima_bin, "omacar")
+_ima_calls = os.path.join(_ima_bin, "omacar-calls.log")
+with open(_fake_omacar, "w", encoding="utf-8") as f:
+    f.write('#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % _ima_calls)
+os.chmod(_fake_omacar, 0o755)
+
+_ima_state = _ima_tempfile.mkdtemp()
+_ima_env = dict(os.environ)
+_ima_env["PATH"] = _ima_bin + os.pathsep + _ima_env.get("PATH", "")
+_ima_env["XDG_STATE_HOME"] = _ima_state
+
+_ima_proc = _ima_sp.run(["bash", _IMA_SH, "--dry-run"], env=_ima_env,
+                        capture_output=True, text=True, timeout=60)
+
+check("--dry-run exits 0", _ima_proc.returncode, 0)
+check("--dry-run never invokes the real omacar", os.path.exists(_ima_calls), False)
+
+_ima_expected = [
+    "omacar drive off",
+    "omacar listen capture --id 231 --seconds 15 --save --note probe-231",
+    "omacar listen capture --id 307 --seconds 15 --save --note probe-307",
+    "omacar listen capture --id 115 --seconds 15 --save --note probe-115",
+    "omacar listen capture --id 17D --seconds 15 --save --note probe-17D",
+    '"header":"18DA0EF1","request":"222660"',
+    '"header":"18DA03F1","request":"2101"',
+    "omacar prospect --service 0x22 --headers 18DA0EF1,18DA10F1 --range 2610-2616 --parked --rounds 4",
+    "omacar prospect --service 0x22 --headers 18DA0EF1,18DA10F1 --range 2660-2666 --parked --rounds 4",
+    "omacar prospect --service 0x22 --headers 18DA0EF1 --range 2240-2240 --parked --rounds 2",
+    "omacar prospect --service 0x22 --headers 18DA03F1,18DA04F1 --range 2001-2012 --parked --rounds 8",
+    "omacar prospect --service 0x22 --headers 18DA03F1,18DA04F1 --range 2021-202C --parked --rounds 8",
+    "omacar prospect --service 0x22 --headers 18DA03F1,18DA04F1 --range 2222-2222 --parked --rounds 8",
+    "omacar prospect --service 0x21 --headers 18DA03F1,18DA04F1 --range 00-FF --parked --rounds 8",
+    "omacar candlog --profile honda-crz-2015 --once",
+    "omacar drive on",
+]
+_ima_missing = [s for s in _ima_expected if s not in _ima_proc.stdout]
+check("--dry-run's plan names every expected command", _ima_missing, [])
+check("step 5 is not planned without --full", "2000-2FFF" not in _ima_proc.stdout, True)
+
+_ima_proc_full = _ima_sp.run(["bash", _IMA_SH, "--dry-run", "--full"], env=_ima_env,
+                             capture_output=True, text=True, timeout=60)
+check("--dry-run --full exits 0", _ima_proc_full.returncode, 0)
+check("--dry-run --full never invokes the real omacar",
+      os.path.exists(_ima_calls), False)
+check("--dry-run --full also plans the optional block sweep",
+      "omacar discover --headers 18DA03F1,18DA04F1 --service 0x22 --range "
+      "2000-2FFF --budget 45 --once" in _ima_proc_full.stdout, True)
+check("and its status check",
+      "omacar discover status" in _ima_proc_full.stdout, True)
+
+_ima_shutil.rmtree(_ima_bin, ignore_errors=True)
+_ima_shutil.rmtree(_ima_state, ignore_errors=True)
+
+# ------------------------------------------------------- the driveway check
+head("tools/driveway-check.sh may run only the commands it is allowed to")
+
+_DW_SH = os.path.join(ROOT, "tools", "driveway-check.sh")
+_DW_PY = os.path.join(ROOT, "tools", "driveway_verdict.py")
+_dw_sh_src = open(_DW_SH, encoding="utf-8").read()
+_dw_py_src = open(_DW_PY, encoding="utf-8").read()
+
+
+def _dw_code_of(src):
+    # Same reasoning as tools/ima-session.sh above: only the code, comment
+    # lines stripped, is what could actually run -- this file's own header
+    # comment names every one of the words the checks below forbid, on
+    # purpose, as the list of things it must never do.
+    return "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
+
+
+_dw_sh_code = _dw_code_of(_dw_sh_src)
+_dw_py_code = _dw_code_of(_dw_py_src)
+
+_DW_OMACAR_ASSIGN = 'OMACAR_BIN="${OMACAR_BIN:-$ROOT/bin/omacar}"'
+_DW_SYSTEMCTL_ASSIGN = 'SYSTEMCTL="${OMACAR_SYSTEMCTL:-systemctl}"'
+# What may follow each way of naming omacar / systemctl. drive off/on/status
+# and listen capture are the brief's four; "driveway-check" is this tool's
+# own name, in its usage text and error prefix.
+_DW_OMACAR_OK = _ima_re.compile(
+    r"\s+(drive\s+(off|on|status)|listen\s+capture|driveway-check)\b")
+_DW_OMACAR_BIN_OK = _ima_re.compile(r'\s+(drive\s+(off|on|status)|listen\s+capture)\b')
+_DW_SYSTEMCTL_OK = _ima_re.compile(r'\s+--user\s+(daemon-reload|restart\s+omacar-drivelog)\b')
+# Nothing in either file may name any of these: none of them belongs in a tool
+# that only reads files the daemon and the recorder already write, and the
+# ones that open the adapter are the whole difference between this and
+# tools/ima-session.sh.
+_DW_BANNED = ("serial", "Elm(", "request_port", "connect.connect", "listen(",
+              ".raw(", ".request(", "subprocess", "os.system", "Popen")
+
+
+def _dw_findings(sh_code, py_code):
+    """Everything in the two files' code that the allowlist does not permit.
+    An empty list is a pass. Takes the code as text so the mutation checks
+    below can feed it a line it must catch."""
+    found = []
+    both = sh_code + "\n" + py_code
+    low = both.lower()
+    for word in ("omacar write", "prospect", "mcp", "atcsm0"):
+        if word in low:
+            found.append(f"forbidden word: {word}")
+    if _ima_re.search(r"clear", both, _ima_re.I):
+        found.append("forbidden word: clear")
+    for b in _ima_re.findall(r"0x([0-9A-Fa-f]{2})\b", both):
+        if b.upper() in _FORBIDDEN_SERVICES:
+            found.append(f"forbidden UDS service byte: 0x{b}")
+    for tok in _DW_BANNED:
+        if (tok.lower() in low) if tok == "serial" else (tok in both):
+            found.append(f"banned (opens the adapter or spawns a process): {tok}")
+    if _ima_re.search(r"\bsudo\b", sh_code):
+        found.append("sudo")
+    for line in sh_code.splitlines():
+        s = line.strip()
+        if "bin/omacar" in s and s != _DW_OMACAR_ASSIGN:
+            found.append(f"bin/omacar outside the OMACAR_BIN default: {s}")
+        for m in _ima_re.finditer(r'\$\{?OMACAR_BIN\}?"?', s):
+            rest = s[m.end():]
+            if rest.startswith(":-"):
+                continue                     # the assignment's own default
+            if not _DW_OMACAR_BIN_OK.match(rest):
+                found.append(f"$OMACAR_BIN used for something else: {s}")
+        for m in _ima_re.finditer(r"(?<![\w./-])omacar(?![\w./-])", s):
+            if not _DW_OMACAR_OK.match(s[m.end():]):
+                found.append(f"omacar used for something else: {s}")
+        if "systemctl" in s and s != _DW_SYSTEMCTL_ASSIGN:
+            found.append(f"a literal systemctl outside SYSTEMCTL's own default: {s}")
+        for m in _ima_re.finditer(r'\$\{?SYSTEMCTL\}?"?', s):
+            if not _DW_SYSTEMCTL_OK.match(s[m.end():]):
+                found.append(f"$SYSTEMCTL used for something else: {s}")
+    return found
+
+
+check("the script exists and is executable", os.access(_DW_SH, os.X_OK), True)
+check("the two files' code passes the allowlist", _dw_findings(_dw_sh_code, _dw_py_code), [])
+
+# The checks are not vacuous: the things they look at are really there.
+check("$OMACAR_BIN is used", len(_ima_re.findall(r'\$\{?OMACAR_BIN', _dw_sh_code)) > 3, True)
+check("$SYSTEMCTL is used", len(_ima_re.findall(r'\$\{?SYSTEMCTL', _dw_sh_code)) >= 2, True)
+check("0x-prefixed bytes are found (0x01, the gear byte for P)",
+      len(_ima_re.findall(r"0x([0-9A-Fa-f]{2})\b", _dw_sh_code + _dw_py_code)) > 0, True)
+
+# A GUARD THAT CANNOT FAIL IS NOT A GUARD. The first version of this one let
+# all of these through. Each is a line inserted before the `drive off` step of
+# the real script's code; every one has to be caught. (Also confirmed by hand
+# on the box copy of the file itself -- see the fix-round section of
+# omacar-notes/driveway-check-report.md.)
+_dw_mutations = {
+    "omacar doctor (sends OBD requests)": "omacar doctor",
+    "$OMACAR_BIN live RPM": '"$OMACAR_BIN" live RPM',
+    "${OMACAR_BIN} live RPM": '${OMACAR_BIN} live RPM',
+    "sudo systemctl stop omacar-daemon": "sudo systemctl stop omacar-daemon",
+    "a systemctl that is not the override": "systemctl --user stop omacar-daemon",
+    "$SYSTEMCTL stop omacar-drivelog": '"$SYSTEMCTL" --user stop omacar-drivelog',
+    "bin/omacar dtc, without the word 'clear'": '"$ROOT/bin/omacar" dtc --once',
+    "omacar mode god": "omacar mode god",
+}
+for _label, _line in _dw_mutations.items():
+    _mutated = _dw_sh_code.replace(
+        'run_cmd "stand the recorder down', _line + '\nrun_cmd "stand the recorder down', 1)
+    check(f"mutation caught: {_label}",
+          _mutated != _dw_sh_code and len(_dw_findings(_mutated, _dw_py_code)) > 0, True)
+for _label, _line in {
+        "import serial": "import serial",
+        "an Elm( on the adapter": "el = Elm(port)",
+        "request_port": "connect.request_port(port)",
+        "listen(": "listenlib.listen(seconds=1)",
+        "a spawned process": "subprocess.run(['omacar', 'doctor'])"}.items():
+    check(f"mutation caught in the helper: {_label}",
+          len(_dw_findings(_dw_sh_code, _dw_py_code + "\n" + _line)) > 0, True)
+
+head("`--dry-run` prints the plan and sends nothing, for all three modes")
+
+_dw_bin = _ima_tempfile.mkdtemp()
+_dw_fake_omacar = os.path.join(_dw_bin, "omacar")
+_dw_fake_systemctl = os.path.join(_dw_bin, "systemctl")
+_dw_calls = os.path.join(_dw_bin, "calls.log")
+for _path in (_dw_fake_omacar, _dw_fake_systemctl):
+    with open(_path, "w", encoding="utf-8") as f:
+        f.write('#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % _dw_calls)
+    os.chmod(_path, 0o755)
+
+
+def _run_driveway(*extra_args, dropin_files=None, systemctl=False):
+    state_dir = _ima_tempfile.mkdtemp()
+    dropin_dir = _ima_tempfile.mkdtemp()
+    for _name, _body in (dropin_files or {}).items():
+        with open(os.path.join(dropin_dir, _name), "w", encoding="utf-8") as f:
+            f.write(_body)
+    env = dict(os.environ)
+    env["OMACAR_BIN"] = _dw_fake_omacar
+    if systemctl:
+        env["OMACAR_SYSTEMCTL"] = _dw_fake_systemctl
+    env["XDG_STATE_HOME"] = state_dir
+    env["OMACAR_DROPIN_DIR"] = dropin_dir
+    proc = _ima_sp.run(["bash", _DW_SH, "--dry-run", *extra_args], env=env,
+                       capture_output=True, text=True, timeout=60, input="")
+    return proc, state_dir, dropin_dir
+
+
+_dw_proc, _dw_state, _ = _run_driveway(systemctl=True)
+check("--dry-run (test mode) exits 0", _dw_proc.returncode, 0)
+check("--dry-run never invokes omacar or systemctl", os.path.exists(_dw_calls), False)
+
+_dw_expected = [
+    f"{_dw_fake_omacar} drive off",
+    f"timeout 90 env OMACAR_FASTBAUD=1 {_dw_fake_omacar} listen capture --seconds 20"
+    " --save --note fastbaud-test",
+    f"timeout 90 env OMACAR_FASTBAUD=1 OMACAR_CAF0=1 {_dw_fake_omacar} listen capture"
+    " --seconds 20 --save --note caf0-test",
+    f"{_dw_fake_systemctl} --user daemon-reload",
+    f"{_dw_fake_systemctl} --user restart omacar-drivelog",
+    f"{_dw_fake_omacar} drive on",
+]
+_dw_missing = [s for s in _dw_expected if s not in _dw_proc.stdout]
+check("--dry-run's plan names every expected command", _dw_missing, [])
+check("the plan shows the recorder being stood down before anything else",
+      _dw_proc.stdout.index("drive off") < _dw_proc.stdout.index("listen capture"), True)
+_dw_summary_path = None
+for _root, _dirs, _files in os.walk(_dw_state):
+    if "summary.json" in _files:
+        _dw_summary_path = os.path.join(_root, "summary.json")
+check("a dry run still leaves a summary.json", _dw_summary_path is not None, True)
+
+_dw_proc_ap, _, _ = _run_driveway("--apply-preset", "fallback")
+check("--dry-run --apply-preset exits 0", _dw_proc_ap.returncode, 0)
+check("--dry-run --apply-preset never invokes the real omacar",
+      os.path.exists(_dw_calls), False)
+check("--dry-run --apply-preset shows the real Environment= line, not an empty one",
+      "Environment=OMACAR_DRIVELOG_END_ON_OVERFLOW=1 OMACAR_DRIVELOG_QUIET=10 "
+      "OMACAR_DRIVELOG_BETWEEN=240" in _dw_proc_ap.stdout, True)
+check("--dry-run --apply-preset stands the recorder down first and gives it back",
+      (f"{_dw_fake_omacar} drive off" in _dw_proc_ap.stdout,
+       f"{_dw_fake_omacar} drive on" in _dw_proc_ap.stdout), (True, True))
+
+_dw_proc_rm, _, _ = _run_driveway(
+    "--remove-preset", dropin_files={"driveway-preset.conf": "[Service]\nEnvironment=X=1\n"})
+check("--dry-run --remove-preset exits 0", _dw_proc_rm.returncode, 0)
+check("--dry-run --remove-preset never invokes the real omacar",
+      os.path.exists(_dw_calls), False)
+check("--dry-run --remove-preset plans the rename, the reload and the restart",
+      all(s in _dw_proc_rm.stdout for s in
+          ("driveway-preset.conf.off", "--user daemon-reload",
+           "--user restart omacar-drivelog")), True)
+
+_dw_proc_none, _, _ = _run_driveway("--remove-preset")
+check("--dry-run --remove-preset with nothing to remove says so and plans nothing",
+      ("nothing to remove" in _dw_proc_none.stdout, "drive off" in _dw_proc_none.stdout),
+      (True, False))
+
+_ima_shutil.rmtree(_dw_bin, ignore_errors=True)
 
 # ----------------------------------------------------------------------- done
 print()

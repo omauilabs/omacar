@@ -49,6 +49,7 @@ class Elm:
         self.ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
         self.header = None
         self.protocol = None
+        self.fastbaud = None      # what raise_baud() did, if it was asked to
         time.sleep(0.2)
 
     # -- transport ---------------------------------------------------------
@@ -253,8 +254,45 @@ class Elm:
     # their own baud; none of them should have to know this exists.
     FAST_BAUD = 500000
 
+    # HOW LONG EACH ANSWER IN THE HANDSHAKE MAY TAKE, and it is
+    # connect.raise_baud()'s number, the handshake that carried 1,907 frames/s
+    # on 28 September. listen() opens its Elm with the constructor's 0.05 s,
+    # and pyserial 3.5's read_until() gets one timeout for the whole call: on
+    # that handle ATBRD's OK and the identification at the new rate each had
+    # 50 ms to reach the host, and on 29 September the raise did not engage.
+    # Set for the handshake only -- _settle()'s reads on a raise that gives up
+    # included -- and put back on every way out. A silent adapter costs 0.8 s
+    # per read; a read_until() that hears a stray byte just before its budget
+    # ends can take under twice that, never more.
+    HANDSHAKE_TIMEOUT = 0.8
+
     def raise_baud(self, target=FAST_BAUD):
-        """Talk the link up. Returns True if the rate actually moved."""
+        """Talk the link up. Returns True if the rate actually moved.
+
+        WHAT HAPPENED IS KEPT, NOT JUST WHETHER. On 29 September capture A
+        ran with OMACAR_FASTBAUD=1, overflowed exactly as it does at 115200,
+        and nothing said whether this was attempted, what the adapter
+        answered, or which step gave up: every way out below returned False
+        and said nothing. So the attempt is left on the connection as
+        `self.fastbaud`, for listen() to keep with the capture and log:
+
+            None when OMACAR_FASTBAUD was not "1" -- not asked, not a failure.
+            Otherwise a dict: `outcome` ("raised", "failed" or "not
+            attempted"), `failed_at` (the step that gave up: "echo-off",
+            "ATBRD OK", "ident" or "final OK"), `why` (an error's words, or
+            why it was not attempted), `steps` (each step reached, with what
+            the host read back and how many ms that took), `settled` (the
+            rate _settle() found the adapter answering on) and `link_baud`
+            (the rate the handle is on afterwards -- read off it, because a
+            False here can still leave both ends at the new rate).
+            `read_timeout` is the budget the handshake's reads really had:
+            HANDSHAKE_TIMEOUT once it is set, the handle's own if setting it
+            failed. The handle leaves with the timeout it came in with.
+
+        Recording this sends nothing new. The only extra read is the
+        echo-off's reply, which was thrown away unread and is now read out
+        of the buffer first, then thrown away as before.
+        """
         # OPT-IN UNTIL THE WHOLE PATH IS PROVEN, AND THE DEFAULT IS OFF.
         #
         # The measurement behind this is solid: 500000 carried 1,907 lines a
@@ -270,15 +308,27 @@ class Elm:
         # OMACAR_FASTBAUD=1 asks for it, which is how it gets finished off the
         # car, where a wedged adapter costs nothing but time.
         if os.environ.get("OMACAR_FASTBAUD") != "1":
+            self.fastbaud = None
             return False
         cur = getattr(self.ser, "baudrate", 0)
+        trail = self.fastbaud = {
+            "outcome": "not attempted", "failed_at": None, "why": None,
+            "from": cur, "target": target,
+            # The budget each read below really gets, in total: the handle's
+            # own until HANDSHAKE_TIMEOUT is set, below.
+            "read_timeout": getattr(self.ser, "timeout", None),
+            "steps": [], "settled": None, "link_baud": cur}
         if not target or not cur or target <= cur:
+            trail["why"] = f"the link is already at {cur} baud"
             return False
         div = round(4000000.0 / target)
         # The divisor is what the adapter takes, so a target it cannot express
         # exactly is not a target: ask for what will really happen.
         if div < 1 or div > 255 or abs(4000000.0 / div - target) > target * 0.02:
+            trail["why"] = f"{target} baud is not 4 MHz over a whole divisor"
             return False
+        trail["outcome"] = "failed"
+        own_timeout = getattr(self.ser, "timeout", None)
         try:
             # ECHO OFF FIRST, AND THIS IS THE WHOLE BUG IT SHIPPED WITH.
             #
@@ -291,36 +341,97 @@ class Elm:
             # after that blocking on bytes that can never parse. That is the
             # seven-minute hang at zero CPU, and it is why this does not rely
             # on the caller having turned echo off yet.
+            trail["failed_at"] = "echo-off"
+            # BEFORE ANYTHING IS WRITTEN, never between ATBRD's OK and the
+            # host's switch below: setting it is a termios round trip, and
+            # that window holds exactly what it always held.
+            self.ser.timeout = self.HANDSHAKE_TIMEOUT
+            trail["read_timeout"] = self.HANDSHAKE_TIMEOUT
+            t = time.time()
             self.ser.reset_input_buffer()
             self.ser.write(b"ATE0\r")
             self.ser.flush()
             time.sleep(0.25)
+            self._heard("echo-off", self._waiting(), t)
             self.ser.reset_input_buffer()
+            trail["failed_at"] = "ATBRD OK"
+            t = time.time()
             self.ser.write(b"ATBRD %02X\r" % div)
             self.ser.flush()
             # READ ONLY TO THE FIRST CR. A fixed-size read swallows the
             # identification that arrives at the NEW rate and turns it into
             # line noise, and the handshake then fails on a link that was
             # perfectly capable.
-            if b"OK" not in self.ser.read_until(b"\r").upper():
+            said = self.ser.read_until(b"\r")
+            if b"OK" not in said.upper():
+                self._heard("ATBRD OK", said, t)
                 # It may still have switched on us -- see _settle().
-                self._settle(cur, target)
+                trail["settled"] = self._settle(cur, target)
                 return False
             self.ser.baudrate = target
-            ident = self.ser.read_until(b"\r").upper()
+            # RECORDED AFTER THE SWITCH, NOT BEFORE IT. From the OK to the
+            # host's switch the adapter may already be sending its
+            # identification at the new rate, so nothing is added to that
+            # window: it holds exactly what it held before this record
+            # existed. So ATBRD's `ms` includes the host's switch, and the
+            # ident's starts after it. A switch that raises is reported at
+            # this step.
+            self._heard("ATBRD OK", said, t)
+            trail["failed_at"] = "ident"
+            t = time.time()
+            said = self.ser.read_until(b"\r")
+            self._heard("ident", said, t)
+            ident = said.upper()
             if b"ELM" not in ident and b"STN" not in ident:
-                self._settle(cur, target)
+                trail["settled"] = self._settle(cur, target)
                 return False
+            trail["failed_at"] = "final OK"
+            t = time.time()
             self.ser.write(b"\r")
             self.ser.flush()
             time.sleep(0.2)
-            if b"OK" not in self.ser.read(64).upper():
-                self._settle(cur, target)
+            said = self.ser.read(64)
+            self._heard("final OK", said, t)
+            if b"OK" not in said.upper():
+                trail["settled"] = self._settle(cur, target)
                 return False
+            trail["outcome"], trail["failed_at"] = "raised", None
             return True
-        except Exception:                                     # noqa: BLE001
-            self._settle(cur, target)
+        except Exception as why:                              # noqa: BLE001
+            trail["why"] = f"{type(why).__name__}: {why}"
+            trail["settled"] = self._settle(cur, target)
             return False
+        finally:
+            # THE HANDLE'S OWN TIMEOUT BACK, ON EVERY WAY OUT, AND NEVER A
+            # RAISE. pyserial's setter starts with tcgetattr, which raises once
+            # the device has gone, and init() relies on this returning.
+            try:
+                self.ser.timeout = own_timeout
+            except Exception:                                 # noqa: BLE001
+                pass
+            trail["link_baud"] = getattr(self.ser, "baudrate", None)
+
+    def _waiting(self):
+        """Whatever the adapter has already sent, read without waiting for more."""
+        try:
+            n = int(getattr(self.ser, "in_waiting", 0) or 0)
+            return self.ser.read(min(n, 256)) if n > 0 else b""
+        except Exception:                                     # noqa: BLE001
+            return b""
+
+    def _heard(self, step, data, since):
+        """One step of the handshake as the host saw it: what came back, and
+        after how long. Bytes that are not text -- line noise from two ends on
+        different rates -- are kept as \\x escapes rather than dropped.
+        Never raises: a record that failed must not become a handshake that
+        failed."""
+        try:
+            self.fastbaud["steps"].append({
+                "step": step,
+                "answered": bytes(data or b"")[:80].decode("ascii", "backslashreplace"),
+                "ms": int(round((time.time() - since) * 1000))})
+        except Exception:                                     # noqa: BLE001
+            pass
 
     def _settle(self, *rates):
         """Put the handle back on whatever the adapter is actually answering.

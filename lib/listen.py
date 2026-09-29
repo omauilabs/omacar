@@ -113,6 +113,12 @@ FLUSH_EVERY = 30.0
 RUNNING = os.path.join(records.STATE, "listen-running.json")
 STOPFILE = os.path.join(records.STATE, "listen-stop")
 
+# ONE LINE PER ADAPTER CONNECTION A CAPTURE MAKES: the rate the link was on,
+# and what OMACAR_FASTBAUD's raise did (see Elm.raise_baud). The capture
+# keeps the same two facts; this is the copy that survives a capture that
+# was never saved -- a quiet probe, a leg that caught nothing.
+LINKLOG = os.path.join(records.STATE, "link.jsonl")
+
 
 # ------------------------------------------------------------------ the frames
 # An arbitration identifier is 3 hex digits on an 11-bit bus and 8 on a 29-bit
@@ -125,6 +131,30 @@ STOPFILE = os.path.join(records.STATE, "listen-stop")
 # quiet. A false "nothing was heard", on the one capability whose whole purpose
 # is to prove the data is there, is the worst possible failure mode for it.
 ID_WIDTHS = (3, 8)
+
+# ATCAF1'S OWN CENSORSHIP, RECOVERED RATHER THAN DISCARDED.
+#
+# ATCAF1 -- the ELM's default CAN auto-formatting, on unless OMACAR_CAF0=1
+# asks _pick_monitor_protocol() and listen() to turn it off -- rejects any
+# frame whose first data byte is 0x08-0x0F or >= 0x20 by printing the FULL,
+# CORRECT bytes and then appending this suffix. parse() used to throw the
+# whole line away: split on whitespace, the token after the identifier ends
+# "...68 2F <DATA" and "ERROR", neither of which is whole hex bytes, so
+# nothing parsed and both went into `rejected`. Measured on a real drive: 818
+# lines out of 3,554, 23% of everything the adapter sent -- and every one of
+# them carried the real frame ahead of the suffix. Gear position 0x191
+# (0x01 = P, 0x08 = D) vanished from every moving capture this way, because D
+# is 0x08, exactly the byte this suffix marks unreadable and is not: the
+# frame is intact, only the suffix says otherwise. Stripping it costs nothing
+# and is on by default; see Capture.recovered for the count kept of it.
+DATA_ERROR_SUFFIX = "<DATA ERROR"
+
+
+def _drop_data_error(text):
+    """(text, was_there) -- an already-upper-cased line with the suffix gone."""
+    if text.endswith(DATA_ERROR_SUFFIX):
+        return text[:-len(DATA_ERROR_SUFFIX)].strip(), True
+    return text, False
 
 
 def parse(line, header_digits=None):
@@ -142,8 +172,18 @@ def parse(line, header_digits=None):
     hex bytes after a legal identifier is not a frame, and the words the adapter
     emits in monitor mode -- STOPPED, BUFFER FULL, CAN ERROR -- are exactly the
     anything else this rejects.
+
+    A LINE ENDING " <DATA ERROR" IS NOT ONE OF THOSE WORDS. It is ATCAF1's
+    other censorship (see DATA_ERROR_SUFFIX) and it carries a real frame ahead
+    of the suffix, so the suffix is dropped before anything else happens and
+    the remainder is parsed exactly as an ordinary line. A line that is only
+    the suffix, or only words, still returns None -- stripping it leaves
+    nothing that looks like an identifier.
     """
     text = (line or "").strip().upper()
+    if not text:
+        return None
+    text, _ = _drop_data_error(text)
     if not text:
         return None
     parts = text.split()
@@ -188,6 +228,13 @@ class Capture:
         self.frames = []                 # (t, can_id, [bytes])
         self.marks = []                  # (t, label)
         self.rejected = 0
+        # HOW MANY OF `frames` WERE RESCUED FROM A " <DATA ERROR" SUFFIX. Not a
+        # second category -- these frames are already counted in `frames` and
+        # nowhere in `rejected` -- but a capture taken before this recovery
+        # existed and one taken after are not the same evidence, and the only
+        # honest way to compare them is to say how many of the second capture's
+        # frames would have been silently gone under the first. See parse().
+        self.recovered = 0
         # WHAT THE ADAPTER SAID WHEN IT STOPPED. parse() already documents that
         # STOPPED, BUFFER FULL and CAN ERROR are among the "anything else" it
         # rejects -- and every one of them was being folded into an anonymous
@@ -196,17 +243,33 @@ class Capture:
         # every one of them was `rejected: 26`. The adapter had said why, in
         # words, and nothing kept the words.
         self.adapter_said = []           # distinct non-hex lines, oldest first
+        # WHICH LINK IT WAS HEARD ON. On 29 September a capture taken with
+        # OMACAR_FASTBAUD=1 overflowed exactly as it does at 115200, and
+        # nothing saved said whether the link had been raised at all. The
+        # rate the handle was on, and what the raise did (None when it was
+        # not asked for). Set by listen() once the adapter is up.
+        self.link_baud = None
+        self.fastbaud = None
 
     ADAPTER_SAID_CAP = 10
 
     def add_line(self, line):
+        text = (line or "").strip().upper()
+        _, recovered = _drop_data_error(text)
         got = parse(line, self.header_digits)
         if got is None:
             self.rejected += 1
             self._remember_chatter(line)
             return False
+        if recovered:
+            self.recovered += 1
         self.frames.append((time.time(), got[0], got[1]))
         return True
+
+    @staticmethod
+    def _is_overflow_word(text):
+        """Is this one of the words that mean the adapter, not the bus, quit."""
+        return "BUFFER" in text or "STOPPED" in text or "CAN ERROR" in text
 
     def _remember_chatter(self, line):
         """Keep the adapter's words, not a tally of them.
@@ -222,9 +285,24 @@ class Capture:
             return
         if set(text) <= HEXCHARS | {" "}:
             return                       # garbled frame, not a message
+        # ANY "<...>" IS THE ADAPTER ANNOTATING A FRAME, NOT SAYING A WORD.
+        #
+        # parse() already recovers a "<DATA ERROR" line that carries a real
+        # frame (see DATA_ERROR_SUFFIX), so anything of that shape reaching
+        # here failed to parse even with the suffix stripped -- garbled past
+        # recovery, still not a message. Before that recovery existed, ten
+        # distinct truncations of the same censorship filled every slot below
+        # and BUFFER FULL and STOPPED -- the words this whole list exists to
+        # keep -- never got recorded on seven captures in a row. This guard
+        # holds even if a future firmware annotates some other way.
+        if "<" in text:
+            return
         if text in self.adapter_said:
             return
-        if len(self.adapter_said) < self.ADAPTER_SAID_CAP:
+        # THE OVERFLOW WORDS OUTRANK THE CAP. BUFFER FULL and STOPPED are what
+        # overflowed() reads back out, so ten unrelated words landing first
+        # must not crowd them out of the ten slots -- they are kept beyond it.
+        if self._is_overflow_word(text) or len(self.adapter_said) < self.ADAPTER_SAID_CAP:
             self.adapter_said.append(text)
 
     def overflowed(self):
@@ -233,8 +311,7 @@ class Capture:
         A monitor that ends this way looks identical to a quiet bus in
         everything the capture used to record: some frames, then nothing.
         """
-        return [w for w in self.adapter_said
-                if "BUFFER" in w or "STOPPED" in w or "CAN ERROR" in w]
+        return [w for w in self.adapter_said if self._is_overflow_word(w)]
 
     def mark(self, label):
         self.marks.append((time.time(), str(label or "").strip() or "mark"))
@@ -388,7 +465,10 @@ class Capture:
             "vehicle": self.vehicle,
             "frames": len(self.frames),
             "rejected": self.rejected,
+            "recovered": self.recovered,
             "adapter_said": list(self.adapter_said),
+            "link_baud": self.link_baud,
+            "fastbaud": self.fastbaud,
             "marks": [{"at": t, "label": lab} for t, lab in self.marks],
             "census": self.census(),
             "discriminators": self.discriminators(),
@@ -456,6 +536,33 @@ class Quiet(Exception):
     """
 
 
+# ATCAF0, AND WHY IT IS OPT-IN WHEN THE DATA ERROR RECOVERY ABOVE IS NOT.
+#
+# ATCAF1 censors two ways, both measured across 85 real captures of this car.
+# One is the " <DATA ERROR" suffix parse() now strips on the host side, always
+# -- the bytes are still sent, only the suffix said otherwise, so recovering
+# them costs nothing and changes nothing about what reaches the adapter. The
+# other cannot be recovered after the fact: any frame whose first data byte is
+# 0x01-0x07 is CUT to byte0+1 bytes before it ever leaves the adapter -- 636 of
+# 636 such frames, measured. 0x164 shows as five bytes (0400003C72) parked and
+# the full eight moving; 0x161 shows 05BF05BF2008 with its counter and
+# checksum simply never sent. There is nothing left on the host side to strip.
+#
+# The only fix for that is ATCAF0, telling the adapter not to format at all --
+# and that changes what is SENT to the adapter, on a link that has to run
+# clean through two drive legs tomorrow. So it is opt-in behind OMACAR_CAF0=1,
+# same shape as OMACAR_FASTBAUD: the measurement is solid (0x191, this car's
+# gear byte, is 0x01=P/0x08=D and is destroyed by both forms of censorship on
+# every moving capture) but the integration wants a driveway test first.
+#
+# It is sent alongside ATE0/ATH1/ATS1 in both places below -- the per-protocol
+# probe and the final settle onto whichever one won -- because the probe has
+# to run with the same formatting the real capture will use, or a protocol
+# that only works with ATCAF0 on could lose to one that does not need it.
+# _restore_protocol() turns ATCAF1 back on before the port goes back to the
+# daemon: python-obd's PID parsing relies on the formatted replies ATCAF1
+# produces, so leaving it off would break ordinary telemetry after every
+# capture, opt-in or not.
 def _pick_monitor_protocol(el, probe=2.0):
     """Put the adapter on a setting that actually hears frames, and say which.
 
@@ -463,6 +570,7 @@ def _pick_monitor_protocol(el, probe=2.0):
     them -- which is a real answer, and a different one from "we monitored on
     the wrong setting and concluded the car was quiet".
     """
+    caf0 = os.environ.get("OMACAR_CAF0") == "1"
     best, best_n = None, 0
     for p in MONITOR_PROTOCOLS:
         try:
@@ -474,6 +582,8 @@ def _pick_monitor_protocol(el, probe=2.0):
             el.raw("ATE0")
             el.raw("ATH1")
             el.raw("ATS1")
+            if caf0:
+                el.raw("ATCAF0")
         except Exception:                                     # noqa: BLE001
             continue
         seen = []
@@ -494,23 +604,57 @@ def _pick_monitor_protocol(el, probe=2.0):
         el.raw("ATE0")
         el.raw("ATH1")
         el.raw("ATS1")
+        if caf0:
+            el.raw("ATCAF0")
     return best
 
 
 def _restore_protocol(el, was):
-    """Put the adapter back on the setting the daemon negotiated.
+    """Put the adapter back on the setting the daemon negotiated, with its own
+    CAN auto-formatting back on.
 
-    Called whether or not a monitoring protocol was found. It used to happen
-    only on the way out of a successful capture, so a probe that heard nothing
-    left the adapter parked on the last setting it tried -- and handed it back
-    to the daemon like that.
+    Called on every exit from listen() -- whether or not a monitoring
+    protocol was found, and whether or not OMACAR_CAF0 asked for ATCAF0 this
+    session. ATCAF1 goes back on unconditionally: it is the adapter's own
+    default, python-obd's PID parsing depends on the formatted replies it
+    produces, and sending it when it is already on is harmless, so there is no
+    case worth telling apart from the others. This used to return immediately
+    when no protocol had been found, which -- before ATCAF1 existed to worry
+    about -- only meant the ATSP restore below had nothing to restore to; now
+    it would also have skipped ATCAF1 on exactly the runs a quiet probe made
+    the daemon's next connection the very next thing to happen.
     """
+    try:
+        el.raw("ATCAF1")
+    except Exception:                                         # noqa: BLE001
+        pass
     if not was:
         return
     try:
         el.raw("ATSP" + str(was).lstrip("A"))
         el.raw("ATH0")
     except Exception:                                         # noqa: BLE001
+        pass
+
+
+def _note_link(cap, el, port):
+    """Keep the link this capture runs on with the capture, and log it once.
+
+    The rate is read off the open handle rather than assumed from whether
+    the raise said yes: a raise that fails at its last step can still leave
+    both ends on the new rate (see Elm.raise_baud).
+    """
+    cap.link_baud = getattr(getattr(el, "ser", None), "baudrate", None)
+    cap.fastbaud = getattr(el, "fastbaud", None)
+    try:
+        os.makedirs(records.STATE, exist_ok=True)
+        with open(LINKLOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": time.time(),
+                                "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "port": port, "note": cap.note,
+                                "link_baud": cap.link_baud,
+                                "fastbaud": cap.fastbaud}) + "\n")
+    except (OSError, TypeError, ValueError):
         pass
 
 
@@ -638,6 +782,7 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
         cap = cap or Capture(header_digits=digits, note=note)
         if cap.header_digits is None:
             cap.header_digits = digits
+        _note_link(cap, el, port)
         # Bound before the try, because the finally below reads it and the
         # first statement inside can raise. It never has, which is the only
         # reason this has not already been a NameError swallowing a real error.
@@ -649,6 +794,13 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
             el.raw("ATE0")
             el.raw("ATH1")
             el.raw("ATS1")
+            # ATCAF0, OPT-IN. See the block above _pick_monitor_protocol() for
+            # why this is not on by default: it changes what is sent to the
+            # adapter, where the DATA ERROR recovery in parse() changes
+            # nothing. _restore_protocol() always turns ATCAF1 back on before
+            # the port goes back to the daemon, further down this function.
+            if os.environ.get("OMACAR_CAF0") == "1":
+                el.raw("ATCAF0")
             # THE BUS YOU DIAGNOSE ON IS NOT THE BUS YOU LISTEN TO.
             #
             # An adapter negotiates a protocol for DIAGNOSTICS. On this

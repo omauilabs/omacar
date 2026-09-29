@@ -33,6 +33,17 @@ python3 "$ROOT/test/phone_test.py" || fails=$((fails + 1))
 # thing that ever runs the listening path without a car.
 python3 "$ROOT/test/listen_test.py" || fails=$((fails + 1))
 
+# tools/driveway_verdict.py's thresholds, against synthetic captures --
+# pass/fail for both driveway-check.sh captures, the preset table, and the
+# telemetry-share estimate. No car needed; see its own docstring.
+python3 "$ROOT/test/driveway_test.py" || fails=$((fails + 1))
+
+# tools/driveway-check.sh itself, run for real against a stand-in car that
+# publishes the same hand-over snapshots the real daemon does (test/
+# driveway_fake.py). Its systemctl is a stub, so it can never restart a real
+# recorder unit. Needs the venv, and says so and skips without one.
+python3 "$ROOT/test/driveway_e2e_test.py" || fails=$((fails + 1))
+
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
 #
