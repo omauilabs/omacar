@@ -1,0 +1,23 @@
+[Unit]
+Description=OmaCar cameras — front, rear and cabin, in one-minute clips that loop
+Documentation=file:__ROOT__/lib/cams.py
+After=graphical-session.target
+# NO START LIMIT: the lesson of the drive-day fixes. systemd's default gives up
+# after five restarts in ten seconds and parks the unit in `failed`, which turns
+# a camera that browned out at a set of lights into a dashcam that records
+# nothing for the rest of the day. In [Unit], where systemd reads it.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+# Stdlib only, so the system python would do; env.sh is sourced like every
+# sibling unit, so OMACAR_PY resolves the same way everywhere.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/cams.py run'
+Restart=always
+RestartSec=5
+# The cameras are not urgent work: the compositor and the page come first.
+Nice=10
+
+[Install]
+WantedBy=default.target

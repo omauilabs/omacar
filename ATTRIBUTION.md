@@ -68,3 +68,9 @@ Two things ARE in this repository, both under licences that allow it:
   mockups are set in Inter.
 - **Icon paths** in `share/js/icons.js` marked "Lucide" — ISC License,
   © Lucide Contributors (https://lucide.dev). Paths only; no Lucide code.
+
+Fetched at install, not in this repository: **MediaPipe tasks-vision 1.0.1**
+and the **Face Landmarker** model, by Google, under the Apache License 2.0.
+`omacar assets fetch` downloads them into `share/js/vendor/mediapipe/` and
+checks them against the pins in `share/assets/manifest.json`. Drowsy mode reads
+the cabin camera with them, in the page, with nothing fetched on the road.

@@ -1,0 +1,67 @@
+/* Drowsy mode on screen (drowsyui.js) and Begin's note about AUX
+   (views/launcher.js). Linked from the redesign/cameras block at the end of
+   app.html. Home's Dashcams card carries the chip and the AUX line too, and is
+   styled in cameras.css. */
+
+.launch-aux { max-width: 34rem; margin: 4px auto 0; text-align: center; font-size: .85rem;
+              line-height: 1.45; color: var(--dim); }
+
+/* "AUX disconnected": shown wherever sound matters -- Begin, and drowsy
+   mode's own screen -- only while the port is the tablet's speakers
+   (audiostate.js showAux). */
+.aux-warn { max-width: 34rem; margin: 0 auto; padding: 6px 12px; border-radius: var(--r);
+            text-align: center; font-size: .9rem; color: var(--warn); background: var(--warn-bg); }
+.aux-warn[hidden] { display: none; }
+
+.dz-layer[hidden], .dz-banner[hidden], .dz-test[hidden], .dz-test-aux[hidden] { display: none; }
+
+/* The chip in the top bar. One line where there is room. Where there is not
+   (portrait, 912 px), it wraps between words rather than cut a word or run
+   into the clock: its six texts are the whole of what it says, so it is never
+   ellipsised. It gives way first (flex-shrink 10), down to its longest word,
+   so the car's name beside it, which main.js always shows, gives way last. */
+.tb-drowsy { flex: 0 10 auto; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px;
+             white-space: normal; text-align: left;
+             border: 1px solid var(--edge); border-radius: 999px; background: none;
+             color: var(--dim); font: inherit; font-size: .72rem; line-height: 1.15; letter-spacing: .04em; cursor: pointer; }
+.tb-drowsy-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.tb-drowsy[data-tone="ok"] { color: var(--ok); }
+.tb-drowsy[data-tone="ok"] .tb-drowsy-dot { background: var(--ok); }
+.tb-drowsy[data-tone="warn"] { color: var(--warn); }
+.tb-drowsy[data-tone="warn"] .tb-drowsy-dot { background: var(--warn); }
+@media (pointer: coarse) { .tb-drowsy { min-height: var(--tap); } }
+
+/* The alerts. Level 1 is a card above the navigation; 2 and 3 fill the screen. */
+.dz-layer { position: fixed; inset: 0; z-index: 300; display: grid; pointer-events: none; }
+.dz-layer[data-level="1"] { place-items: end center; padding: 0 16px calc(var(--nav) + 16px); }
+.dz-card { pointer-events: auto; width: 100%; max-width: 560px; display: grid; gap: 10px; padding: 18px 20px;
+           border-radius: 18px; background: var(--panel);
+           border: 1px solid color-mix(in srgb, var(--warn) 50%, transparent);
+           box-shadow: 0 12px 40px rgba(0, 0, 0, .5); }
+.dz-full { pointer-events: auto; display: grid; place-content: center; justify-items: center; gap: 22px;
+           padding: 32px; text-align: center; background: color-mix(in srgb, var(--ground) 92%, var(--warn)); }
+.dz-full.l3 { background: color-mix(in srgb, var(--ground) 86%, var(--rec)); }
+.dz-t { font-size: 1.5rem; font-weight: 600; color: var(--ink); }
+.dz-full .dz-t { font-size: clamp(2.4rem, 6vw, 4rem); }
+.dz-s { color: var(--ink-2); }
+.dz-rest { margin: 0; max-width: 40rem; color: var(--dim); font-size: .9rem; line-height: 1.45; }
+.dz-awake { min-height: var(--tap-lg); padding: 0 24px; border: 0; border-radius: var(--r);
+            background: var(--accent-fill); color: var(--on-accent); font: inherit; font-weight: 600; }
+.dz-awake.big { min-width: min(80vw, 520px); min-height: 120px; border-radius: 28px; font-size: 2rem; }
+.dz-banner { position: fixed; top: 64px; left: 50%; z-index: 250; transform: translateX(-50%);
+             padding: 10px 18px; border-radius: 999px; background: var(--rec); color: #FFFFFF; font-weight: 600; }
+
+/* The settings sheet's preview and lines. */
+.dz-preview { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: center; }
+.dz-preview canvas { width: 160px; height: 120px; border-radius: 10px; background: #000; }
+.dz-status { font-weight: 600; }
+.dz-measures, .dz-aux { font-size: .82rem; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* "Test the alerts": above everything, sheet included, with Stop. */
+.dz-test { position: fixed; top: 64px; left: 50%; z-index: 320; transform: translateX(-50%);
+           display: flex; align-items: center; gap: 14px; padding: 8px 8px 8px 18px; border-radius: 999px;
+           background: var(--panel); border: 1px solid var(--edge); box-shadow: 0 8px 28px rgba(0, 0, 0, .5); }
+.dz-test-t { font-weight: 600; white-space: nowrap; }
+.dz-test-aux { font-size: .82rem; color: var(--warn); white-space: nowrap; }
+.dz-stop { min-height: var(--tap); padding: 0 20px; border: 0; border-radius: 999px;
+           background: var(--accent-fill); color: var(--on-accent); font: inherit; font-weight: 600; }
