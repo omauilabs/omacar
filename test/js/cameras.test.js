@@ -277,10 +277,20 @@ export default [
   ["a clip the server cannot serve, a real 404, does the same once the browser reports it", async () => {
     const v = await mount({ real404: true });
     try {
+      // What the tab asked the server for. Any URL the runner answers with an
+      // error would bring the tab back, so this is where the clip's URL is
+      // pinned: to the route lib/serve.py serves. `error` does not bubble, so
+      // a capture listener on the tab's root hears it, before the tab's own
+      // handler lets go of the source.
+      const tried = [];
+      v.root.addEventListener("error", (e) => {
+        if (e.target.tagName === "VIDEO") tried.push(new URL(String(e.target.getAttribute("src")), location.href).pathname);
+      }, true);
       const said = v.toasts().length;
       await v.play();
       await until(() => v.isLive(), "the browser's error to bring the tab back to live");
-      eq([v.held(), v.words(), v.toasts().slice(said)], [LIVE, NONE, [COULD_NOT_PLAY]]);
+      eq([tried, v.held(), v.words(), v.toasts().slice(said)],
+         [["/api/cams/clip/front/a.mp4"], LIVE, NONE, [COULD_NOT_PLAY]]);
     } finally { v.done(); }
   }],
   ["the message comes once: a second error from the clip it gave up on says nothing more", async () => {
