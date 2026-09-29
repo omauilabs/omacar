@@ -342,6 +342,15 @@ class Supervisor:
             return now - last["at"] > self.quiet
 
         def began(c):
+            # THE QUIET CLOCK STARTS HERE, WHEN THE ADAPTER IS LISTENING -- not
+            # at leg set-up above. Set-up is ATZ, the protocol search and the
+            # monitor probe: 11.5s at 115200 on the car on 29 September. done()
+            # is only asked once the monitor runs, so a clock started at set-up
+            # met eleven seconds of "silence" on its first call, and with
+            # QUIET=10 every leg ended before its first frame and saved none.
+            # Set-up stays bounded by listen()'s own per-command deadlines;
+            # this clock never bounded it, because done() is not asked then.
+            last["at"] = time.time()
             self.legs += 1
             self.say("capturing", f"leg {self.legs} on protocol {c.protocol}",
                      leg=self.legs, protocol=c.protocol)

@@ -96,7 +96,102 @@ def summarize(doc):
         "lengths": lengths,
         "min_lengths": min_lengths,
         "gear": gear,
+        # Which link it was heard on, as lib/listen.py saves it: the rate
+        # the handle was on and what OMACAR_FASTBAUD's raise did. Both None
+        # on a capture saved before they were recorded.
+        "link_baud": doc.get("link_baud"),
+        "fastbaud": doc.get("fastbaud"),
+        "overflowed": [w for w in (doc.get("adapter_said") or [])
+                       if listenlib.Capture._is_overflow_word(str(w).upper())],
     }
+
+
+# -- which link a capture was on -------------------------------------------
+#
+# 29 September, capture A: 142 frames in 0.33s, then BUFFER FULL -- identical
+# to 115200 -- and all the verdict could say was "only 142 frames". A link
+# that never came up and a link that came up and still could not keep up are
+# different faults with different fixes, and the capture now says which.
+
+_STEP_LABELS = {"echo-off": "the echo-off step", "ATBRD OK": "the ATBRD step",
+                "final OK": "the final OK step"}
+
+
+def _answered(fastbaud, step):
+    for s in fastbaud.get("steps") or []:
+        if s.get("step") == step:
+            return s.get("answered")
+    return None
+
+
+def _quoted(text):
+    """What the adapter said, on one line: CR and LF shown as \\r and \\n,
+    and bytes the handshake already kept as \\x escapes left as they are."""
+    if not text:
+        return "nothing"
+    esc = {"\r": "\\r", "\n": "\\n", "\t": "\\t"}
+    return "'" + "".join(ch if " " <= ch <= "~" else esc.get(ch, f"\\x{ord(ch):02x}")
+                         for ch in text) + "'"
+
+
+def _where_raise_stopped(fastbaud):
+    """The step the raise gave up at, and what it heard there, in words."""
+    if fastbaud.get("outcome") == "not attempted":
+        return f"the raise was not attempted: {fastbaud.get('why') or 'no reason recorded'}"
+    step = fastbaud.get("failed_at")
+    if not step:
+        return "the raise said it succeeded"
+    target = fastbaud.get("target") or connect.FAST_BAUD
+    label = _STEP_LABELS.get(step) or (f"the ident step at {target} baud"
+                                       if step == "ident" else f"the {step} step")
+    if fastbaud.get("why"):
+        text = f"{label} failed: {' '.join(str(fastbaud['why']).split())}"
+    else:
+        text = f"{label} said {_quoted(_answered(fastbaud, step))}"
+    # The echo-off's reply is not a gate -- the handshake goes on to ATBRD
+    # whatever it was -- but no OK there is the likeliest reason for what
+    # happened next, so it is named beside the step that gave up.
+    echo = _answered(fastbaud, "echo-off")
+    if step != "echo-off" and echo is not None and "OK" not in echo.upper():
+        text += f"; the echo-off before it said {_quoted(echo)}"
+    return text
+
+
+def link_why(summary):
+    """Whether the fast link engaged, in words, or "" for a capture saved
+    before the link was recorded (which then reads as it always did)."""
+    baud, fastbaud = summary.get("link_baud"), summary.get("fastbaud")
+    if baud is None and fastbaud is None:
+        return ""
+    if fastbaud is None:
+        return f"the fast link was not asked for (OMACAR_FASTBAUD was not 1; {baud} baud)"
+    target = fastbaud.get("target") or connect.FAST_BAUD
+    if baud and baud >= target:
+        over = summary.get("overflowed") or []
+        if over:
+            return (f"the fast link engaged ({baud} baud) but the adapter still "
+                    f"overflowed ({over[0]})")
+        return f"the fast link engaged ({baud} baud)"
+    return (f"the fast link did not engage (still {baud or 'an unknown'} baud; "
+            f"{_where_raise_stopped(fastbaud)})")
+
+
+def raise_outcome(summary):
+    """One short word for the raise: raised, failed at <step>, not
+    attempted, not asked -- or "" for a capture from before it was kept."""
+    fastbaud = summary.get("fastbaud")
+    if fastbaud is None:
+        return "not asked" if summary.get("link_baud") is not None else ""
+    if fastbaud.get("outcome") == "failed":
+        return f"failed at {fastbaud.get('failed_at')}"
+    return fastbaud.get("outcome") or ""
+
+
+def _too_few(summary):
+    """"only N frames over Ss", led by what the link says about why."""
+    base = f"only {summary['frames']} frames over {summary['span']:.1f}s"
+    link = link_why(summary)
+    return f"{link}: {base}" if link else base
 
 
 def verdict_a(summary):
@@ -109,7 +204,7 @@ def verdict_a(summary):
     frames, span = summary["frames"], summary["span"]
     if frames > A_MIN_FRAMES and span >= A_MIN_SPAN:
         return True, f"{frames} frames over {span:.1f}s"
-    return False, f"only {frames} frames over {span:.1f}s"
+    return False, _too_few(summary)
 
 
 def verdict_b(summary):
@@ -130,7 +225,7 @@ def verdict_b(summary):
     problems = []
     frames, span = summary["frames"], summary["span"]
     if not (frames > A_MIN_FRAMES and span >= A_MIN_SPAN):
-        problems.append(f"only {frames} frames over {span:.1f}s")
+        problems.append(_too_few(summary))
     missing = [i for i in CAF0_REQUIRED_IDS if i not in summary["ids_seen"]]
     if missing:
         problems.append(f"missing identifiers: {', '.join(missing)}")
@@ -499,6 +594,8 @@ def _cmd_verdict(argv, which):
         ("ids", ",".join(summary["ids_seen"])),
         ("passed", 1 if passed else 0),
         ("why", why),
+        ("link_baud", "" if summary["link_baud"] is None else summary["link_baud"]),
+        ("fastbaud", raise_outcome(summary)),
     ]
     for ident in FULL_WIDTH_IDS:
         pairs.append((f"len_{ident}", (summary.get("min_lengths") or {}).get(ident, 0)))
@@ -590,6 +687,8 @@ def _capture_block(path):
         "span": summary["span"],
         "ids_seen": summary["ids_seen"],
         "gear": summary["gear"],
+        "link_baud": summary["link_baud"],
+        "fastbaud": summary["fastbaud"],
     }, summary
 
 

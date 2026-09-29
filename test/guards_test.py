@@ -2613,6 +2613,195 @@ _e3 = _fresh_elm(brd=False)
 check("an adapter without ATBRD is left where it was", _e3.raise_baud(500000), False)
 check("at the rate it started on", (_e3.ser.baudrate, _e3.ser.rate), (115200, 115200))
 
+# ------------------------------------------ the handshake says what it did
+head("the link handshake records which step it reached and what the adapter said")
+
+# MEASURED ON THE CAR, 29 SEPTEMBER. With OMACAR_FASTBAUD=1 capture A took 142
+# frames in a third of a second and then BUFFER FULL -- exactly the 115200
+# shape -- and nothing anywhere said whether the raise was attempted, what the
+# adapter answered, or which step gave up. raise_baud() returned False
+# silently. It now leaves the whole attempt on the connection, for the capture
+# and the link log to keep.
+
+
+class _HandshakeElm(EchoingElm):
+    """EchoingElm, able to fail at any step, and closer to the datasheet in
+    two ways that decide what a failure looks like afterwards: a byte written
+    while the two ends are on different rates is noise the adapter ignores,
+    and an adapter that switched and did not get its carriage return goes
+    back to the old rate on its own (ATBRD fails closed)."""
+
+    def __init__(self, fail=None, **kw):
+        super().__init__(**kw)
+        self.fail = fail
+        self.old_rate = None             # set while waiting for the confirming CR
+
+    @property
+    def in_waiting(self):
+        n = 0
+        for rate, data in self.segs:
+            if rate != self.baudrate:
+                break
+            n += len(data)
+        return n
+
+    def read(self, n=1):
+        out = b""
+        while len(out) < n:
+            got = self._take(n - len(out))
+            if not got:
+                break
+            out += got
+        return out
+
+    def write(self, data):
+        cmd = data.decode("ascii", "replace").strip().upper()
+        if self.old_rate is not None:
+            old, self.old_rate = self.old_rate, None
+            if not (cmd == "" and self.baudrate == self.rate):
+                self.rate = old          # no CR in time: back where it was
+                self._put(b">", old)
+                return                   # and what arrived was noise to it
+        if self.baudrate != self.rate:
+            return
+        if cmd == "ATE0" and self.fail == "echo-off":
+            raise sys.modules["serial"].SerialException("[Errno 5] Input/output error")
+        if cmd == "ATE0" and self.fail == "echo-off ignored":
+            return                       # mid-reset: nothing said, echo stays on
+        was = self.rate
+        super().write(data)
+        if cmd.startswith("ATBRD") and self.rate != was:
+            self.old_rate = was
+            if self.fail == "ident":     # the identification never reaches the host
+                self.segs = [s for s in self.segs if s[0] == was]
+
+
+def _stepped(**kw):
+    e = elm.Elm.__new__(elm.Elm)
+    e.ser = _HandshakeElm(**kw)
+    return e
+
+
+def _said(e, step):
+    for s in (getattr(e, "fastbaud", None) or {}).get("steps") or []:
+        if s.get("step") == step:
+            return s.get("answered")
+    return None
+
+
+# Raised.
+_h = _stepped()
+check("the raise succeeds against a well-behaved adapter", _h.raise_baud(500000), True)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("and says so", (_hf.get("outcome"), _hf.get("failed_at")), ("raised", None))
+check("with the rate in force afterwards", _hf.get("link_baud"), 500000)
+check("and every step it took, in order",
+      [s.get("step") for s in _hf.get("steps") or []],
+      ["echo-off", "ATBRD OK", "ident", "final OK"])
+check("the echo-off's reply is read before it is thrown away",
+      _said(_h, "echo-off"), "ATE0\rOK\r")
+check("the identification is what the adapter sent at the new rate",
+      _said(_h, "ident"), "ELM327 v1.4b\r")
+check("each step says how long its answer took",
+      bool(_hf.get("steps"))
+      and all(isinstance(s.get("ms"), int) for s in _hf["steps"]), True)
+
+# The echo-off itself raised.
+_h = _stepped(fail="echo-off")
+check("a write that fails at the echo-off does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at the echo-off", (_hf.get("outcome"), _hf.get("failed_at")),
+      ("failed", "echo-off"))
+check("and keeps the error, in words", "SerialException" in (_hf.get("why") or ""), True)
+check("the link stays at 115200", _hf.get("link_baud"), 115200)
+
+# ATBRD's OK: an adapter that has no ATBRD.
+_h = _stepped(brd=False)
+check("an adapter that refuses ATBRD does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at ATBRD's OK", _hf.get("failed_at"), "ATBRD OK")
+check("and keeps what it said instead", _said(_h, "ATBRD OK"), "?\r")
+check("the link stays at 115200", _hf.get("link_baud"), 115200)
+
+# ATBRD's OK: the echo-off never took (an adapter still busy with ATZ), so the
+# adapter repeats ATBRD back before its OK -- the bug this shipped with.
+_h = _stepped(fail="echo-off ignored")
+check("an adapter that ignored the echo-off does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at ATBRD's OK", _hf.get("failed_at"), "ATBRD OK")
+check("which heard its own command echoed back", _said(_h, "ATBRD OK"), "ATBRD 08\r")
+check("and the echo-off before it heard nothing at all", _said(_h, "echo-off"), "")
+check("the adapter fell back, and so did the link", (_hf.get("link_baud"), _h.ser.rate),
+      (115200, 115200))
+
+# The ident at the new rate.
+_h = _stepped(fail="ident")
+check("an identification that never arrives does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at the ident", _hf.get("failed_at"), "ident")
+check("which heard nothing", _said(_h, "ident"), "")
+check("the adapter fell back, and so did the link", (_hf.get("link_baud"), _h.ser.rate),
+      (115200, 115200))
+
+# The final OK. The adapter switched and never confirmed, and _settle() finds
+# it at the new rate: the call returns False and the link is 500000 anyway,
+# which is why the rate in force is read off the handle, not inferred.
+_h = _stepped(confirm=False)
+check("a switch that is never confirmed does not raise", _h.raise_baud(500000), False)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("it fails at the final OK", _hf.get("failed_at"), "final OK")
+check("and the rate in force is the one the handle really ended on",
+      (_hf.get("link_baud"), _hf.get("settled")), (500000, 500000))
+
+# NOT ASKED FOR IS NOT A FAILURE, and not a guess either.
+os.environ.pop("OMACAR_FASTBAUD", None)
+_h = _stepped()
+_h.raise_baud(500000)
+check("with OMACAR_FASTBAUD unset there is no attempt to record",
+      getattr(_h, "fastbaud", "missing"), None)
+check("and nothing was sent", _h.ser.segs, [])
+os.environ["OMACAR_FASTBAUD"] = "1"
+
+# NOTHING NEW ON THE WIRE. Recording the attempt adds no command: every byte
+# written is one raise_baud() already wrote.
+_h = _stepped()
+_writes = []
+_orig_write = _h.ser.write
+_h.ser.write = lambda d: (_writes.append(d), _orig_write(d))[1]
+_h.raise_baud(500000)
+check("the handshake writes exactly ATE0, ATBRD and the confirming CR",
+      _writes, [b"ATE0\r", b"ATBRD 08\r", b"\r"])
+
+# NOR NEW TIME IN THE ONE WINDOW THAT MATTERS. Between reading ATBRD's OK and
+# switching the host's rate, the adapter may already be sending its
+# identification at the new rate -- that gap is one of the report's two
+# leading reasons the raise fails on the car. So the record of ATBRD's answer
+# is written after the switch, and the window holds what it always held.
+
+
+class _SwitchWatch(_HandshakeElm):
+    """Notes what the record held at the moment the host switched to 500000."""
+
+    def __setattr__(self, name, value):
+        owner = self.__dict__.get("owner")
+        if (name == "baudrate" and value == 500000 and owner is not None
+                and "at_switch" not in self.__dict__):
+            trail = getattr(owner, "fastbaud", None) or {}
+            self.__dict__["at_switch"] = (
+                [s.get("step") for s in trail.get("steps") or []],
+                trail.get("failed_at"))
+        object.__setattr__(self, name, value)
+
+
+_h = elm.Elm.__new__(elm.Elm)
+_h.ser = _SwitchWatch()
+_h.ser.owner = _h
+check("the watched handshake still raises", _h.raise_baud(500000), True)
+check("nothing is recorded between reading ATBRD's OK and the host's switch",
+      _h.ser.__dict__.get("at_switch"), (["echo-off"], "ATBRD OK"))
+check("ATBRD's answer is still recorded, just after the switch",
+      _said(_h, "ATBRD OK"), "OK\r")
+
 if _keep_env is None:
     os.environ.pop("OMACAR_FASTBAUD", None)
 else:
@@ -3183,6 +3372,99 @@ try:
           f"quiet timeout ({_took_on:.1f}s)", _took_on < 3.0, True)
 finally:
     _ln.listen = _orig_listen_ov
+
+head("a leg's quiet timeout counts from when the adapter is listening, not from set-up")
+
+# MEASURED ON THE CAR, 29 SEPTEMBER. With the fallback preset (QUIET=10,
+# END_ON_OVERFLOW=1) every leg from 11:58 to 13:17 saved ZERO frames. The last
+# leg on default settings got its first frame 11.47s after the capture began:
+# ATZ, the protocol search and the monitor probe, at 115200. The quiet clock
+# started at leg set-up, and done() -- only ever asked once the monitor is
+# running -- found eleven seconds of "silence" on its very first call and
+# ended every leg about a second and a half before its first frame.
+
+
+class _LegClock:
+    """drivelog's clock, so eleven seconds of adapter set-up take none."""
+
+    def __init__(self):
+        self.t = time.time()
+
+    def time(self):
+        return self.t
+
+    def __getattr__(self, name):                 # strftime, sleep, ...
+        return getattr(time, name)
+
+
+def _slow_setup_listen(clock, ready_at, first_at, lines, backstop=120.0):
+    """A listen() whose adapter reaches the monitor `ready_at` seconds after
+    the leg began, and whose first line arrives at `first_at` -- then the
+    `lines`, one per hundredth of a second, then silence. should_stop is
+    asked before every read and never during set-up, which is what the real
+    listen() does: it only reaches Elm.monitor() for the final ATMA."""
+    out = {}
+
+    def fake(**kw):
+        cap, should_stop = kw["cap"], kw["should_stop"]
+        t0 = clock.t
+        clock.t = t0 + ready_at
+        if kw.get("on_ready"):
+            kw["on_ready"](cap)
+        todo = list(lines)
+        while clock.t - t0 < backstop:
+            if should_stop():
+                break
+            clock.t += 0.01
+            if todo and clock.t - t0 >= first_at:
+                cap.add_line(todo.pop(0))
+        out["ended_at"] = clock.t - t0
+        return cap
+    return fake, out
+
+
+_orig_listen_slow = _ln.listen
+_orig_dl_time = _dl.time
+_today = ["13A 0013000000000024"] * 128 + ["BUFFER FULL"]
+try:
+    _clk = _LegClock()
+    _dl.time = _clk
+
+    # Today's leg, on today's fallback preset.
+    _ln.listen, _slow = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                           lines=_today)
+    _sup_slow = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=True)
+    _sup_slow.say = lambda *a, **k: None
+    _sup_slow.leg()
+    check("QUIET=10 with 11.4s of set-up: the leg keeps the frames it heard",
+          (_sup_slow.last_leg or {}).get("frames"), 128)
+    check("and still ends on the overflow, not the quiet timeout "
+          f"({_slow.get('ended_at', 0):.1f}s after it began)",
+          12.5 <= _slow.get("ended_at", 0) < 15.0, True)
+
+    # The same set-up, without END_ON_OVERFLOW: the quiet timeout ends it,
+    # counted from the last frame.
+    _ln.listen, _slow2 = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                            lines=_today)
+    _sup_slow2 = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=False)
+    _sup_slow2.say = lambda *a, **k: None
+    _sup_slow2.leg()
+    check("QUIET=10, overflow-ending off: the frames are kept too",
+          (_sup_slow2.last_leg or {}).get("frames"), 128)
+
+    # A SILENT BUS STILL ENDS THE LEG, quiet seconds after listening began --
+    # not before (the old clock ended it at once) and not never.
+    _ln.listen, _silent = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                             lines=[])
+    _sup_silent = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=True)
+    _sup_silent.say = lambda *a, **k: None
+    _sup_silent.leg()
+    check("a silent bus ends the leg QUIET seconds after listening began "
+          f"({_silent.get('ended_at', 0):.2f}s after the leg began)",
+          21.4 <= _silent.get("ended_at", 0) < 21.6, True)
+finally:
+    _ln.listen = _orig_listen_slow
+    _dl.time = _orig_dl_time
 
 # --------------------------------------------------------- the parked session
 head("tools/ima-session.sh sends only read-only prospect/listen/mcp calls")
