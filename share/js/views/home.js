@@ -8,7 +8,7 @@
 
 import { h, clear, icon, store, api } from "../core.js";
 import { ICONS } from "../icons.js";
-import { READINGS, readingState } from "../readings.js";
+import { READINGS, readingState, pausedNote } from "../readings.js";
 import { makeGauge } from "../gauges.js";
 import { makeSignalTile } from "../sigtile.js";
 import { footerLine, sourceKey } from "../provenance.js";
@@ -57,15 +57,22 @@ function dialCard() {
   return {
     node,
     paint() {
-      const s = store.sample, v = store.values, car = store.car;
-      g.update(speed.get(v, s, car), speed.read(v, s, car));
+      // DRAWN FROM store.shown: during a hand-off, the last values read. The
+      // Begin decision below reads store.sample, as it always has.
+      const s = store.shown, v = s.values || {}, car = store.car;
       // THE DIAL NAMES ITS SOURCE LIKE ANY OTHER LIVE NUMBER. Speed and RPM
       // are readings like a sig tile's, just drawn on a needle and in a div
       // instead of in a box -- so each carries the same data-state/data-src
       // pair, set the same way sigtile.js sets it (readingState + sourceKey),
       // so this card cannot draw a live number without saying where it came
       // from. Never a value with no state, or a state with no source.
+      //
+      // AND A PAUSED ONE IS NOT LIVE. During a hand-off the speed stays on
+      // the arc, dimmed by data-state="paused" and with no source, and the
+      // words below it say paused instead of an engine speed: this is the
+      // dial that read 60 mph at a stop.
       const speedState = readingState(speed, s);
+      g.update(speed.get(v, s, car), speed.read(v, s, car));
       g.el.dataset.state = speedState;
       if (speedState === "live") g.el.dataset.src = sourceKey(car, s);
       else delete g.el.dataset.src;
@@ -85,6 +92,7 @@ function dialCard() {
       // which is false in exactly the case adapters are known for: dropping
       // out mid-drive.
       text(rpm, noServer ? "No server"
+        : rpmState === "paused" ? pausedNote(store.pausedSince, true)
         : store.connected ? `${rpmReading.get(v, s, car).v} rpm` : "No data");
       // Begin is for a car that is off and still. Not while the adapter
       // answers, not with no server, not while the car was last seen moving,
@@ -195,7 +203,7 @@ function makeCard(id, cat) {
     // Named by the readings catalogue, as Vehicle and Gauges name it.
     const t = makeSignalTile(c.reading);
     t.node.classList.add("card", "hc");
-    return { node: t.node, paint: () => t.paint(store.car, store.sample) };
+    return { node: t.node, paint: () => t.paint(store.car, store.shown) };
   }
   return MAKERS[id] ? MAKERS[id]() : null;
 }
@@ -279,7 +287,9 @@ export default function home(root) {
     // GREYED WHILE DRIVING, NEVER HIDDEN, the rule every write screen's chip
     // keeps: a control that vanishes is one somebody hunts for at 60 mph.
     // startEditing() refuses while driving too; this says so before the tap.
-    const moving = store.state === "driving";
+    // Driving or a hand-off: store.lockedAsMoving (lockOf() on the red-light
+    // branch replaces it).
+    const moving = store.lockedAsMoving;
     if (custom.disabled !== moving) {
       custom.disabled = moving;
       custom.title = moving ? "Available when you stop" : "";

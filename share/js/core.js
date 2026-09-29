@@ -323,6 +323,36 @@ export const api = {
   aiHistory: () => req("/api/ai/history"),
 };
 
+// ---------------------------------------------------------------- a hand-off
+// IS THIS SAMPLE A HAND-OFF THAT IS STILL HAPPENING?
+//
+// records.live() marks every "yielded" sample `handover`, and never ages one
+// out: its staleness check only runs on a sample that says connected, and a
+// yield says connected: false. So a daemon that dies while the adapter is lent
+// out leaves "yielded" in live.json for ever, and every screen would say
+// "Paused · adapter in use · 40 min" about a process that no longer exists.
+//
+// A real hand-off re-stamps `t` about every 0.3 s (daemon.py yield_snapshot()),
+// so one whose `t` is past LIVE_STALE_S is a stopped daemon -- the rule
+// plugin/Panel.qml's liveFresh already applies, on the same 15 s as
+// records.LIVE_STALE. The bare hand-off (wait_for_car(), no `t` at all) has
+// only the store's own clock: it gives out once it has lasted longer than a
+// lease holds without a heartbeat, connect.YIELD_GRACE. `since` is
+// store.pausedSince; leave it out and a bare hand-off is taken at its word.
+//
+// Display only. Begin's lock and the lock inputs read store.sample.handover
+// itself; records.live() belongs to the red-light work.
+export const LIVE_STALE_S = 15;          // lib/records.py LIVE_STALE, Panel.qml liveStale
+export const BARE_HANDOFF_MAX_S = 90;    // lib/connect.py YIELD_GRACE
+
+export function handingOver(sample, since, now = Date.now()) {
+  const s = sample || {};
+  if (!s.handover) return false;
+  const t = Number(s.t) || 0;
+  if (t > 0) return now / 1000 - t <= LIVE_STALE_S;
+  return since === null || since === undefined || now - since <= BARE_HANDOFF_MAX_S * 1000;
+}
+
 // ---------------------------------------------------------------- the store
 // One object, one event. Views subscribe and re-render; nothing reaches into
 // anything else's DOM.
@@ -349,10 +379,35 @@ class Store extends EventTarget {
     // car was moving when last seen is kept here, where every sample passes,
     // and a screen mounted after the drop still knows it.
     this.lastMoving = false;
+    // A HAND-OFF, AS THE SCREENS DRAW IT. records.live() marks a sample
+    // `handover` while the daemon has lent the adapter to a command, and every
+    // live reading then shows as paused (readings.js readingState()). Two
+    // things about it are only knowable here, where every sample passes:
+    // when it began, for pausedNote()'s "· 2 min", and the last values read
+    // before it, for the hand-off that arrives with none of its own (see
+    // `shown` below). Neither is touched by anything that decides a lock.
+    this.pausedSince = null;  // ms since the epoch, or null when not paused
+    this.held = {};           // the last values a sample carried, kept through a hand-off
   }
   emit(what) {
     if (this.connected) this.lastMoving = this.state === "driving";
+    this.notePause();
     this.dispatchEvent(new CustomEvent(what));
+  }
+
+  notePause() {
+    const s = this.sample;
+    const vals = s.values && Object.keys(s.values).length ? s.values : null;
+    if (s.handover) {
+      if (this.pausedSince === null) this.pausedSince = Date.now();
+      if (vals) this.held = vals;
+    } else {
+      // Anything else ends the hand-off, and a sample with no values of its
+      // own (a lost adapter, a stale file) ends what was held with it: a
+      // later bare hand-off must not bring back a number from before that.
+      this.pausedSince = null;
+      this.held = vals || {};
+    }
   }
   on(what, fn) { this.addEventListener(what, fn); return () => this.removeEventListener(what, fn); }
 
@@ -433,6 +488,47 @@ class Store extends EventTarget {
   }
   get values() { return this.sample.values || {}; }
   get connected() { return !!this.sample.connected; }
+  // A hand-off that is still happening (handingOver() above), for drawing.
+  get paused() { return handingOver(this.sample, this.pausedSince); }
+
+  // THE SAMPLE TO DRAW, WHICH IS NOT ALWAYS THE SAMPLE TO ACT ON.
+  //
+  // During a hand-off the daemon republishes its last complete sample
+  // (lib/daemon.py yield_snapshot()), so this is normally `sample` itself. But
+  // a lease that lands while the daemon is between connections -- two
+  // commands back to back, or one while it waits for the car -- is published
+  // with no values at all, and every paused reading would go blank for it.
+  // Drawn from here it keeps the last values read, dimmed and marked paused.
+  //
+  // AND A HAND-OFF THAT HAS STOPPED is drawn as what it is, a daemon that is
+  // not there: no hand-off, and no values, exactly as records.live() returns a
+  // stale sample. Otherwise its carried values would be drawn as current by
+  // every screen that draws whatever it is handed.
+  //
+  // DRAWING ONLY. Anything that locks or unlocks a control (Begin, Customise,
+  // the moving/parked logic, the write screens) keeps reading `sample`,
+  // `values` and `state`, exactly as before.
+  get shown() {
+    const s = this.sample;
+    if (!s.handover) return s;
+    if (!this.paused) return Object.assign({}, s, { handover: false, status: "no daemon", values: {} });
+    if (s.values && Object.keys(s.values).length) return s;
+    return Object.assign({}, s, { values: this.held });
+  }
+  // WHETHER A CONTROL THAT IS ONLY FOR A STOPPED CAR IS LOCKED: the
+  // write-screen chips (main.js), Customize layout (views/home.js) and Home's
+  // layout editor (homeedit.js). Driving, or a hand-off. `state` reads
+  // "offline" during a hand-off because the sample is not connected, and
+  // every few minutes mid-drive these came unlocked for as long as the
+  // adapter was lent out. A hand-off is taken as moving, as launcher.js
+  // already does for Begin -- the raw flag, so a stopped daemon mid-hand-off
+  // keeps them locked too. At a standstill that locks them for the length of
+  // a hand-off, which is the right way round to be wrong.
+  //
+  // SUPERSEDED ON MERGE: the red-light branch (safety/parked-confirm) replaces
+  // these locks with lockOf(). Where the two meet, lockOf wins and this goes.
+  get lockedAsMoving() { return this.state === "driving" || !!this.sample.handover; }
+
   get state() {
     if (!this.connected) return "offline";
     const v = this.values;

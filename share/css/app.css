@@ -978,6 +978,53 @@ textarea { resize: vertical; min-height: 66px; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- paused: a hand-off ----
+   While the daemon has lent the adapter to a command (records.live()
+   `handover`), every live number on screen is the last one read, not now.
+   readingState() in readings.js calls that "paused", each screen marks what
+   it draws with data-state="paused" and says so in pausedNote()'s words, and
+   this is the one look for it on every screen: the number stays, in --faint,
+   and whatever places it on a scale goes the --ghost of disabled chrome, as
+   a dead needle already does -- unless it carries a warning, below. Never
+   hidden: the driver keeps a value, and can see that it is old.
+   Theme-following, like every other ink here. */
+[data-state="paused"] .sig-v,
+[data-state="paused"] .sig-u,
+[data-state="paused"] .drive-speed,
+[data-state="paused"] .drive-tile-v,
+[data-state="paused"] .g-bar-v,
+[data-state="paused"] .cl-read,
+[data-state="paused"] .music-v,
+[data-state="paused"] .orbit-reading strong { color: var(--faint); }
+[data-state="paused"] .g-value { fill: var(--faint); }
+[data-state="paused"] .g-arc-fill { stroke: var(--ghost); }
+[data-state="paused"] .g-needle { fill: var(--ghost); }
+[data-state="paused"] .g-bar-fill { background: var(--ghost); }
+[data-state="paused"] .orbit-value { stroke: var(--ghost); }
+/* A WARNING OUTLIVES THE HAND-OFF. A reading last seen in its warning or
+   alert band keeps that colour while paused, dimmed toward the ground the way
+   the plain number goes to --faint (64%, the mix the sunlight block derives
+   --faint with) -- so an overheating engine does not turn grey for two
+   minutes because the adapter was lent out, and still reads as old. */
+.sig[data-state="paused"][data-tone="warn"] .sig-v,
+[data-state="paused"] .drive-tile-v.warn,
+[data-state="paused"] .drive-speed.warn,
+[data-state="paused"] .g-bar[data-tone="warn"] .g-bar-v {
+  color: color-mix(in srgb, var(--warn) 64%, var(--ground));
+}
+.sig[data-state="paused"][data-tone="bad"] .sig-v,
+[data-state="paused"] .drive-tile-v.bad,
+[data-state="paused"] .drive-speed.bad,
+[data-state="paused"] .g-bar[data-tone="bad"] .g-bar-v {
+  color: color-mix(in srgb, var(--bad) 64%, var(--ground));
+}
+[data-state="paused"] .g-svg[data-tone="warn"] .g-value { fill: color-mix(in srgb, var(--warn) 64%, var(--ground)); }
+[data-state="paused"] .g-svg[data-tone="bad"]  .g-value { fill: color-mix(in srgb, var(--bad) 64%, var(--ground)); }
+[data-state="paused"] .g-svg[data-tone="warn"] .g-arc-fill { stroke: color-mix(in srgb, var(--warn) 64%, var(--ground)); }
+[data-state="paused"] .g-svg[data-tone="bad"]  .g-arc-fill { stroke: color-mix(in srgb, var(--bad) 64%, var(--ground)); }
+[data-state="paused"] .g-bar[data-tone="warn"] .g-bar-fill { background: color-mix(in srgb, var(--warn) 64%, var(--ground)); }
+[data-state="paused"] .g-bar[data-tone="bad"]  .g-bar-fill { background: color-mix(in srgb, var(--bad) 64%, var(--ground)); }
+
 .drive-trip { text-align: center; color: var(--dim); font-size: clamp(.75rem, 1.8cqh, 1.05rem); }
 
 /* One target, the width of a thumb and then some. */

@@ -51,6 +51,7 @@ import { h, clear, store, api, toast, since, fullDate, grouped } from "../core.j
 import { explain } from "../learn.js";
 import { lookup, decode } from "../knowledge.js";
 import { makeGauge } from "../gauges.js";
+import { pausedNote } from "../readings.js";
 import { sparkline } from "../charts.js";
 
 // core.js owns the `api` object and this pass does not own core.js, so the
@@ -161,6 +162,8 @@ export default function ima(root) {
   // nothing new can leave the DOM completely alone.
   let sig = "";
   let poll = 0;
+  // Whether the last draw() showed a hand-off, so a flip redraws (see below).
+  let drawnPaused = false;
 
   async function load(quiet) {
     if (!quiet) { loading = true; draw(); }
@@ -206,11 +209,17 @@ export default function ima(root) {
   }
 
   function chargeDial() {
-    const soc = store.values && store.values.HYBRID_BATTERY_REMAINING;
+    // DURING A HAND-OFF THIS IS THE LAST READING, NOT NOW. It is drawn from
+    // store.shown (the hand-off's own values, or the last ones held), dimmed
+    // through data-state="paused" by app.css, and the story says paused
+    // instead of offering a direction -- see pausedDirection() below.
+    const vals = store.shown.values || {};
+    const soc = vals.HYBRID_BATTERY_REMAINING;
     if (soc === null || soc === undefined || Number.isNaN(Number(soc))) return null;
     const pct = Math.min(100, Math.max(0, Number(soc)));
     const face = svg("svg", { viewBox: "0 0 300 300", role: "img",
-                              "aria-label": `Hybrid pack remaining ${Math.round(pct)} percent` });
+                              "aria-label": `Hybrid pack remaining ${Math.round(pct)} percent`
+                                + (drawnPaused ? ", paused" : "") });
     face.appendChild(svg("circle", { cx: 150, cy: 150, r: R, class: "orbit-track" }));
     face.appendChild(svg("circle", {
       cx: 150, cy: 150, r: R, class: "orbit-value",
@@ -221,9 +230,9 @@ export default function ima(root) {
                                      transform: `rotate(${i * 9} 150 150)`,
                                      class: "orbit-tick" }));
     }
-    const dir = socDirection(pct);
+    const dir = drawnPaused ? pausedDirection() : socDirection(pct);
     return h("section.sect",
-      h("div.charge-stage",
+      h("div.charge-stage", { data: { state: drawnPaused ? "paused" : "live" } },
         h("div.charge-orbit", face,
           h("div.orbit-reading",
             h("strong", String(Math.round(pct)), h("small", "%")),
@@ -248,6 +257,17 @@ export default function ima(root) {
   // that jitter is worse than no direction.
   const socTrail = [];
   const SOC_WINDOW_MS = 12000, SOC_MOVED = 0.4;
+
+  // A HAND-OFF BREAKS THE WINDOW, as it does for the IMA tile in readings.js:
+  // the daemon republishes its last pack reading while the adapter is lent
+  // out, and a direction measured across that compares now with before it.
+  // So the window is emptied and the story says paused until fresh readings
+  // come back.
+  function pausedDirection() {
+    socTrail.length = 0;
+    return { tone: "rest", label: pausedNote(store.pausedSince, true),
+             line: "The last reading, not now." };
+  }
 
   function socDirection(pct) {
     socTrail.push({ t: Date.now(), soc: pct });
@@ -865,6 +885,7 @@ export default function ima(root) {
 
   // ------------------------------------------------------------------ draw
   function draw() {
+    drawnPaused = store.paused;
     clear(wrap);
     if (loading && !doc) {
       wrap.appendChild(h("div.card", h("div.skel")));
@@ -903,6 +924,12 @@ export default function ima(root) {
   draw();
   load();
 
+  // THE PAUSED STATE ARRIVES ON THE STORE, not with /api/ima, so a hand-off
+  // starting or ending redraws the dial -- when that flips, and only then.
+  const onSample = () => { if (store.paused !== drawnPaused) draw(); };
+  const offCar = store.on("car", onSample);
+  const offLive = store.on("live", onSample);
+
   // WHILE THE CAR IS PLUGGED IN, THIS SCREEN HAS TO MOVE.
   //
   // It did not. The view rendered once at mount and then froze: open it on a
@@ -917,5 +944,5 @@ export default function ima(root) {
   // redraws when the payload actually changed, so a parked car costs one
   // request and no repaint at all.
   poll = setInterval(() => load(true), 6000);
-  return () => clearInterval(poll);
+  return () => { clearInterval(poll); offCar(); offLive(); };
 }

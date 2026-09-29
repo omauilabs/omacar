@@ -9,6 +9,7 @@
 import { h, store, temp, econ, U, readOnly,
          adapterState, adapterLabel, connectCar } from "../core.js";
 import { makeRing } from "../ring.js";
+import { pausedNote } from "../readings.js";
 
 const MAX_SPEED_KPH = 180, MAX_RPM = 7000;
 
@@ -20,20 +21,22 @@ export default function live(root) {
   const canvas = h("canvas", { width: 900, height: 900, role: "img",
     "aria-label": "Ambient meter: ring colour shows driving efficiency, the bright arc shows road speed." });
 
-  const speedEl = h("div", { style: { fontSize: "clamp(3rem, 9vw, 5.6rem)", fontWeight: "600",
+  const speedEl = h("div.cl-read.cl-speed", { style: { fontSize: "clamp(3rem, 9vw, 5.6rem)", fontWeight: "600",
     lineHeight: ".92", letterSpacing: "-.03em", fontVariantNumeric: "tabular-nums" } }, "—");
   const unitEl = h("div.eyebrow", { style: { marginTop: ".35rem" } }, U.units.speed.toUpperCase());
-  const rpmEl = h("div.muted", { style: { marginTop: "1rem" } }, "— RPM");
+  const rpmEl = h("div.muted.cl-read", { style: { marginTop: "1rem" } }, "— RPM");
   const modeEl = h("div.eyebrow", mode.toUpperCase());
 
   const cells = {};
   function cell(id, label) {
-    const v = h("div.v", { style: { fontSize: "1.05rem" } }, "—");
+    const v = h("div.v.cl-read", { style: { fontSize: "1.05rem" } }, "—");
     cells[id] = v;
     return h("div.card", h("div.stat-tile", h("div.k", label), v));
   }
 
-  root.appendChild(h("div.grid", { style: { gridTemplateColumns: "1fr minmax(280px, 40vh) 1fr",
+  // The readouts, as one: every number on this screen comes from the live
+  // sample, so a hand-off pauses them all together (data-state, below).
+  const readouts = h("div.grid.cluster", { style: { gridTemplateColumns: "1fr minmax(280px, 40vh) 1fr",
       alignItems: "center", gap: "22px" } },
     h("div.sect",
       cell("economy", "Economy"), cell("load", "Engine load"),
@@ -44,7 +47,8 @@ export default function live(root) {
         modeEl, speedEl, unitEl, rpmEl)),
     h("div.sect",
       cell("coolant", "Coolant"), cell("intake", "Intake air"),
-      cell("stft", "Short fuel trim"), cell("ltft", "Long fuel trim"))));
+      cell("stft", "Short fuel trim"), cell("ltft", "Long fuel trim")));
+  root.appendChild(readouts);
 
   const basisEl = h("span.muted");
   // The status line is held rather than looked up by id on every paint. It used
@@ -92,7 +96,11 @@ export default function live(root) {
   const lerp = (a, b, k) => a + (b - a) * k;
 
   function paint() {
-    const v = store.values, s = store.sample;
+    // Drawn from store.shown and marked paused during a hand-off: the numbers
+    // stay, dimmed by app.css, and the status line says why. It used to show
+    // the last values as current and the daemon's own word, "yielded".
+    const s = store.shown, v = s.values || {};
+    readouts.dataset.state = store.paused ? "paused" : store.connected ? "live" : "waiting";
     const kph = v.SPEED === undefined || v.SPEED === null ? null : v.SPEED;
     speedEl.textContent = kph === null ? "—" : String(Math.round(kph * U.units.km));
     unitEl.textContent = U.units.speed.toUpperCase();
@@ -113,12 +121,15 @@ export default function live(root) {
     set("stft", v.SHORT_FUEL_TRIM_1 === undefined || v.SHORT_FUEL_TRIM_1 === null ? "—" : v.SHORT_FUEL_TRIM_1.toFixed(1) + " %");
     set("ltft", v.LONG_FUEL_TRIM_1 === undefined || v.LONG_FUEL_TRIM_1 === null ? "—" : v.LONG_FUEL_TRIM_1.toFixed(1) + " %");
 
-    dotEl.className = "dot" + (store.connected ? " ok live" : connecting ? " warn" : " bad");
+    dotEl.className = "dot" + (store.connected ? " ok live"
+      : connecting || store.paused ? " warn" : " bad");
     if (store.connected) {
       statusEl.textContent = `${s.port || "connected"}  ·  ${s.protocol || ""}`;
       hintEl.textContent = "";
     } else if (connecting) {
       statusEl.textContent = "connecting…";
+    } else if (store.paused) {
+      statusEl.textContent = pausedNote(store.pausedSince, true);
     } else {
       // Whatever the daemon last said about itself, and nothing invented on top
       // of it. "not connected" is the honest floor when it has said nothing.
