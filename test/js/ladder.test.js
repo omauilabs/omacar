@@ -1,5 +1,6 @@
 import { eq } from "./assert.js";
 import { createLadder, createStopClock, scaled, isNight } from "../js/ladder.js";
+import { createMeasures } from "../js/drowsy.js";
 
 const CFG = async () => (await fetch("../data/drowsy.json")).json();
 const M = (o) => Object.assign({ face: true, calibrated: true, closed: false, closedFor: 0, openFor: 0,
@@ -10,6 +11,44 @@ const go = (o) => Object.assign({ active: true, parked: false, sinceStop: 0, sto
 // every test but P2b/I2, which overrides it to freeze a stale snapshot).
 const drive = (lad, rows) => rows.map(([t, m, x]) => lad.step(go(Object.assign({ t, m: M(Object.assign({ t }, m)) }, x))));
 const kinds = (out) => out.cues.map((c) => (c.clip ? `${c.kind}:${c.clip}` : c.kind));
+// Whole-second (or dt) steps from a to b inclusive, without float drift.
+const range = (a, b, dt = 1) => { const r = []; for (let t = a; t <= b + 1e-9; t = +(t + dt).toFixed(6)) r.push(t); return r; };
+// Every raise and every release, as [t, level, trigger or "clear"].
+const events = (outs) => outs.filter((o) => o.raised || o.cleared)
+  .map((o) => [o.t, o.level, o.raised ? o.raised.trigger : "clear"]);
+// The plan's cabin feed through the real measures (drowsy.js) into the
+// ladder: a frame every 0.1 s from t=100, and a ladder step per frame, as
+// drowsyrun.js's onFrame does. calibrated at speed first (60 s). frame(i, tr,
+// st) returns { closed, active, light, tap } for frame i at tr = t - 100;
+// "light" is a stop at a red light: no frames (the watcher is stopped) and a
+// 2 Hz pollLive step re-feeding the last, stale snapshot, parked. st carries
+// the first raise's time and the tap's. Returns { ev: [[tr, level,
+// trigger|"clear"]...], st }.
+const cabin = async (n, frame) => {
+  const cfg = await CFG();
+  const meas = createMeasures(cfg), lad = createLadder(cfg);
+  const st = { raisedAt: null, tapAt: null };
+  const ev = [];
+  let last = null;
+  for (let i = 0; i < n; i++) {
+    const t = +(100 + i * 0.1).toFixed(3), tr = +(t - 100).toFixed(3);
+    const f = frame(i, tr, st);
+    let o;
+    if (f.light) {
+      if (i % 5) continue;
+      o = lad.step(go({ t, m: last, active: false, parked: true }));
+    } else {
+      last = meas.feed({ t, face: true, blink: f.closed ? 0.9 : 0.1, jaw: 0, pitch: 0, gated: f.active !== false });
+      if (f.tap) st.tapAt = tr;
+      o = lad.step(go({ t, m: last, active: f.active !== false, tap: !!f.tap }));
+    }
+    if (o.raised && st.raisedAt === null) st.raisedAt = tr;
+    if (o.raised || o.cleared) ev.push([tr, o.level, o.raised ? o.raised.trigger : "clear"]);
+  }
+  return { ev, st };
+};
+// "I'm awake" on the first frame 30 s or more after the first raise.
+const tapAfter30 = (st, tr) => st.raisedAt !== null && st.tapAt === null && tr - st.raisedAt >= 30 - 1e-9;
 // N4: drives a Level 2 ladder through an open-eye run, an embedded closure
 // given as concrete [t, closed, closedFor] frames (a real 10 fps sequence,
 // simulated outside the ladder -- not drowsy.js), and checks release exactly
@@ -307,7 +346,7 @@ export default [
       [8, { perclos: 0.27 }]]);
     eq(out3.map((o) => o.level), [0, 0, 0, 2]);
   }],
-  ["N1c: PERCLOS crossing 25% during a short (under 5 min) stop, with a Level 1 already up, escalates rather than getting lost", async () => {
+  ["PERCLOS crossing 25% below the gate with a Level 1 up escalates (M8); 396 s later a fresh 0.28 is new evidence, not the same episode (NR5)", async () => {
     const lad = createLadder(await CFG());
     const out1 = drive(lad, [[0, { yawns: 3 }]]); // raises Level 1
     eq(out1[0].level, 1);
@@ -317,46 +356,223 @@ export default [
     const out2 = drive(lad, [[1, { perclos: 0.26 }, { active: false }], [2, { perclos: 0.26 }, { active: false }],
       [3, { perclos: 0.26 }, { active: false }], [4, { perclos: 0.26 }, { active: false }]]);
     eq(out2.map((o) => o.level), [1, 1, 1, 2]);
-    // perclos2 actually raised Level 2 at t=4, so it is latched (NR1) and a
-    // tap cannot free it -- correctly: PERCLOS never actually recovered, so
-    // Level 2 must not be reachable again from the same sustained episode.
-    // perclos1 was consumed unused at t=4 (perclos2 won that step) and was
-    // never latched, so the tap's discard does reset it: sustained PERCLOS
-    // above the gate reaches Level 1 again within about 3 s, not stuck.
-    const out3 = drive(lad, [[400, {}, { tap: true }], [401, { perclos: 0.28 }], [402, { perclos: 0.28 }],
+    // perclos2 raised Level 2 at t=4, so it is latched (NR1). But 396 s of
+    // camera time pass before the next reading: the 60 s PERCLOS window can
+    // hold no frame from before the latch, so the latch has expired (NR5)
+    // and 0.28 is new evidence. After its 3 s hold it raises Level 2 -- only
+    // Level 2, since the first one is 400 s back, outside repeat-l2's 300 s.
+    // (Round 3 wrongly kept the latch and asserted Level 1 here.) The tap row
+    // reads M()'s default PERCLOS, 0.02, so its release latches nothing.
+    const out3 = drive(lad, [[400, { perclos: 0.02 }, { tap: true }], [401, { perclos: 0.28 }], [402, { perclos: 0.28 }],
       [403, { perclos: 0.28 }], [404, { perclos: 0.28 }]]);
-    eq(out3.map((o) => o.level), [0, 0, 0, 0, 1]);
+    eq(out3.map((o) => o.level), [0, 0, 0, 0, 2]);
+    eq(out3[4].trigger, "perclos");
   }],
-  ["NR1a (Important): a tap on a PERCLOS Level 2 never re-raises from the same continuing 0.26", async () => {
+  ["N1c (NR5): the plan's red light -- a stale snapshot latches both gates, the camera restarts, and a fresh sustained 0.28 raises Level 2", async () => {
+    // Re-review 1's N1c probe, the drowsyrun.js pattern. Level 1 is up; the
+    // last frame reads 0.251 as the car stops. Through a 40 s light the
+    // watcher is stopped and pollLive re-feeds that stale snapshot, parked:
+    // the release latches both gates on it (NR3). Frames resume with a
+    // discontinuity, which empties the measures' PERCLOS window -- the
+    // latch expires there and then (NR5). PERCLOS reads null for 30 s (its
+    // minimum window), then 0.28: after the 3 s hold, Level 2 at t=94.
+    const rows = [];
+    for (const t of range(0, 4)) rows.push([t, { perclos: 0.16 }]);          // Level 1 at t=3
+    for (const t of range(5, 20)) rows.push([t, { perclos: 0.24 }]);
+    rows.push([20.5, { perclos: 0.251 }]);                                     // the last frame as it slows
+    for (const t of range(21, 60, 0.5)) rows.push([t, { t: 20.5, perclos: 0.251 }, { active: false, parked: true }]);
+    rows.push([61, { perclos: null, discontinuity: true }, { active: false }]); // the camera restarts
+    for (const t of range(62, 90)) rows.push([t, { perclos: null }]);
+    for (const t of range(91, 300)) rows.push([t, { perclos: 0.28 }]);
+    const ev = events(drive(createLadder(await CFG()), rows));
+    eq(ev.slice(0, 3), [[3, 1, "perclos"], [21, 0, "clear"], [94, 2, "perclos"]]);
+    // Nothing between the light and t=94, and no Level 3 from the light's
+    // own (stale) reading.
+    eq(ev.filter(([t]) => t > 21 && t < 94).length, 0);
+  }],
+  ["NR1a/NR5: a tap on a PERCLOS Level 2 never re-raises from the same 60 s window; once the window is all new frames, a continuing 0.26 raises", async () => {
     // PERCLOS is a 60 s window and stays high well after the tap. Round 2
     // alone let the tap free the gate that had just raised, so the same
     // 0.26 re-raised about 3 s later -- Level 2 became Level 3 (repeat-l2).
     const out = drive(createLadder(await CFG()),
-      Array.from({ length: 20 }, (_, t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]));
+      Array.from({ length: 90 }, (_, t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]));
     eq(out.slice(0, 5).map((o) => o.level), [0, 0, 0, 2, 2]);
-    eq(out.slice(5).every((o) => o.level === 0), true);
-    eq(out.every((o) => o.level !== 3), true);
+    // Latched at the tap (t=5): nothing -- and never Level 3 -- while the
+    // window still holds any frame from before it.
+    eq(out.slice(5, 69).every((o) => o.level === 0 && !o.raised), true);
+    // NR5: at t=66 the window (60 s, pruned as drowsy.js prunes it: older
+    // than 60 s) holds only frames from after the tap, so the latch expires;
+    // 0.26 is then new evidence and, after the 3 s hold, raises at t=69. A
+    // second Level 2 within 5 min of the first is Level 3 (repeat-l2).
+    eq(events(out), [[3, 2, "perclos"], [5, 0, "clear"], [69, 3, "repeat-l2"]]);
   }],
-  ["NR1b (Important): a tap on a PERCLOS Level 1 never re-raises from the same continuing 0.17", async () => {
+  ["NR1b/NR5: a tap on a PERCLOS Level 1 never re-raises from the same 60 s window; after it, only a reading still at 15% or more raises", async () => {
     const out = drive(createLadder(await CFG()),
-      Array.from({ length: 20 }, (_, t) => [t, { perclos: 0.17 }, t === 5 ? { tap: true } : {}]));
+      Array.from({ length: 90 }, (_, t) => [t, { perclos: 0.17 }, t === 5 ? { tap: true } : {}]));
     eq(out.slice(0, 5).map((o) => o.level), [0, 0, 0, 1, 1]);
-    eq(out.slice(5).every((o) => o.level === 0), true);
+    eq(out.slice(5, 69).every((o) => o.level === 0 && !o.raised), true);
+    // NR5: 0.17 still at or above 15% once the window is all post-tap frames
+    // raises a new notice at t=69, which clears on open eyes at t=75.
+    eq(events(out), [[3, 1, "perclos"], [5, 0, "clear"], [69, 1, "perclos"], [75, 0, "clear"]]);
+    // The same, with PERCLOS falling to 0.13 by then (below 15%, above the
+    // 12% re-arm margin): the latch expires, and nothing is raised.
+    const fell = drive(createLadder(await CFG()), Array.from({ length: 150 },
+      (_, t) => [t, { perclos: t < 40 ? 0.17 : 0.13 }, t === 5 ? { tap: true } : {}]));
+    eq(events(fell), [[3, 1, "perclos"], [5, 0, "clear"]]);
   }],
   ["NR1d (Important): PERCLOS draining from 0.40 with eyes open, tapped every 5 s, never reaches Level 3", async () => {
     // PERCLOS decays linearly from 0.40 (a 60 s window, eyes open from t=5):
     // p(t) = 0.40 * (60-(t-5))/60 after t=5. Round 2 alone answered every
     // tap with Level 3 (repeat-l2) 3.5 s later, four times, then Level 1
     // three times, while PERCLOS stayed at 25% or more.
+    // Run on to t=150 (NR5): the latch taken at the first tap expires at
+    // t=68, when PERCLOS has drained to 0, so there is still nothing to raise.
     const lad = createLadder(await CFG());
-    const events = [];
-    for (let t = 0; t <= 60; t += 0.5) {
+    const outs = [];
+    for (let t = 0; t <= 150; t += 0.5) {
       const p = t < 5 ? 0.40 : Math.max(0, 0.40 * (60 - (t - 5)) / 60);
-      const tap = t >= 8 && Math.abs((t - 8) % 5) < 1e-9;
-      const o = lad.step(go({ t, m: M({ t, perclos: +p.toFixed(4) }), tap }));
-      if (o.raised || o.cleared) events.push([t, o.level, o.raised ? o.raised.trigger : "clear"]);
+      const tap = t >= 8 && t <= 60 && Math.abs((t - 8) % 5) < 1e-9;
+      outs.push(lad.step(go({ t, m: M({ t, perclos: +p.toFixed(4) }), tap })));
     }
-    eq(events, [[3, 2, "perclos"], [8, 0, "clear"]]);
+    eq(events(outs), [[3, 2, "perclos"], [8, 0, "clear"]]);
+  }],
+  ["NR1c/NR5 (guard): 'I'm awake' at PERCLOS 0.30 with the eyes open from then on never re-raises, before or after the window turns over", async () => {
+    // Through drowsy.js at 10 fps: 0.4 s closures (4 of 13 frames, never a
+    // closure trigger) raise Level 2 by PERCLOS; the tap comes 30 s later
+    // at about 0.30; the eyes stay open from the tap to tr=300. PERCLOS
+    // drains to 0 within the 60 s the latch lasts, so neither the re-arm nor
+    // the NR5 expiry finds anything at or above a threshold. The Level 1
+    // variant uses 0.2 s closures (2 of 11 frames, about 0.18).
+    for (const [level, shut, every] of [[2, 4, 13], [1, 2, 11]]) {
+      const { ev, st } = await cabin(3000, (i, tr, s) => ({
+        closed: tr >= 65 && s.tapAt === null && i % every < shut, tap: tapAfter30(s, tr) }));
+      eq(ev, [[st.raisedAt, level, "perclos"], [st.tapAt, 0, "clear"]]);
+    }
+  }],
+  ["B1 (NR5): a tap at 0.251 latches a gate that never raised; PERCLOS rising to 0.40 raises Level 2 once the window is all new frames", async () => {
+    const rows = [];
+    for (const t of range(0, 4)) rows.push([t, { perclos: 0.16 }]);                       // Level 1 at t=3
+    for (const t of range(5, 20)) rows.push([t, { perclos: +(0.16 + (t - 5) * 0.006).toFixed(4) }]); // to 0.25
+    rows.push([21, { perclos: 0.251 }, { tap: true }]);                                    // Level 2's hold 1 s in
+    for (const t of range(22, 300)) rows.push([t, { perclos: Math.min(0.40, +(0.251 + (t - 21) * 0.0025).toFixed(4)) }]);
+    const ev = events(drive(createLadder(await CFG()), rows));
+    // Latched at t=21 (NR3); expired at t=82, when no frame from t=21 or
+    // before is left in the window; Level 2 after the 3 s hold. Round 3
+    // raised nothing in 279 s of 0.25-0.40. That Level 2 clears on open eyes
+    // at t=91 and latches again; 64 s later the still-0.40 window is new
+    // again and a second Level 2 within 5 min is Level 3.
+    eq(ev, [[3, 1, "perclos"], [21, 0, "clear"], [85, 2, "perclos"], [91, 0, "clear"], [155, 3, "repeat-l2"]]);
+  }],
+  ["B1y (NR5): Level 1 by yawns, PERCLOS crossing 25% a second before the tap, then 0.30: Level 2 once the window is all new frames", async () => {
+    const rows = [[0, { yawns: 3, perclos: 0.10 }], [1, { yawns: 3, perclos: 0.20 }], [2, { yawns: 3, perclos: 0.25 }],
+      [3, { yawns: 3, perclos: 0.26 }, { tap: true }], ...range(4, 200).map((t) => [t, { yawns: 3, perclos: 0.30 }])];
+    // Round 3: nothing in 197 s of 0.30. Now: latched at t=3, expired at
+    // t=64, Level 2 at t=67; then as B1.
+    eq(events(drive(createLadder(await CFG()), rows)),
+      [[0, 1, "yawns"], [3, 0, "clear"], [67, 2, "perclos"], [73, 0, "clear"], [137, 3, "repeat-l2"]]);
+  }],
+  ["B2 (NR5): 'I'm awake' at 0.30 and the drowsiness carries on -- raised again 60 s (plus the 3 s hold) after the tap", async () => {
+    // Through drowsy.js: 0.4 s closures raise Level 2 by PERCLOS; the tap
+    // comes 30 s later; then either the same closures, or worse, 0.8 s
+    // closures every 2 s (PERCLOS about 0.40, never a 1 s closure). Round 3
+    // raised nothing for the remaining 300 s. Now the tap's latch expires as
+    // the window turns over, and the second Level 2 within 5 min is Level 3.
+    for (const worse of [false, true]) {
+      const { ev, st } = await cabin(4200, (i, tr, s) => ({
+        closed: worse && s.tapAt !== null ? i % 20 < 8 : tr >= 65 && i % 13 < 4, tap: tapAfter30(s, tr) }));
+      eq(ev.map(([, l, k]) => [l, k]), [[2, "perclos"], [0, "clear"], [3, "repeat-l2"]]);
+      eq([ev[0][0], ev[1][0]], [st.raisedAt, st.tapAt]);
+      const after = +(ev[2][0] - st.tapAt).toFixed(3);
+      eq(after > 60 && after <= 63.2, true);
+    }
+  }],
+  ["C1 (NR5): the plan's red light, through drowsy.js -- the same closures before and after a 40 s stop raise again once the fresh window holds", async () => {
+    // A 40 s light (no frames, the stale snapshot re-fed parked at 2 Hz),
+    // then 10 s at 20 mph (frames resume: a discontinuity), then the drive.
+    // The same 0.4 s closures throughout.
+    const light = (L) => (i, tr) => {
+      const ph = tr < L ? "drive" : tr < L + 40 ? "light" : tr < L + 50 ? "slow" : "drive";
+      return { light: ph === "light", active: ph === "drive", closed: tr >= 65 && i % 13 < 4 };
+    };
+    // The light while Level 2 sounds (tr=100): the stop clears it and
+    // latches both gates on the stale snapshot; the restart at tr=140
+    // expires them; PERCLOS is null for its 30 s minimum window, then after
+    // the 3 s hold the second Level 2 within 5 min is Level 3 -- 33 s after
+    // the restart. Round 3 raised nothing in the 450 s after the light.
+    const a = (await cabin(6000, light(100))).ev;
+    eq(a.map(([, l, k]) => [l, k]), [[2, "perclos"], [0, "clear"], [3, "repeat-l2"]]);
+    eq(a[1][0], 100);
+    const sinceRestart = +(a[2][0] - 140).toFixed(3);
+    eq(sinceRestart >= 30 && sinceRestart <= 33.2, true);
+    // The light early (tr=10, calibration not yet done): Level 2 at last,
+    // which clears itself on open eyes (0.4 s closures are blinks) and
+    // latches; the window turns over 60 s later and the closures that
+    // carried on raise again, as Level 3.
+    const b = (await cabin(6000, light(10))).ev;
+    eq(b.map(([, l, k]) => [l, k]), [[2, "perclos"], [0, "clear"], [3, "repeat-l2"]]);
+    const sinceRelease = +(b[2][0] - b[1][0]).toFixed(3);
+    eq(sinceRelease > 60 && sinceRelease <= 63.2, true);
+  }],
+  // NR6: each of the latch's three ways out, pinned so deleting any one
+  // fails here. Every case: Level 2 by PERCLOS at t=3, "I'm awake" at t=5
+  // with 0.26 still read, which latches both gates (NR1/NR3).
+  ["NR6 re-arm: 10 s below threshold - 0.03 frees a latch early; 9 s does not", async () => {
+    const rows = (below) => [...range(0, 20).map((t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]),
+      ...range(21, 20 + below).map((t) => [t, { perclos: 0.20 }]),
+      ...range(21 + below, 90).map((t) => [t, { perclos: 0.26 }])];
+    // 0.20 from t=21 re-arms Level 2's gate at t=31; 0.26 again from t=32
+    // is a genuine new rise, held 3 s: Level 3 (repeat-l2) at t=35.
+    eq(events(drive(createLadder(await CFG()), rows(11))), [[3, 2, "perclos"], [5, 0, "clear"], [35, 3, "repeat-l2"]]);
+    // 9 s is not a recovery: the latch waits for the window to turn over.
+    eq(events(drive(createLadder(await CFG()), rows(9))), [[3, 2, "perclos"], [5, 0, "clear"], [69, 3, "repeat-l2"]]);
+  }],
+  ["NR6 expiry: with no recovery, a latch lasts until the window holds no frame from its own step -- stale re-feeds never age it", async () => {
+    // The plan's cadence: a step per 10 fps frame (m.t = the frame's t) and
+    // a 2 Hz pollLive step re-feeding the last snapshot (m.t unchanged).
+    const lad = createLadder(await CFG());
+    const outs = [];
+    let snap = null;
+    const ticks = [...range(0, 90, 0.1).map((t) => [t, "frame"]), ...range(0, 90, 0.5).map((t) => [+(t + 0.03).toFixed(3), "poll"])]
+      .sort((a, b) => a[0] - b[0]);
+    for (const [t, kind] of ticks) {
+      if (kind === "frame") snap = M({ t, perclos: 0.26 });
+      outs.push(lad.step(go({ t, m: snap, tap: kind === "frame" && t === 5 })));
+    }
+    // At m.t=65.0 the frame from t=5.0 is exactly 60 s old and still in the
+    // window (drowsy.js drops frames OLDER than 60 s); at 65.1 it has gone.
+    // The polls at 65.03 re-feed m.t=65.0 and change nothing. The hold starts
+    // at 65.1, not before: Level 3 at 68.1, and nothing in between.
+    eq(events(outs), [[3, 2, "perclos"], [5, 0, "clear"], [68.1, 3, "repeat-l2"]]);
+  }],
+  ["NR6 discontinuity: a camera gap empties the window, so the latch goes at once; the fresh reading still needs 30 s and the 3 s hold", async () => {
+    const rows = [...range(0, 9).map((t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]),
+      [10, { perclos: null, discontinuity: true }],             // frames resume after a gap
+      ...range(11, 39).map((t) => [t, { perclos: null }]),        // the measures' 30 s minimum window
+      ...range(40, 90).map((t) => [t, { perclos: 0.26 }])];
+    // Level 3 at t=43: 3 s of a reading made only of frames after the gap.
+    // Without the discontinuity expiry it would wait for t=66, then t=69.
+    eq(events(drive(createLadder(await CFG()), rows)), [[3, 2, "perclos"], [5, 0, "clear"], [43, 3, "repeat-l2"]]);
+  }],
+  ["NR6 camera restart: a snapshot clock that goes backwards is a restart, and expires the latch the same way", async () => {
+    // A new measures stream on a new clock (m.t 0 at step t=10): its first
+    // snapshot carries no discontinuity flag -- nothing came before it in
+    // that stream -- and the ladder's "fresh m.t" test alone would never
+    // see it as advancing. Its PERCLOS window starts empty all the same.
+    const rows = [...range(0, 9).map((t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]),
+      [10, { t: 0, perclos: null }],
+      ...range(11, 39).map((t) => [t, { t: t - 10, perclos: null }]),
+      ...range(40, 90).map((t) => [t, { t: t - 10, perclos: 0.26 }])];
+    eq(events(drive(createLadder(await CFG()), rows)), [[3, 2, "perclos"], [5, 0, "clear"], [43, 3, "repeat-l2"]]);
+  }],
+  ["NR5: fresh frames below the gate turn the window over too; the hold itself still needs 3 s above it", async () => {
+    // The latch is about which frames the window holds, and drowsy.js keeps
+    // (and drops) frames whatever the speed. 95 s at 20 mph after the tap:
+    // nothing is raised below the gate (I4), but the window is all new, so
+    // 3 s after passing 30 mph with 0.26 still read, it raises.
+    const rows = [...range(0, 5).map((t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]),
+      ...range(6, 100).map((t) => [t, { perclos: 0.26 }, { active: false }]),
+      ...range(101, 120).map((t) => [t, { perclos: 0.26 }])];
+    eq(events(drive(createLadder(await CFG()), rows)), [[3, 2, "perclos"], [5, 0, "clear"], [104, 3, "repeat-l2"]]);
   }],
   ["NR2 (Important): yawns below the gate never mask a rising edge made of active yawns alone", async () => {
     // Three yawns below the gate reach the raw count of 3; then, while
@@ -370,13 +586,39 @@ export default [
     eq(out.every((o) => o.level === 0), false); // it does raise, somewhere in here
     eq(out.map((o) => (o.raised ? o.raised.trigger : null)).some((t) => t === "yawns"), true);
   }],
+  ["NR7: a yawn counted on the very frame an old one leaves the measures' 5 min window still counts", async () => {
+    // Through drowsy.js at 10 fps. Yawn A is counted below the gate at
+    // t=100.0; B, C and D above it at 260.0, 330.0 and 400.1 -- and 400.1 is
+    // the frame on which A, 300.1 s old, leaves drowsy.js's own window, so
+    // its count reads 3 before and after. Three active yawns within 5 min
+    // are Level 1, at the frame D is counted. D half a second later is the
+    // control: the count dips to 2 first, then rises.
+    for (const [dStart, want] of [[398.6, 400.1], [399.1, 400.6]]) {
+      const cfg = await CFG();
+      const meas = createMeasures(cfg), lad = createLadder(cfg);
+      const starts = [98.5, 258.5, 328.5, dStart];
+      const outs = [];
+      for (let i = 0; i < 4200; i++) {
+        const t = +(i * 0.1).toFixed(3);
+        const jaw = starts.some((s) => t >= s && t < s + 1.8) ? 0.8 : 0.1;
+        const active = t < 65 || t >= 250;
+        const m = meas.feed({ t, face: true, blink: 0.1, jaw, pitch: 0, gated: active });
+        outs.push(lad.step(go({ t, m, active })));
+      }
+      eq(events(outs).filter(([, l]) => l > 0), [[want, 1, "yawns"]]);
+    }
+  }],
   ["16 yawns above 30 mph over 15 minutes raise Level 1, including after below-gate yawns (NR2)", async () => {
-    const rows = [[0, { yawns: 3 }, { active: false }]]; // 3 below the gate: never counted
-    for (let t = 280, n = 0; t <= 1180; t += 60) { n++; rows.push([t, { yawns: 3 + n }]); } // 15 active yawns
+    // m.yawns as drowsy.js reports it: the yawns in the last 300 s (NR7
+    // fix round 4: round 3's rows never let a yawn leave that window).
+    const at = [0, 0, 0];                                  // 3 below the gate: never counted
+    for (let t = 280; t <= 1180; t += 60) at.push(t);      // 16 active yawns
+    const count = (t) => at.filter((y) => y <= t && t - y <= 300).length;
+    const rows = [[0, { yawns: count(0) }, { active: false }], ...at.slice(3).map((t) => [t, { yawns: count(t) }])];
     const out = drive(createLadder(await CFG()), rows);
     eq(out.some((o) => o.raised && o.raised.trigger === "yawns"), true);
   }],
-  ["NR3 (product call): a Level 2 from a closure, released with PERCLOS steady at its own threshold, does not become a new Level 2", async () => {
+  ["NR3/NR5: a Level 2 from a closure, released with PERCLOS steady at its own threshold, does not become a new Level 2 from the same 60 s window", async () => {
     const out = drive(createLadder(await CFG()), [
       [0, { closed: true, closedFor: 1.0, perclos: 0.26 }], // raises Level 2 by closure, PERCLOS already high
       [1, { perclos: 0.26 }], [2, { perclos: 0.26 }], [3, { perclos: 0.26 }], [4, { perclos: 0.26 }],
@@ -391,6 +633,21 @@ export default [
       [5, { perclos: 0.26 }], [6, { perclos: 0.26 }], [400, { closed: true, closedFor: 1.0 }]]);
     eq(out2[6].level, 0);
     eq([out2[7].level, out2[7].trigger], [2, "closed"]);
+    // NR5, after the latch period: the release latched both gates at t=6.
+    // With 0.26 continuing, nothing is raised while the window still holds
+    // a frame from t=6 or before; at t=67 it does not, so 0.26 is new
+    // evidence -- Level 2 after its 3 s hold, and Level 3 (repeat-l2),
+    // since the closure's Level 2 was 70 s earlier.
+    const on = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 1.0, perclos: 0.26 }],
+      ...range(1, 120).map((t) => [t, { perclos: 0.26 }])]);
+    eq(events(on), [[0, 2, "closed"], [6, 0, "clear"], [70, 3, "repeat-l2"]]);
+    // Falling to 0.23 by then (under 25%, but not under the 22% re-arm
+    // margin): Level 2's gate expires with nothing to raise, and Level 1's,
+    // which 0.23 still meets, raises a Level 1 notice.
+    const fell = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 1.0, perclos: 0.26 }],
+      ...range(1, 120).map((t) => [t, { perclos: t < 20 ? 0.26 : 0.23 }])]);
+    // (That notice then clears on 5 s of open eyes at t=76, as Level 1 does.)
+    eq(events(fell), [[0, 2, "closed"], [6, 0, "clear"], [70, 1, "perclos"], [76, 0, "clear"]]);
   }],
   ["P13x: PERCLOS 16% that armed as escalation evidence while Level 2 sounded does not survive its tap and raise Level 1 (I4/NR3)", async () => {
     // Re-review 1's actual P13x: Level 2 is already up (from a closure), and

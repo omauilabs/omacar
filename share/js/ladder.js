@@ -32,6 +32,19 @@
 // ALERTS within 5 min" (repeat-l2) now counts only a Level 2 that is actually
 // raised, never a re-arm while one is already sounding.
 //
+// PERCLOS LATCHES (NR1/NR3, fix round 3; NR5, fix round 4). A gate that
+// raises is latched, and so, on any release, is every gate whose reading is
+// still at or above its threshold: the reading has not changed just because
+// the alert cleared. A latch exists only to stop the SAME 60 s window
+// raising twice, so it lasts only as long as that window can: it expires
+// once the measures' window holds no frame from the latch's own step (by
+// m.t, pruned exactly as drowsy.js prunes it), and at once on a
+// discontinuity or a camera restart, which empty that window. A recovery
+// (below threshold - 0.03 for 10 s) frees it earlier. After any of these a
+// reading at or above threshold is new evidence and raises after the usual
+// 3 s hold; so a second Level 2 -- and with it Level 3 -- can come from a
+// fresh window, never from the one that already raised.
+//
 // A SOUNDING ALERT AND THE GATE. With alert_continues_below_gate (the
 // default), a raised level carries on below 30 mph, repeats and all. Set to
 // false, it falls silent below the gate -- including Level 3's held alarm,
@@ -65,10 +78,12 @@
 // that reads as the eyes having stayed open for however long the wall clock
 // ran, with no new frame in evidence. Keyed on m.t, a snapshot whose time
 // has not moved since the last step is never evidence for a release, no
-// matter how much wall-clock time passed around it. Everything else --
-// PERCLOS's hold and re-arm timers, repeat and voice scheduling, the
-// Level 2 history -- still runs on step()'s own t, since those are the
-// app's own timing, not the camera's.
+// matter how much wall-clock time passed around it. A PERCLOS latch's
+// expiry and the yawn and nod windows run on m.t too (NR5/NR7), since they
+// mirror the measures' own windows. Everything else -- PERCLOS's hold and
+// re-arm timers, repeat and voice scheduling, the Level 2 history -- still
+// runs on step()'s own t, since those are the app's own timing, not the
+// camera's.
 //
 // Level 3 has no time cap and does not clear on open eyes: it ends on
 // "I'm awake" or a stopped car.
@@ -102,14 +117,34 @@ const TAP_QUIET_SECS = 600;      // N8: camera-free Level 1 notices are quiet
 // for a raise, via perclosLatch (N1, fix round 2): an episode that arms and
 // is then discarded unused must return to fresh, not get stuck blocked
 // forever with no way to read below its own threshold again.
-function perclosGate(perc, key, threshold, value, t, evidenceOK) {
-  const st = perc[key] || (perc[key] = { holdSince: null, belowSince: null, blocked: false });
+//
+// A latched gate has three ways out (NR5, fix round 4). A latch exists only
+// to stop the SAME 60 s window raising twice, so:
+//   - it expires once the window holds no frame from the latch's own step:
+//     a fresh snapshot (m.t advanced, not a discontinuity) whose m.t is more
+//     than perclos.window_secs past the latch's m.t -- the very rule
+//     drowsy.js prunes its window by. Stale re-feeds do not move m.t, so
+//     they never age a latch;
+//   - it expires at once on a discontinuity or a camera restart
+//     (perclosReset, from step()), since the measures then empty their
+//     window: the reading that follows still needs drowsy.js's 30 s
+//     minimum window, then the 3 s hold;
+//   - and, earlier, it re-arms once PERCLOS has read below (threshold -
+//     PERCLOS_MARGIN) for PERCLOS_REARM_SECS.
+// A latched gate runs no hold, so whichever way it goes, a reading at or
+// above threshold must then be held a full PERCLOS_HOLD_SECS from that step.
+const freshGate = () => ({ holdSince: null, belowSince: null, blocked: false, latchMT: null });
+const gateOf = (perc, key) => perc[key] || (perc[key] = freshGate());
+
+function perclosGate(perc, key, threshold, value, t, evidenceOK, mt, windowSecs) {
+  const st = gateOf(perc, key);
+  if (st.blocked && mt - st.latchMT > windowSecs) st.blocked = false;
   const above = evidenceOK && has(value) && value >= threshold;
   const belowMargin = has(value) && value < threshold - PERCLOS_MARGIN;
-  st.holdSince = above ? (st.holdSince === null ? t : st.holdSince) : null;
   st.belowSince = belowMargin ? (st.belowSince === null ? t : st.belowSince) : null;
   if (st.blocked && st.belowSince !== null && t - st.belowSince >= PERCLOS_REARM_SECS) st.blocked = false;
-  if (!st.blocked && above && st.holdSince !== null && t - st.holdSince >= PERCLOS_HOLD_SECS) {
+  st.holdSince = above && !st.blocked ? (st.holdSince === null ? t : st.holdSince) : null;
+  if (st.holdSince !== null && t - st.holdSince >= PERCLOS_HOLD_SECS) {
     st.holdSince = null;
     return true;
   }
@@ -117,17 +152,24 @@ function perclosGate(perc, key, threshold, value, t, evidenceOK) {
 }
 
 // N1/NR3: block a gate, creating its entry if this is the first time it is
-// touched -- a sibling gate latched by NR3 may never have armed at all.
-function perclosLatch(perc, key) {
-  const st = perc[key] || (perc[key] = { holdSince: null, belowSince: null, blocked: false });
+// touched -- a sibling gate latched by NR3 may never have armed at all. The
+// latch is stamped with the snapshot's own m.t (NR5); latching a gate that
+// is already latched restamps it, since the newer reading's window is the
+// one that must now turn over. A hold in progress is dropped.
+function perclosLatch(perc, key, mt) {
+  const st = gateOf(perc, key);
   st.blocked = true;
+  st.latchMT = mt;
+  st.holdSince = null;
 }
 
 // I4: a stop of 5 min or more returns a gate fully to fresh -- unarmed and
 // unblocked -- not merely clearing the outer armed flag. This is the strong
 // discard: even a gate that raised is cleared, since a real stop is rest.
+// NR5: a discontinuity or a camera restart does the same, since the
+// measures' PERCLOS window no longer holds any frame the latch was about.
 function perclosReset(perc, key) {
-  perc[key] = { holdSince: null, belowSince: null, blocked: false };
+  perc[key] = freshGate();
 }
 
 // NR1: a tap is the weak discard. It still clears an armed-but-UNUSED hold
@@ -138,7 +180,7 @@ function perclosReset(perc, key) {
 function perclosTapDiscard(perc, key) {
   const st = perc[key];
   if (st && st.blocked) return;
-  perc[key] = { holdSince: null, belowSince: null, blocked: false };
+  perc[key] = freshGate();
 }
 
 // Sensitive lowers every trigger threshold by 20%: the closed-eye margin and
@@ -245,12 +287,12 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   let rot = 0, nextRepeat = null, nextVoice = null, alarmSilenced = false;
   let openStreakStart = null, perclosAtOpenStreak = null;
   let lastMT = null, lastTapT = null;
-  let lastYawns = null, lastNods = null; // NR2: drowsy.js's own raw counts,
-                                          // to detect a fresh increment
   const was = {}, armed = {};
   const perc = {};               // PERCLOS hysteresis state, per trigger key
-  const activeYawns = [], activeNods = []; // NR2: timestamps of increments
-                                            // seen on an evidenceOK step only
+  // NR2/NR7: a mirror of drowsy.js's own yawn and nod windows -- each event
+  // it has counted, as [m.t first seen, seen on an evidenceOK step] -- so a
+  // new event is told apart from an old one leaving, even on one frame.
+  const seenYawns = [], seenNods = [];
   const l2Times = [];
   const lastFree = {};
 
@@ -281,7 +323,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     }
   }
 
-  function clear(out, m) {
+  function clear(out, m, mt) {
     level = 0;
     trigger = null;
     nextRepeat = nextVoice = null;
@@ -294,10 +336,11 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     // sibling or not. The reading did not change just because the level
     // cleared, so it is not new evidence and must not immediately re-arm
     // and raise again a moment later (a fresh Level 2, or Level 1 on Level
-    // 2's own release). It still needs the normal re-arm to fire again.
+    // 2's own release). It is freed as any latch is (NR5): a recovery, the
+    // window turning over past this snapshot's m.t, or a camera gap.
     if (m && has(m.perclos)) {
-      if (m.perclos >= L2.perclos) perclosLatch(perc, "perclos2");
-      if (m.perclos >= L1.perclos) perclosLatch(perc, "perclos1");
+      if (m.perclos >= L2.perclos) perclosLatch(perc, "perclos2", mt);
+      if (m.perclos >= L1.perclos) perclosLatch(perc, "perclos1", mt);
     }
   }
 
@@ -309,8 +352,21 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     // m.t, not step()'s t -- see the header. Falls back to t only if a
     // caller's snapshot genuinely carries no t of its own.
     const mt = has(m.t) ? m.t : t;
-    const advanced = lastMT === null || mt > lastMT;
+    const prevMT = lastMT;
+    const advanced = prevMT === null || mt > prevMT;
     lastMT = mt;
+
+    // NR5 (fix round 4): a discontinuity -- drowsy.js's own flag, on a
+    // snapshot that is not a re-feed of the last one -- or a camera restart,
+    // a snapshot clock that went backwards (drowsy.js flags that too, but
+    // it is not "advanced" here), empties the measures' PERCLOS window. No
+    // frame a latch was taken on remains, so every latch expires at once,
+    // and no hold may span the gap. Done before the release below, so a
+    // release on this very step latches on its own (post-gap) reading.
+    if (prevMT !== null && mt !== prevMT && (m.discontinuity || mt < prevMT)) {
+      perclosReset(perc, "perclos1");
+      perclosReset(perc, "perclos2");
+    }
 
     // Release first: "I'm awake", a stationary car, or (Levels 1 and 2) eyes
     // that have stayed open. A blink under BLINK_SECS (effectively half a
@@ -341,7 +397,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
       const steady = level < 3 && !m.discontinuity && advanced && openStreakStart !== null && hadBaseline
         && mt - openStreakStart >= cfg.release.open_secs
         && has(m.perclos) && perclosAtOpenStreak !== null && m.perclos <= perclosAtOpenStreak;
-      if (inp.tap || steady || inp.parked) clear(out, m);
+      if (inp.tap || steady || inp.parked) clear(out, m, mt);
     }
     if (banner && inp.stoppedFor >= cfg.banner_stopped_secs) banner = false;
 
@@ -378,25 +434,34 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
       // later rising edge made entirely of active evidence. Kept in the
       // ladder's own window (L1.count_window_secs), independent of
       // drowsy.js's own count, which still includes below-gate events.
-      const countActive = (xs, raw, last) => {
-        if (has(raw) && evidenceOK) {
-          const from = has(last) ? last : 0; // no prior reading: take it whole
-          if (raw > from) for (let i = from; i < raw; i++) xs.push(t);
+      // NR7 (fix round 4): drowsy.js's count is itself windowed, so an old
+      // event leaving on the same frame a new one arrives leaves it
+      // unchanged; diffing it lost the new one. The mirror is pruned by
+      // drowsy.js's own rule (older than count_window_secs, by m.t) and then
+      // to its count, oldest first, should it lag; whatever the count still
+      // holds beyond the mirror is new since the last fresh snapshot.
+      const countActive = (seen, raw) => {
+        while (seen.length && mt - seen[0][0] > L1.count_window_secs) seen.shift();
+        if (has(raw)) {
+          while (seen.length > raw) seen.shift();
+          while (seen.length < raw) seen.push([mt, evidenceOK]); // none before: taken whole
         }
-        while (xs.length && t - xs[0] > L1.count_window_secs) xs.shift();
-        return xs.length;
+        return seen.filter(([, active]) => active).length;
       };
-      const activeYawnCount = countActive(activeYawns, m.yawns, lastYawns);
-      const activeNodCount = countActive(activeNods, m.nods, lastNods);
-      lastYawns = has(m.yawns) ? m.yawns : lastYawns;
-      lastNods = has(m.nods) ? m.nods : lastNods;
+      const activeYawnCount = countActive(seenYawns, m.yawns);
+      const activeNodCount = countActive(seenNods, m.nods);
       see("yawns", activeYawnCount >= L1.yawns);
       see("nods", activeNodCount >= L1.nods);
       // PERCLOS triggers use their own hold/re-arm hysteresis (C1/I1), not a
       // plain rising edge; evidenceOK gates whether time counts toward the
-      // hold at all, not just whether the result is kept.
-      if (perclosGate(perc, "perclos2", L2.perclos, m.perclos, t, evidenceOK)) armed.perclos2 = true;
-      if (perclosGate(perc, "perclos1", L1.perclos, m.perclos, t, evidenceOK)) armed.perclos1 = true;
+      // hold at all, not just whether the result is kept. Only a fresh,
+      // non-discontinuity snapshot gets here, so only such a one can age a
+      // latch out (NR5) -- whatever the speed, since drowsy.js keeps and
+      // drops frames whatever the speed: the window is what the latch is
+      // about. A hold still runs only while evidenceOK.
+      const W = cfg.perclos.window_secs;
+      if (perclosGate(perc, "perclos2", L2.perclos, m.perclos, t, evidenceOK, mt, W)) armed.perclos2 = true;
+      if (perclosGate(perc, "perclos1", L1.perclos, m.perclos, t, evidenceOK, mt, W)) armed.perclos1 = true;
     }
 
     // M8: no NEW alert starts below the gate, but new evidence on one already
@@ -435,7 +500,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
         if (why === "since-stop") lastFree["since-stop"] = t;
         if (why === "night") lastFree.night = t;
         // N1: only a trigger that actually raised something latches its gate.
-        if (whyKey) perclosLatch(perc, whyKey);
+        if (whyKey) perclosLatch(perc, whyKey, mt);
         raise(to, why, t, out);
       }
     }
