@@ -19,6 +19,7 @@ import drive from "../js/views/drive.js";
 import cluster from "../js/views/live.js";
 import music from "../js/views/music.js";
 import { gaugeRail } from "../js/omaplay/rail.js";
+import ima from "../js/views/ima.js";
 
 const { READINGS, readingState } = R;
 // Looked up at call time, so this file still loads against a readings.js that
@@ -90,7 +91,7 @@ function ensureHosts() {
 // this runner changes under it.
 async function withCss(fn) {
   const links = [];
-  for (const href of ["css/app.css", "css/home.css"]) {
+  for (const href of ["css/app.css", "css/home.css", "css/ima.css"]) {
     const l = document.createElement("link");
     l.rel = "stylesheet";
     l.href = href;
@@ -102,10 +103,10 @@ async function withCss(fn) {
   try { await fn(); } finally { for (const l of links) l.remove(); }
 }
 
-// What var(--name) resolves to where `el` is, as the property `prop` reports
-// it. A probe beside the element, so a screen-scoped override of the token
-// (the drive screen lifts --faint for sunlight) is the one compared against.
-function token(el, name, prop = "color") {
+// What var(--name) resolves to, as a colour, where `el` is. A probe beside the
+// element, so a screen-scoped override of the token (the drive screen lifts
+// --faint for sunlight) is the one compared against.
+function token(el, name) {
   const host = el instanceof SVGElement ? el.ownerSVGElement.parentElement : el.parentElement;
   const probe = document.createElement("span");
   probe.style.color = `var(${name})`;
@@ -417,5 +418,37 @@ const onRail = [
   }],
 ];
 
+// ---------------------------------------------------------------- Battery (IMA view)
+const onBattery = [
+  ["the Battery screen in a hand-off shows the pack dimmed and paused, not a direction", () =>
+    withCss(async () => {
+      const was = { ima: api.ima, history: api.history };
+      api.ima = async () => ({});
+      api.history = async () => ({ rows: [] });
+      store.car = { live: LIVE() };
+      store.emit("car");
+      const m = await mounted(ima);
+      try {
+        for (let i = 0; i < 40 && !m.root.querySelector(".charge-stage"); i++) await wait(50);
+        ok(m.root.querySelector(".charge-stage"), "the charge dial drew");
+        store.car = { live: HANDOVER() };
+        store.emit("car");
+        const stage = m.root.querySelector(".charge-stage");
+        eq(stage.dataset.state, "paused", "the dial's state");
+        eq(m.root.querySelector(".energy-state").textContent, "Paused · adapter in use", "the words");
+        const pct = m.root.querySelector(".orbit-reading strong");
+        eq(pct.textContent, "61%", "the last reading is still shown");
+        eq(ink(pct), token(pct, "--faint"), "dimmed");
+        store.car = { live: LIVE() };
+        store.emit("car");
+        eq(m.root.querySelector(".charge-stage").dataset.state, "live", "live again");
+      } finally {
+        m.done();
+        Object.assign(api, was);
+        if (!was.ima) delete api.ima;
+      }
+    })],
+];
+
 export default [...rules, ...tile, ...onHome, ...onGauges, ...direction, ...onCluster,
-                ...onMusic, ...onRail];
+                ...onMusic, ...onRail, ...onBattery];
