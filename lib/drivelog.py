@@ -70,9 +70,86 @@ QUIET_TIMEOUT = 120.0       # silence that means the engine has stopped
 BACKOFF_MAX = 300.0         # the longest wait after something declines
 LIVE_STALE = 90.0           # a live.json older than this tells us nothing
 
+# Silence after the adapter itself says it gave up (see OMACAR_DRIVELOG_
+# END_ON_OVERFLOW below) before a leg ends on that rather than on QUIET_
+# TIMEOUT. Not zero: the adapter's own buffer can still be draining a few
+# more bytes through pyserial's 512-byte reads when the overflow word lands.
+OVERFLOW_SETTLE = 1.0
+
 STATE = os.path.join(records.STATE, "drivelog.json")
 OFFFILE = os.path.join(records.STATE, "drivelog-off")
 LOGDIR = os.path.join(records.STATE, "drivelog")
+
+
+# -- the duty cycle, overridable without touching this file -----------------
+#
+# LEG_MINUTES, BETWEEN_LEGS, QUIET_TIMEOUT and listen.DEFAULT_LIMIT decide the
+# trade this whole file exists to make: however long a leg holds the port is
+# capture depth, and whatever is left of the cycle is telemetry -- the daemon
+# reconnected and the gauges are alive. That trade is not the same trade every
+# day; the day before a demo wants telemetry over depth. So the numbers that
+# set it are overridable from a systemd drop-in, the same way OMACAR_FASTBAUD
+# and OMACAR_CAF0 already are, and unset every default below is unchanged.
+_ENV_BETWEEN = "OMACAR_DRIVELOG_BETWEEN"
+_ENV_LEG_LINES = "OMACAR_DRIVELOG_LEG_LINES"
+_ENV_QUIET = "OMACAR_DRIVELOG_QUIET"
+_ENV_END_ON_OVERFLOW = "OMACAR_DRIVELOG_END_ON_OVERFLOW"
+
+# Floors and ceilings, not tuning. Below the floor a number stops meaning what
+# its name says -- a between-legs gap under five seconds does not give the
+# daemon time to reconnect, and a quiet timeout under five seconds ends a leg
+# on an ordinary gap in traffic rather than the engine stopping. Above the
+# ceiling, a typo (an extra digit in a drop-in written at night before a
+# drive) would otherwise hold the port for the rest of the trip, or cap a leg
+# at half a million lines, instead of failing loudly -- so it is treated the
+# same as a value that does not parse at all: logged, and the default used.
+_BETWEEN_BOUNDS = (5.0, 900.0)
+_QUIET_BOUNDS = (5.0, 900.0)
+_LEG_LINES_BOUNDS = (100, 500000)
+
+
+def _env_number(name, default, bounds, cast=float):
+    """One override, validated and bounded. Returns (value, note-or-None).
+
+    Unset, blank, unparseable, or outside `bounds` all fall back to
+    `default` -- the recorder has to start whatever is sitting in the
+    drop-in, and a typo should cost the override, not the leg. `note` is
+    None when the default applied unchanged, and a short string otherwise,
+    for the one line this is logged on at start-up.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default, None
+    try:
+        val = cast(raw)
+    except (TypeError, ValueError):
+        return default, f"{name}={raw!r} is not a number — using {default}"
+    lo, hi = bounds
+    if not (lo <= val <= hi):
+        return default, f"{name}={raw!r} is outside {lo}-{hi} — using {default}"
+    return val, f"{name}={val}"
+
+
+def read_overrides():
+    """The duty cycle this run will actually use, taken from the environment.
+
+    Called once, at start-up, by main() -- never by `status`, which reads
+    what the running supervisor published (see Supervisor.publish()) rather
+    than re-reading the environment of whatever process happens to ask. The
+    CLI invoked to check status does not carry the systemd drop-in's
+    environment, so reading it there would show the wrong thing.
+    """
+    between, n1 = _env_number(_ENV_BETWEEN, BETWEEN_LEGS, _BETWEEN_BOUNDS)
+    leg_lines, n2 = _env_number(_ENV_LEG_LINES, listenlib.DEFAULT_LIMIT,
+                                _LEG_LINES_BOUNDS, cast=int)
+    quiet, n3 = _env_number(_ENV_QUIET, QUIET_TIMEOUT, _QUIET_BOUNDS)
+    # Exact-match "1", the same as OMACAR_FASTBAUD and OMACAR_CAF0 -- an
+    # unrecognised value such as "yes" or "true" is the default, off, not a
+    # guess at what the author meant.
+    end_on_overflow = os.environ.get(_ENV_END_ON_OVERFLOW) == "1"
+    return {"between": between, "leg_lines": leg_lines, "quiet": quiet,
+            "end_on_overflow": end_on_overflow,
+            "notes": [n for n in (n1, n2, n3) if n]}
 
 
 def _live():
@@ -102,12 +179,19 @@ def _event(kind, **fields):
 
 class Supervisor:
     def __init__(self, leg_minutes=LEG_MINUTES, quiet=QUIET_TIMEOUT,
-                 between=BETWEEN_LEGS, poll=IDLE_POLL, once=False):
+                 between=BETWEEN_LEGS, poll=IDLE_POLL, once=False,
+                 leg_lines=None, end_on_overflow=False):
         self.leg_minutes = leg_minutes
         self.quiet = quiet
         self.between = between
         self.poll = poll
         self.once = once
+        # None, not listenlib.DEFAULT_LIMIT, as the parameter default: the
+        # module the caller passed a stub for (see the guard tests) may not
+        # be the same object this file imported, so the fallback is resolved
+        # here rather than baked into the signature at import time.
+        self.leg_lines = listenlib.DEFAULT_LIMIT if leg_lines is None else leg_lines
+        self.end_on_overflow = bool(end_on_overflow)
         self.state = "starting"
         self.detail = ""
         self.legs = 0
@@ -125,6 +209,12 @@ class Supervisor:
             "legs": self.legs, "frames": self.frames,
             "last_leg": self.last_leg,
             "leg_minutes": self.leg_minutes,
+            # THE DUTY CYCLE IN EFFECT, not just the defaults -- so `omacar
+            # drive status`, run from a terminal that never saw the systemd
+            # drop-in's environment, can still say what this run is actually
+            # doing.
+            "between": self.between, "leg_lines": self.leg_lines,
+            "quiet": self.quiet, "end_on_overflow": self.end_on_overflow,
         }
         if cap is not None:
             doc["leg"] = {"frames": len(cap.frames),
@@ -236,6 +326,19 @@ class Supervisor:
                 self.publish(cap)
             if self.stood_down():
                 return True
+            # AN OVERFLOW CAN END THE LEG ON ITS OWN, OPT-IN.
+            #
+            # cap.overflowed() is non-empty the moment the adapter has said
+            # BUFFER FULL or STOPPED -- words that mean it has already given
+            # up monitoring, not a guess that it might have. There is nothing
+            # left to wait for: it will not send another frame until a fresh
+            # ATMA starts it again, so QUIET_TIMEOUT's only job from that
+            # point on is holding a port that has nothing left to give, for
+            # up to another 120 seconds. OVERFLOW_SETTLE, not zero, covers the
+            # tail of whatever the adapter is still draining out of its own
+            # buffer when the word arrives.
+            if self.end_on_overflow and cap.overflowed():
+                return now - last["at"] > OVERFLOW_SETTLE
             return now - last["at"] > self.quiet
 
         def began(c):
@@ -246,7 +349,7 @@ class Supervisor:
         try:
             listenlib.listen(seconds=seconds, cap=cap, note="drive",
                              flush_as=name, should_stop=done, on_ready=began,
-                             require_traffic=True)
+                             require_traffic=True, limit=self.leg_lines)
         except listenlib.Quiet as why:
             # Not a fault: the car is off, or its broadcast traffic is not on
             # any setting we know. Either way there is nothing to record.
@@ -360,6 +463,17 @@ def report():
     colour = GREEN if alive else RED
     lines.append(f"    {colour}{doc.get('state', '?')}{RESET}   "
                  f"{doc.get('detail') or ''}")
+    # THE DUTY CYCLE IN EFFECT, whether it is the shipped default or a
+    # systemd drop-in from the night before a demo. `between` is only absent
+    # on a status file written before this existed, so its presence is the
+    # test for whether there is anything to show.
+    if doc.get("between") is not None:
+        eoo = doc.get("end_on_overflow")
+        lines.append(
+            f"    {DIM}between legs {doc['between']:.0f}s · "
+            f"leg cap {doc.get('leg_lines')} lines · "
+            f"quiet {doc.get('quiet', 0):.0f}s"
+            f"{' · ends on overflow' if eoo else ''}{RESET}")
     if not alive:
         # A SUPERVISOR THAT HAS STOPPED LOOKS EXACTLY LIKE ONE THAT IS WAITING,
         # and the whole point of it is that nobody is watching.
@@ -431,7 +545,23 @@ def main(argv):
         return 0
 
     once = "--once" in argv
-    sup = Supervisor(once=once)
+    overrides = read_overrides()
+    # LOGGED ONCE, HERE, BEFORE THE FIRST LEG -- not rediscovered from a
+    # status file that may not exist yet if this run's first leg never
+    # starts. `report()` shows the same numbers for as long as the process
+    # runs; this is the copy that lands in the day's trip log, which outlives
+    # both the terminal that started the unit and this run of it.
+    _event("startup", detail="duty-cycle settings",
+           between=overrides["between"], leg_lines=overrides["leg_lines"],
+           quiet=overrides["quiet"], end_on_overflow=overrides["end_on_overflow"],
+           overridden=overrides["notes"])
+    print(f"\n  between legs {overrides['between']:.0f}s   "
+          f"leg cap {overrides['leg_lines']} lines   "
+          f"quiet timeout {overrides['quiet']:.0f}s"
+          f"{'   ends on overflow' if overrides['end_on_overflow'] else ''}\n")
+    sup = Supervisor(once=once, between=overrides["between"],
+                     quiet=overrides["quiet"], leg_lines=overrides["leg_lines"],
+                     end_on_overflow=overrides["end_on_overflow"])
     try:
         return sup.run()
     except KeyboardInterrupt:

@@ -3034,6 +3034,156 @@ check("nothing rate-limits the restart that keeps it alive",
 check("and the restart itself is still unconditional",
       any(d == "Restart=always" for d in _directives), True)
 
+# ------------------------------------------------------- the duty-cycle knobs
+head("the leg duty cycle is overridable, validated, bounded, and shown")
+
+_DUTY_ENV = ("OMACAR_DRIVELOG_BETWEEN", "OMACAR_DRIVELOG_LEG_LINES",
+             "OMACAR_DRIVELOG_QUIET", "OMACAR_DRIVELOG_END_ON_OVERFLOW")
+_duty_kept = {k: os.environ.get(k) for k in _DUTY_ENV}
+
+
+def _duty_restore():
+    for k, v in _duty_kept.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+try:
+    for k in _DUTY_ENV:
+        os.environ.pop(k, None)
+    _ov = _dl.read_overrides()
+    check("unset, between keeps its default", _ov["between"], _dl.BETWEEN_LEGS)
+    check("unset, the leg cap keeps listen's own default",
+          _ov["leg_lines"], _ln.DEFAULT_LIMIT)
+    check("unset, quiet keeps its default", _ov["quiet"], _dl.QUIET_TIMEOUT)
+    check("unset, ending on overflow is off", _ov["end_on_overflow"], False)
+    check("and nothing was overridden", _ov["notes"], [])
+
+    os.environ["OMACAR_DRIVELOG_BETWEEN"] = "240"
+    os.environ["OMACAR_DRIVELOG_LEG_LINES"] = "10000"
+    os.environ["OMACAR_DRIVELOG_QUIET"] = "30"
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "1"
+    _ov = _dl.read_overrides()
+    check("a good BETWEEN is honoured", _ov["between"], 240.0)
+    check("a good LEG_LINES is honoured", _ov["leg_lines"], 10000)
+    check("a good QUIET is honoured", _ov["quiet"], 30.0)
+    check("the overflow flag is exactly \"1\"", _ov["end_on_overflow"], True)
+    check("and every good override is noted for the start-up log",
+          len(_ov["notes"]), 3)
+
+    os.environ["OMACAR_DRIVELOG_BETWEEN"] = "not a number"
+    os.environ["OMACAR_DRIVELOG_LEG_LINES"] = "0"           # below the floor
+    os.environ["OMACAR_DRIVELOG_QUIET"] = "100000"          # above the ceiling
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "yes"   # only "1" counts
+    _ov = _dl.read_overrides()
+    check("a value that does not parse falls back to the default",
+          _ov["between"], _dl.BETWEEN_LEGS)
+    check("a value below the floor falls back to the default",
+          _ov["leg_lines"], _ln.DEFAULT_LIMIT)
+    check("a value above the ceiling falls back to the default",
+          _ov["quiet"], _dl.QUIET_TIMEOUT)
+    check("only the exact flag turns overflow-ending on",
+          _ov["end_on_overflow"], False)
+    # A GUARD THAT CANNOT FAIL IS NOT A GUARD. Confirmed by hand: disabling
+    # the `if not (lo <= val <= hi):` bounds check in _env_number() (so an
+    # out-of-range value is accepted rather than falling back) turned the two
+    # bounds checks above into FAILs -- "wanted 60000, got 0" for LEG_LINES
+    # and "wanted 120.0, got 100000.0" for QUIET -- while the unparseable-
+    # BETWEEN check kept passing, since that one is caught earlier, by the
+    # cast() itself. Restoring the check made every one of them pass again.
+    check("every fallback is still logged as an override attempt",
+          len(_ov["notes"]), 3)
+finally:
+    _duty_restore()
+
+head("a leg is capped by OMACAR_DRIVELOG_LEG_LINES, passed to listen() as limit=")
+
+_seen_kwargs = {}
+_orig_listen_call = _ln.listen
+
+
+def _fake_listen(**kw):
+    _seen_kwargs.update(kw)
+    cap = kw.get("cap")
+    if cap is not None:
+        cap.protocol = "6"
+    return cap
+
+
+_ln.listen = _fake_listen
+try:
+    _sup_leg = _dl.Supervisor(once=True, leg_lines=12345)
+    _sup_leg.say = lambda *a, **k: None
+    _sup_leg.leg()
+    check("the configured cap reaches listen() as limit=",
+          _seen_kwargs.get("limit"), 12345)
+finally:
+    _ln.listen = _orig_listen_call
+
+head("`omacar drive status` shows the duty cycle a running supervisor is using")
+
+_duty_tmp = tempfile.mkdtemp()
+_duty_state_kept = _dl.STATE
+_dl.STATE = os.path.join(_duty_tmp, "drivelog.json")
+try:
+    _sup_status = _dl.Supervisor(once=True, between=240.0, leg_lines=10000,
+                                 quiet=30.0, end_on_overflow=True)
+    _sup_status.publish()
+    _status_text, _ = _dl.report()
+    check("the gap between legs is shown", "240" in _status_text, True)
+    check("the leg's line cap is shown", "10000" in _status_text, True)
+    check("the quiet timeout is shown", "30" in _status_text, True)
+    check("and that ending on overflow is on",
+          "overflow" in _status_text.lower(), True)
+finally:
+    _dl.STATE = _duty_state_kept
+    shutil.rmtree(_duty_tmp, ignore_errors=True)
+
+head("an overflowed adapter can end the leg without waiting out the quiet timeout")
+
+_orig_listen_ov = _ln.listen
+
+
+def _fake_listen_overflow(**kw):
+    """Feeds the words a real overflow produces, then stays silent."""
+    cap = kw["cap"]
+    on_ready = kw.get("on_ready")
+    should_stop = kw["should_stop"]
+    if on_ready:
+        on_ready(cap)
+    cap.add_line("13A 0013000000000024")
+    cap.add_line("BUFFER FULL")
+    cap.add_line("STOPPED")
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if should_stop():
+            break
+        time.sleep(0.02)
+    return cap
+
+
+_ln.listen = _fake_listen_overflow
+try:
+    _sup_off = _dl.Supervisor(once=True, quiet=120.0, end_on_overflow=False)
+    _sup_off.say = lambda *a, **k: None
+    _t0 = time.time()
+    _sup_off.leg()
+    _took_off = time.time() - _t0
+    check("with the flag off, the overflow does not shorten the leg",
+          _took_off >= 5.0, True)
+
+    _sup_on = _dl.Supervisor(once=True, quiet=120.0, end_on_overflow=True)
+    _sup_on.say = lambda *a, **k: None
+    _t0 = time.time()
+    _sup_on.leg()
+    _took_on = time.time() - _t0
+    check(f"with the flag on, the leg ends on the overflow, not the 120s "
+          f"quiet timeout ({_took_on:.1f}s)", _took_on < 3.0, True)
+finally:
+    _ln.listen = _orig_listen_ov
+
 # --------------------------------------------------------- the parked session
 head("tools/ima-session.sh sends only read-only prospect/listen/mcp calls")
 
