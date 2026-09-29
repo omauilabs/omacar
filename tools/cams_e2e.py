@@ -192,7 +192,11 @@ def main(argv):
         say(0.0)
         check("hard braking was caught from the car's speed", braked)
         st, body = req("POST", "/api/cams/mark", body="{}")
-        check("Mark event answered", st == 200 and json.loads(body)["kind"] == "marked")
+        try:
+            kind = json.loads(body).get("kind")
+        except (ValueError, AttributeError):
+            kind = None
+        check("Mark event answered", st == 200 and kind == "marked")
 
         print("\n  waiting, up to 150 s, for two clips of every camera and both events locked")
 
