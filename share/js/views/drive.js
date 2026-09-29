@@ -17,7 +17,8 @@
 import { h, clear, store, api, U, dist, mins,
          since, toast } from "../core.js";
 import { KINDS, makeGauge, kindsFor, normaliseKind } from "../gauges.js";
-import { READINGS as TILES, learnedFor, learnedKey } from "../readings.js";
+import { READINGS as TILES, learnedFor, learnedKey,
+         readingState, pausedNote, drawnAs } from "../readings.js";
 
 const ACK_KEY = "omacar.ackAlert";
 
@@ -126,7 +127,7 @@ export default function drive(root, { arg } = {}) {
       const tile = h("div.drive-tile", { data: { kind } },
                      h("div.drive-tile-k", def.label));
       tile.appendChild(g.el);
-      cells.push({ id, def, g });
+      cells.push({ id, def, g, tile });
       row.appendChild(tile);
     }
     buildHero();
@@ -250,26 +251,37 @@ export default function drive(root, { arg } = {}) {
   }
 
   function paint() {
-    const v = store.values, s = store.sample, car = store.car;
+    // What decides (moving, running, the Customise lock) reads the sample, as
+    // it always has. What is DRAWN comes from store.shown, and during a
+    // hand-off every live readout is marked paused -- dimmed by app.css, its
+    // tone dropped, and the line under the hero says why. This screen used to
+    // go on drawing the hand-off's last values as current for the whole of it.
+    const v = store.values, car = store.car;
+    const s = store.shown, sv = s.values || {};
     const moving = (v.SPEED || 0) > 3;
     const running = (v.RPM || 0) > 200;
 
     const hero = catalogue[layout.hero] || catalogue.speed;
-    const hv = hero.get(v, s, car);
+    const heroState = readingState(hero, s);
+    heroSlot.dataset.state = heroState;
+    const hv = drawnAs(hero.get(sv, s, car), heroState);
     if (heroGauge) {
-      heroGauge.update(hv, hero.read ? hero.read(v, s, car) : null);
+      heroGauge.update(hv, hero.read ? hero.read(sv, s, car) : null);
     } else {
       heroV.textContent = hv.v;
       heroV.className = "drive-speed" + (hv.tone ? " " + hv.tone : "");
       heroU.textContent = hv.n;
     }
     stateEl.textContent = store.connected
-      ? (moving ? "" : running ? "idling" : "parked") : "no link";
+      ? (moving ? "" : running ? "idling" : "parked")
+      : store.paused ? pausedNote(store.pausedSince, true) : "no link";
     wrap.dataset.state = store.connected ? (moving ? "driving" : "still") : "offline";
 
     for (const c of cells) {
-      const out = c.def.get(v, s, car);
-      c.g.update(out, c.def.read ? c.def.read(v, s, car) : null);
+      const st = readingState(c.def, s);
+      c.tile.dataset.state = st;
+      const out = drawnAs(c.def.get(sv, s, car), st);
+      c.g.update(out, c.def.read ? c.def.read(sv, s, car) : null);
     }
 
     tripEl.textContent = (FOOTERS[layout.footer] || FOOTERS.trip)(car);

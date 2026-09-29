@@ -11,10 +11,11 @@
 // the IMA state saying "charging" while the motor assisted. These are the
 // screens, mounted for real and fed the daemon's own shapes.
 import { eq, ok } from "./assert.js";
-import { store } from "../js/core.js";
+import { store, api } from "../js/core.js";
 import * as R from "../js/readings.js";
 import { makeSignalTile } from "../js/sigtile.js";
 import home from "../js/views/home.js";
+import drive from "../js/views/drive.js";
 
 const { READINGS, readingState } = R;
 // Looked up at call time, so this file still loads against a readings.js that
@@ -276,6 +277,59 @@ const onHome = [
     })],
 ];
 
+// ---------------------------------------------------------------- Gauges
+const LAYOUT = { hero: "speed", heroKind: "digital", columns: 2, footer: "none",
+                 tiles: ["coolant", "ima", "econ_now", "odometer"], kinds: { coolant: "dial" } };
+
+async function withGauges(before, fn) {
+  const was = api.driveLayout;
+  api.driveLayout = async () => JSON.parse(JSON.stringify(LAYOUT));
+  if (before) before();
+  const m = await mounted(drive);
+  try {
+    for (let i = 0; i < 40 && m.root.querySelectorAll(".drive-tile").length < 4; i++) await wait(50);
+    await fn(m.root);
+  } finally { m.done(); api.driveLayout = was; }
+}
+
+const tiles = (root) => Object.fromEntries([...root.querySelectorAll(".drive-tile")].map((t) =>
+  [t.querySelector(".drive-tile-k").textContent, t.dataset.state]));
+
+const onGauges = [
+  ["Gauges in a hand-off: the hero and every live readout are paused and dimmed, and the line says why", () =>
+    withCss(() => withGauges(() => feed(LIVE()), async (root) => {
+      feed(HANDOVER());
+      const hero = root.querySelector(".drive-hero-slot");
+      const speed = root.querySelector(".drive-speed");
+      eq([hero.dataset.state, speed.textContent], ["paused", "60"], "the hero keeps the last speed, paused");
+      eq(ink(speed), token(speed, "--faint"), "dimmed");
+      eq(root.querySelector(".drive-state").textContent, "Paused · adapter in use", "the line under it");
+      eq(tiles(root), { Coolant: "paused", IMA: "paused", Economy: "paused", Odometer: "live" },
+         "each readout's state");
+      const cool = root.querySelector(".drive-tile .g-value");
+      eq(ink(cool, "fill"), token(cool, "--faint"), "the coolant dial is dimmed");
+    }))],
+
+  ["and back to live on the next fresh sample", () =>
+    withCss(() => withGauges(() => feed(LIVE()), async (root) => {
+      feed(HANDOVER());
+      feed(LIVE({ SPEED: 48.28 }));
+      const speed = root.querySelector(".drive-speed");
+      eq([root.querySelector(".drive-hero-slot").dataset.state, speed.textContent], ["live", "30"]);
+      ok(ink(speed) !== token(speed, "--faint"), "full ink");
+      eq(root.querySelector(".drive-state").textContent, "", "moving: nothing under the hero");
+      eq(tiles(root), { Coolant: "live", IMA: "live", Economy: "live", Odometer: "live" });
+    }))],
+
+  ["a stale no-daemon sample on Gauges is 'no link', never paused", () =>
+    withGauges(() => feed(LIVE()), async (root) => {
+      feed(STALE);
+      eq(root.querySelector(".drive-state").textContent, "no link");
+      eq(root.querySelector(".drive-hero-slot").dataset.state, "waiting");
+      eq(root.querySelector(".drive-speed").textContent, "—");
+    })],
+];
+
 // ---------------------------------------------------------------- the IMA state
 //
 // The direction is the pack's own movement over a twelve-second window. A
@@ -302,4 +356,4 @@ const direction = [
   }],
 ];
 
-export default [...rules, ...tile, ...onHome, ...direction];
+export default [...rules, ...tile, ...onHome, ...onGauges, ...direction];
