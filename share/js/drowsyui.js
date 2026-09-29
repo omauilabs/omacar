@@ -86,6 +86,11 @@ export function chipTitle(st) {
   return says(`Drowsy mode: ${st.chip}`, CHIP_NOTE[st.chip], why);
 }
 
+// The chip's whole title: what it means (chipTitle), then that AUX is out
+// while it is. The top bar's chip and Home's Dashcams card both use this, so a
+// hover on either says the same thing.
+export const chipHint = (st) => says(chipTitle(st), sentence(st.aux));
+
 export function testLine(st) {
   if (!st.testing) return "";
   return "Testing the alerts · " + (st.testLevel ? `Level ${st.testLevel}` : "starting");
@@ -188,7 +193,7 @@ export function mountDrowsyUI({
   const off = engine.on((st) => {
     chipT.textContent = st.chip;
     chip.dataset.tone = chipTone(st.chip);
-    chip.title = says(chipTitle(st), sentence(st.aux));
+    chip.title = chipHint(st);
     banner.hidden = !(st.banner && st.level === 0);
     const tl = dz === "test" ? testLine({ testing: true, testLevel: 2 }) : testLine(st);
     test.hidden = !tl;
