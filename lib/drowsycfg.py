@@ -72,10 +72,35 @@ def load():
     return _overlay(_read(DEFAULTS), _read(user_path()))
 
 
+def _read_for_save():
+    """The owner's file, to lay the app's changes over. Unlike _read, which
+    shrugs a broken file off as {} for reading (the spec's numbers are used),
+    a save must not: writing the app's keys over {} would silently delete
+    every hand-tuned threshold in a file that has, say, a trailing comma. So
+    a file that exists and is not a JSON object stops the save, and the
+    message names the file and where it broke (Task 9 fix round 1, I2)."""
+    path = user_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError) as e:
+        raise ValueError(f"{path} could not be read ({e}), so nothing was saved; fix or remove it by hand")
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{path} is not valid JSON (line {e.lineno}, column {e.colno}: {e.msg}), "
+                         "so nothing was saved; fix it by hand")
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path} must hold a JSON object, so nothing was saved; fix it by hand")
+    return doc
+
+
 def save(changes):
     if not isinstance(changes, dict):
         raise ValueError("the settings must be an object")
-    user = _read(user_path())
+    user = _read_for_save()
     for k, v in changes.items():
         if k == "enabled" and isinstance(v, bool):
             user[k] = v

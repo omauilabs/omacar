@@ -114,6 +114,28 @@ check("rows that are not a list are a 400",
       camroutes.handle_post("/api/drowsy/log", json.dumps({"rows": "x"}))[0], 400)
 check("a body that is not an object is a 400", camroutes.handle_post("/api/drowsy", "[1]")[0], 400)
 
+head("fix round 1, I2: a save never rewrites an owner file that does not parse")
+for bad_text in ("{bad", '{"level2": {"perclos": 0.3},}\n', "[1, 2]", ""):
+    with open(drowsycfg.user_path(), "w", encoding="utf-8") as f:
+        f.write(bad_text)
+    before = open(drowsycfg.user_path(), "rb").read()
+    try:
+        drowsycfg.save({"sensitivity": "standard"})
+        why = None
+    except ValueError as e:
+        why = str(e)
+    after = open(drowsycfg.user_path(), "rb").read()
+    check(f"{bad_text[:14]!r}: the save is refused, naming the file, and the file is byte-for-byte unchanged",
+          (why is not None and drowsycfg.user_path() in why, after == before), (True, True))
+with open(drowsycfg.user_path(), "w", encoding="utf-8") as f:
+    f.write('{"level2": {"perclos": 0.3},\n "eyes": {"closed_cap": 0.7,}}\n')
+before = open(drowsycfg.user_path(), "rb").read()
+code, body = camroutes.handle_post("/api/drowsy", json.dumps({"enabled": False}))
+check("through the route it is a 400 whose message gives the line", (code, "line 2" in body.get("error", "")), (400, True))
+check("and the file is still the owner's", open(drowsycfg.user_path(), "rb").read(), before)
+os.remove(drowsycfg.user_path())
+check("with no file at all a save still works", drowsycfg.save({"enabled": True})["enabled"], True)
+
 shutil.rmtree(SCRATCH, ignore_errors=True)
 print()
 if fails:
