@@ -1,5 +1,5 @@
 {
-  "_comment": "Pictures that ship in the app but not in this public repository, because they carry Honda's badge. The files live in share/assets/private/ (git-ignored). `omacar assets status` checks them against this list; `omacar assets pin NAME` records a file's hash; `omacar assets push` copies them to the tablet. Anchors are fractions of the image, [x, y] from the top left.",
+  "_comment": "Pictures that ship in the app but not in this public repository, because they carry Honda's badge. The files live in share/assets/private/ (git-ignored). `omacar assets status` checks them against this list; `omacar assets pin NAME` records a file's hash; `omacar assets push` copies them to the tablet. Anchors are fractions of the image, [x, y] from the top left. `fetch` lists files too big for the repository, downloaded once at install by `omacar assets fetch` and held to their pins.",
   "assets": {
     "crz-xray": {
       "file": "crz-xray.png",
@@ -40,6 +40,32 @@
           0.9
         ]
       }
+    }
+  },
+  "fetch": {
+    "mediapipe-bundle": {
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs",
+      "file": "share/js/vendor/mediapipe/vision_bundle.mjs",
+      "bytes": 155439,
+      "sha256": "d885630c297c0b20b1fe86096cb06291c4c8080876f27852e724f24ac603713f"
+    },
+    "mediapipe-wasm-loader": {
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm/vision_wasm_internal.js",
+      "file": "share/js/vendor/mediapipe/wasm/vision_wasm_internal.js",
+      "bytes": 323377,
+      "sha256": "e170ee67dd4e16c1a6fcd8840a206687e5a59b22c20e4a902bc445b095454d73"
+    },
+    "mediapipe-wasm": {
+      "url": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm/vision_wasm_internal.wasm",
+      "file": "share/js/vendor/mediapipe/wasm/vision_wasm_internal.wasm",
+      "bytes": 11756954,
+      "sha256": "8da277a733926eacd0474b8704b36742d6ec3231c57a860c5b889dff8f1df886"
+    },
+    "face-landmarker": {
+      "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+      "file": "share/js/vendor/mediapipe/face_landmarker.task",
+      "bytes": 3758596,
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"
     }
   }
 }
