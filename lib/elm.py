@@ -254,6 +254,18 @@ class Elm:
     # their own baud; none of them should have to know this exists.
     FAST_BAUD = 500000
 
+    # HOW LONG EACH ANSWER IN THE HANDSHAKE MAY TAKE, and it is
+    # connect.raise_baud()'s number, the handshake that carried 1,907 frames/s
+    # on 28 September. listen() opens its Elm with the constructor's 0.05 s,
+    # and pyserial 3.5's read_until() gets one timeout for the whole call: on
+    # that handle ATBRD's OK and the identification at the new rate each had
+    # 50 ms to reach the host, and on 29 September the raise did not engage.
+    # Set for the handshake only -- _settle()'s reads on a raise that gives up
+    # included -- and put back on every way out. A silent adapter costs 0.8 s
+    # per read; a read_until() that hears a stray byte just before its budget
+    # ends can take under twice that, never more.
+    HANDSHAKE_TIMEOUT = 0.8
+
     def raise_baud(self, target=FAST_BAUD):
         """Talk the link up. Returns True if the rate actually moved.
 
@@ -273,6 +285,9 @@ class Elm:
             rate _settle() found the adapter answering on) and `link_baud`
             (the rate the handle is on afterwards -- read off it, because a
             False here can still leave both ends at the new rate).
+            `read_timeout` is the budget the handshake's reads really had:
+            HANDSHAKE_TIMEOUT once it is set, the handle's own if setting it
+            failed. The handle leaves with the timeout it came in with.
 
         Recording this sends nothing new. The only extra read is the
         echo-off's reply, which was thrown away unread and is now read out
@@ -299,8 +314,8 @@ class Elm:
         trail = self.fastbaud = {
             "outcome": "not attempted", "failed_at": None, "why": None,
             "from": cur, "target": target,
-            # The handle's own read timeout: every read_until() below gets
-            # this long, in total, for its answer.
+            # The budget each read below really gets, in total: the handle's
+            # own until HANDSHAKE_TIMEOUT is set, below.
             "read_timeout": getattr(self.ser, "timeout", None),
             "steps": [], "settled": None, "link_baud": cur}
         if not target or not cur or target <= cur:
@@ -313,6 +328,7 @@ class Elm:
             trail["why"] = f"{target} baud is not 4 MHz over a whole divisor"
             return False
         trail["outcome"] = "failed"
+        own_timeout = getattr(self.ser, "timeout", None)
         try:
             # ECHO OFF FIRST, AND THIS IS THE WHOLE BUG IT SHIPPED WITH.
             #
@@ -326,6 +342,11 @@ class Elm:
             # seven-minute hang at zero CPU, and it is why this does not rely
             # on the caller having turned echo off yet.
             trail["failed_at"] = "echo-off"
+            # BEFORE ANYTHING IS WRITTEN, never between ATBRD's OK and the
+            # host's switch below: setting it is a termios round trip, and
+            # that window holds exactly what it always held.
+            self.ser.timeout = self.HANDSHAKE_TIMEOUT
+            trail["read_timeout"] = self.HANDSHAKE_TIMEOUT
             t = time.time()
             self.ser.reset_input_buffer()
             self.ser.write(b"ATE0\r")
@@ -381,6 +402,13 @@ class Elm:
             trail["settled"] = self._settle(cur, target)
             return False
         finally:
+            # THE HANDLE'S OWN TIMEOUT BACK, ON EVERY WAY OUT, AND NEVER A
+            # RAISE. pyserial's setter starts with tcgetattr, which raises once
+            # the device has gone, and init() relies on this returning.
+            try:
+                self.ser.timeout = own_timeout
+            except Exception:                                 # noqa: BLE001
+                pass
             trail["link_baud"] = getattr(self.ser, "baudrate", None)
 
     def _waiting(self):

@@ -2802,6 +2802,265 @@ check("nothing is recorded between reading ATBRD's OK and the host's switch",
 check("ATBRD's answer is still recorded, just after the switch",
       _said(_h, "ATBRD OK"), "OK\r")
 
+# --------------------------------- the handshake's answers get time to arrive
+head("the link handshake gives each answer the time connect.raise_baud() gave it")
+
+# 142 FRAMES AND BUFFER FULL, WITH OMACAR_FASTBAUD=1, ON 29 SEPTEMBER. listen()
+# opens its Elm with the constructor's 50 ms read timeout, and pyserial 3.5's
+# read_until() gets that long for the whole call: ATBRD's OK and the
+# identification at the new rate each had 50 ms to reach the host.
+# connect.raise_baud() -- the handshake behind the 1,907 frames/s measured on
+# 28 September -- reads the same exchange with 0.8 s. Every fake above answers
+# instantly, so no test could tell the two apart. This one is on a clock.
+import time as _hs_time  # noqa: E402
+
+
+class _Lagging(_HandshakeElm):
+    """_HandshakeElm on a real clock, read the way pyserial 3.5 reads.
+
+    ATBRD's OK becomes readable `ok_lag` seconds after ATBRD is written, and
+    the identification `ident_lag` after that. `silent` answers nothing at
+    all; `trickle` is a silent adapter that lets one stray byte through that
+    long after ATBRD. read() and read_until() follow serialposix/serialutil
+    3.5: read(n) waits up to `timeout` for n bytes, and read_until() gives the
+    whole call one `timeout`, stops at the first empty read(1), and checks
+    expiry only after a byte. Every read, write and setting is logged in order,
+    with the timeout it ran under and how long it took."""
+
+    CAP = 5.0            # whatever the code under test does, the suite goes on
+
+    def __init__(self, ok_lag=0.0, ident_lag=0.0, silent=False, trickle=None, **kw):
+        self.__dict__["events"] = None
+        super().__init__(**kw)
+        self.ok_lag, self.ident_lag = ok_lag, ident_lag
+        self.silent, self.trickle = silent, trickle
+        self.timeout = 0.05              # listen()'s handle: Elm's default
+        self.events = []                 # from here on
+
+    def __setattr__(self, name, value):
+        if name in ("timeout", "baudrate") and self.__dict__.get("events") is not None:
+            self.events.append((name, value))
+        object.__setattr__(self, name, value)
+
+    def _put(self, data, rate=None):
+        self.segs.append((rate if rate is not None else self.rate, data,
+                          _hs_time.monotonic()))
+
+    def write(self, data):
+        self.events.append(("write", data))
+        brd = data.strip().upper().startswith(b"ATBRD")
+        if self.silent:
+            if brd and self.trickle is not None:
+                self.segs.append((self.baudrate, b"\xfe",
+                                  _hs_time.monotonic() + self.trickle))
+            return
+        n = len(self.segs)
+        super().write(data)
+        if brd:
+            t0 = _hs_time.monotonic()
+            for i in range(n, len(self.segs)):
+                rate, seg, _ = self.segs[i]
+                lag = (self.ok_lag if seg.startswith(b"OK") else
+                       self.ok_lag + self.ident_lag if b"ELM" in seg else 0.0)
+                self.segs[i] = (rate, seg, t0 + lag)
+
+    def _ready(self):
+        """The front segment's bytes the host can read now, and when more come."""
+        while self.segs and not self.segs[0][1]:
+            self.segs.pop(0)
+        if not self.segs:
+            return b"", None
+        rate, data, at = self.segs[0]
+        if rate != self.baudrate:
+            return b"", None             # noise to this host, never a byte
+        return (data, None) if at <= _hs_time.monotonic() else (b"", at)
+
+    def _front(self):
+        return self._ready()[0]
+
+    def _take(self, n):
+        data = self._front()[:n]
+        if data:
+            rate, buf, at = self.segs[0]
+            self.segs[0] = (rate, buf[len(data):], at)
+        return data
+
+    @property
+    def in_waiting(self):
+        now, n = _hs_time.monotonic(), 0
+        for rate, data, at in self.segs:
+            if rate != self.baudrate or at > now:
+                break
+            n += len(data)
+        return n
+
+    def _budget(self):
+        return self.CAP if self.timeout is None else min(self.timeout, self.CAP)
+
+    def _read(self, n):
+        deadline = _hs_time.monotonic() + self._budget()
+        out = b""
+        while len(out) < n:
+            got = self._take(n - len(out))
+            if got:
+                out += got
+            else:
+                _, nxt = self._ready()
+                now = _hs_time.monotonic()
+                if now >= deadline:
+                    break
+                if nxt is None or nxt >= deadline:
+                    _hs_time.sleep(deadline - now)     # select() times out
+                    break
+                _hs_time.sleep(max(0.0, nxt - now))
+                continue
+            if _hs_time.monotonic() >= deadline:
+                break
+        return out
+
+    def read(self, n=1):
+        t0 = _hs_time.monotonic()
+        out = self._read(n)
+        self.events.append(("read", self.timeout, _hs_time.monotonic() - t0))
+        return out
+
+    def read_until(self, term=b"\r"):
+        t0 = _hs_time.monotonic()
+        deadline = t0 + self._budget()
+        line = b""
+        while True:
+            c = self._read(1)
+            if not c:
+                break
+            line += c
+            if line.endswith(term):
+                break
+            if _hs_time.monotonic() >= deadline:
+                break
+        self.events.append(("read_until", self.timeout, _hs_time.monotonic() - t0))
+        return line
+
+
+def _lagging(**kw):
+    e = elm.Elm.__new__(elm.Elm)
+    e.ser = _Lagging(**kw)
+    return e
+
+
+def _reads(e):
+    return [ev for ev in e.ser.events if ev[0] in ("read", "read_until")]
+
+
+# THE CASE ITSELF: the OK and the identification each take 200 ms. With 50 ms
+# per read the host gives up on an adapter that was about to say yes.
+_lg = _lagging(ok_lag=0.2, ident_lag=0.2)
+check("an adapter whose OK and identification each take 200 ms is raised",
+      _lg.raise_baud(500000), True)
+_lgf = getattr(_lg, "fastbaud", None) or {}
+check("both ends end up on 500000", (_lg.ser.baudrate, _lg.ser.rate), (500000, 500000))
+check("and the record says so", (_lgf.get("outcome"), _lgf.get("failed_at")),
+      ("raised", None))
+check("every read in the handshake had 0.8 s, not the handle's 50 ms",
+      sorted({ev[1] for ev in _reads(_lg)}), [0.8])
+check("the record keeps the budget the reads really had", _lgf.get("read_timeout"), 0.8)
+check("the handle has its own 50 ms back afterwards", _lg.ser.timeout, 0.05)
+_tev = _lg.ser.events
+check("the budget is set once, before ATE0, and put back once, at the end",
+      ([ev[1] for ev in _tev if ev[0] == "timeout"],
+       ("timeout", 0.8) in _tev
+       and _tev.index(("timeout", 0.8)) < _tev.index(("write", b"ATE0\r")),
+       _tev[-1:]),
+      ([0.8, 0.05], True, [("timeout", 0.05)]))
+# The one time-critical window: from reading ATBRD's OK to the host's switch.
+_sw = _tev.index(("baudrate", 500000)) if ("baudrate", 500000) in _tev else 0
+check("nothing is done between reading ATBRD's OK and the host's switch",
+      _tev[_sw - 1][0] if _sw else None, "read_until")
+check("and the wire still carries exactly ATE0, ATBRD and the confirming CR",
+      [ev[1] for ev in _lg.ser.events if ev[0] == "write"],
+      [b"ATE0\r", b"ATBRD 08\r", b"\r"])
+
+# Hypothesis 1 exactly: the OK is prompt and the identification is not.
+_lg = _lagging(ident_lag=0.2)
+check("an identification 200 ms behind a prompt OK is raised too",
+      (_lg.raise_baud(500000), (getattr(_lg, "fastbaud", None) or {}).get("failed_at")),
+      (True, None))
+
+# BOUNDED, NOT JUST LONGER. The raise's comments remember a capture that sat in
+# a serial read for seven minutes. An adapter that never answers must fail the
+# raise inside the budget: 0.8 s for ATBRD's OK, then _settle()'s two tries.
+_lg = _lagging(silent=True)
+_t0 = _hs_time.monotonic()
+_lg_r = _lg.raise_baud(500000)
+_lg_took = _hs_time.monotonic() - _t0
+_lgf = getattr(_lg, "fastbaud", None) or {}
+check("an adapter that never answers fails the raise", _lg_r, False)
+check("at ATBRD's OK, having heard nothing",
+      (_lgf.get("failed_at"), _said(_lg, "ATBRD OK")), ("ATBRD OK", ""))
+check("no single read waits more than 1 s (longest %.2fs)"
+      % max([ev[2] for ev in _reads(_lg)] or [0]),
+      max([ev[2] for ev in _reads(_lg)] or [0]) < 1.0, True)
+check("and the whole raise gives up in under 4 s (took %.2fs)" % _lg_took,
+      _lg_took < 4.0, True)
+check("the link stays at 115200, with the handle's timeout back",
+      (_lgf.get("link_baud"), _lg.ser.timeout), (115200, 0.05))
+
+# THE LONGEST ONE READ CAN TAKE. read_until() checks its budget only after a
+# byte, so a stray byte just before the 0.8 s runs out buys one more read(1):
+# under two budgets, and never more. A silent adapter (above) never does this.
+_lg = _lagging(silent=True, trickle=0.7)
+_t0 = _hs_time.monotonic()
+_lg.raise_baud(500000)
+_lg_took = _hs_time.monotonic() - _t0
+_lg_long = max([ev[2] for ev in _reads(_lg)] or [0])
+check("a stray byte at 0.7 s stretches a read to under two budgets (%.2fs)" % _lg_long,
+      _lg_long < 1.7, True)
+check("and the raise still gives up in under 5 s (took %.2fs)" % _lg_took,
+      _lg_took < 5.0, True)
+
+# BACK ON EVERY PATH. Whichever step gives up, the reads had 0.8 s and the
+# handle leaves raise_baud() with the timeout it came in with.
+_back = []
+for _kw in ({}, {"fail": "echo-off"}, {"brd": False}, {"fail": "ident"},
+            {"confirm": False}):
+    _h = _stepped(**_kw)
+    _h.ser.timeout = 0.05
+    _h.raise_baud(500000)
+    _hf = getattr(_h, "fastbaud", None) or {}
+    _back.append((_hf.get("failed_at") or _hf.get("outcome"),
+                  _hf.get("read_timeout"), _h.ser.timeout))
+check("the handle's own timeout is back after a raise and after each step that gives up",
+      _back, [("raised", 0.8, 0.05), ("echo-off", 0.8, 0.05), ("ATBRD OK", 0.8, 0.05),
+              ("ident", 0.8, 0.05), ("final OK", 0.8, 0.05)])
+
+
+# A RESTORE THAT CANNOT HAPPEN IS NOT A RAISE THAT FAILED. pyserial's timeout
+# setter starts with tcgetattr, which raises once the device has gone; init()
+# and everything above it rely on raise_baud() returning, never raising.
+class _GoneOnRestore(_HandshakeElm):
+    def __setattr__(self, name, value):
+        if name == "timeout" and self.__dict__.get("armed") and value != 0.8:
+            raise sys.modules["serial"].SerialException("[Errno 5] Input/output error")
+        object.__setattr__(self, name, value)
+
+
+_h = elm.Elm.__new__(elm.Elm)
+_h.ser = _GoneOnRestore()
+_h.ser.timeout = 0.05
+_h.ser.armed = True
+check("a timeout that cannot be put back does not raise out of the handshake",
+      _raises(lambda: _h.raise_baud(500000), Exception), False)
+
+# ONE PLACE, AND THE KNOWN-GOOD NUMBER. The budget is changed inside
+# raise_baud() only, and it is the one connect.raise_baud() reads with.
+_elm_now = open(os.path.join(ROOT, "lib", "elm.py"), encoding="utf-8").read()
+_rb = _elm_now[_elm_now.index("def raise_baud(self"):]
+_rb = _rb[:_rb.index("\n    def ", 10)]
+check("the handle's timeout is changed only inside raise_baud()",
+      _elm_now.count("self.ser.timeout =") == _rb.count("self.ser.timeout =") > 0, True)
+check("and the budget is connect.raise_baud()'s",
+      "timeout=%s)" % getattr(elm.Elm, "HANDSHAKE_TIMEOUT", None)
+      in open(os.path.join(ROOT, "lib", "connect.py"), encoding="utf-8").read(), True)
+
 if _keep_env is None:
     os.environ.pop("OMACAR_FASTBAUD", None)
 else:
