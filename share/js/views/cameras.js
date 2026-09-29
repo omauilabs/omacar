@@ -26,6 +26,7 @@
 import { h, clear, icon, toast } from "../core.js";
 import { ICONS } from "../icons.js";
 import { getJSON, postJSON, liveUrl, clipUrl } from "../camapi.js";
+import { LIVE_TIMEOUT_MS } from "../drowsyrun.js";
 import { ROLES, ROLE_LABEL, camBadge, feedState, storageLine, timelineModel, clipAt,
          stepAcross, hhmm, hhmmss } from "../camlogic.js";
 
@@ -50,10 +51,12 @@ const pct = (x) => (x * 100).toFixed(3) + "%";
 // What a side feed says in place of its picture while a clip plays.
 const PAUSED_FOR_CLIP = "Paused while a clip plays";
 
-// `get`, `post`, `every` and `stopEvery` are for the tests (test/js/cameras.test.js);
-// the page uses the defaults.
+// `get`, `post`, `every`, `later` and `stopEvery` are for the tests
+// (test/js/cameras.test.js); the page uses the defaults. clearTimeout and
+// clearInterval share one list of ids, so `stopEvery` stops either kind.
 export default function camerasView(root, { get = getJSON, post = postJSON,
                                             every = (fn, ms) => setInterval(fn, ms),
+                                            later = (fn, ms) => setTimeout(fn, ms),
                                             stopEvery = (id) => clearInterval(id) } = {}) {
   let alive = true;
   let ov = null;
@@ -218,20 +221,42 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
     }
   }
 
-  async function refresh() {
-    try { ov = await get("/api/cams"); } catch { ov = null; }
-    if (alive) paint();
+  // ---- the polls: one request at a time, and given up (final review, m2) -----
+  //
+  // The pattern of Home's Dashcams card (dashcard.js) and drowsy mode's polls
+  // (drowsyrun.js pollLive, pollCams). A server that stops answering must not
+  // collect a request from every 2 s tick and every 10 s tick: Chromium lets a
+  // host six connections, and drowsy mode's /api/live poll waits behind
+  // whatever this tab leaves it. So a poll asks for nothing while its last
+  // request is out (a caller that comes round meanwhile waits on that one), and
+  // a request still out after LIVE_TIMEOUT_MS is aborted: a miss, like one that
+  // fails, and the poll's next tick goes out. Leaving the tab aborts them too.
+  const out = new Set();           // the AbortController of every request still out
+  function oneAtATime(ask) {
+    let pending = null;
+    return () => pending || (pending = (async () => {
+      const ctl = new AbortController();
+      out.add(ctl);
+      const bail = later(() => ctl.abort(), LIVE_TIMEOUT_MS);
+      try { await ask(ctl.signal); }
+      finally { stopEvery(bail); out.delete(ctl); pending = null; }
+    })());
   }
 
-  async function refreshClips() {
+  const refresh = oneAtATime(async (signal) => {
+    try { ov = await get("/api/cams", { signal }); } catch { ov = null; }
+    if (alive) paint();
+  });
+
+  const refreshClips = oneAtATime(async (signal) => {
     const from = Math.floor(Date.now() / 1000) - 3600;
     try {
-      const d = await get(`/api/cams/clips?from=${from}`);
+      const d = await get(`/api/cams/clips?from=${from}`, { signal });
       clips = d.clips;
       events = d.events;
     } catch { /* keep what was there */ }
     if (alive) drawTimeline();
-  }
+  });
 
   function play(role, file, at) {
     const c = clips.find((k) => k.role === role && k.file === file);
@@ -322,6 +347,7 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
   return () => {
     alive = false;
     for (const t of timers) stopEvery(t);
+    for (const ctl of out) ctl.abort();
     for (const r of ROLES) feeds[r].img.removeAttribute("src");
     video.pause();
     video.removeAttribute("src");

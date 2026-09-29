@@ -1,5 +1,6 @@
 // The Cameras tab (share/js/views/cameras.js): what it holds open while a
-// clip plays (final review, I2).
+// clip plays (final review, I2), and that its polls never pile up on a server
+// that stops answering (final review, m2).
 //
 // serve.py speaks HTTP/1.1, so Chromium allows six connections to it. The
 // three feeds, drowsy mode's cabin stream and a playing clip took five, and
@@ -11,11 +12,12 @@
 // playback.
 //
 // The view is mounted on a scripted server and hand-held timers, so nothing
-// polls. Its <img> and <video> sources get a 404 from the runner's static
+// polls unless a test fires the tab's timer (`v.fire(ms)`). Its <img> and <video> sources get a 404 from the runner's static
 // server; no test looks at what the browser does with that, only at which
 // elements hold a source.
 import { eq } from "./assert.js";
 import camerasView from "../js/views/cameras.js";
+import { LIVE_TIMEOUT_MS } from "../js/drowsyrun.js";
 
 const role = (o) => Object.assign({ device: "/dev/v4l/by-id/x", mode: { fmt: "MJPG", w: 1920, h: 1080, fps: 30 },
   sim: false, recording: true, live: true, fps: 29.9, error: null }, o);
@@ -32,15 +34,46 @@ function clips() {
           { role: "front", file: "b.mp4", start: t - 5, end: t + 55, locked: false }];
 }
 
-async function mount() {
+// Timers the test fires by hand. `ticks` are the tab's repeating polls with the
+// interval each asked for; `laters` are the abort timers it sets (negative ids),
+// each with the delay it asked for; `cancelled` is every id it stopped.
+function timers() {
+  const t = { ticks: [], laters: [], cancelled: [] };
+  t.every = (fn, ms) => { t.ticks.push({ fn, ms }); return t.ticks.length; };
+  t.later = (fn, ms) => { t.laters.push({ fn, ms }); return -t.laters.length; };
+  t.stop = (id) => t.cancelled.push(id);
+  return t;
+}
+
+// A server that never answers. A request stays out until its signal aborts it;
+// one made with no signal stays out for good, as a fetch with none would.
+function hung() {
+  const s = { asked: [] };
+  s.get = (path, opts) => {
+    const r = { path, signal: opts && opts.signal, done: false };
+    s.asked.push(r);
+    return new Promise((_, no) => {
+      if (r.signal) r.signal.addEventListener("abort", () => { r.done = true; no(new Error("aborted")); });
+    });
+  };
+  const open = (re) => s.asked.filter((r) => !r.done && re.test(r.path)).length;
+  // Requests still out: [the overview poll's, the clip list poll's].
+  s.out = () => [open(/^\/api\/cams$/), open(/^\/api\/cams\/clips/)];
+  return s;
+}
+
+async function mount({ get, post = async () => ({}) } = {}) {
   const root = document.createElement("div");
   document.body.appendChild(root);
-  const get = async (path) => (path.startsWith("/api/cams/clips") ? { clips: clips(), events: [] } : OV);
-  const stop = camerasView(root, { get, post: async () => ({}), every: () => 0, stopEvery: () => {} });
+  const t = timers();
+  get = get || (async (path) => (path.startsWith("/api/cams/clips") ? { clips: clips(), events: [] } : OV));
+  const stop = camerasView(root, { get, post, every: t.every, later: t.later, stopEvery: t.stop });
   await settle();
   const $ = (sel) => root.querySelector(sel);
   const v = {
-    root, stop,
+    root, stop, t,
+    // The tab's repeating poll that asked for this interval, fired once.
+    fire: (ms) => t.ticks.find((k) => k.ms === ms).fn(),
     // Every element in the tab that holds a source, as "img:front" or "video".
     held: () => [...root.querySelectorAll("[src]")].map((e) =>
       (e.tagName === "IMG" ? "img:" + e.closest(".cam-feed").dataset.role : e.tagName.toLowerCase())).sort(),
@@ -109,5 +142,55 @@ export default [
       await v.play();
       eq([v.held(), v.words()], [["video"], { front: "", rear: PAUSED, cabin: "No camera" }]);
     } finally { v.done(); OV.roles.cabin = was; }
+  }],
+
+  // ---- the polls: one request at a time, and given up (final review, m2)
+  ["a server that never answers gets one request out per poll, however often the poll comes round", async () => {
+    const srv = hung();
+    const v = await mount({ get: srv.get });
+    try {
+      const start = srv.out();
+      for (let i = 0; i < 5; i++) v.fire(2000);          // the overview poll, every 2 s
+      for (let i = 0; i < 3; i++) v.fire(10000);         // the clip list poll, every 10 s
+      await settle();
+      eq([start, srv.out(), srv.asked.length], [[1, 1], [1, 1], 2]);
+    } finally { v.done(); }
+  }],
+  ["each request is given up after the drowsy poll's five seconds, and that poll's next one then goes out", async () => {
+    const srv = hung();
+    const v = await mount({ get: srv.get });
+    try {
+      eq([v.t.laters.map((l) => l.ms), LIVE_TIMEOUT_MS], [[LIVE_TIMEOUT_MS, LIVE_TIMEOUT_MS], 5000]);
+      v.t.laters[0].fn();                                // five seconds pass on the overview poll's request
+      await settle();
+      const aborted = srv.asked.map((r) => r.signal.aborted);
+      v.fire(2000);                                      // its next tick goes out ...
+      v.fire(10000);                                     // ... the clip list's, still waiting, does not
+      await settle();
+      const after = [srv.out(), srv.asked.length];
+      v.t.laters[1].fn();                                // the clip list's five seconds pass
+      await settle();
+      v.fire(10000);
+      await settle();
+      eq([aborted, after, srv.out(), srv.asked.length], [[true, false], [[1, 1], 3], [1, 1], 4]);
+    } finally { v.done(); }
+  }],
+  ["a poll that has answered clears its abort timer, and asks again on the next tick", async () => {
+    const v = await mount();
+    try {
+      const cleared = v.t.laters.map((_, i) => v.t.cancelled.includes(-(i + 1)));
+      v.fire(2000); v.fire(10000); await settle();
+      eq([cleared, v.t.laters.length], [[true, true], 4]);
+    } finally { v.done(); }
+  }],
+  ["leaving the tab gives up the requests still out", async () => {
+    const srv = hung();
+    const v = await mount({ get: srv.get });
+    const before = srv.out();
+    v.stop();
+    await settle();
+    const after = srv.out();
+    v.root.remove();
+    eq([before, after], [[1, 1], [0, 0]]);
   }],
 ];
