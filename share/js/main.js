@@ -584,7 +584,9 @@ function paintNavState() {
   els.here.hidden = !(here && here.off);
   if (here && here.off) els.here.textContent = here.title;
 
-  const driving = store.state === "driving";
+  // Driving or a hand-off: store.lockedAsMoving (lockOf() on the red-light
+  // branch replaces it).
+  const driving = store.lockedAsMoving;
   for (const c of [...els.chips.querySelectorAll(".chip[data-key]"),
                    ...els.seg.querySelectorAll(".chip[data-key]")]) {
     const key = c.dataset.key;
@@ -798,7 +800,7 @@ async function toggleDayNight() {
 function paintBar() {
   buildBar();
   const car = store.car;
-  const b = badge(car, store.live, store.noServer);
+  const b = badge(car, store.live, store.noServer, store.pausedSince);
   if (els.src.textContent !== b.text) els.src.textContent = b.text;
   const cls = "tb-src" + (b.tone ? " " + b.tone : "");
   if (els.src.className !== cls) els.src.className = cls;

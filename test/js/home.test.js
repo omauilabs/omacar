@@ -112,7 +112,10 @@ export default [
     withHome("normal", PARKED, async (root) => {
       const begin = root.querySelector(".dial-begin");
       HANDOVER();
-      eq(root.querySelector(".dial-rpm").textContent, "No data", "the dial's words during the hand-off");
+      // Paused, not "No data": a hand-off is not a dropped adapter, and the
+      // dial says which (handover.test.js has the rest of that).
+      eq(root.querySelector(".dial-rpm").textContent, "Paused · adapter in use",
+         "the dial's words during the hand-off");
       eq(begin.style.visibility, "hidden",
          "connected reads false and the car was last stopped, but this is a hand-off, not the car going off");
       DROPPED();

@@ -125,7 +125,11 @@ export function gaugeRail() {
     // A car that stopped answering must look like one. Dimming the whole rail
     // is better than four gauges frozen at their last reading, which is
     // indistinguishable from a car sitting at a steady 60mph.
-    const fresh = (v.t || 0) > 0 && (Date.now() / 1000 - v.t) < 10;
+    //
+    // So must a hand-off. Its sample carries a FRESH `t` -- the daemon
+    // re-stamps its last reading while the adapter is lent out -- so the age
+    // test alone called it live; `handover` is what says it is not.
+    const fresh = (v.t || 0) > 0 && (Date.now() / 1000 - v.t) < 10 && !v.handover;
     if (fresh !== stale) {
       root.dataset.live = fresh ? "1" : "0";
       stale = fresh;

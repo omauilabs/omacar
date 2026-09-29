@@ -14,7 +14,9 @@ import { ICONS } from "./icons.js";
 import { moveItem, nextSize } from "./homecards.js";
 
 export function startEditing({ grid, bar, cat, layout, orient, place, save, onEnd }) {
-  if (store.state === "driving") {
+  // Driving or a hand-off: store.lockedAsMoving (lockOf() on the red-light
+  // branch replaces it, here and below).
+  if (store.lockedAsMoving) {
     toast("Available when you stop");
     return null;
   }
@@ -111,8 +113,11 @@ export function startEditing({ grid, bar, cat, layout, orient, place, save, onEn
   grid.addEventListener("pointercancel", onUp);
   grid.addEventListener("click", swallow, true);
   const offLive = store.on("live", () => {
-    if (store.state === "driving") {
-      toast("Editing stopped: the car is moving");
+    if (store.lockedAsMoving) {
+      // Only "moving" when it is known to be: during a hand-off the car may
+      // just as well be parked, and the words should not claim otherwise.
+      toast(store.state === "driving" ? "Editing stopped: the car is moving"
+                                      : "Editing stopped: cannot tell if the car is moving");
       finish(false);
     }
   });
