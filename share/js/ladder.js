@@ -452,11 +452,21 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     // the step began, before a tap on this same step cleared it. The
     // boolean triggers need no latch: their rising edge is already the rule
     // (see was[] below).
-    if (inp.active && wasActive === false && levelAtStart === 0) {
+    //
+    // ONLY A KNOWN GATE COUNTS (Task 9 fix round 3). A step with no car data
+    // -- the link down, the speed unreadable, a /api/live answer late --
+    // comes with inp.gateKnown === false. It is neither active nor inactive
+    // here: it is skipped, so active -> no car data -> active is not a
+    // crossing (a late answer at 100 km/h must not latch PERCLOS for a
+    // minute), while below the gate -> no car data -> active still is. No
+    // frame is fed during such a spell (drowsyrun.js), so it adds no
+    // evidence of either kind. gateKnown defaults to known.
+    const gateKnown = inp.gateKnown !== false;
+    if (gateKnown && inp.active && wasActive === false && levelAtStart === 0) {
       perclosLatch(perc, "perclos1", mt);
       perclosLatch(perc, "perclos2", mt);
     }
-    wasActive = !!inp.active;
+    if (gateKnown) wasActive = !!inp.active;
 
     // N8: the tap's own step already falls inside its own quiet period.
     if (inp.tap) lastTapT = t;

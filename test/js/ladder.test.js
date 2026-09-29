@@ -909,4 +909,19 @@ export default [
     // the hold starts at 82 and raises 3 s later.
     eq([events(below), events(above), events(later)], [[], [], [[85, 2, "perclos"]]]);
   }],
+  // Task 9 fix round 3: a no-car-data step (gateKnown false: link down,
+  // speed unreadable, answer late) is skipped when looking for a crossing.
+  ["active, then no car data, then active is not a crossing: nothing is latched", async () => {
+    const lad = createLadder(await CFG());
+    const out = drive(lad, [[0, { perclos: 0.02 }], [1, { perclos: 0.02 }, { active: false, gateKnown: false }],
+      ...range(2, 6).map((t) => [t, { perclos: 0.3 }])]);
+    eq(events(out), [[5, 2, "perclos"]]);   // the 3 s hold from t=2, as if no spell had come
+  }],
+  ["below the gate, then no car data, then active is a crossing: both gates latch", async () => {
+    const lad = createLadder(await CFG());
+    const out = drive(lad, [...range(0, 5).map((t) => [t, { perclos: 0.3 }, { active: false }]),
+      ...range(6, 8).map((t) => [t, { perclos: 0.3 }, { active: false, gateKnown: false }]),
+      ...range(9, 75).map((t) => [t, { perclos: 0.3 }])]);
+    eq(events(out), [[73, 2, "perclos"]]);
+  }],
 ];

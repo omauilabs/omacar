@@ -32,9 +32,12 @@
 // discontinuity, only after 10 s stopped (0 km/h, until it moves again),
 // after a dropped link, or on a camera gap: the first frame fed after one is
 // marked `restart` (drowsy.js), so a PERCLOS reading after moving off is
-// never built from a long stop. A poll that failed is unknown, not a dropped
-// link: it pauses feeding and restarts nothing by itself. The settings
-// preview still shows the raw frame while parked (state.frame).
+// never built from a long stop. A poll that failed or came late is
+// unknown, not a dropped link: it pauses feeding and restarts nothing by
+// itself. Nor is it a crossing: the ladder skips a no-car-data step when
+// looking for one (gateKnown, fix round 3), so only a last KNOWN gate below
+// 30 mph makes the next active step latch PERCLOS. The settings preview
+// still shows the raw frame while stopped (state.frame).
 // (Refined before review, controller 2026-09-29.)
 //
 // THE CLOCK. Every step of the ladder, and the stop clock, run on one
@@ -322,6 +325,8 @@ export function createDrowsy(opts = {}) {
     const snap = m || NO_SNAPSHOT;
     const out = ladder.step({
       t, m: snap, active: !!(cfg.enabled && gate && gate.active), parked: !!(gate && gate.parked),
+      // No car data (fix round 3): the crossing latch skips such a step.
+      gateKnown: !!(gate && gate.connected && gate.kph !== null),
       sinceStop: sc.sinceStop, stoppedFor: sc.stoppedFor, hour: d.hour(), tap,
     });
     st.t = t;

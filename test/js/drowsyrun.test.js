@@ -24,6 +24,7 @@ async function rig(over = {}) {
     installed: over.installed || (() => false), asked: [], posts: [], log: [],
     timers: [], nextId: 1, onFrame: null, watches: 0, stops: 0, audio: null,
     liveCalls: 0, hang: false, fail: false, drops: 0, camsFail: false, camsHang: false,
+    lateOnce: 0, lateAll: 0, lateOut: false,
   };
   const fake = {
     play(cues, out) { r.log.push(["play", cues.map(kind), out.level]); return Promise.resolve(); },
@@ -41,6 +42,25 @@ async function rig(over = {}) {
         if (r.hang) {
           return new Promise((_, no) => {
             if (opts && opts.signal) opts.signal.addEventListener("abort", () => no(new Error("aborted")));
+          });
+        }
+        // A late answer (fix round 3): `lateOnce` delays the next answer,
+        // `lateAll` every answer, by that many seconds of the rig's clock.
+        const late = r.lateOnce || r.lateAll;
+        r.lateOnce = 0;
+        if (late) {
+          r.lateOut = true;
+          const sample = r.live;
+          return new Promise((yes, no) => {
+            const id = r.nextId++;
+            r.timers.push({ id, at: r3(r.t + late), fn: () => { r.lateOut = false; yes(sample); } });
+            if (opts && opts.signal) {
+              opts.signal.addEventListener("abort", () => {
+                r.timers = r.timers.filter((x) => x.id !== id);
+                r.lateOut = false;
+                no(new Error("aborted"));
+              });
+            }
           });
         }
         return r.live;
@@ -84,7 +104,7 @@ async function rig(over = {}) {
   // it is not waited for: only a timer the rig fires later can end it.
   r.poll = async () => {
     const p = r.eng.pollLive();
-    if (!r.hang) { await p; await r.eng.idle(); }
+    if (!r.hang && !r.lateOut) { await p; await r.eng.idle(); }
   };
   // `secs` of cabin frames at 10 fps, each stamped on the frame clock as
   // facewatch.js stamps it, with the page's half-second /api/live poll
@@ -93,6 +113,9 @@ async function rig(over = {}) {
   r.frames = async (secs, fn) => {
     for (let i = 0; i < Math.round(secs * 10); i++) {
       r.advance(0.1);
+      // A few turns of the microtask queue, so an answer that just came
+      // (a late one's timer, above) lands before the next frame, as on the page.
+      for (let k = 0; k < 8; k++) await null;
       if (i % 5 === 4) await r.poll();
       if (r.onFrame) r.onFrame(Object.assign({ t: r.t, face: true, blink: 0.1, jaw: 0.1, pitch: 0 }, fn ? fn(i) : {}));
     }
@@ -123,14 +146,15 @@ async function rig(over = {}) {
 // The review's lead-in (Task 9 review, I1): calibrated at speed, then 60 s at
 // 40 km/h with a 0.7 s closure every 2 s -- PERCLOS about 0.35, no closure
 // long enough for Level 2, and nothing raised below the gate -- then above
-// it. Returns the crossing's time.
-async function perclosLead(r) {
+// it (unless `cross` is false: then it stays at 40 km/h). Returns the
+// crossing's time.
+async function perclosLead(r, { cross = true } = {}) {
   await r.calibrate();
   await r.drive(40);
   await r.frames(60, (i) => ({ blink: i % 20 < 7 ? 0.9 : 0.1 }));
   const m = r.eng.state.measures;
   ok(m.perclos > 0.3 && r.eng.state.level === 0, `below the gate: PERCLOS ${m.perclos}, level ${r.eng.state.level}`);
-  await r.drive(100);
+  if (cross) await r.drive(100);
   return r.t;
 }
 // Every change of level from now on, as [seconds after `from`, level, trigger].
@@ -554,6 +578,69 @@ export default [
     const [at, level, trigger] = raises[0] || [];
     ok(raises.length === 1 && at > 2.5 && at < 4, `raises ${JSON.stringify(raises)}`);
     eq([level, trigger], [2, "closed"]);
+  }],
+
+  // ---- fix round 3: a late /api/live answer at speed is not a crossing.
+  // No car data is neither active nor inactive for the crossing latch; only
+  // the last KNOWN gate counts (controller ruling, re-review 1, New Breakage 1).
+  ["one /api/live answer 2.65 s late at 100 km/h does not delay the first PERCLOS Level 2", async () => {
+    const first = async (stall) => {
+      const r = await rig();
+      await r.calibrate();
+      const from = r.t;
+      const raises = watchRaises(r, from);
+      const closing = (i) => ({ blink: i % 20 < 7 ? 0.9 : 0.1 });   // 0.7 s every 2 s
+      await r.frames(10, closing);
+      if (stall) {
+        // The reviewer's case: a fresh answer, then the next request answered
+        // 2.65 s late. The gate is no car data for its last 0.65 s, frames
+        // are not fed then, and the gap stays under 1 s: no discontinuity.
+        await r.poll();
+        r.lateOnce = 2.65;
+        r.poll();
+      }
+      const t0 = r.t;
+      let gap = 0, last = null;
+      r.eng.on((st) => { const m = st.measures; if (m && m !== last) { if (last) gap = Math.max(gap, m.t - last.t); last = m; } });
+      await r.frames(80, closing);
+      return { raise: raises[0], gap: r3(gap), t0 };
+    };
+    const base = await first(false), late = await first(true);
+    ok(base.raise && late.raise, `base ${JSON.stringify(base.raise)}, late ${JSON.stringify(late.raise)}`);
+    ok(late.gap > 0.5 && late.gap < 1, `the unfed spell was ${late.gap} s: no discontinuity, as in the review`);
+    eq([base.raise[1], base.raise[2], late.raise[1], late.raise[2]], [2, "perclos", 2, "perclos"]);
+    ok(Math.abs(late.raise[0] - base.raise[0]) <= 3, `first Level 2 at +${late.raise[0]} s with the late answer, +${base.raise[0]} s without`);
+  }],
+  ["every /api/live answer 2.4 s late at 100 km/h: PERCLOS still raises Level 2 in the normal time", async () => {
+    const first = async (lateAll) => {
+      const r = await rig();
+      await r.calibrate();
+      const from = r.t;
+      const raises = watchRaises(r, from);
+      let stale = 0;
+      r.eng.on((st) => { if (st.gate && !st.gate.connected) stale++; });
+      r.lateAll = lateAll;
+      await r.frames(80, (i) => ({ blink: i % 20 < 7 ? 0.9 : 0.1 }));
+      return { raise: raises[0], stale };
+    };
+    const base = await first(0), late = await first(2.4);
+    ok(late.stale > 0, "the gate did go stale between answers");
+    ok(base.raise && late.raise, `base ${JSON.stringify(base.raise)}, late ${JSON.stringify(late.raise)}`);
+    eq([late.raise[1], late.raise[2]], [2, "perclos"]);
+    ok(late.raise[0] <= base.raise[0] + 3, `first Level 2 at +${late.raise[0]} s with every answer late, +${base.raise[0]} s without`);
+  }],
+  ["below the gate, then no car data, then above it is still a crossing: the latch holds", async () => {
+    const r = await rig();
+    await perclosLead(r, { cross: false });       // PERCLOS about 0.35, built at 40 km/h; still there
+    r.fail = true;                                // three failed polls: no car data, no restart
+    await r.poll(); await r.poll(); await r.poll();
+    const unknown = r.eng.state.chip;
+    r.fail = false;
+    const cross = r.t;
+    await r.drive(100);
+    const raises = watchRaises(r, cross);
+    await r.frames(65);
+    eq([unknown, raises], ["Paused · no car data", []]);
   }],
 
   // ---- fix round 1, I3: a tracker failing on every frame is shown, stopped and reloaded
