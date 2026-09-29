@@ -14,7 +14,8 @@ at the tablet's real sizes (shoot.SIZES).
 
 Every wait is a poll with a deadline, so a slow machine takes longer rather
 than failing. About 80 seconds on the box. Not in test/all.sh, because it
-needs a camera.
+needs a camera. It refuses to start while another recorder runs here
+(omacar-cams.service, or this checkout's own): two cannot share the camera.
 
     python3 tools/cams_e2e.py OUT_DIR
 """
@@ -48,6 +49,19 @@ def check(msg, cond):
     print(f"    {'ok  ' if cond else 'FAIL'}  {msg}")
 
 
+def recorder_up():
+    """test/all.sh's guard: omacar-cams.service is active, or this checkout's
+    own lib/cams.py is recording (anchored to its absolute path, for the
+    reason given there)."""
+    def ran(*cmd):
+        try:
+            return subprocess.run(cmd, capture_output=True).returncode == 0
+        except OSError:
+            return False
+    return (ran("systemctl", "--user", "is-active", "--quiet", "omacar-cams.service")
+            or ran("pgrep", "-f", os.path.join(ROOT, "lib", "cams.py") + " (run|sim)"))
+
+
 def until(secs, fn, every=1.0):
     """fn() again and again until it returns something true or `secs` have
     passed. Returns its last value."""
@@ -59,7 +73,45 @@ def until(secs, fn, every=1.0):
         time.sleep(every)
 
 
+def group_left(pgid):
+    """Is anything still in process group `pgid`?"""
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def stop_group(proc, grace=20, wait=5):
+    """Stop `proc`, started with start_new_session=True, and everything in its
+    process group. SIGINT first, which the recorder takes as "stop": each
+    ffmpeg closes its clip. Then whatever is left of the group: SIGTERM, a
+    short wait, SIGKILL. An ffmpeg orphaned by a bare kill of the recorder
+    would keep the C920, and the next run would find the camera busy."""
+    proc.send_signal(signal.SIGINT)
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not group_left(proc.pid):
+            break
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            break
+        until(wait, lambda: proc.poll() is not None and not group_left(proc.pid), every=0.2)
+    proc.poll()
+
+
 def main(argv):
+    if recorder_up():
+        print("\n  A camera recorder is already running on this machine (omacar-cams, or this"
+              "\n  checkout's lib/cams.py), and two recorders cannot share the camera."
+              "\n  Stop it first (omacar cams off), then run this again.\n")
+        return 2
     out = argv[1] if len(argv) > 1 else "/tmp/omacar-e2e"
     os.makedirs(out, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="omacar-e2e-")
@@ -79,8 +131,10 @@ def main(argv):
 
     say(0.0)
     log = open(os.path.join(out, "recorder.log"), "w")
+    # Its own process group, which its ffmpegs share, so that stopping it can
+    # never leave one behind holding the C920.
     rec = subprocess.Popen([sys.executable, os.path.join(ROOT, "lib", "cams.py"), "sim"],
-                           env=env, stdout=log, stderr=subprocess.STDOUT)
+                           env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     port = free_port()
     srv = subprocess.Popen([python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port),
                             os.path.join(ROOT, "share")], env=env,
@@ -193,11 +247,12 @@ def main(argv):
         check("the timeline shows both events", dom.count('class="cam-marker"') >= 2)
     finally:
         srv.terminate()
-        rec.send_signal(signal.SIGINT)
+        stop_group(rec)
         try:
-            rec.wait(timeout=20)
+            srv.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            rec.kill()
+            srv.kill()
+            srv.wait()
         log.close()
         shutil.rmtree(scratch, ignore_errors=True)
     print(f"\n  {'every check held' if not fails else str(fails) + ' failed'}; screenshots in {out}\n")
