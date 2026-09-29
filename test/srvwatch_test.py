@@ -324,6 +324,47 @@ def test_restart():
         s.clean()
 
 
+def test_unwritable_watch_log():
+    print("\n  A watch log that cannot be written does not stop the restart\n")
+    if os.geteuid() == 0:
+        print("    (skipping: root can write a read-only file, so this cannot fail here)")
+        return
+    every = 1
+    port = free_port()
+    s = Scratch(port, every=every)
+    server = watcher = None
+    try:
+        server = start_server(s)
+        os.makedirs(s.state, exist_ok=True)
+        log = s.path("serve-watch.log")
+        open(log, "w").close()
+        os.chmod(log, 0o444)
+        watcher = start_watcher(s)
+        time.sleep(every * 1.5)
+        for n in (1, 2):
+            pids = server_pids(port)
+            if not pids:
+                bad(f"kill {n}: there is no server left to kill")
+                break
+            os.kill(pids[0], signal.SIGKILL)
+            if pids[0] == server.pid:
+                server.wait()
+            wait_for(lambda: not alive(pids[0]), 2)
+            t = wait_for(lambda: answers(port), every + 4)
+            check(f"kill {n}: the server is restarted although the log cannot be"
+                  f" written ({'never' if t is None else f'{t:.1f}s'})",
+                  t is not None)
+            check(f"kill {n}: and the watcher is still watching", watcher.poll() is None)
+            time.sleep(1)
+        check("nothing was written to the log it could not write",
+              read(log) == "")
+    finally:
+        for proc in (watcher, server):
+            if proc and proc.poll() is None:
+                proc.kill()
+        s.clean()
+
+
 def test_foreign_port():
     print("\n  A port held by something that is not ours is left alone\n")
     every = 0.5
@@ -490,7 +531,8 @@ def main():
         print("    (skipping: this drives bash, setsid and ss, which are Linux)")
         return 0
 
-    for test in (test_log, test_restart, test_foreign_port, test_parent_exit,
+    for test in (test_log, test_restart, test_unwritable_watch_log,
+                 test_foreign_port, test_parent_exit,
                  test_kiosk, test_says_so):
         try:
             test()

@@ -179,7 +179,7 @@ serve_watch() {
   local every="${OMACAR_WATCH_EVERY:-10}" told=0
   while sleep "$every"; do
     [[ -z "$parent" ]] || kill -0 "$parent" 2>/dev/null || return 0
-    log_trim "$OMACAR_STATE/serve.log"
+    log_trim "$OMACAR_STATE/serve.log" || true
     if ours "$p"; then told=0; continue; fi
     if port_taken "$p"; then
       (( told )) || serve_note "port $p is held by something that is not the OmaCar server; leaving it alone"
@@ -194,10 +194,18 @@ serve_watch() {
 }
 
 # One line, with the time, in serve-watch.log.
+#
+# BEST EFFORT, AND IT MUST STAY THAT WAY. `set -e` is on, and the note about a
+# dead server is written BEFORE the server is started again, so a write that
+# failed (a full or read-only state directory, a file somebody else owns) used
+# to end the watcher there, with the server still down and nothing left to
+# start it. The restart is what the screen needs; the log is only what it says
+# about it. The shell's own complaint still reaches stderr, which is the one
+# place left to see that the log could not be written.
 serve_note() {
   local f="$OMACAR_STATE/serve-watch.log"
-  log_trim "$f"
-  printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$f"
+  log_trim "$f" || true
+  printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$f" || true
 }
 
 # --- demo mode --------------------------------------------------------------
