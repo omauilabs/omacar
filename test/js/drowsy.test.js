@@ -136,4 +136,19 @@ export default [
     ok(near(s.closedFor, 1.5), `closedFor after resuming ${s.closedFor}`);
     eq(s.perclos, null, "PERCLOS's window does not yet hold 30 s since the gap");
   }],
+  ["a duplicate frame timestamp is ignored, not a discontinuity", async () => {
+    const m = await calibrated();
+    let last = null;
+    for (let i = 0; i <= 11; i++) {          // t = 61.0 .. 62.1, eyes closed, each fed twice
+      const t = +(61 + i / 10).toFixed(3);
+      const frame = { t, face: true, blink: 0.9, jaw: 0.1, pitch: 0, gated: true };
+      const first = m.feed(frame);
+      const dup = m.feed(frame);
+      ok(dup === first, `the duplicate at t=${t} did not return the very same, unchanged snapshot`);
+      last = first;
+    }
+    ok(last.closedFor >= 1, `closedFor ${last.closedFor} never reached 1 s despite every frame being fed twice`);
+    const jump = m.feed({ t: 40, face: true, blink: 0.1, jaw: 0.1, pitch: 0, gated: true });
+    eq(jump.discontinuity, true, "a real backward jump still resets");
+  }],
 ];

@@ -67,17 +67,26 @@ export function createMeasures(cfg) {
 
   function feed(f) {
     const t = f.t;
+
+    // The same frame fed twice -- a re-read MJPEG frame, or a clock too
+    // coarse to move between two real reads -- is not a discontinuity. It is
+    // ignored outright, with no reset: treating a repeat as a gap would keep
+    // zeroing closedFor and every hold before either could ever reach its
+    // threshold, so drowsy mode would silently never alert -- worse than the
+    // false alert the discontinuity guard exists to prevent.
+    if (lastT !== null && t === lastT) return snap;
+
     if (firstT === null) firstT = t;
     if (f.face) lastFace = t;
 
-    // A frame whose time did not move forward, or that jumped more than 1 s
-    // past the last one -- a paused/resumed camera, or a stalled tab -- is a
+    // A frame whose time is earlier than the last one, or that jumped more
+    // than 1 s past it -- a paused/resumed camera, or a stalled tab -- is a
     // discontinuity. Nothing about the gap may read through: every running
     // duration and hold starts over, and the PERCLOS window drops what came
     // before rather than mixing two eras. Left unguarded, a gap can surface
     // as an instantly huge "eyes closed" on the very first frame after it --
     // exactly the spurious alert a driver must never get startled by.
-    const discontinuity = lastT !== null && (t <= lastT || t - lastT > 1);
+    const discontinuity = lastT !== null && (t < lastT || t - lastT > 1);
     lastT = t;
     if (discontinuity) {
       closedSince = null; openSince = null;
