@@ -386,6 +386,210 @@ AGENT_PROBE = r"""
 </script>
 """
 
+# ROAD CAMERAS, at the tablet's own sizes, against a stubbed API. The list is
+# built by lib/roadcams.py itself from test/fixtures/d5-cctv.json, so the shape
+# the screen is tested against is the server's real one; the stills are drawn
+# here and the construction cameras point at about:blank. Nothing reaches
+# Caltrans or TrueLook. %(listing)s is that JSON, set by roadcams_listing().
+ROADCAMS_STUB = r"""
+<script>
+window.__rcErrs = [];
+addEventListener("error", (e) => window.__rcErrs.push(`${e.message} @${e.lineno}`));
+addEventListener("unhandledrejection", (e) => window.__rcErrs.push(String(e.reason)));
+(() => {
+  const listing = %(listing)s;
+  const now = Date.now() / 1000;
+  listing.feed.fetched_at = now - 7200;
+  listing.net = { ok_at: now - 5, fail_at: null, error: null };
+  const json = (o) => Promise.resolve(new Response(JSON.stringify(o),
+    { headers: { "Content-Type": "application/json" } }));
+  const __f3 = window.fetch;
+  window.__rcAsked = [];
+  window.fetch = (u, o) => {
+    const p = String(u);
+    const m = p.match(/\/api\/roadcams\/([a-z0-9-]+)\/image/);
+    if (m) {
+      window.__rcAsked.push(m[1]);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="260">`
+        + `<rect width="320" height="260" fill="#2a3a44"/><text x="12" y="30" fill="#fff" `
+        + `font-family="sans-serif" font-size="16">STUB ${m[1]}</text></svg>`;
+      return Promise.resolve(new Response(new Blob([svg], { type: "image/svg+xml" }), {
+        headers: { "X-Roadcam-Age": "120", "X-Roadcam-Modified": String(Math.round(now - 120)),
+                   "X-Roadcam-Source": "caltrans" } }));
+    }
+    if (p.includes("/api/roadcams")) return json(listing);
+    return __f3(u, o);
+  };
+})();
+</script>
+"""
+
+ROADCAMS_PROBE = r"""
+<script type="module">
+import { store } from "./js/core.js";
+window.__st = store;
+</script>
+<script>
+(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const stage = () => {
+    const st = document.getElementById("stage");
+    return { scroll: st.scrollHeight, client: st.clientHeight };
+  };
+  // The shortest visible button on the screen: every one is a thumb's target.
+  const shortest = () => {
+    const hs = [...document.querySelectorAll(".rc button")]
+      .filter((b) => b.offsetParent !== null)
+      .map((b) => Math.round(b.getBoundingClientRect().height));
+    return hs.length ? Math.min(...hs) : null;
+  };
+  await wait(3500);
+  const out = { viewport: [innerWidth, innerHeight],
+                coarse: matchMedia("(pointer: coarse)").matches };
+  // Home's Navigation card, on the arrival screen: it names the road cameras
+  // and opens them, not the maps placeholder.
+  const card = document.querySelector('.home-grid [data-card="nav"]');
+  out.card = card ? [".hc-ph-t", ".hc-ph-s"].map((k) => (card.querySelector(k) || {}).textContent) : null;
+  if (card) card.click();
+  await wait(1500);
+  const via = document.querySelector("#stage .wrap");
+  out.cardOpens = via ? via.dataset.view : null;
+  location.hash = "#home";
+  await wait(1200);
+  const tabs = [...document.querySelectorAll("#tabbar .tab")];
+  tabs[1].click();
+  await wait(2500);
+  const wrap = document.querySelector("#stage .wrap");
+  out.view = wrap ? wrap.dataset.view : null;
+  out.chips = [...document.querySelectorAll("#subbar-chips .chip[data-key]")].map((c) => c.textContent.trim());
+  const pinned = document.querySelector(".rc-sec[data-sec='pinned'] .rc-grid");
+  out.pinned = pinned ? [...pinned.children].map((t) => t.dataset.id) : null;
+  out.groups = [...document.querySelectorAll(".rc-groups .rc-sec-t")].map((e) => e.textContent);
+  out.pictures = [...document.querySelectorAll(".rc-sec[data-sec='pinned'] .rc-tile[data-kind='still']")]
+    .map((t) => [t.dataset.has, t.querySelector(".rc-age").textContent]);
+  // Stills only: a construction camera's player may say "live embed".
+  out.live = [...document.querySelectorAll(".rc-tile[data-kind='still']")]
+    .some((el) => /\blive\b/i.test(el.textContent));
+  out.parkedTap = shortest();
+  out.asked = [...new Set(window.__rcAsked)].length;
+  // Moving: the poller silenced first, or it puts "no car" straight back.
+  const s = window.__st;
+  s.refreshLive = async () => {};
+  await wait(400);
+  s.live = { connected: true, values: { SPEED: 55, RPM: 2400 } };
+  s.emit("live");
+  await wait(1200);
+  out.drive = {
+    parkedHidden: document.querySelector(".rc-parked").hidden,
+    tiles: [...document.querySelectorAll(".rc-driving .rc-tile")].map((t) => [t.dataset.id, t.dataset.has]),
+    width: Math.round((document.querySelector(".rc-driving .rc-tile") || { getBoundingClientRect: () => ({ width: 0 }) })
+      .getBoundingClientRect().width),
+    frames: document.querySelectorAll(".rc iframe").length,
+    edit: [document.querySelector(".rc-editbtn").disabled, document.querySelector(".rc-editbtn").title],
+    stage: stage(),
+    tap: shortest(),
+  };
+  // A red light: stopped, and 40 s on it is still the one tile (store.moving
+  // waits a minute). The store's clock is moved rather than waited out.
+  let ahead = 0;
+  s.clock = () => Date.now() + ahead;
+  const stopped = () => { s.live = { connected: true, values: { SPEED: 0, RPM: 800 } }; s.emit("live"); };
+  stopped();
+  ahead = 40000;
+  stopped();
+  await wait(300);
+  out.redLight = document.querySelector(".rc-parked").hidden;
+  // A minute stopped: parked again, and the grid comes back.
+  ahead = 61000;
+  stopped();
+  await wait(800);
+  out.parkedAgain = !document.querySelector(".rc-parked").hidden;
+  out.errs = window.__rcErrs;
+  document.title = "ROADCAMS " + JSON.stringify(out);
+})();
+</script>
+"""
+
+
+def roadcams_listing():
+    """The listing lib/roadcams.py would answer for the fixture, with the
+    default pins, and the construction cameras pointed at about:blank."""
+    sys.path.insert(0, os.path.join(ROOT, "lib"))
+    import roadcams
+    doc = json.load(open(os.path.join(ROOT, "test", "fixtures", "d5-cctv.json"), encoding="utf-8"))
+    cams = roadcams.cameras(doc)
+    embs = [dict(e, url="about:blank#" + e["id"]) for e in roadcams.embeds()]
+    by_name = {c["name"]: c["id"] for c in cams}
+    known = {c["id"] for c in cams + embs}
+    pins = [p if p in known else by_name.get(p)
+            for p in roadcams.data_file().get("default_pins", [])]
+    groups = []
+    for c in cams:
+        if not groups or groups[-1]["id"] != c["route"]:
+            groups.append({"id": c["route"], "label": c["route"], "ids": []})
+        groups[-1]["ids"].append(c["id"])
+    groups.append({"id": "imjin", "label": "Imjin Parkway", "ids": [e["id"] for e in embs]})
+    return {"cameras": cams + embs, "groups": groups, "pins": [p for p in pins if p],
+            "pins_default": True, "pins_missing": [], "default_pins": [p for p in pins if p],
+            "feed": {"source": roadcams.SOURCE, "fetched_at": 0, "age": 7200,
+                     "from_cache": True, "error": None, "offline": False, "count": len(cams)},
+            "net": {}, "image_ttl": 60, "max_pins": 12}
+
+
+def roadcams_check(exe):
+    """Navigation opens Road cameras: pinned first, the roads in order, and one
+    fixed still with nothing to scroll once the car moves -- at both sizes."""
+    stub = ROADCAMS_STUB % {"listing": json.dumps(roadcams_listing())}
+    for orient, (want, size) in TABLET.items():
+        g = run_probe(exe, stub + ROADCAMS_PROBE, "ROADCAMS", flags=(size, COARSE), budget=14000)
+        if not g:
+            bad(f"{orient}: the road cameras probe returned nothing")
+            continue
+        check(f"{orient}: the viewport is the tablet's, touch pointer "
+              f"(got {g.get('viewport')}, coarse={g.get('coarse')})",
+              g.get("viewport") == list(want) and g.get("coarse") is True)
+        check(f"{orient}: Home's Navigation card names the road cameras and opens them "
+              f"(card {g.get('card')!r}, opens {g.get('cardOpens')!r})",
+              g.get("card") == ["Road cameras", "Your commute: SR-1 at Imjin, Lightfighter, SR-68"]
+              and g.get("cardOpens") == "roadcams")
+        check(f"{orient}: the Navigation tab opens Road cameras, with Maps beside it "
+              f"(view {g.get('view')!r}, chips {g.get('chips')})",
+              g.get("view") == "roadcams" and g.get("chips") == ["Road cameras", "Maps"])
+        check(f"{orient}: the commute is pinned first, then the Imjin Parkway cameras "
+              f"(got {g.get('pinned')})",
+              g.get("pinned") == ["sr1imjinparkway", "sr1lightfighterdrive",
+                                  "sr68reservationroadriverroad", "imjin-1", "imjin-2", "imjin-3"])
+        check(f"{orient}: then every road in order, then Imjin Parkway (got {g.get('groups')})",
+              g.get("groups") == ["US-101", "SR-1", "SR-68", "SR-156", "SR-183", "Imjin Parkway"])
+        check(f"{orient}: each pinned still shows its picture and its age "
+              f"(got {g.get('pictures')})",
+              g.get("pictures") == [["1", "2 min ago"]] * 3)
+        check(f"{orient}: and no Caltrans still says live", g.get("live") is False)
+        check(f"{orient}: every button parked is at least 56 px (shortest {g.get('parkedTap')})",
+              (g.get("parkedTap") or 0) >= 56)
+        check(f"{orient}: only cameras on screen were asked for "
+              f"({g.get('asked')} of 8)", 0 < (g.get("asked") or 0) < 8)
+        d = g.get("drive") or {}
+        st = d.get("stage") or {}
+        check(f"{orient}: moving, the grid is replaced by one tile, the first pinned "
+              f"Caltrans camera, with its picture (got {d.get('tiles')})",
+              d.get("parkedHidden") is True and d.get("tiles") == [["sr1imjinparkway", "1"]])
+        check(f"{orient}: small, but a picture you can read at a glance: wider than "
+              f"Caltrans' own 320 px and no wider than 520 (got {d.get('width')})",
+              320 <= (d.get("width") or 0) <= 520)
+        check(f"{orient}: with nothing to scroll (content {st.get('scroll')} in "
+              f"{st.get('client')} px)", st.get("scroll", 1e9) <= st.get("client", 0) + 1)
+        check(f"{orient}: no construction camera is framed (got {d.get('frames')})",
+              d.get("frames") == 0)
+        check(f"{orient}: Edit pins greys out with the reason (got {d.get('edit')})",
+              d.get("edit") == [True, "Available when you stop"])
+        check(f"{orient}: and every button is still at least 56 px (shortest {d.get('tap')})",
+              (d.get("tap") or 0) >= 56)
+        check(f"{orient}: a 40 s red light is still the one tile", g.get("redLight") is True)
+        check(f"{orient}: a minute stopped brings the grid back", g.get("parkedAgain") is True)
+        check(f"{orient}: and nothing threw on the way (got {g.get('errs')})", g.get("errs") == [])
+
+
 # Emulates the Surface's touch screen: `pointer: coarse` matches, `hover` does
 # not. Checked on Chromium 151 by reading both media queries back.
 COARSE = ("--blink-settings=primaryPointerType=2,availablePointerTypes=2,"
@@ -1064,6 +1268,8 @@ def main():
         daynight_check(exe)
         # ---- and a spoken request by Home's old name ---------------------
         hub_ask_check(exe)
+        # ---- and the road cameras, parked and moving ---------------------
+        roadcams_check(exe)
     finally:
         server.terminate()
         try:

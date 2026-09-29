@@ -35,6 +35,11 @@ python3 "$ROOT/test/design_test.py" || fails=$((fails + 1))
 # the rule two suites above this one were added for.
 python3 "$ROOT/test/phone_test.py" || fails=$((fails + 1))
 
+# Road cameras: Caltrans' list, the proxied stills, the pins, and the one door
+# out, against a trimmed copy of the list. Its own scratch HOME, and nothing
+# reaches the internet -- the suite's last check is that nothing tried.
+python3 "$ROOT/test/roadcams_test.py" || fails=$((fails + 1))
+
 # The detached drive capture, against a fake adapter that can talk, go quiet,
 # or not be there. The bench emulator has no monitor mode, so this is the only
 # thing that ever runs the listening path without a car.
