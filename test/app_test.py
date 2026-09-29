@@ -446,6 +446,16 @@ window.__st = store;
   await wait(3500);
   const out = { viewport: [innerWidth, innerHeight],
                 coarse: matchMedia("(pointer: coarse)").matches };
+  // Home's Navigation card, on the arrival screen: it names the road cameras
+  // and opens them, not the maps placeholder.
+  const card = document.querySelector('.home-grid [data-card="nav"]');
+  out.card = card ? [".hc-ph-t", ".hc-ph-s"].map((k) => (card.querySelector(k) || {}).textContent) : null;
+  if (card) card.click();
+  await wait(1500);
+  const via = document.querySelector("#stage .wrap");
+  out.cardOpens = via ? via.dataset.view : null;
+  location.hash = "#home";
+  await wait(1200);
   const tabs = [...document.querySelectorAll("#tabbar .tab")];
   tabs[1].click();
   await wait(2500);
@@ -538,6 +548,10 @@ def roadcams_check(exe):
         check(f"{orient}: the viewport is the tablet's, touch pointer "
               f"(got {g.get('viewport')}, coarse={g.get('coarse')})",
               g.get("viewport") == list(want) and g.get("coarse") is True)
+        check(f"{orient}: Home's Navigation card names the road cameras and opens them "
+              f"(card {g.get('card')!r}, opens {g.get('cardOpens')!r})",
+              g.get("card") == ["Road cameras", "Your commute: SR-1 at Imjin, Lightfighter, SR-68"]
+              and g.get("cardOpens") == "roadcams")
         check(f"{orient}: the Navigation tab opens Road cameras, with Maps beside it "
               f"(view {g.get('view')!r}, chips {g.get('chips')})",
               g.get("view") == "roadcams" and g.get("chips") == ["Road cameras", "Maps"])

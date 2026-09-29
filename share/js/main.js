@@ -180,7 +180,7 @@ const TABS = [
   { id: "navigation", label: "Navigation", icon: ICONS.nav,
     views: [
       { id: "roadcams",   label: "Road cameras", title: "Road cameras", mount: roadcamsView, fast: true },
-      { id: "navigation", label: "Maps",         title: "Navigation",   mount: navigationView },
+      { id: "navigation", label: "Maps",         title: "Maps",         mount: navigationView },
     ] },
   { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [
