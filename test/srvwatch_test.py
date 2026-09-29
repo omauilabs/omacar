@@ -81,6 +81,41 @@ def free_port():
         return s.getsockname()[1]
 
 
+def free_ports(n):
+    """n different free ports (free_port() twice could hand back the same one)."""
+    socks = [socket.socket() for _ in range(n)]
+    for sock in socks:
+        sock.bind(("127.0.0.1", 0))
+    ports = [sock.getsockname()[1] for sock in socks]
+    for sock in socks:
+        sock.close()
+    return ports
+
+
+class NotOurs(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"some other program"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+def hold_port(port):
+    """Another program, listening on `port` and not answering as ours."""
+    other = http.server.ThreadingHTTPServer(("127.0.0.1", port), NotOurs)
+    threading.Thread(target=other.serve_forever, daemon=True).start()
+    return other
+
+
+def release_port(other):
+    other.shutdown()
+    other.server_close()
+
+
 def answers(port):
     """Is the OmaCar server what is answering on this port."""
     try:
@@ -147,12 +182,15 @@ class Scratch:
     real is ever the thing that answers.
     """
 
-    def __init__(self, port, every=1, register=True):
+    def __init__(self, port, every=1, register=True, ports=None):
         self.dir = tempfile.mkdtemp(prefix="omacar-srvwatch-")
         d = self.dir
         self.port = port
+        # The ports bin/omacar may choose from, in its order. One unless a test
+        # is about the choice; `port` is then the one it is expected to make.
+        self.ports = list(ports) if ports else [port]
         if register:
-            SCRATCH_PORTS.add(port)
+            SCRATCH_PORTS.update(self.ports)
             SCRATCH_DIRS.add(d)
         self.state = os.path.join(d, "state", "omacar")
         self.bin = os.path.join(d, "bin")
@@ -170,7 +208,7 @@ class Scratch:
             XDG_CACHE_HOME=os.path.join(d, "cache"),
             XDG_RUNTIME_DIR=run,
             PATH=self.bin + os.pathsep + os.environ.get("PATH", ""),
-            OMACAR_PORTS=str(port),
+            OMACAR_PORTS=" ".join(str(p) for p in self.ports),
             OMACAR_WATCH_EVERY=str(every),
             # Python's fault handler on from outside, so the log tests do not
             # lean on serve.py's own. test_says_so takes it away again to show
@@ -202,9 +240,9 @@ class Scratch:
         """Nothing this scratch started may outlive it."""
         # Matched on this checkout's own paths and this scratch port, so it
         # cannot reach a real server or a real kiosk on the same machine.
-        for pattern in (f"{SERVE} {self.port} ",
-                        f"{OMACAR} server watch {self.port}"):
-            subprocess.run(["pkill", "-9", "-f", pattern])
+        for port in self.ports:
+            for pattern in (f"{SERVE} {port} ", f"{OMACAR} server watch {port}"):
+                subprocess.run(["pkill", "-9", "-f", pattern])
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
@@ -472,20 +510,7 @@ def test_foreign_port():
     every = 0.5
     port = free_port()
     s = Scratch(port, every=every)
-
-    class NotOurs(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            body = b"some other program"
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *a):
-            pass
-
-    other = http.server.ThreadingHTTPServer(("127.0.0.1", port), NotOurs)
-    threading.Thread(target=other.serve_forever, daemon=True).start()
+    other = hold_port(port)
     watcher = None
     try:
         watcher = start_watcher(s)
@@ -503,8 +528,7 @@ def test_foreign_port():
     finally:
         if watcher and watcher.poll() is None:
             watcher.kill()
-        other.shutdown()
-        other.server_close()
+        release_port(other)
         s.clean()
 
 
@@ -579,6 +603,58 @@ def test_kiosk():
 
 # ---- a death that says so -----------------------------------------------------
 
+def test_kiosk_port_choice():
+    print("\n  With several ports to choose from, the watcher keeps the page's own\n")
+    every = 1
+    first, page, third = free_ports(3)
+    s = Scratch(page, every=every, ports=[first, page, third])
+    other = hold_port(first)              # so the kiosk's server lands on the second
+    kiosk = None
+    try:
+        with open(os.path.join(s.dir, "kiosk.err"), "w") as err:
+            kiosk = subprocess.Popen([OMACAR, "kiosk", "hub"], env=s.env,
+                                     stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=err,
+                                     start_new_session=True)
+        up = wait_for(lambda: os.path.exists(os.path.join(s.marks, "chromium.pid")), 10)
+        check("the kiosk started, past the port that something else holds",
+              up is not None)
+        check("its page is on the second port",
+              f"--app=http://127.0.0.1:{page}/app.html#hub" in s.mark("chromium.args"))
+        check("and the watcher is on that same port, not the first",
+              len(pgrep(f"{OMACAR} server watch {page} {kiosk.pid}$")) == 1)
+
+        # Now make the first port FREE, and only then kill the page's server. A
+        # watcher that restarted "on the first free port", the way app_base
+        # picks one, would now start it on the first; one that watched the
+        # first port would start it there too. The page is on the second.
+        release_port(other)
+        other = None
+        pids = server_pids(page)
+        if not pids:
+            bad("there is no server on the page's port to kill")
+            return
+        os.kill(pids[0], signal.SIGKILL)
+        wait_for(lambda: not alive(pids[0]), 2)
+        t = wait_for(lambda: answers(page), every + 4)
+        check(f"the page's server is back on the page's port"
+              f" ({'never' if t is None else f'{t:.1f}s'})", t is not None)
+        time.sleep(every * 2)             # long enough for a wrong one to show
+        check("and nothing was started on the first port, now free",
+              not server_pids(first) and not answers(first))
+        check("or on the third", not server_pids(third) and not answers(third))
+        said = read(s.path("serve-watch.log")) + read(s.path("serve.log"))
+        check("and every line about a restart names the page's port only",
+              f"port {page}" in said and f"port {first}" not in said
+              and f"port {third}" not in said)
+    finally:
+        if kiosk and kiosk.poll() is None:
+            os.killpg(kiosk.pid, signal.SIGKILL)
+        if other:
+            release_port(other)
+        s.clean()
+
+
 def test_says_so():
     print("\n  A signal that ends the server leaves a line saying which\n")
     port = free_port()
@@ -643,7 +719,7 @@ def main():
         for test in (test_log, test_restart, test_unwritable_watch_log,
                      test_unwritable_serve_log,
                      test_foreign_port, test_parent_exit,
-                     test_kiosk, test_says_so):
+                     test_kiosk, test_kiosk_port_choice, test_says_so):
             try:
                 test()
             except Exception as e:                       # noqa: BLE001
