@@ -287,7 +287,9 @@ export default function home(root) {
     // GREYED WHILE DRIVING, NEVER HIDDEN, the rule every write screen's chip
     // keeps: a control that vanishes is one somebody hunts for at 60 mph.
     // startEditing() refuses while driving too; this says so before the tap.
-    const moving = store.state === "driving";
+    // Driving or a hand-off: store.lockedAsMoving (lockOf() on the red-light
+    // branch replaces it).
+    const moving = store.lockedAsMoving;
     if (custom.disabled !== moving) {
       custom.disabled = moving;
       custom.title = moving ? "Available when you stop" : "";

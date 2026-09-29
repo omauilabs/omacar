@@ -515,6 +515,20 @@ class Store extends EventTarget {
     if (s.values && Object.keys(s.values).length) return s;
     return Object.assign({}, s, { values: this.held });
   }
+  // WHETHER A CONTROL THAT IS ONLY FOR A STOPPED CAR IS LOCKED: the
+  // write-screen chips (main.js), Customize layout (views/home.js) and Home's
+  // layout editor (homeedit.js). Driving, or a hand-off. `state` reads
+  // "offline" during a hand-off because the sample is not connected, and
+  // every few minutes mid-drive these came unlocked for as long as the
+  // adapter was lent out. A hand-off is taken as moving, as launcher.js
+  // already does for Begin -- the raw flag, so a stopped daemon mid-hand-off
+  // keeps them locked too. At a standstill that locks them for the length of
+  // a hand-off, which is the right way round to be wrong.
+  //
+  // SUPERSEDED ON MERGE: the red-light branch (safety/parked-confirm) replaces
+  // these locks with lockOf(). Where the two meet, lockOf wins and this goes.
+  get lockedAsMoving() { return this.state === "driving" || !!this.sample.handover; }
+
   get state() {
     if (!this.connected) return "offline";
     const v = this.values;

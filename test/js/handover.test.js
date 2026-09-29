@@ -499,6 +499,68 @@ const deadDaemon = [
     })],
 ];
 
+// ---------------------------------------------------------------- the locks
+//
+// The write-screen chips, Customize layout and Home's layout editor lock while
+// the car is driving -- read from store.state, which says "offline" whenever a
+// sample is not connected. A hand-off is not connected, so mid-drive those
+// controls came unlocked for a couple of minutes in every four. They now treat
+// a hand-off as moving, as the launcher already does for Begin.
+const PARKED_AT = () => LIVE({ SPEED: 0, RPM: 0 });
+
+const locks = [
+  ["the store's lock reads a hand-off as moving, fresh, bare or stopped, and a parked sample as free", () => {
+    const got = [];
+    for (const s of [LIVE(), PARKED_AT(), HANDOVER(PARKED_AT()), BARE, QUIET(40), PARKED_AT()]) {
+      feed(s);
+      got.push(store.lockedAsMoving);
+    }
+    forget();
+    eq(got, [true, false, true, true, true, false]);
+  }],
+  ["and the write-screen chips key on it rather than on store.state", async () => {
+    // main.js boots the whole app on import, so its chip loop is read as text.
+    const src = await (await fetch("js/main.js", { cache: "no-store" })).text();
+    ok(/const driving = store\.lockedAsMoving;/.test(src), "`driving` is store.lockedAsMoving");
+    ok(/const block = !isGroup && !!\(v && v\.write\) && driving;/.test(src),
+       "and a write chip's lock is `driving`");
+    ok(!/store\.state === "driving"/.test(src), "nothing in main.js locks on store.state alone");
+  }],
+  ["Customize layout greys out during a hand-off at a stop, and frees on the next parked sample", () =>
+    withHome(() => feed(PARKED_AT()), async (root) => {
+      const btn = root.querySelector(".home-custom");
+      eq(btn.disabled, false, "parked");
+      feed(HANDOVER(PARKED_AT()));
+      eq([btn.disabled, btn.title, btn.getAttribute("aria-disabled")],
+         [true, "Available when you stop", "true"], "hand-off");
+      feed(PARKED_AT());
+      eq([btn.disabled, btn.title], [false, ""], "parked again");
+    })],
+  ["the layout editor will not open during a hand-off, and opens again once parked", () =>
+    withHome(() => feed(PARKED_AT()), async (root) => {
+      const grid = root.querySelector(".home-grid");
+      feed(HANDOVER(PARKED_AT()));
+      grid.firstElementChild.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      grid.firstElementChild.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, button: 0, pointerType: "touch", pointerId: 7, clientX: 5, clientY: 5 }));
+      grid.firstElementChild.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      ok(!grid.classList.contains("editing"), "no editor mid-hand-off");
+      feed(PARKED_AT());
+      root.querySelector(".home-custom").click();
+      ok(grid.classList.contains("editing"), "the editor opens once parked");
+      const cancel = [...root.querySelectorAll(".home-editbar button")].find((b) => b.textContent === "Cancel");
+      if (cancel) cancel.click();
+    })],
+  ["and one already open closes when a hand-off starts", () =>
+    withHome(() => feed(PARKED_AT()), async (root) => {
+      const grid = root.querySelector(".home-grid");
+      root.querySelector(".home-custom").click();
+      ok(grid.classList.contains("editing"), "open while parked");
+      feed(HANDOVER(PARKED_AT()));
+      ok(!grid.classList.contains("editing"), "closed by the hand-off");
+    })],
+];
+
 // ---------------------------------------------------------------- the IMA state
 //
 // The direction is the pack's own movement over a twelve-second window. A
@@ -615,5 +677,5 @@ const onBattery = [
     })],
 ];
 
-export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...deadDaemon, ...direction,
+export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...deadDaemon, ...locks, ...direction,
                 ...onCluster, ...onMusic, ...onRail, ...onBattery];

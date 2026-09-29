@@ -578,7 +578,9 @@ function paintNavState() {
   els.here.hidden = !(here && here.off);
   if (here && here.off) els.here.textContent = here.title;
 
-  const driving = store.state === "driving";
+  // Driving or a hand-off: store.lockedAsMoving (lockOf() on the red-light
+  // branch replaces it).
+  const driving = store.lockedAsMoving;
   for (const c of [...els.chips.querySelectorAll(".chip[data-key]"),
                    ...els.seg.querySelectorAll(".chip[data-key]")]) {
     const key = c.dataset.key;
