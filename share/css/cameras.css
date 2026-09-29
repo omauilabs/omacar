@@ -94,3 +94,24 @@
   .cams-foot, .cam-playbar { grid-template-columns: 1fr; }
   .cam-actions .cam-act { flex: 1; }
 }
+
+/* Home's Dashcams card. */
+.hc-cam { padding: 0; background: #000; }
+.dc-stage { position: absolute; inset: 0; }
+.dc-img { width: 100%; height: 100%; object-fit: cover; }
+.dc-why { position: absolute; inset: 0; display: grid; place-items: center; padding: 40px 16px 16px;
+          text-align: center; color: var(--dim); font-size: .9rem; background: var(--panel); }
+.dc-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 8px;
+          padding: 12px 14px; color: #F6FCFF; background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent); }
+.dc-title { flex: 1; font-size: .9rem; }
+.dc-rec { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+          background: rgba(0, 0, 0, .55); font-size: .75rem; font-weight: 600; letter-spacing: .06em; }
+.dc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
+.dc-sim { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: var(--warn);
+          font-size: .66rem; letter-spacing: .12em; }
+.dc-drowsy { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); font-size: .7rem; }
+.dc-drowsy[data-tone="ok"] { color: var(--ok); }
+.dc-drowsy[data-tone="warn"] { color: var(--warn); }
+.dc-aux { position: absolute; right: 0; bottom: 0; left: 0; padding: 8px 14px;
+          background: rgba(0, 0, 0, .7); color: var(--warn); font-size: .8rem; }
+.dc-aux[hidden] { display: none; }

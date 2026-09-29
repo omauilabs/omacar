@@ -183,7 +183,17 @@ const MAKERS = {
   dial: dialCard,
   car: carCard,
   nav: () => soonCard(ICONS.nav, "Navigation", "Offline maps and turn-by-turn arrive with the navigation step.", "navigation"),
-  dashcam: () => soonCard(ICONS.camera, "Dashcams", "Front, rear and cabin recording arrive with the cameras step.", "cameras"),
+  // ---- redesign/cameras: the live front view (share/js/dashcard.js) -----------
+  // Imported where the card is made, so the cameras branch meets this file in
+  // one hunk (doc/design/2026-09-28-cameras-drowsy-plan.md).
+  dashcam: () => {
+    const node = tappable(h("div.card.hc.hc-cam"), "cameras");
+    let card = null, gone = false;
+    import("../dashcard.js").then((m) => { if (!gone) card = m.dashcamCard(node); });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // ---- end redesign/cameras ---------------------------------------------------
   phone: phoneCard,
   agent: agentCard,
 };

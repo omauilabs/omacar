@@ -1,6 +1,7 @@
-/* Drowsy mode on screen (drowsyui.js), its line on Home's Dashcams card, and
-   Begin's note about AUX (views/launcher.js). Linked from the redesign/cameras
-   block at the end of app.html. */
+/* Drowsy mode on screen (drowsyui.js) and Begin's note about AUX
+   (views/launcher.js). Linked from the redesign/cameras block at the end of
+   app.html. Home's Dashcams card carries the chip and the AUX line too, and is
+   styled in cameras.css. */
 
 .launch-aux { max-width: 34rem; margin: 4px auto 0; text-align: center; font-size: .85rem;
               line-height: 1.45; color: var(--dim); }

@@ -1,5 +1,5 @@
 import { eq } from "./assert.js";
-import { camBadge, feedState, storageLine, timelineModel, clipAt, stepAcross } from "../js/camlogic.js";
+import { camBadge, feedState, dashState, storageLine, timelineModel, clipAt, stepAcross } from "../js/camlogic.js";
 
 const at = (h, m, s = 0) => new Date(2026, 8, 30, h, m, s).getTime() / 1000;
 const role = (o) => Object.assign({ device: "/dev/v4l/by-id/x", mode: { fmt: "MJPG", w: 1920, h: 1080, fps: 30 },
@@ -74,4 +74,29 @@ export default [
                   "front", "a", 55, 10), { file: "c", pos: 0 })],
   ["forward past the newest clip is back to live", () =>
     eq(stepAcross([{ role: "front", file: "a", start: 1000, end: 1060 }], "front", "a", 55, 10), null)],
+
+  // ---- Home's Dashcams card: the front picture, or in words why there is none
+  ["Home's card shows the front picture with REC while recording", () =>
+    eq(dashState(ov({})), { live: true, rec: true, sim: false, why: null })],
+  ["and says SIMULATED over a test picture", () => eq(dashState(ov({ front: role({ sim: true }) })).sim, true)],
+  ["recorder off, with the front camera plugged in", () => eq(dashState(ov({}, false)).why, "Recorder off")],
+  ["no front camera at all", () =>
+    eq(dashState(ov({ front: role({ device: null, recording: false, error: "no camera" }) })).why, "No front camera")],
+  ["and no server at all", () => eq(dashState(null).why, "OmaCar cannot reach its server")],
+  // The rest of the ways the front camera can be without a picture: each says
+  // what the recorder said, and none of them is REC.
+  ["a front camera that stalled says so, and is not REC", () =>
+    eq(dashState(ov({ front: role({ recording: false, live: false, error: "stalled: no picture for 12 s" }) })),
+       { live: false, rec: false, sim: false, why: "stalled: no picture for 12 s" })],
+  ["recording with no frame yet is REC and waits, rather than showing a black rectangle", () =>
+    eq(dashState(ov({ front: role({ live: false }) })), { live: false, rec: true, sim: false, why: "Waiting for the picture" })],
+  ["no front role at all is no front camera", () =>
+    eq(dashState({ running: true, roles: { rear: role({}) } }).why, "No front camera")],
+  ["recorder off and no front camera says no camera, not that the recorder is off", () =>
+    eq(dashState(ov({ front: role({ device: null }) }, false)).why, "No front camera")],
+  ["only the front camera's own trouble is shown: the rear's is not the front's", () =>
+    eq(dashState(ov({ rear: role({ recording: false, live: false, error: "stalled: no picture for 12 s" }) })),
+       { live: true, rec: true, sim: false, why: null })],
+  ["a simulated picture that has not arrived is still SIMULATED, and waiting", () =>
+    eq(dashState(ov({ front: role({ sim: true, live: false }) })), { live: false, rec: true, sim: true, why: "Waiting for the picture" })],
 ];
