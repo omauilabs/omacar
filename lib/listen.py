@@ -113,6 +113,12 @@ FLUSH_EVERY = 30.0
 RUNNING = os.path.join(records.STATE, "listen-running.json")
 STOPFILE = os.path.join(records.STATE, "listen-stop")
 
+# ONE LINE PER ADAPTER CONNECTION A CAPTURE MAKES: the rate the link was on,
+# and what OMACAR_FASTBAUD's raise did (see Elm.raise_baud). The capture
+# keeps the same two facts; this is the copy that survives a capture that
+# was never saved -- a quiet probe, a leg that caught nothing.
+LINKLOG = os.path.join(records.STATE, "link.jsonl")
+
 
 # ------------------------------------------------------------------ the frames
 # An arbitration identifier is 3 hex digits on an 11-bit bus and 8 on a 29-bit
@@ -237,6 +243,13 @@ class Capture:
         # every one of them was `rejected: 26`. The adapter had said why, in
         # words, and nothing kept the words.
         self.adapter_said = []           # distinct non-hex lines, oldest first
+        # WHICH LINK IT WAS HEARD ON. On 29 September a capture taken with
+        # OMACAR_FASTBAUD=1 overflowed exactly as it does at 115200, and
+        # nothing saved said whether the link had been raised at all. The
+        # rate the handle was on, and what the raise did (None when it was
+        # not asked for). Set by listen() once the adapter is up.
+        self.link_baud = None
+        self.fastbaud = None
 
     ADAPTER_SAID_CAP = 10
 
@@ -454,6 +467,8 @@ class Capture:
             "rejected": self.rejected,
             "recovered": self.recovered,
             "adapter_said": list(self.adapter_said),
+            "link_baud": self.link_baud,
+            "fastbaud": self.fastbaud,
             "marks": [{"at": t, "label": lab} for t, lab in self.marks],
             "census": self.census(),
             "discriminators": self.discriminators(),
@@ -622,6 +637,27 @@ def _restore_protocol(el, was):
         pass
 
 
+def _note_link(cap, el, port):
+    """Keep the link this capture runs on with the capture, and log it once.
+
+    The rate is read off the open handle rather than assumed from whether
+    the raise said yes: a raise that fails at its last step can still leave
+    both ends on the new rate (see Elm.raise_baud).
+    """
+    cap.link_baud = getattr(getattr(el, "ser", None), "baudrate", None)
+    cap.fastbaud = getattr(el, "fastbaud", None)
+    try:
+        os.makedirs(records.STATE, exist_ok=True)
+        with open(LINKLOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": time.time(),
+                                "when": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "port": port, "note": cap.note,
+                                "link_baud": cap.link_baud,
+                                "fastbaud": cap.fastbaud}) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass
+
+
 def _publish_progress(name, cap, seconds):
     """What a detached capture is doing, for anything that asks."""
     tmp = RUNNING + ".tmp"
@@ -746,6 +782,7 @@ def listen(seconds=DEFAULT_SECONDS, can_id=None, note="", on_frame=None,
         cap = cap or Capture(header_digits=digits, note=note)
         if cap.header_digits is None:
             cap.header_digits = digits
+        _note_link(cap, el, port)
         # Bound before the try, because the finally below reads it and the
         # first statement inside can raise. It never has, which is the only
         # reason this has not already been a NameError swallowing a real error.

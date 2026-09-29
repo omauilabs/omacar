@@ -77,6 +77,11 @@ class FakeElm:
         self.protocol = "7"
         self.closed = False
         self.setting = None
+        # The link as a real Elm leaves it after init(): the handle's rate, and
+        # what OMACAR_FASTBAUD's handshake did (None when it was not asked for).
+        self.ser = types.SimpleNamespace(
+            baudrate=FakeElm.plan.get("link_baud", baudrate))
+        self.fastbaud = FakeElm.plan.get("fastbaud")
         FakeElm.made.append(self)
 
     def init(self):
@@ -428,6 +433,57 @@ _healthy = {"frames": 1662, "rejected": 4, "monitor_protocol": "6",
             "raw": [{"t": 21.9 + i * 0.0217, "id": "1DC", "data": "00"}
                     for i in range(1662)]}
 check("a sustained capture is not flagged", listen.quiet_verdict(_healthy) == "")
+
+# ------------------------------------------------------------------------
+head("A capture says which link it ran on, and so does the link log")
+
+# 29 SEPTEMBER. Capture A ran with OMACAR_FASTBAUD=1, took 142 frames in a
+# third of a second and then BUFFER FULL -- the 115200 shape -- and nothing
+# in the capture, or anywhere else, said which rate the link was really on or
+# what the raise had done. Both now travel with every capture, and the same
+# goes into one line of the state dir's link log.
+
+reset()
+_linklog = getattr(listen, "LINKLOG", os.path.join(records.STATE, "link.jsonl"))
+try:
+    os.remove(_linklog)
+except OSError:
+    pass
+_fb = {"outcome": "failed", "failed_at": "ATBRD OK", "why": None,
+       "from": 115200, "target": 500000,
+       "steps": [{"step": "echo-off", "answered": "", "ms": 250},
+                 {"step": "ATBRD OK", "answered": "ATBRD 08\r", "ms": 3}],
+       "settled": None, "link_baud": 115200}
+FakeElm.plan = {"probe": {"6": ["17C 01"] * 12},
+                "frames": [f"17C 0{i % 8} 02" for i in range(40)],
+                "gap": 0.001, "cap_seconds": 1,
+                "link_baud": 115200, "fastbaud": _fb}
+_lc = listen.listen(seconds=3, note="fastbaud-test")
+_ldoc = json.load(open(_lc.save(raw=True), encoding="utf-8"))
+check("the saved capture records the rate the link was on",
+      _ldoc.get("link_baud") == 115200)
+check("and what the raise did, down to the step that gave up",
+      (_ldoc.get("fastbaud") or {}).get("failed_at") == "ATBRD OK")
+_ll = []
+if os.path.exists(_linklog):
+    with open(_linklog, encoding="utf-8") as _f:
+        _ll = [json.loads(_x) for _x in _f if _x.strip()]
+check("the link log has one line for this connection", len(_ll) == 1)
+check("saying the same rate, the same outcome, and which capture it was",
+      bool(_ll) and _ll[0].get("link_baud") == 115200
+      and (_ll[0].get("fastbaud") or {}).get("failed_at") == "ATBRD OK"
+      and _ll[0].get("note") == "fastbaud-test")
+
+reset()
+FakeElm.plan = {"probe": {"6": ["17C 01"] * 12},
+                "frames": [f"17C 0{i % 8} 02" for i in range(40)],
+                "gap": 0.001, "cap_seconds": 1,
+                "link_baud": 115200, "fastbaud": None}
+_ld = listen.listen(seconds=3, note="plain").asdict()
+check("without OMACAR_FASTBAUD a capture still says the rate",
+      _ld.get("link_baud") == 115200)
+check("and that no raise was asked for, rather than leaving it out",
+      "fastbaud" in _ld and _ld["fastbaud"] is None)
 
 shutil.rmtree(_TMP, ignore_errors=True)
 print()
