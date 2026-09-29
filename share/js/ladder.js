@@ -7,17 +7,19 @@
 //   2 · Wake       eyes closed >= 1.0 s, or PERCLOS >= 25%
 //   3 · Pull over  eyes closed >= 2.0 s, or two Level 2 alerts within 5 min
 //
-// EVIDENCE, NOT SPEED. Every trigger is watched on every step, below the gate
-// or above it, and a condition that becomes true is armed until a raise uses
-// it. The 30 mph gate decides only whether an armed trigger may raise now.
-// So a condition that became true at 25 mph raises once the car passes 30, and
-// hovering around 30 mph with the same evidence never raises it again, nor
-// builds two Level 2s into a Level 3. A stop (5 min or more) or a tap discards
-// all armed-but-unused evidence -- every trigger, including yawns and nods --
-// so a doze at a rest stop must not raise the moment the car pulls back onto
-// the road (I4). A discontinuity snapshot (m.discontinuity === true) is never
-// read as evidence and never advances a release, on its own -- fix round 1,
-// C1/I2, after a camera-gap snapshot slipped through as "eyes open".
+// EVIDENCE, NOT SPEED -- but never evidence gathered while parked either
+// (fix round 2, I4, correcting this header -- NR4). A trigger is watched
+// only while the car is active, or an alert is already sounding: that carve
+// -out is what lets new evidence escalate an alert below the gate (M8), the
+// only sense in which anything still counts "below the gate". Nothing ever
+// arms purely from being below the gate with nothing already up -- a doze at
+// a rest stop, or yawning at a red light, is never evidence for the drive
+// that follows. A stop (5 min or more) or a tap discards armed-but-unused
+// evidence -- every trigger, including yawns and nods -- as a second line of
+// defense for whatever the gate does let arm while escalating. A
+// discontinuity snapshot (m.discontinuity === true) is never read as
+// evidence and never advances a release, on its own -- fix round 1, C1/I2,
+// after a camera-gap snapshot slipped through as "eyes open".
 //
 // PERCLOS HYSTERESIS (fix round 1, C1/I1). PERCLOS is a noisy, frame-by-frame
 // ratio: a value that sits within about 0.002 of a threshold can cross it and
@@ -114,14 +116,28 @@ function perclosGate(perc, key, threshold, value, t, evidenceOK) {
   return false;
 }
 
-// N1: block a gate only once its arm is actually spent on a raise.
+// N1/NR3: block a gate, creating its entry if this is the first time it is
+// touched -- a sibling gate latched by NR3 may never have armed at all.
 function perclosLatch(perc, key) {
-  if (perc[key]) perc[key].blocked = true;
+  const st = perc[key] || (perc[key] = { holdSince: null, belowSince: null, blocked: false });
+  st.blocked = true;
 }
 
-// I4: a discard (a tap, or a stop of 5 min or more) returns a gate fully to
-// fresh -- unarmed and unblocked -- not merely clearing the outer armed flag.
+// I4: a stop of 5 min or more returns a gate fully to fresh -- unarmed and
+// unblocked -- not merely clearing the outer armed flag. This is the strong
+// discard: even a gate that raised is cleared, since a real stop is rest.
 function perclosReset(perc, key) {
+  perc[key] = { holdSince: null, belowSince: null, blocked: false };
+}
+
+// NR1: a tap is the weak discard. It still clears an armed-but-UNUSED hold
+// (round 2's N1), but it must never un-latch a gate that already raised --
+// "I'm awake" answers the alert, it does not make PERCLOS's own 60 s window
+// read as fresh evidence again. Only the normal re-arm rule (below margin
+// for PERCLOS_REARM_SECS) frees a gate that actually raised something.
+function perclosTapDiscard(perc, key) {
+  const st = perc[key];
+  if (st && st.blocked) return;
   perc[key] = { holdSince: null, belowSince: null, blocked: false };
 }
 
@@ -229,8 +245,12 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   let rot = 0, nextRepeat = null, nextVoice = null, alarmSilenced = false;
   let openStreakStart = null, perclosAtOpenStreak = null;
   let lastMT = null, lastTapT = null;
+  let lastYawns = null, lastNods = null; // NR2: drowsy.js's own raw counts,
+                                          // to detect a fresh increment
   const was = {}, armed = {};
   const perc = {};               // PERCLOS hysteresis state, per trigger key
+  const activeYawns = [], activeNods = []; // NR2: timestamps of increments
+                                            // seen on an evidenceOK step only
   const l2Times = [];
   const lastFree = {};
 
@@ -261,7 +281,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     }
   }
 
-  function clear(out) {
+  function clear(out, m) {
     level = 0;
     trigger = null;
     nextRepeat = nextVoice = null;
@@ -269,6 +289,16 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     alarmSilenced = false;
     out.cleared = true;
     out.cues.push({ kind: "fade" });
+    // NR3: on ANY release -- a tap, open eyes, or a stop -- a PERCLOS gate
+    // still reading at or above its own threshold right now is latched too,
+    // sibling or not. The reading did not change just because the level
+    // cleared, so it is not new evidence and must not immediately re-arm
+    // and raise again a moment later (a fresh Level 2, or Level 1 on Level
+    // 2's own release). It still needs the normal re-arm to fire again.
+    if (m && has(m.perclos)) {
+      if (m.perclos >= L2.perclos) perclosLatch(perc, "perclos2");
+      if (m.perclos >= L1.perclos) perclosLatch(perc, "perclos1");
+    }
   }
 
   function step(inp) {
@@ -288,6 +318,11 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     // m.discontinuity always does (I2) -- a camera gap is never credited as
     // time the driver's eyes were seen open.
     if (level > 0) {
+      // N3 detail (fix round 3): captured BEFORE this step may set the
+      // baseline below, so the step where PERCLOS first appears cannot
+      // satisfy "not rising" by comparing a reading with itself -- release
+      // on fresh PERCLOS is deferred one step, to a genuine comparison.
+      const hadBaseline = perclosAtOpenStreak !== null;
       if (level < 3) {
         if (m.discontinuity || !m.face || !m.calibrated) {
           openStreakStart = null;
@@ -303,10 +338,10 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
           perclosAtOpenStreak = m.perclos;
         }
       }
-      const steady = level < 3 && !m.discontinuity && advanced && openStreakStart !== null
+      const steady = level < 3 && !m.discontinuity && advanced && openStreakStart !== null && hadBaseline
         && mt - openStreakStart >= cfg.release.open_secs
         && has(m.perclos) && perclosAtOpenStreak !== null && m.perclos <= perclosAtOpenStreak;
-      if (inp.tap || steady || inp.parked) clear(out);
+      if (inp.tap || steady || inp.parked) clear(out, m);
     }
     if (banner && inp.stoppedFor >= cfg.banner_stopped_secs) banner = false;
 
@@ -336,8 +371,27 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
       };
       see("closed3", m.closedFor >= L3.closed_secs);
       see("closed2", m.closedFor >= L2.closed_secs);
-      see("yawns", m.yawns >= L1.yawns);
-      see("nods", m.nods >= L1.nods);
+
+      // NR2: a yawn or nod counts only if drowsy.js's own running count
+      // (m.yawns/m.nods) increments on a step where evidenceOK is true -- a
+      // below-gate yawn is never counted at all, so it can never mask a
+      // later rising edge made entirely of active evidence. Kept in the
+      // ladder's own window (L1.count_window_secs), independent of
+      // drowsy.js's own count, which still includes below-gate events.
+      const countActive = (xs, raw, last) => {
+        if (has(raw) && evidenceOK) {
+          const from = has(last) ? last : 0; // no prior reading: take it whole
+          if (raw > from) for (let i = from; i < raw; i++) xs.push(t);
+        }
+        while (xs.length && t - xs[0] > L1.count_window_secs) xs.shift();
+        return xs.length;
+      };
+      const activeYawnCount = countActive(activeYawns, m.yawns, lastYawns);
+      const activeNodCount = countActive(activeNods, m.nods, lastNods);
+      lastYawns = has(m.yawns) ? m.yawns : lastYawns;
+      lastNods = has(m.nods) ? m.nods : lastNods;
+      see("yawns", activeYawnCount >= L1.yawns);
+      see("nods", activeNodCount >= L1.nods);
       // PERCLOS triggers use their own hold/re-arm hysteresis (C1/I1), not a
       // plain rising edge; evidenceOK gates whether time counts toward the
       // hold at all, not just whether the result is kept.
@@ -388,10 +442,17 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
 
     // I4 (fix round 2): a discard fires on a tap, or a stop of 5 min or
     // more -- never merely on a parked step, which by itself now arms
-    // nothing anyway. It returns every PERCLOS gate fully to fresh, not just
-    // the outer armed flag, so an episode discarded unused can read below
-    // its own threshold and arm again like new (N1).
-    if (inp.tap || inp.stoppedFor >= cfg.stop.still_secs) {
+    // nothing anyway. Round 2's N1 still holds: an armed-but-unused hold is
+    // cleared by either. NR1 (fix round 3) draws the line the reset must
+    // not cross: a tap uses the weak discard, which never un-latches a gate
+    // that actually raised (perclosTapDiscard); only a real 5+ min stop uses
+    // the strong one, resetting every gate regardless (perclosReset).
+    if (inp.tap) {
+      for (const k in armed) armed[k] = false;
+      perclosTapDiscard(perc, "perclos1");
+      perclosTapDiscard(perc, "perclos2");
+    }
+    if (inp.stoppedFor >= cfg.stop.still_secs) {
       for (const k in armed) armed[k] = false;
       perclosReset(perc, "perclos1");
       perclosReset(perc, "perclos2");
