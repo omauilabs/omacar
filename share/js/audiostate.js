@@ -17,16 +17,22 @@ const fns = new Set();
 // apply while one is already in flight.
 let inFlight = false;
 
+// How long one apply may take before it is abandoned, so it can never hold
+// one of the browser's 6 connections to this host for ever. It covers
+// apply()'s worst case on the server (lib/audio.py, APPLY_WORST_SECS): every
+// wpctl and pactl call there times out at 1 s, so status() is at most 3 s;
+// pin() starts no call after 8 s, so it is at most 9 s; and the read after it
+// is at most 1 s. That is 13 s, which leaves 2 s for the request itself.
+// test/audio_test.py reads this number and holds the server to it.
+export const APPLY_TIMEOUT_MS = 15000;
+
 export function onAudio(fn) { fns.add(fn); fn(audio.last); return () => fns.delete(fn); }
 
 export async function applyAudio() {
   if (inFlight) return audio.last;      // one is already out; do not stack another
   inFlight = true;
   const ctl = new AbortController();
-  // pin()'s own hard bound is 8 s; 15 s leaves it room to finish and still
-  // guarantees this can never hang forever holding one of the browser's 6
-  // connections to this host.
-  const bail = setTimeout(() => ctl.abort(), 15000);
+  const bail = setTimeout(() => ctl.abort(), APPLY_TIMEOUT_MS);
   try {
     audio.last = await postJSON("/api/audio", { action: "apply" }, { signal: ctl.signal });
   } catch {

@@ -19,24 +19,16 @@ every half minute, and a desk machine's speakers at 100% -- or the box's,
 every time the test suite opens the app -- are not anybody's idea of help.
 wpctl sets the volume; pactl names the port.
 
-pin() NEVER TRUSTS ITS OWN COUNTER (fix round 2). The first ramp (fix round 1)
-climbed by advancing a local variable and never checking whether a step had
-actually landed: a run of failed `wpctl set-volume` calls, or the volume
-changing from outside mid-ramp -- the volume key, or the AUX cable restoring
-its own port's level -- left that variable pointing nowhere near the real
-sink, and the next SUCCESSFUL call jumped the gap in one step. The same
-open-loop shape unmuted without checking the floor call had actually landed,
-and hung forever formatting "0.00" if the sink was already at zero (0.0 times
-any ratio is still 0.0).
-
-So pin() below re-reads the real sink with `wpctl get-volume` at the top of
-EVERY iteration and computes the next step from THAT reading, never from
-where it last thought the sink was. A failed set, an outside change, or a
-sink parked at exactly 0.00 can only ever cost one small step from wherever
-the sink actually is -- never a jump, and never a hang. It also takes an
-exclusive, non-blocking lock (flock) so two ramps -- a slow poll and a
-reload, say -- can never fight over the same sink; the second one returns
-`busy` at once and touches nothing.
+pin() NEVER JUMPS THE LEVEL, because the jack drives the car's speakers and a
+jump startles the driver. It is a closed loop: every move is decided from a
+fresh read of the real sink, never from where pin() thinks it left it, and is
+re-read again immediately before it is made. It climbs at most 3 dB per
+100 ms, measured from the lowest real level the read allows. It sets a muted
+sink to a quiet floor before unmuting it, and it stops, saying so, when
+something else raises the level under it. It is single-flight (a second call
+returns `busy` and touches nothing), bounded in iterations and seconds, and
+it says `pinned: true` only on a read showing the target. The rules and the
+one window it cannot close are in _pin_locked()'s docstring.
 """
 
 import fcntl
@@ -50,30 +42,37 @@ import time
 
 SINK = "@DEFAULT_AUDIO_SINK@"
 
-# wpctl's volume knob is CUBIC: dB = 60*log10(v) (v the number wpctl takes,
-# 0..1 and a bit beyond). STEP_DB is deliberately 2.5, not the plan's 3.0
-# ceiling -- wpctl only ever prints and (here) sets two decimal places, and
-# that rounding can cost a few hundredths of a dB either way; 2.5 leaves
-# headroom so a step never reads back over 3.0 even after both ends round.
+# wpctl's volume knob is CUBIC: dB = 60*log10(v), v the number wpctl takes
+# (0..1 and a bit beyond). wpctl prints two decimals and pin() sets two, so a
+# read of v means a real level anywhere from v - READ_SLACK up.
+TICK = 0.01
+READ_SLACK = TICK / 2
+# Each step aims for STEP_DB above the lowest real level the read allows, and
+# is never more than STEP_DB_MAX (the plan's ceiling) above it.
 STEP_DB = 2.5
-STEP_SECS = 0.1
-# The escape valve below (when rounding to 2 decimals means "the next tick"
-# is the only way to move at all) is allowed up to the PLAN's own ceiling,
-# not STEP_DB -- see pin()'s "doesn't move the value" branch.
 STEP_DB_MAX = 3.0
+STEP_SECS = 0.1
 TARGET_TOL_DB = 0.1
-# Quiet enough that unmuting here is not itself an audible jump -- silence
-# has no "partway", so this is the one step that cannot be ramped.
-FLOOR_DB = -60.0
-FLOOR_V = 0.1                    # 10**(FLOOR_DB/60), exact at two decimals
-# Anything at or below this reads as "the floor" for the purpose of the dB
-# math below, so log10 of an actual zero -- reachable with the volume keys,
-# never through this module -- is never computed, and the ramp always has a
-# real step to take from wherever it is, however low.
-FLOOR_READ_V = 0.001
-WPCTL_TIMEOUT = 1                # seconds; short, because pin() retries anyway
+# The floor: quiet enough that the two steps which cannot be ramped -- the
+# unmute (silence has no "partway") and the move up from anything below it --
+# land where nobody is startled. 0.13 (-53.2 dB), not lower, because steps are
+# sized from read - READ_SLACK: from a read of 0.12 the next tick is 3.2 dB
+# above the lowest real level that reads 0.12 (0.13 over 0.115), while from
+# 0.13 up there is always a tick within 3 dB (0.14 over 0.125 is 2.95 dB).
+FLOOR_V = 0.13
+FLOOR_DB = 60.0 * math.log10(FLOOR_V)
+# Every wpctl and pactl call in this file passes this timeout, so no call can
+# wedge a request: pin() retries anyway, and status() just reports what it got.
+TOOL_TIMEOUT = 1
 MAX_ITERATIONS = 40
+# No iteration starts at or after LAST_START_SECS, and no wpctl call starts at
+# or after MAX_SECS, so pin() ends by MAX_SECS + TOOL_TIMEOUT at the latest.
+LAST_START_SECS = 7.0
 MAX_SECS = 8.0
+# apply()'s worst case, for the page's abort (share/js/audiostate.js,
+# APPLY_TIMEOUT_MS): status()'s three calls, pin() running out its time with
+# one call in flight, and the one read after it.
+APPLY_WORST_SECS = 3 * TOOL_TIMEOUT + (MAX_SECS + TOOL_TIMEOUT) + TOOL_TIMEOUT
 
 
 def flag_path():
@@ -133,7 +132,10 @@ def port_of(sinks, default):
     return "unknown", ""
 
 
-def _run(args, timeout=5):
+# The three hooks tests replace: _run with a fake sink, _sleep and _now with
+# its fake clock, so nothing in test/audio_test.py touches a real device or
+# spends real seconds.
+def _run(args, timeout):
     try:
         r = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return r.returncode, r.stdout
@@ -141,33 +143,54 @@ def _run(args, timeout=5):
         return 127, ""
 
 
-# A swappable hook, the same idea as _run: tests replace this with something
-# that does not actually wait, so the ramp's timing can be checked without
-# audio_test.py spending real wall-clock time on every call to pin().
 def _sleep(secs):
     time.sleep(secs)
 
 
+def _now():
+    return time.monotonic()
+
+
+def _read():
+    """(volume, muted) from one `wpctl get-volume`, or (None, None)."""
+    rc, out = _run(["wpctl", "get-volume", SINK], timeout=TOOL_TIMEOUT)
+    return parse_volume(out) if rc == 0 else (None, None)
+
+
 def _set_volume(v):
-    # v is already rounded to 2 decimals by the caller (pin()'s whole point
-    # is that the rounding happens BEFORE the number is sent, never after),
-    # so this just says exactly that back to wpctl.
-    rc, _ = _run(["wpctl", "set-volume", SINK, f"{v:.2f}"], timeout=WPCTL_TIMEOUT)
+    rc, _ = _run(["wpctl", "set-volume", SINK, f"{v:.2f}"], timeout=TOOL_TIMEOUT)
     return rc == 0
 
 
-def _db(v):
-    """dB on wpctl's cubic scale, with the floor standing in for anything at
-    or effectively at zero -- so this never calls log10(0) and a ramp
-    starting from "Volume: 0.00" always has a real, finite step to take."""
-    return FLOOR_DB if v is None or v <= FLOOR_READ_V else 60.0 * math.log10(v)
+def _heard_db(vol, muted):
+    """The level a driver hears, for spotting a rise: muted, or anywhere
+    below the floor, counts as the floor. So pin()'s own unmute and its own
+    move up to the floor are not rises, and nothing that stays below the
+    floor is either."""
+    return FLOOR_DB if muted or vol < FLOOR_V else 60.0 * math.log10(vol)
+
+
+def _step_up(vol, target):
+    """The next level from an unmuted read of `vol` (at or above the floor):
+    STEP_DB above the lowest real level that reads as `vol`, capped at the
+    target and rounded DOWN to two decimals, so rounding can only hold a step
+    back. If that rounds back onto `vol`, the next tick instead, when it is
+    within STEP_DB_MAX. None when no step is safe, which the floor above
+    makes impossible from 0.13 up."""
+    low_db = 60.0 * math.log10(vol - READ_SLACK)
+    raw = min(target, 10 ** ((low_db + STEP_DB) / 60.0))
+    v = math.floor(raw * 100 + 1e-9) / 100.0
+    if v <= round(vol, 2) + 1e-9:
+        v = min(target, round(vol + TICK, 2))
+        if 60.0 * math.log10(v) - low_db > STEP_DB_MAX + 1e-9:
+            return None
+    return v
 
 
 def status():
-    rc, out = _run(["wpctl", "get-volume", SINK])
-    vol, muted = parse_volume(out) if rc == 0 else (None, None)
-    _, default = _run(["pactl", "get-default-sink"])
-    rc2, js = _run(["pactl", "--format=json", "list", "sinks"])
+    vol, muted = _read()
+    _, default = _run(["pactl", "get-default-sink"], timeout=TOOL_TIMEOUT)
+    rc2, js = _run(["pactl", "--format=json", "list", "sinks"], timeout=TOOL_TIMEOUT)
     try:
         sinks = json.loads(js) if rc2 == 0 and js.strip() else []
     except ValueError:
@@ -179,105 +202,150 @@ def status():
 
 
 def _pin_locked(target):
-    """The ramp itself, run only once the caller holds the lock. Every
-    iteration re-reads the real sink and decides its next move from THAT
-    reading -- never from a count of its own past calls -- which is what
-    makes a failed set, an outside change or a sink already at 0.00 cost at
-    most one small step rather than becoming a later jump or a hang.
+    """The ramp, run only once pin() holds the lock.
 
-    BELOW THE FLOOR, THE 3 dB RULE DOES NOT APPLY (fix round 3): nothing
-    down there is audible enough to startle anybody, so a sink the volume
-    keys left at, say, 5% or 1% is set straight to FLOOR_V in one step --
-    the one large step this function is allowed to take -- and the ordinary
-    step-by-step ramp takes over once a read confirms it is there. Round 2's
-    version instead tried to ramp UP FROM that low reading directly: at
-    those levels a single hundredth-of-a-percent wpctl tick is many dB, so
-    its "the next tick is too big, call it close enough" escape valve fired
-    immediately and reported `pinned: true` while the sink was still nearly
-    silent -- a dishonest status as well as a safety failure. That escape
-    valve cannot legitimately fire above the floor at all (a tick is ~2.5 dB
-    at v=0.1 and only gets smaller above it), so if it somehow does, this
-    now reports a truthful failure instead of a false success."""
-    start = time.monotonic()
+    1. Every move is decided from a fresh read of the real sink, never from
+       where the last move meant to leave it. A failed read, or a failed
+       set, sets nothing; the next iteration reads again.
+    2. Immediately before every set-volume and set-mute, the sink is read
+       again. If that read differs at all from the one the move was decided
+       from, nothing is set, and the move is decided again from the new
+       read. (The ruling allowed one 0.01 tick of slack. There is none,
+       because only an outside actor changes the sink between two reads
+       milliseconds apart, and a step sized for the higher read can be over
+       3 dB from the lower one: 0.21 over a real 0.1851, which reads 0.19,
+       is 3.3 dB.)
+    3. Every read is checked against the one before it. A rise of more than
+       STEP_DB_MAX, in what a driver hears, is not pin()'s doing, because its
+       own steps are smaller. So pin() takes no further step, and returns
+       pinned: false saying an outside change interfered. It does not ramp
+       on from a level it did not set.
+    4. Muted, the only move is to the floor, inaudibly. The unmute happens
+       only when two reads in a row show muted at or below the floor.
+       Unmuted and below the floor, one step goes straight to it: nothing
+       down there is loud enough to startle anybody. From the floor up,
+       each step is _step_up(): at most STEP_DB_MAX above the lowest real
+       level the read allows, and STEP_SECS after the last audible move.
+    5. Bounded: MAX_ITERATIONS, no iteration starts after LAST_START_SECS,
+       no call starts after MAX_SECS, and every call has TOOL_TIMEOUT.
+    6. pinned: true comes only from a read showing the target, unmuted.
+
+    THE WINDOW THIS CANNOT CLOSE. A window of milliseconds remains between
+    the read in (2) and the set that follows it: the reading wpctl
+    exiting, then the setting wpctl starting and connecting to PipeWire.
+    That is about one wpctl call, 9 ms median on the box; it has not been
+    measured on the tablet. An outside change landing exactly there -- a
+    volume key, or the headphone route restoring its own level -- is
+    overwritten by a set sized for the level before it. If that change
+    was a drop, the set is a jump. Closing the window would take a set
+    that applies only if the level is still what was read, a
+    compare-and-set, and wpctl has none: it takes a volume as a plain
+    value, so any read-then-set leaves this gap. (2) keeps the gap at
+    that minimum. No decision, sleep or other call ever sits between the
+    last read and the set. But (2) cannot make the gap shorter than one
+    call, and a single read followed at once by the set was already that
+    short. (3) catches any rise the gap lets through, at the next read.
+    """
+    start = _now()
     iterations = 0
-    last_vol = None
-    target_db = _db(target)
+    last = None          # (volume, muted) of the most recent successful read
+    carried = None       # a pre-set read that did not match, to decide from next
+    target_db = 60.0 * math.log10(target)
+
+    def elapsed():
+        return _now() - start
+
+    def result(pinned, error):
+        return {"pinned": pinned, "busy": False, "volume": last[0] if last else None,
+                "iterations": iterations, "error": error}
+
+    def short(why):
+        where = ("without a readable volume" if last is None else
+                 f"at {last[0] * 100:.0f}%{' muted' if last[1] else ''}, short of the target")
+        return result(False, f"{why} after {iterations} iterations {where}")
+
+    def rest():
+        # The gap between audible moves. Skipped once no further iteration
+        # may start, so a sleep never adds to the time bound's overrun.
+        if elapsed() < LAST_START_SECS:
+            _sleep(STEP_SECS)
+
+    def outside_rise(reading):
+        return last is not None and _heard_db(*reading) - _heard_db(*last) > STEP_DB_MAX + 1e-9
+
+    def interfered(reading):
+        return dict(result(False, (
+            f"an outside change interfered: the volume rose from "
+            f"{last[0] * 100:.0f}%{' muted' if last[1] else ''} to "
+            f"{reading[0] * 100:.0f}%{' muted' if reading[1] else ''} between two "
+            "reads, so pin() stopped rather than ramp on from a level it did not set")),
+            volume=reading[0])
 
     while True:
-        if iterations >= MAX_ITERATIONS or (time.monotonic() - start) >= MAX_SECS:
-            return {"pinned": False, "busy": False, "volume": last_vol,
-                    "iterations": iterations,
-                    "error": (f"gave up after {iterations} iterations without a "
-                              "readable volume" if last_vol is None else
-                              f"gave up after {iterations} iterations at "
-                              f"{last_vol * 100:.0f}%, short of the target")}
+        if iterations >= MAX_ITERATIONS:
+            return short("gave up")
+        if elapsed() >= LAST_START_SECS:
+            return short("ran out of time")
         iterations += 1
 
-        rc, out = _run(["wpctl", "get-volume", SINK], timeout=WPCTL_TIMEOUT)
-        vol, muted = parse_volume(out) if rc == 0 else (None, None)
-        if vol is None:
-            _sleep(STEP_SECS)
-            continue
-        last_vol = vol
+        # (1) The read this iteration's move is decided from.
+        if carried is not None:
+            reading, carried = carried, None
+        else:
+            reading = _read()
+            if reading[0] is None:
+                rest()
+                continue
+            if outside_rise(reading):                            # (3)
+                return interfered(reading)
+            last = reading
+        vol, muted = reading
 
+        # (4) Decide the move.
         if muted:
-            if vol > FLOOR_V + 1e-9:
-                _set_volume(FLOOR_V)
-                continue                       # loop: re-read and confirm
-            # A fresh read just confirmed muted AND at or below the floor --
-            # the only condition under which this unmutes.
-            _run(["wpctl", "set-mute", SINK, "0"], timeout=WPCTL_TIMEOUT)
-            _sleep(STEP_SECS)
+            move = ("unmute", None) if vol <= FLOOR_V + 1e-9 else ("set", FLOOR_V)
+        elif vol < FLOOR_V - 1e-9:
+            move = ("set", FLOOR_V)
+        elif abs(60.0 * math.log10(vol) - target_db) <= TARGET_TOL_DB:
+            return result(True, None)                            # (6)
+        else:
+            v_next = _step_up(vol, target)
+            if v_next is None:
+                return result(False, f"stuck at {vol * 100:.0f}%: no step within "
+                                     f"{STEP_DB_MAX:g} dB is available")
+            move = ("set", v_next)
+
+        # (2) Read again, immediately before acting on it.
+        if elapsed() >= MAX_SECS:
+            return short("ran out of time")
+        check = _read()
+        if check[0] is None:
+            rest()
+            continue
+        if outside_rise(check):                                  # (3)
+            return interfered(check)
+        last = check
+        if (round(check[0], 2), check[1]) != (round(vol, 2), muted):
+            carried = check
             continue
 
-        if vol < FLOOR_V - 1e-9:
-            # Below the floor: not loud enough to ramp, and not loud enough
-            # to need to. One step straight to the floor -- see this
-            # function's own docstring -- then loop to re-read and confirm
-            # it landed before the ordinary ramp below ever runs on it.
-            _set_volume(FLOOR_V)
-            _sleep(STEP_SECS)
-            continue
-
-        cur_db = _db(vol)
-        if abs(cur_db - target_db) <= TARGET_TOL_DB:
-            return {"pinned": True, "busy": False, "volume": vol,
-                    "iterations": iterations, "error": None}
-
-        raw_next = min(target, 10 ** ((cur_db + STEP_DB) / 60.0))
-        # Rounded DOWN, so the rounding itself can never push a step over the
-        # limit -- only ever hold it back a little.
-        v_next = math.floor(raw_next * 100 + 1e-9) / 100.0
-        vol2 = round(vol, 2)
-        if v_next <= vol2 + 1e-9:
-            # Rounding down landed back on the level that was just read: at
-            # this level, 2.5 dB isn't even one hundredth. Try the next tick
-            # up instead (capped at the target, same as the normal step),
-            # but only if that tick is still within the PLAN's own ceiling.
-            v_alt = min(target, round(vol2 + 0.01, 2))
-            if _db(v_alt) - cur_db <= STEP_DB_MAX + 1e-9:
-                v_next = v_alt
-            else:
-                # UNREACHABLE ABOVE THE FLOOR IN PRACTICE (fix round 3): a
-                # two-decimal tick is only ~2.5 dB at v=0.1 and smaller from
-                # there up, so this branch should never fire here. If it
-                # somehow does, that is a bug -- report it as the failure it
-                # is rather than claiming the level was pinned.
-                return {"pinned": False, "busy": False, "volume": vol,
-                        "iterations": iterations,
-                        "error": (f"stuck at {vol * 100:.0f}%: no safe step "
-                                  "available above the floor")}
-
-        _set_volume(v_next)
-        _sleep(STEP_SECS)
+        if elapsed() >= MAX_SECS:
+            return short("ran out of time")
+        if move[0] == "unmute":
+            _run(["wpctl", "set-mute", SINK, "0"], timeout=TOOL_TIMEOUT)
+        else:
+            _set_volume(move[1])
+            if muted:
+                continue          # inaudible while muted: re-read and confirm at once
+        rest()
 
 
 def pin(target=1.0):
     """Ramp the sink to `target` (an amplitude, 1.0 = 0 dBFS = full scale),
-    never more than ~3 dB per 100 ms measured against the REAL sink, not a
-    plan. Single-flight: a second call while one is already running touches
-    nothing and returns `busy` at once, because two ramps racing the same
-    sink is its own way of jumping the level (fix round 2, Critical 1)."""
+    never more than 3 dB per 100 ms measured from the real sink, and return
+    {pinned, busy, volume, iterations, error}. Single-flight: a second call
+    while one is running touches nothing and returns `busy` at once, because
+    two ramps racing the same sink is its own way of jumping the level."""
     try:
         fd = os.open(_lock_path(), os.O_CREAT | os.O_RDWR, 0o600)
     except OSError as e:
@@ -304,18 +372,21 @@ def apply():
     switches to a port that keeps a volume of its own, which is why this is
     asked again rather than once.
 
-    Returns the same shape as status() -- callers (the routes, audiostate.js,
-    this file's own CLI) all read volume/muted/port/aux/managed/error from
-    it -- with `busy` and pin()'s own `error` layered on top when a ramp
-    actually ran."""
+    Returns the same shape as status(), with `busy` and pin()'s own `error`
+    layered on top when a ramp ran. After a ramp only the volume is read
+    again; the port is the one read before it (the next poll reads it anew).
+    That keeps the worst case at APPLY_WORST_SECS: 3 s for status(), 9 s for
+    pin(), 1 s for the read after, 13 s in all, inside the page's 15 s abort."""
     st = status()
     if st["managed"] and st["volume"] is not None and (st["volume"] < 0.995 or st["muted"]):
         result = pin()
-        st = status()
+        vol, muted = _read()
+        st = dict(st, volume=vol, muted=muted,
+                  error=None if vol is not None else "wpctl could not read the volume")
         if result.get("busy"):
-            st = dict(st, busy=True)
-        if result.get("error") and not st.get("error"):
-            st = dict(st, error=result["error"])
+            st["busy"] = True
+        if result.get("error") and not st["error"]:
+            st["error"] = result["error"]
     return st
 
 
