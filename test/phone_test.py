@@ -64,8 +64,22 @@ def free_port():
 
 
 def browser():
-    for name in ("chromium", "chromium-browser", "google-chrome",
-                 "google-chrome-stable"):
+    # AN EXPLICIT BROWSER WINS, AND A MISSING ONE IS A FAILURE, NOT A SKIP.
+    #
+    # CI's ubuntu-latest image puts the snap wrapper at /usr/bin/chromium, and
+    # headless under that wrapper hangs until the 120 s timeout -- so the app
+    # test failed on every run from 2026-09-17 while every other suite passed.
+    # The workflow points OMACAR_CHROME at the image's real Google Chrome. If
+    # the variable is set and names nothing runnable, that is a broken setup,
+    # and saying "skipping: no chromium here" would turn it into a green run
+    # that checked nothing -- so it raises instead.
+    want = os.environ.get("OMACAR_CHROME", "").strip()
+    if want:
+        p = want if os.sep in want else shutil.which(want)
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+        raise SystemExit(f"    OMACAR_CHROME={want!r} is set but is not a runnable browser")
+    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable"):
         p = shutil.which(name)
         if p:
             return p
