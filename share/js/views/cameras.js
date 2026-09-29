@@ -17,15 +17,17 @@
 // data", and no alert can start. So WHILE A CLIP PLAYS THE FEEDS LET GO OF
 // THEIR STREAMS (final review, I2): the main feed's under the video and both
 // side feeds, which say "Paused while a clip plays" instead. They take them
-// up again when playback ends, and leaving the tab ends it. Drowsy mode's
-// cabin stream is never let go of for playback: it is the safety feature.
-// Live, the tab holds three, and with drowsy mode and the phone layer that is
-// five, one left for every poll on the page; playing, the tab holds one, and
-// three are left. Do not add a stream.
+// up again when playback ends, when the clip cannot be played (m3), and when
+// the tab is left. Drowsy mode's cabin stream is never let go of for
+// playback: it is the safety feature. Live, the tab holds three, and with
+// drowsy mode and the phone layer that is five, one left for every poll on
+// the page; playing, the tab holds one, and three are left. Do not add a
+// stream.
 
 import { h, clear, icon, toast } from "../core.js";
 import { ICONS } from "../icons.js";
 import { getJSON, postJSON, liveUrl, clipUrl } from "../camapi.js";
+import { LIVE_TIMEOUT_MS } from "../drowsyrun.js";
 import { ROLES, ROLE_LABEL, camBadge, feedState, storageLine, timelineModel, clipAt,
          stepAcross, hhmm, hhmmss } from "../camlogic.js";
 
@@ -50,11 +52,14 @@ const pct = (x) => (x * 100).toFixed(3) + "%";
 // What a side feed says in place of its picture while a clip plays.
 const PAUSED_FOR_CLIP = "Paused while a clip plays";
 
-// `get`, `post`, `every` and `stopEvery` are for the tests (test/js/cameras.test.js);
-// the page uses the defaults.
+// `get`, `post`, `every`, `later`, `stopEvery` and `clipSrc` are for the tests
+// (test/js/cameras.test.js); the page uses the defaults. clearTimeout and
+// clearInterval share one list of ids, so `stopEvery` stops either kind.
 export default function camerasView(root, { get = getJSON, post = postJSON,
                                             every = (fn, ms) => setInterval(fn, ms),
-                                            stopEvery = (id) => clearInterval(id) } = {}) {
+                                            later = (fn, ms) => setTimeout(fn, ms),
+                                            stopEvery = (id) => clearInterval(id),
+                                            clipSrc = clipUrl } = {}) {
   let alive = true;
   let ov = null;
   let clips = [], events = [];
@@ -218,20 +223,42 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
     }
   }
 
-  async function refresh() {
-    try { ov = await get("/api/cams"); } catch { ov = null; }
-    if (alive) paint();
+  // ---- the polls: one request at a time, and given up (final review, m2) -----
+  //
+  // The pattern of Home's Dashcams card (dashcard.js) and drowsy mode's polls
+  // (drowsyrun.js pollLive, pollCams). A server that stops answering must not
+  // collect a request from every 2 s tick and every 10 s tick: Chromium lets a
+  // host six connections, and drowsy mode's /api/live poll waits behind
+  // whatever this tab leaves it. So a poll asks for nothing while its last
+  // request is out (a caller that comes round meanwhile waits on that one), and
+  // a request still out after LIVE_TIMEOUT_MS is aborted: a miss, like one that
+  // fails, and the poll's next tick goes out. Leaving the tab aborts them too.
+  const out = new Set();           // the AbortController of every request still out
+  function oneAtATime(ask) {
+    let pending = null;
+    return () => pending || (pending = (async () => {
+      const ctl = new AbortController();
+      out.add(ctl);
+      const bail = later(() => ctl.abort(), LIVE_TIMEOUT_MS);
+      try { await ask(ctl.signal); }
+      finally { stopEvery(bail); out.delete(ctl); pending = null; }
+    })());
   }
 
-  async function refreshClips() {
+  const refresh = oneAtATime(async (signal) => {
+    try { ov = await get("/api/cams", { signal }); } catch { ov = null; }
+    if (alive) paint();
+  });
+
+  const refreshClips = oneAtATime(async (signal) => {
     const from = Math.floor(Date.now() / 1000) - 3600;
     try {
-      const d = await get(`/api/cams/clips?from=${from}`);
+      const d = await get(`/api/cams/clips?from=${from}`, { signal });
       clips = d.clips;
       events = d.events;
     } catch { /* keep what was there */ }
     if (alive) drawTimeline();
-  }
+  });
 
   function play(role, file, at) {
     const c = clips.find((k) => k.role === role && k.file === file);
@@ -241,7 +268,7 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
     const f = feeds[role];
     f.node.appendChild(video);
     f.node.classList.add("is-playing");
-    video.src = clipUrl(role, file);
+    video.src = clipSrc(role, file);
     video.addEventListener("loadedmetadata", () => {
       video.currentTime = Math.max(0, Math.min(at, (video.duration || at) - 0.1));
       video.play().catch(() => {});
@@ -275,6 +302,10 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
   async function step(delta) {
     if (!playing) {
       await refreshClips();
+      // Leaving the tab aborts the request this waits on, and ends the wait.
+      // A gone view starts no clip: its <video> would hold a connection that
+      // drowsy mode's polls need, and its toast would land on another view.
+      if (!alive) return;
       const hit = clipAt(clips, main, Date.now() / 1000 + delta);
       if (hit) play(main, hit.file, hit.pos); else toast("Nothing recorded to go back to yet.");
       return;
@@ -287,6 +318,18 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
 
   video.addEventListener("play", paintPlay);
   video.addEventListener("pause", paintPlay);
+  // A CLIP THAT WILL NOT PLAY (final review, m3): a 404, a file the janitor
+  // removed since the list was read, a decode error. While it plays the side
+  // feeds have let go of their streams (see the header), so without this the
+  // owner would be left with a black or frozen slot and feeds that stay
+  // paused until Live, a tap or leaving the tab. It goes back to live, which
+  // takes the feeds' streams up again, and says why. `playing` is null by the
+  // time anything goLive() itself provokes is heard, so it is said once.
+  video.addEventListener("error", () => {
+    if (!playing) return;
+    goLive();
+    toast("That clip could not be played.", "bad");
+  });
   // On to the next minute, or back to live after the newest.
   video.addEventListener("ended", () => {
     if (!playing) return;
@@ -322,6 +365,7 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
   return () => {
     alive = false;
     for (const t of timers) stopEvery(t);
+    for (const ctl of out) ctl.abort();
     for (const r of ROLES) feeds[r].img.removeAttribute("src");
     video.pause();
     video.removeAttribute("src");
