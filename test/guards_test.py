@@ -3004,6 +3004,99 @@ try:
 finally:
     _ln.listen = _orig_listen_ov
 
+head("a leg's quiet timeout counts from when the adapter is listening, not from set-up")
+
+# MEASURED ON THE CAR, 29 SEPTEMBER. With the fallback preset (QUIET=10,
+# END_ON_OVERFLOW=1) every leg from 11:58 to 13:17 saved ZERO frames. The last
+# leg on default settings got its first frame 11.47s after the capture began:
+# ATZ, the protocol search and the monitor probe, at 115200. The quiet clock
+# started at leg set-up, and done() -- only ever asked once the monitor is
+# running -- found eleven seconds of "silence" on its very first call and
+# ended every leg about a second and a half before its first frame.
+
+
+class _LegClock:
+    """drivelog's clock, so eleven seconds of adapter set-up take none."""
+
+    def __init__(self):
+        self.t = time.time()
+
+    def time(self):
+        return self.t
+
+    def __getattr__(self, name):                 # strftime, sleep, ...
+        return getattr(time, name)
+
+
+def _slow_setup_listen(clock, ready_at, first_at, lines, backstop=120.0):
+    """A listen() whose adapter reaches the monitor `ready_at` seconds after
+    the leg began, and whose first line arrives at `first_at` -- then the
+    `lines`, one per hundredth of a second, then silence. should_stop is
+    asked before every read and never during set-up, which is what the real
+    listen() does: it only reaches Elm.monitor() for the final ATMA."""
+    out = {}
+
+    def fake(**kw):
+        cap, should_stop = kw["cap"], kw["should_stop"]
+        t0 = clock.t
+        clock.t = t0 + ready_at
+        if kw.get("on_ready"):
+            kw["on_ready"](cap)
+        todo = list(lines)
+        while clock.t - t0 < backstop:
+            if should_stop():
+                break
+            clock.t += 0.01
+            if todo and clock.t - t0 >= first_at:
+                cap.add_line(todo.pop(0))
+        out["ended_at"] = clock.t - t0
+        return cap
+    return fake, out
+
+
+_orig_listen_slow = _ln.listen
+_orig_dl_time = _dl.time
+_today = ["13A 0013000000000024"] * 128 + ["BUFFER FULL"]
+try:
+    _clk = _LegClock()
+    _dl.time = _clk
+
+    # Today's leg, on today's fallback preset.
+    _ln.listen, _slow = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                           lines=_today)
+    _sup_slow = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=True)
+    _sup_slow.say = lambda *a, **k: None
+    _sup_slow.leg()
+    check("QUIET=10 with 11.4s of set-up: the leg keeps the frames it heard",
+          (_sup_slow.last_leg or {}).get("frames"), 128)
+    check("and still ends on the overflow, not the quiet timeout "
+          f"({_slow.get('ended_at', 0):.1f}s after it began)",
+          12.5 <= _slow.get("ended_at", 0) < 15.0, True)
+
+    # The same set-up, without END_ON_OVERFLOW: the quiet timeout ends it,
+    # counted from the last frame.
+    _ln.listen, _slow2 = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                            lines=_today)
+    _sup_slow2 = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=False)
+    _sup_slow2.say = lambda *a, **k: None
+    _sup_slow2.leg()
+    check("QUIET=10, overflow-ending off: the frames are kept too",
+          (_sup_slow2.last_leg or {}).get("frames"), 128)
+
+    # A SILENT BUS STILL ENDS THE LEG, quiet seconds after listening began --
+    # not before (the old clock ended it at once) and not never.
+    _ln.listen, _silent = _slow_setup_listen(_clk, ready_at=11.4, first_at=11.5,
+                                             lines=[])
+    _sup_silent = _dl.Supervisor(once=True, quiet=10.0, end_on_overflow=True)
+    _sup_silent.say = lambda *a, **k: None
+    _sup_silent.leg()
+    check("a silent bus ends the leg QUIET seconds after listening began "
+          f"({_silent.get('ended_at', 0):.2f}s after the leg began)",
+          21.4 <= _silent.get("ended_at", 0) < 21.6, True)
+finally:
+    _ln.listen = _orig_listen_slow
+    _dl.time = _orig_dl_time
+
 # --------------------------------------------------------- the parked session
 head("tools/ima-session.sh sends only read-only prospect/listen/mcp calls")
 

@@ -191,7 +191,10 @@ different in kind from `OMACAR_FASTBAUD` and `OMACAR_CAF0` above:
 - `OMACAR_DRIVELOG_LEG_LINES` — the line cap for one leg, passed straight to
   `listen()` as `limit=` (default `listen.DEFAULT_LIMIT`, 60,000).
 - `OMACAR_DRIVELOG_QUIET` — the quiet timeout (default `QUIET_TIMEOUT`,
-  120s).
+  120s). It counts from when the adapter starts listening, not from when the
+  leg starts: set-up (ATZ, the protocol search and the probe) took about
+  11.5s at 115200 on 29 September, and until that was fixed a 10s QUIET
+  ended every leg before its first frame.
 - `OMACAR_DRIVELOG_END_ON_OVERFLOW=1` — end a leg the moment the adapter
   itself says `BUFFER FULL` or `STOPPED` (`Capture.overflowed()`), instead of
   waiting out the full quiet timeout afterwards. Off by default; see below.
