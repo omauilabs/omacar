@@ -3,6 +3,7 @@ import {
   gateOf, chipOf, rotationFor, testMayRun, voiceInstalled, showAux, KPH_PER_MPH,
   createDrowsy, createTracker, setTestGate, drowsy, TRACKER_RETRY_SECS,
 } from "../js/drowsyrun.js";
+import { watchCabin } from "../js/facewatch.js";
 import * as player from "../js/alertplayer.js";
 import * as audiostate from "../js/audiostate.js";
 
@@ -683,6 +684,60 @@ export default [
     const failed = r.eng.state.error;
     await r.polls(61);
     eq([/did not load: no wasm/.test(failed || ""), n, r.eng.state.error], [true, 2, null]);
+  }],
+
+  // ---- final review, I1: the tracker's chip, right in both directions
+  ["a tracker that fails on the GPU, then fails to load on the CPU, then loads: its first good frame reads 'Watching', with no error (I1a)", async () => {
+    // The ledger's MUST FIX (row 47). The failed reload cleared the load
+    // error once the next load worked, but never the frame failure before
+    // it, so the chip said "Stopped · face tracker error" for the rest of
+    // the drive while detection ran and alerts could raise.
+    const loads = [];
+    const FACE = { faceBlendshapes: [{ categories: [{ categoryName: "eyeBlinkLeft", score: 0.1 },
+      { categoryName: "eyeBlinkRight", score: 0.1 }] }] };
+    let r = null;
+    const tracker = createTracker({
+      load: async (delegate) => {
+        loads.push(delegate);
+        if (loads.length === 1) return { detectForVideo() { throw new Error("GPU context lost"); }, close() {} };
+        if (loads.length === 2) throw new Error("vision_wasm_internal.wasm: 503");
+        return { detectForVideo: () => FACE };
+      },
+      // The real watch loop, with each frame stamped on the rig's clock
+      // instead of the page's, so "a face seen just now" means now.
+      watch: (o) => watchCabin({ ...o, onFrame: (f) => o.onFrame({ ...f, t: r.t }) }),
+      options: { fetchLive: liveStream(1000), decode: async () => ({ width: 4, height: 3, close() {} }),
+                 fps: Infinity, retryMs: 0 },
+    });
+    r = await rig({ tracker, canvas: { width: 0, height: 0, getContext: () => ({ drawImage() {} }) } });
+    await r.drive(100);
+    await turns(() => /stopped after 3 failed frames/.test(r.eng.state.error || ""));
+    const gpu = r.eng.state.chip;
+    r.advance(TRACKER_RETRY_SECS);
+    await r.poll();                               // the CPU load fails
+    const cpu = [r.eng.state.chip, /did not load: vision_wasm_internal\.wasm: 503/.test(r.eng.state.error || "")];
+    r.advance(60);
+    await r.poll();                               // and the next one works
+    await turns(() => r.eng.state.error === null && r.eng.state.chip === "Watching");
+    eq([gpu, cpu, loads, r.eng.state.chip, r.eng.state.error],
+       ["Stopped · face tracker error", ["Stopped · face tracker error", true], ["GPU", "CPU", "CPU"], "Watching", null]);
+  }],
+  ["a tracker that never loads reads 'Stopped · face tracker error', never 'Can't see you', with the load's error (I1b)", async () => {
+    // The MediaPipe files missing (assets fetch never run on the tablet), a
+    // corrupt file, or neither delegate starting: loadLandmarker rejects
+    // after trying the GPU and then the CPU. "Can't see you" would send the
+    // owner to re-aim the camera instead of fixing the install.
+    const loads = [];
+    const tracker = createTracker({
+      load: async (delegate) => { loads.push(delegate); throw new Error("face_landmarker.task: 404"); },
+    });
+    const r = await rig({ tracker });
+    await r.drive(100);
+    const first = [r.eng.state.chip, r.eng.state.error];
+    await r.polls(61);                            // tried again a minute later, and failed again
+    eq([first, r.eng.state.chip, r.eng.state.error, loads.length],
+       [["Stopped · face tracker error", "The face tracker did not load: face_landmarker.task: 404"],
+        "Stopped · face tracker error", "The face tracker did not load: face_landmarker.task: 404", 2]);
   }],
 
   // ---- fix round 1 minors

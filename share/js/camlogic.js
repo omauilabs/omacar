@@ -38,6 +38,19 @@ export function feedState(ov, role) {
   return { title, rec: true, sim: !!r.sim, live: !!r.live, why: r.live ? null : "Waiting for the picture" };
 }
 
+// Home's Dashcams card: the front picture, or in words why there is none.
+// Only the front role matters here; a card that showed the rear's trouble
+// would blame the wrong camera. `why` is a reason to show in place of the
+// picture, and is also what the card says while it waits for its first frame.
+export function dashState(ov) {
+  const off = (why) => ({ live: false, rec: false, sim: false, why });
+  if (!ov) return off("OmaCar cannot reach its server");
+  const r = (ov.roles && ov.roles.front) || {};
+  if (!ov.running) return off(r.device ? "Recorder off" : "No front camera");
+  if (!r.recording) return off(!r.error || r.error === "no camera" ? "No front camera" : r.error);
+  return { live: !!r.live, rec: true, sim: !!r.sim, why: r.live ? null : "Waiting for the picture" };
+}
+
 // "12.3 of 40 GB".
 export function storageLine(s) {
   if (!s) return "";

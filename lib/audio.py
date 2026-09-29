@@ -25,10 +25,14 @@ fresh read of the real sink, never from where pin() thinks it left it, and is
 re-read again immediately before it is made. It climbs at most 3 dB per
 100 ms, measured from the lowest real level the read allows, and every step
 up is wpctl's own relative step (`wpctl set-volume -l <target> SINK <step>+`),
-so it adds to whatever the level is when wpctl applies it and never passes
-the target. It sets a muted sink to a quiet floor before unmuting it, reads
-again the moment it has unmuted, and re-mutes if something raised the level
-in between. It stops, saying so, when something else raises the level under
+so it is added to the level wpctl reads as it starts, not to pin()'s read,
+and never passes the target. That bounds an outside drop landing just
+before a step to one step (at most 0.09) above where the drop left it, but
+not a drop landing after wpctl's read and before PipeWire applies the set:
+that one is overwritten, up to the target (0.13 -> 1.00 at worst, +53.2 dB).
+It sets a muted sink to a quiet floor before unmuting it, reads again the
+moment it has unmuted, and re-mutes if something raised the level in
+between. It stops, saying so, when something else raises the level under
 it. It is single-flight (a second call returns `busy` and touches nothing),
 bounded in iterations and seconds, and it says `pinned: true` only on a read
 showing the target. The rules, and the windows it cannot close, are in
@@ -174,8 +178,12 @@ def _set_volume(v):
 def _step(delta, target):
     """wpctl's own relative step, as its help gives it: `VOL+` steps the
     volume up by VOL, and `-l` "limits the final volume ... to below this
-    value". wpctl reads the level itself as it applies the set, adds
-    `delta`, and stops at `target`. `-l` is a set-volume option, so it goes
+    value". wpctl reads the level itself when it connects, adds `delta` to
+    that, and stops at `target`. The read is wpctl's, not pin()'s, which is
+    what bounds an outside drop before it; but it is not taken at the
+    instant PipeWire applies the set, so a drop landing between the two is
+    overwritten, by at most `target` (_pin_locked(), THE WINDOWS THIS
+    CANNOT CLOSE). `-l` is a set-volume option, so it goes
     after the command (wpctl takes the command from argv[1]), as in
     Hyprland's own `wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+`."""
     rc, _ = _run(["wpctl", "set-volume", "-l", f"{target:.2f}", SINK, f"{delta:.2f}+"],
@@ -281,12 +289,16 @@ def _pin_locked(target):
        unmute starts only while there is room for the two calls (7) may
        make after it, so those also start before MAX_SECS.
     6. pinned: true comes only from a read showing the target, unmuted.
-    7. The moment pin() has unmuted, it reads again. If the level is more
-       than STEP_DB_MAX above the floor, a rise landed between the read in
-       (2) and the unmute. If the read fails, nothing shows that it did
-       not. Either way pin() mutes again at once, rests, and goes round
-       from (1), which sets the floor again before the next unmute. If
-       that mute fails, pin() stops, not pinned, and says so.
+    7. The moment pin() has unmuted, it reads again. If that read shows a
+       level certainly more than STEP_DB_MAX above the floor -- judged as in
+       (3), from the lowest real level the read allows (_rose()) -- a rise
+       landed between the read in (2) and the unmute. So a read of 0.15
+       -- a real level from 0.145 to 0.155, 2.8 to 4.6 dB above the floor
+       -- is left standing, and a read of 0.16 (at least 4.6 dB up) is
+       not. If the read fails, nothing shows that it did not. Either way
+       pin() mutes again at once, rests, and goes round from (1), which
+       sets the floor again before the next unmute. If that mute fails,
+       pin() stops, not pinned, and says so.
 
     THE WINDOWS THIS CANNOT CLOSE. wpctl has no compare-and-set. Every set
     and every unmute is its own wpctl process, which starts, connects to
@@ -300,15 +312,19 @@ def _pin_locked(target):
     Before a step up, the danger is a drop. A plain set would overwrite
     the drop with a level sized for the read before it: a drop to 0.25
     just before a set to 1.00 is +36.1 dB. A relative step is added to the
-    level wpctl finds instead, so the sink lands at most Δ above where the
-    drop left it, and never above the target. Δ is at most 0.09. So a drop
-    to the floor costs at most 0.13 -> 0.22, +13.7 dB (-53.2 to -39.5 dBFS),
-    and a drop to 0.25 costs 0.25 -> 0.34, +8.0 dB. Below the floor the
-    ratio is larger, but nothing lands louder than 0.22.
+    level wpctl finds instead, so a drop that lands before wpctl reads the
+    level leaves the sink at most Δ above where the drop left it, and never
+    above the target. Δ is at most 0.09. So such a drop to the floor costs
+    at most 0.13 -> 0.22, +13.7 dB (-53.2 to -39.5 dBFS), and one to 0.25
+    costs 0.25 -> 0.34, +8.0 dB. Below the floor the ratio is larger, but
+    nothing lands louder than 0.22. These bounds hold only for a drop that
+    lands before wpctl's read:
     - What remains is inside wpctl itself. It learns the level when it
       connects, and adds Δ to that. A drop between then and PipeWire
-      applying the set is still overwritten, by at most the target. That
-      window is a fraction of one call and has not been measured.
+      applying the set is still overwritten, by at most the target: at
+      worst a drop to the floor late in the ramp, overwritten 0.13 -> 1.00,
+      +53.2 dB, the same size as a plain set's. That window is a fraction
+      of one call and has not been measured.
     - pin() does not see any of this. The sink lands lower than the step
       would have left it without the drop, so (3) does not fire.
 
@@ -433,10 +449,13 @@ def _pin_locked(target):
 
 def pin(target=1.0):
     """Ramp the sink to `target` (an amplitude, 1.0 = 0 dBFS = full scale),
-    never more than 3 dB per 100 ms measured from the real sink, and return
-    {pinned, busy, volume, iterations, error}. Single-flight: a second call
-    while one is running touches nothing and returns `busy` at once, because
-    two ramps racing the same sink is its own way of jumping the level."""
+    never more than 3 dB per 100 ms above the lowest real level the last
+    read allows -- an outside change landing between a read and wpctl's set
+    can still make one move larger (_pin_locked(), THE WINDOWS THIS CANNOT
+    CLOSE) -- and return {pinned, busy, volume, iterations, error}.
+    Single-flight: a second call while one is running touches nothing and
+    returns `busy` at once, because two ramps racing the same sink is its own
+    way of jumping the level."""
     try:
         fd = os.open(_lock_path(), os.O_CREAT | os.O_RDWR, 0o600)
     except OSError as e:

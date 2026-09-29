@@ -92,8 +92,10 @@ export function gateOf(sample, cfg) {
 // "Paused · no car data", "Stopped · face tracker error", "Off".
 //   - "Off": drowsy mode is off, or the numbers are simulated, which it ignores.
 //   - "Stopped · face tracker error" (fix round 1, I3): the tracker failed on
-//     three frames in a row and has not come back. Drowsy mode is not
-//     watching, and must not say "Can't see you" with a face in view.
+//     three frames in a row, or would not load at all (final review, I1b:
+//     the MediaPipe files missing or corrupt, or neither delegate starting),
+//     and no frame has come through it since. Drowsy mode is not watching,
+//     and must not say "Can't see you" with a face in view.
 //   - "Paused · no car data": a dropped link, an unreadable speed, or no
 //     sample at all. The chip says only what is known.
 //   - "Paused · stopped" (fix round 2, renamed from "… · parked"): a car that
@@ -210,7 +212,8 @@ export function createDrowsy(opts = {}) {
   let testing = null;
   let started = false, cfgRetryAt = -Infinity, liveBusy = false, camsBusy = false, camsMisses = 0;
   // st.error is the tracker's trouble, else the settings'. A load failure
-  // clears once a tracker starts; a frame failure once a frame goes through.
+  // clears once a tracker starts; any frame that goes through clears both
+  // kinds, and trackerFailed with them (final review, I1a).
   let settingsError = null, trackerError = null, trackerLoadFailed = false, trackerFailed = false;
 
   const st = {
@@ -234,8 +237,12 @@ export function createDrowsy(opts = {}) {
     st.testLevel = testing ? testing.level : 0;
     st.aux = aux;
     st.error = trackerError || settingsError;
+    // A tracker that will not load is as stopped as one that failed on its
+    // frames (final review, I1b): with no watcher faceLost() is true, and
+    // "Can't see you" would send the owner to re-aim the camera instead of
+    // fixing the install.
     st.chip = chipOf({ enabled: !!(cfg && cfg.enabled), gate, cabinLive, measures: { faceLost: faceLost() },
-                       trackerFailed, rolling: rolling && !stoppedLong() });
+                       trackerFailed: trackerFailed || trackerLoadFailed, rolling: rolling && !stoppedLong() });
     for (const fn of listeners) { try { fn(st); } catch (e) { console.error(e); } }
   }
 
@@ -369,7 +376,14 @@ export function createDrowsy(opts = {}) {
   function onFrame(f) {
     if (!cfg || !ladder || !f) return;
     freshen();
-    if (trackerError && !trackerLoadFailed) { trackerError = null; trackerFailed = false; }
+    // A frame that came back through the tracker proves it works, whatever
+    // failed before it: failed frames, a failed reload, or both in turn
+    // (final review, I1a -- a failed reload and then a good one used to leave
+    // "Stopped · face tracker error" up for the rest of the drive).
+    if (trackerFailed || trackerLoadFailed || trackerError) {
+      trackerFailed = trackerLoadFailed = false;
+      trackerError = null;
+    }
     frame = f;
     if (f.face) lastFaceT = f.t;
     if (!feeding()) { publish(); return; }

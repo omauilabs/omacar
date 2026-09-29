@@ -449,8 +449,12 @@ export default [
     eq(events(out), [[3, 2, "perclos"], [5, 0, "clear"], [69, 3, "repeat-l2"]]);
   }],
   ["NR1b/NR5: a tap on a PERCLOS Level 1 never re-raises from the same 60 s window; after it, only a reading still at 15% or more raises", async () => {
-    const out = drive(createLadder(await CFG()),
-      Array.from({ length: 90 }, (_, t) => [t, { perclos: 0.17 }, t === 5 ? { tap: true } : {}]));
+    // The latch's own rule, with the Level 1 notice spacing (row 42) off:
+    // with it on, as by default, the notice at t=69 is 66 s after the one
+    // at t=3 and is held back (checked at the end).
+    const noSpacing = async () => { const c = await CFG(); c.level1.perclos_every_secs = 0; return c; };
+    const rows = Array.from({ length: 90 }, (_, t) => [t, { perclos: 0.17 }, t === 5 ? { tap: true } : {}]);
+    const out = drive(createLadder(await noSpacing()), rows);
     eq(out.slice(0, 5).map((o) => o.level), [0, 0, 0, 1, 1]);
     eq(out.slice(5, 69).every((o) => o.level === 0 && !o.raised), true);
     // NR5: 0.17 still at or above 15% once the window is all post-tap frames
@@ -458,9 +462,11 @@ export default [
     eq(events(out), [[3, 1, "perclos"], [5, 0, "clear"], [69, 1, "perclos"], [75, 0, "clear"]]);
     // The same, with PERCLOS falling to 0.13 by then (below 15%, above the
     // 12% re-arm margin): the latch expires, and nothing is raised.
-    const fell = drive(createLadder(await CFG()), Array.from({ length: 150 },
+    const fell = drive(createLadder(await noSpacing()), Array.from({ length: 150 },
       (_, t) => [t, { perclos: t < 40 ? 0.17 : 0.13 }, t === 5 ? { tap: true } : {}]));
     eq(events(fell), [[3, 1, "perclos"], [5, 0, "clear"]]);
+    // By default the second notice waits for the spacing.
+    eq(events(drive(createLadder(await CFG()), rows)), [[3, 1, "perclos"], [5, 0, "clear"]]);
   }],
   ["NR1d (Important): PERCLOS draining from 0.40 with eyes open, tapped every 5 s, never reaches Level 3", async () => {
     // PERCLOS decays linearly from 0.40 (a 60 s window, eyes open from t=5):
@@ -923,5 +929,60 @@ export default [
       ...range(6, 8).map((t) => [t, { perclos: 0.3 }, { active: false, gateKnown: false }]),
       ...range(9, 75).map((t) => [t, { perclos: 0.3 }])]);
     eq(events(out), [[73, 2, "perclos"]]);
+  }],
+
+  // ---- final review, row 42: a PERCLOS Level 1 notice at most every 5 minutes.
+  // PERCLOS sitting between 15% and 25% used to raise Level 1 every ~70 s:
+  // each release latched perclos1 (NR3), the latch expired as the window
+  // turned over (NR5), and the 3 s hold raised again -- a chime, a line and a
+  // 40 s radio swell more than half the time, which teaches a driver to
+  // switch drowsy mode off, and with it Levels 2 and 3. Now a PERCLOS Level
+  // 1 comes at most once every level1.perclos_every_secs (300 s; 0 is off).
+  // An armed perclos1 held back by it is used up without a latch, so it
+  // re-arms as usual; nothing else is spaced.
+  ["PERCLOS held at 20% raises Level 1 at most once in 5 minutes (row 42)", async () => {
+    // Level 1 at t=3, cleared on open eyes at t=9, which latches perclos1.
+    // The latch expires at t=70 and the gate re-arms every 4 s from t=73,
+    // each one held back and used up, until t=305, 302 s after the first
+    // notice; the same again from there to t=607.
+    const out = drive(createLadder(await CFG()), range(0, 700).map((t) => [t, { perclos: 0.2 }]));
+    const notices = events(out).filter(([, l]) => l === 1).map(([t]) => t);
+    eq(events(out), [[3, 1, "perclos"], [9, 0, "clear"], [305, 1, "perclos"], [311, 0, "clear"],
+                     [607, 1, "perclos"], [613, 0, "clear"]]);
+    eq(notices.slice(1).every((t, i) => t - notices[i] >= 300), true);
+  }],
+  ["and through drowsy.js, 0.4 s closures every 2 s for 10 minutes: Level 1 at most once in any 5 minutes, and it does come back", async () => {
+    // PERCLOS about 20%, every closure a blink to the release (under 0.5 s).
+    const { ev } = await cabin(6600, (i, tr) => ({ closed: tr >= 60 && i % 20 < 4 }));
+    const notices = ev.filter(([, l, k]) => l === 1 && k === "perclos").map(([t]) => t);
+    eq([ev.every(([, l]) => l <= 1), notices.length >= 2, notices.slice(1).every((t, i) => t - notices[i] >= 300)],
+       [true, true, true], JSON.stringify(ev));
+  }],
+  ["a climb to 25% inside those 5 minutes still raises Level 2, and a second Level 2 still makes Level 3 (row 42)", async () => {
+    // Level 1 at t=3 and its release at t=9 as above; nothing at t=73 (held
+    // back); 0.26 from t=100 raises Level 2 after its own 3 s hold. Its
+    // release at t=109 latches both gates; at t=173 the window is new and the
+    // second Level 2 within 5 min is Level 3.
+    const out = drive(createLadder(await CFG()), range(0, 200).map((t) => [t, { perclos: t < 100 ? 0.2 : 0.26 }]));
+    eq(events(out), [[3, 1, "perclos"], [9, 0, "clear"], [103, 2, "perclos"], [109, 0, "clear"], [173, 3, "repeat-l2"]]);
+  }],
+  ["closure triggers, Level 3 and a Level 1 by yawns are untouched by the PERCLOS notice spacing (row 42)", async () => {
+    // Inside the 5 minutes after a PERCLOS notice: a 1 s closure is Level 2
+    // and 2 s is Level 3, at once.
+    const closure = drive(createLadder(await CFG()), [...range(0, 20).map((t) => [t, { perclos: 0.2 }]),
+      [21, { perclos: 0.2, closed: true, closedFor: 1.0 }], [22, { perclos: 0.2, closed: true, closedFor: 2.0 }]]);
+    eq(events(closure), [[3, 1, "perclos"], [9, 0, "clear"], [21, 2, "closed"], [22, 3, "closed"]]);
+    // And three yawns are a Level 1 notice of their own, spacing or not.
+    const yawns = drive(createLadder(await CFG()), [...range(0, 20).map((t) => [t, { perclos: 0.2 }]),
+      [21, { perclos: 0.2, yawns: 3 }]]);
+    eq(events(yawns), [[3, 1, "perclos"], [9, 0, "clear"], [21, 1, "yawns"]]);
+  }],
+  ["the notice spacing is 300 s by default, is not a threshold Sensitive lowers, and 0 turns it off (row 42)", async () => {
+    const c = await CFG();
+    eq([c.level1.perclos_every_secs, scaled(c, "sensitive").level1.perclos_every_secs], [300, 300]);
+    c.level1.perclos_every_secs = 0;
+    const out = drive(createLadder(c), range(0, 150).map((t) => [t, { perclos: 0.2 }]));
+    eq(events(out), [[3, 1, "perclos"], [9, 0, "clear"], [73, 1, "perclos"], [79, 0, "clear"],
+                     [143, 1, "perclos"], [149, 0, "clear"]]);
   }],
 ];

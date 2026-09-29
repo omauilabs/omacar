@@ -969,6 +969,10 @@ function openSettings() {
                   : "Identifying details visible again.");
       }, privacy.on));
 
+    // ---- redesign/cameras: drowsy mode's own sheet (share/js/drowsyui.js) ----
+    rows.appendChild(row("Drowsy mode", "Watches your eyes above 30 mph and wakes you gently",
+      "Open", () => { close(); import("./drowsyui.js").then((m) => m.openDrowsySheet()); }));
+    // ---- end redesign/cameras -------------------------------------------------
     rows.appendChild(row("Learn mode", "Explains the terms in place, and hides nothing",
       learn.on ? "On" : "Off", () => { learn.toggle(); redraw(); go(); }, learn.on));
 

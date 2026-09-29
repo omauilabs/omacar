@@ -7,10 +7,12 @@
 .cams { display: grid; gap: 12px; }
 
 /* Landscape: the main feed takes two thirds and the other two stack in the
-   last third, all within 40% of the screen's height, as mockup 6 has it.
+   last third. Mockup 6 gives them 40% of the screen's height; 36% is what
+   leaves the playback card whole above the chip row and tab bar at the
+   tablet's 1368x912, whose navigation (152 px) is twice the mockup's.
    Pictures fill their boxes (object-fit: cover), so the 4:3 cabin crops
    rather than letterboxes. */
-.cams-feeds { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; height: 40vh; min-height: 280px; }
+.cams-feeds { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; height: 36vh; min-height: 280px; }
 .cam-main, .cam-side { display: grid; gap: 12px; min-width: 0; min-height: 0; }
 .cam-side { grid-template-rows: 1fr 1fr; }
 .cam-feed {
@@ -56,11 +58,15 @@
 .cam-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); }
 
 /* Playback. */
-.cam-playbar { display: grid; gap: 10px; padding: 14px 16px; grid-template-columns: 1fr auto; align-items: center; }
+.cam-playbar { display: grid; gap: 10px; padding: 14px 16px; grid-template-columns: 1fr auto 1fr; align-items: center; }
 .cam-scrubrow { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; font-size: .85rem; }
 .cam-scrub { flex: 1; min-height: var(--tap); accent-color: var(--accent); }
 .cam-when { min-width: 8ch; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .cam-transport, .cam-actions { display: flex; align-items: center; gap: 10px; }
+/* As mockup 6 has them: the transport centred on the card, the actions at its
+   right, all three the same height although Mute carries a second line. */
+.cam-transport { grid-column: 2; justify-content: center; }
+.cam-actions { grid-column: 3; justify-self: end; align-items: stretch; }
 .cam-btn, .cam-live, .cam-act, .cam-pick {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-width: var(--tap-lg); min-height: var(--tap-lg); padding: 0 14px;
@@ -72,7 +78,10 @@
 .cam-act-note { font-size: .66rem; color: var(--dim); }
 
 /* Selection and storage. */
-.cams-foot { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+/* The margin starts the footer below the fold at both tablet sizes, rather
+   than a sliver of it showing under the playback card: the first screen is
+   the feeds, the timeline and playback, and these are a scroll away. */
+.cams-foot { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 24px; }
 .cam-select, .cam-settings { display: grid; gap: 10px; align-content: start; padding: 14px 16px; }
 .cam-card-t { font-size: .9rem; color: var(--ink-2); }
 .cam-picks { display: flex; gap: 10px; }
@@ -89,8 +98,32 @@
 
 @media (orientation: portrait) {
   .cams-feeds { grid-template-columns: 1fr; height: auto; }
-  .cam-feed { aspect-ratio: 16 / 9; }
+  /* A little wider than 16:9, for the same reason as the 36% above, at 912x1368. */
+  .cam-feed { aspect-ratio: 1.85; }
   .cam-side { grid-template-rows: none; grid-template-columns: 1fr 1fr; }
   .cams-foot, .cam-playbar { grid-template-columns: 1fr; }
+  .cam-transport, .cam-actions { grid-column: 1; }
+  .cam-actions { justify-self: stretch; }
   .cam-actions .cam-act { flex: 1; }
 }
+
+/* Home's Dashcams card. */
+.hc-cam { padding: 0; background: #000; }
+.dc-stage { position: absolute; inset: 0; }
+.dc-img { width: 100%; height: 100%; object-fit: cover; }
+.dc-why { position: absolute; inset: 0; display: grid; place-items: center; padding: 40px 16px 16px;
+          text-align: center; color: var(--dim); font-size: .9rem; background: var(--panel); }
+.dc-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 8px;
+          padding: 16px; color: #F6FCFF; background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent); }
+.dc-title { flex: 1; font-size: .95rem; }
+.dc-rec { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+          background: rgba(0, 0, 0, .55); font-size: .75rem; font-weight: 600; letter-spacing: .06em; }
+.dc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
+.dc-sim { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); color: var(--warn);
+          font-size: .66rem; letter-spacing: .12em; }
+.dc-drowsy { padding: 3px 8px; border-radius: 999px; background: rgba(0, 0, 0, .55); font-size: .7rem; }
+.dc-drowsy[data-tone="ok"] { color: var(--ok); }
+.dc-drowsy[data-tone="warn"] { color: var(--warn); }
+.dc-aux { position: absolute; right: 0; bottom: 0; left: 0; padding: 8px 14px;
+          background: rgba(0, 0, 0, .7); color: var(--warn); font-size: .8rem; }
+.dc-aux[hidden] { display: none; }

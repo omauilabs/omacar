@@ -1,0 +1,132 @@
+// Home's Dashcams card: the front camera's live picture with a REC dot while
+// the recorder runs, and in words why not when it does not -- no camera, or
+// recorder off -- so a black rectangle never stands in for a reason. A test
+// picture says SIMULATED, the same rule as the car's numbers.
+//
+// It also carries drowsy mode's chip, and says when the AUX cable is out.
+//
+// home.js makes the card's node (a tap opens Cameras) and imports this module
+// where the card is made: see the redesign/cameras block in its MAKERS.
+import { h } from "./core.js";
+import { getJSON, liveUrl } from "./camapi.js";
+import { dashState } from "./camlogic.js";
+import { LIVE_TIMEOUT_MS, CAMS_MISSES, drowsy } from "./drowsyrun.js";
+import { chipTone, chipHint } from "./drowsyui.js";
+import { showAux } from "./audiostate.js";
+
+export const POLL_MS = 3000;
+// What the card says while it does not yet know: before its first answer, and
+// again when it is put back after being out of the layout. Words, so it is
+// never an empty or black rectangle.
+const CHECKING = "Checking the front camera…";
+
+// `engine`, `poll` and the timers are the page's unless a test hands in its
+// own. clearTimeout and clearInterval share one list of timers, so `cancel`
+// takes either kind of id.
+export function dashcamCard(node, {
+  engine = drowsy,
+  poll = getJSON,
+  every = (fn, ms) => setInterval(fn, ms),
+  later = (fn, ms) => setTimeout(fn, ms),
+  cancel = (id) => clearTimeout(id),
+} = {}) {
+  const img = h("img.dc-img", { alt: "Front camera, live", draggable: "false", hidden: true });
+  const why = h("div.dc-why");
+  const rec = h("span.dc-rec", { hidden: true }, h("span.dc-dot"), "REC");
+  const sim = h("span.dc-sim", { hidden: true }, "SIMULATED");
+  const dz = h("span.dc-drowsy");
+  const top = h("div.dc-top", h("span.dc-title", "Dashcams"), sim, rec, dz);
+  const aux = h("div.dc-aux", { hidden: true });
+  node.append(h("div.dc-stage", img, why), top, aux);
+
+  // THE TOP BAR'S CHIP, NOT A SECOND OPINION OF IT. Its text is the engine's;
+  // its tone and its title are drowsyui.js's, the very ones the top bar's chip
+  // uses, so the two chips cannot disagree.
+  const offDz = engine.on((st) => {
+    dz.textContent = st.chip;
+    dz.dataset.tone = chipTone(st.chip);
+    dz.title = chipHint(st);
+  });
+
+  // THE AUX LINE IS DROWSY MODE'S: showAux() says "AUX disconnected" for
+  // exactly as long as the one audio state (audiostate.js) knows the port is
+  // the tablet's speakers, and nothing while it is unknown. Not decided again
+  // here, so Home, Begin and drowsy mode's own screens agree.
+  const offAux = showAux(aux);
+
+  let streaming = false, dead = false, busy = false, inflight = null, misses = 0;
+  img.addEventListener("error", () => { streaming = false; });
+
+  // With no picture to show, the picture goes, and its address with it: that
+  // is what closes the stream. A stream that failed has already lost
+  // `streaming`, so this never waits on it.
+  function dropPicture() {
+    img.removeAttribute("src");
+    img.hidden = true;
+    streaming = false;
+  }
+
+  function checking() {
+    misses = 0;
+    dropPicture();
+    rec.hidden = true;
+    sim.hidden = true;
+    why.hidden = false;
+    why.textContent = CHECKING;
+  }
+
+  // ONE POLL AT A TIME, AND GIVEN UP. A server that stops answering must not
+  // collect a request every 3 s: the browser lets a host have six, and the
+  // live picture and every other poll on this page share them
+  // (audiostate.js, drowsyrun.js pollCams). A request that is given up is a
+  // miss, like one that fails.
+  //
+  // AN ANSWER IS ACTED ON AT ONCE; A MISS ONLY AFTER CAMS_MISSES IN A ROW, the
+  // drowsy engine's own rule for this same endpoint. One dropped poll must not
+  // swap a playing picture for "cannot reach its server" and close and reopen
+  // the stream, and the two readers of /api/cams must not disagree about when
+  // the server is gone. Until then the card shows what it showed.
+  //
+  // A CARD THAT IS NOT IN THE DOCUMENT HAS NOTHING TO SHOW. Home takes a card
+  // that is not in the layout out of the grid and keeps it, and only destroys
+  // it when Home unmounts, so a removed card would go on holding a stream open
+  // and asking every 3 s for a picture nobody sees. It drops the picture (which
+  // closes the stream) and asks for nothing; when place() puts the same node
+  // back, the next tick picks it up again.
+  async function refresh() {
+    if (dead || busy) return;
+    if (!node.isConnected) { checking(); return; }
+    busy = true;
+    let ov = null;
+    const ctl = inflight = new AbortController();
+    const bail = later(() => ctl.abort(), LIVE_TIMEOUT_MS);
+    try { ov = await poll("/api/cams", { signal: ctl.signal }); }
+    catch { /* a miss */ }
+    finally { cancel(bail); busy = false; inflight = null; }
+    if (dead) return;
+    if (!node.isConnected) { checking(); return; }      // taken out while the request was out
+    if (ov) misses = 0;
+    else if (++misses < CAMS_MISSES) return;
+    const s = dashState(ov);
+    rec.hidden = !s.rec;
+    sim.hidden = !s.sim;
+    why.hidden = !s.why;
+    why.textContent = s.why || "";
+    if (s.live) {
+      if (!streaming) { img.src = liveUrl("front"); img.hidden = false; streaming = true; }
+    } else {
+      dropPicture();
+    }
+  }
+  checking();
+  refresh();
+  const timer = every(refresh, POLL_MS);
+
+  return {
+    top,
+    paint() {},
+    // Everything it started, stopped: the timer, a request already out (its
+    // answer is dropped), the picture and its stream, and both listeners.
+    destroy() { dead = true; cancel(timer); if (inflight) inflight.abort(); dropPicture(); offDz(); offAux(); },
+  };
+}
