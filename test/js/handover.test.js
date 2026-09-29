@@ -16,6 +16,9 @@ import * as R from "../js/readings.js";
 import { makeSignalTile } from "../js/sigtile.js";
 import home from "../js/views/home.js";
 import drive from "../js/views/drive.js";
+import cluster from "../js/views/live.js";
+import music from "../js/views/music.js";
+import { gaugeRail } from "../js/omaplay/rail.js";
 
 const { READINGS, readingState } = R;
 // Looked up at call time, so this file still loads against a readings.js that
@@ -356,4 +359,63 @@ const direction = [
   }],
 ];
 
-export default [...rules, ...tile, ...onHome, ...onGauges, ...direction];
+// ---------------------------------------------------------------- Cluster
+const onCluster = [
+  ["the Cluster in a hand-off: readouts paused and dimmed, and the status line says why", () =>
+    withCss(async () => {
+      feed(LIVE());
+      const m = await mounted(cluster);
+      try {
+        feed(HANDOVER());
+        const read = m.root.querySelector(".cluster");
+        ok(read, "the readouts");
+        eq(read.dataset.state, "paused", "their state");
+        const speed = read.querySelector(".cl-speed");
+        eq(speed.textContent, "60", "the last speed is still shown");
+        eq(ink(speed), token(speed, "--faint"), "dimmed");
+        eq(m.root.querySelector("#live-status").textContent, "Paused · adapter in use", "the status line");
+        feed(LIVE({ SPEED: 0 }));
+        eq([read.dataset.state, speed.textContent], ["live", "0"], "and live again on the next sample");
+        ok(ink(speed) !== token(speed, "--faint"), "full ink");
+      } finally { m.done(); }
+    })],
+];
+
+// ---------------------------------------------------------------- Music
+const onMusic = [
+  ["the Music dock in a hand-off: its numbers dimmed, and it says paused", () =>
+    withCss(async () => {
+      feed(LIVE());
+      const m = await mounted(music);
+      try {
+        const dock = m.root.querySelector(".music-dock");
+        const speed = dock.querySelector(".music-v");
+        const says = () => [...dock.querySelectorAll(".music-k")]
+          .filter((k) => !k.hidden && /Paused/.test(k.textContent)).map((k) => k.textContent);
+        feed(HANDOVER());
+        eq([dock.dataset.state, speed.textContent], ["paused", "60"], "the last speed, paused");
+        eq(ink(speed), token(speed, "--faint"), "dimmed");
+        eq(says(), ["Paused · adapter in use"], "the words");
+        feed(LIVE({ SPEED: 0 }));
+        eq(["state" in dock.dataset, speed.textContent, says()], [false, "0", []], "live again");
+      } finally { m.done(); }
+    })],
+];
+
+// ---------------------------------------------------------------- the phone screen's rail
+const onRail = [
+  ["the phone screen's gauge rail goes dim for a hand-off, though its sample's t is fresh", () => {
+    const r = gaugeRail();
+    try {
+      feed(LIVE());
+      eq(r.el.dataset.live, "1", "live");
+      feed(HANDOVER());
+      eq(r.el.dataset.live, "0", "hand-off");
+      feed(LIVE());
+      eq(r.el.dataset.live, "1", "live again");
+    } finally { r.destroy(); forget(); }
+  }],
+];
+
+export default [...rules, ...tile, ...onHome, ...onGauges, ...direction, ...onCluster,
+                ...onMusic, ...onRail];

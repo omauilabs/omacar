@@ -47,6 +47,7 @@
 
 import { h, clear, store, api, toast, U } from "../core.js";
 import { radioPanel } from "../radio.js";
+import { pausedNote } from "../readings.js";
 
 // ---------------------------------------------------------------- the shaders
 //
@@ -479,12 +480,16 @@ export default function music(root) {
   }
   const shaderBtn = h("button.btn.music-btn", SHADERS[shader].name);
   const srcPill = h("span.pill.music-src", "car");
+  // Said only during a hand-off, in the space the spacer gives up, so nothing
+  // else in the row moves when it appears.
+  const pausedEl = h("div.music-k", { hidden: true });
   const dock = h("div.music-dock",
     h("button.btn.music-btn", { onclick: () => { location.hash = "#home"; } }, "Home"),
     cell("speed", "speed"),
     cell("rpm", "engine"),
     cell("soc", "charge"),
     cell("econ", "econ"),
+    pausedEl,
     h("div.music-spacer"),
     srcPill,
     shaderBtn);
@@ -591,7 +596,14 @@ export default function music(root) {
 
   // ---- the dock numbers ----------------------------------------------------
   function paintDock() {
-    const v = store.values || {};
+    // During a hand-off the four numbers are the last ones read: drawn from
+    // store.shown, dimmed by app.css through data-state, and said so.
+    const v = store.shown.values || {};
+    const paused = store.paused;
+    if (paused) dock.dataset.state = "paused";
+    else delete dock.dataset.state;
+    pausedEl.hidden = !paused;
+    if (paused) pausedEl.textContent = pausedNote(store.pausedSince, true);
     const set = (id, text) => { if (cells[id]) cells[id].textContent = text; };
     set("speed", v.SPEED === undefined || v.SPEED === null
       ? "—" : String(Math.round(v.SPEED * U.units.km)));

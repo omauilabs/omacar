@@ -991,7 +991,9 @@ textarea { resize: vertical; min-height: 66px; }
 [data-state="paused"] .sig-u,
 [data-state="paused"] .drive-speed,
 [data-state="paused"] .drive-tile-v,
-[data-state="paused"] .g-bar-v { color: var(--faint); }
+[data-state="paused"] .g-bar-v,
+[data-state="paused"] .cl-read,
+[data-state="paused"] .music-v { color: var(--faint); }
 [data-state="paused"] .g-value { fill: var(--faint); }
 [data-state="paused"] .g-arc-fill { stroke: var(--ghost); }
 [data-state="paused"] .g-needle { fill: var(--ghost); }
