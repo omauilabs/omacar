@@ -16,6 +16,8 @@ import { U, temp, econ, dist, vol, grouped } from "./core.js";
 const SOC_WINDOW_MS = 12000;   // a few live samples, not a trend line
 const SOC_MOVED = 0.4;         // a resting pack jitters less than this between reads
 const socTrail = [];
+// What the IMA tile last said, handed back while a hand-off pauses it.
+let lastIma = { v: "—", n: "no pack reading" };
 
 // ---------------------------------------------------------------- the catalogue
 //
@@ -49,6 +51,9 @@ const TILES = {
   },
   econ_now: {
     label: "Economy",
+    // No PID, but worked out from the live sample, so a hand-off pauses it
+    // like one (see readingState()).
+    sampled: true,
     get: (v, s, car) => {
       const moving = (v.SPEED || 0) > 3;
       if (moving && s.economy_lphk) return { v: econ(s.economy_lphk, false), n: U.units.econ };
@@ -147,18 +152,23 @@ const TILES = {
     // few samples and nothing more. It is not signed motor power and it does
     // not pretend to be -- which is why it says "charging" rather than a
     // number of kilowatts it cannot know.
-    get: (v) => {
-      const soc = v.HYBRID_BATTERY_REMAINING;
-      if (soc === null || soc === undefined) return { v: "—", n: "no pack reading" };
-      socTrail.push({ t: Date.now(), soc });
-      while (socTrail.length && Date.now() - socTrail[0].t > SOC_WINDOW_MS) socTrail.shift();
-      if (socTrail.length < 3) return { v: "…", n: "settling" };
-      const drift = soc - socTrail[0].soc;
-      // A pack at rest still jitters a fraction of a percent between reads, so
-      // below this it is called steady rather than manufacturing a direction.
-      if (drift > SOC_MOVED) return { v: "Charging", n: "regen", tone: "good" };
-      if (drift < -SOC_MOVED) return { v: "Assist", n: "motor helping" };
-      return { v: "Steady", n: "at rest" };
+    //
+    // A HAND-OFF BREAKS THE WINDOW. While the adapter is lent out the daemon
+    // republishes the last pack reading it took, and this used to go on
+    // pushing that into the window -- then compare the first fresh reading
+    // after it with one from before it. That measures the change across the
+    // whole hand-off, not now: regen before it, assist after it, and the tile
+    // said "Charging" while the motor was helping. So a hand-off empties the
+    // window, the direction starts again from fresh readings only, and in the
+    // meantime the last thing this said is handed back for the renderer to
+    // draw paused.
+    get: (v, s) => {
+      if (s && s.handover) {
+        socTrail.length = 0;
+        return lastIma;
+      }
+      lastIma = imaNow(v.HYBRID_BATTERY_REMAINING);
+      return lastIma;
     },
   },
   fuel: {
@@ -176,6 +186,7 @@ const TILES = {
   },
   range: {
     label: "Range",
+    sampled: true,
     get: (v, s, car) => {
       // Distance to empty, from what is in the tank and how the car has
       // actually been driven — not a number the ECU reports.
@@ -284,6 +295,20 @@ function num(x, fmt) {
   return x === null || x === undefined || Number.isNaN(x) ? "—" : String(fmt(x));
 }
 
+// The IMA tile's direction from one fresh pack reading and the window behind it.
+function imaNow(soc) {
+  if (soc === null || soc === undefined) return { v: "—", n: "no pack reading" };
+  socTrail.push({ t: Date.now(), soc });
+  while (socTrail.length && Date.now() - socTrail[0].t > SOC_WINDOW_MS) socTrail.shift();
+  if (socTrail.length < 3) return { v: "…", n: "settling" };
+  const drift = soc - socTrail[0].soc;
+  // A pack at rest still jitters a fraction of a percent between reads, so
+  // below this it is called steady rather than manufacturing a direction.
+  if (drift > SOC_MOVED) return { v: "Charging", n: "regen", tone: "good" };
+  if (drift < -SOC_MOVED) return { v: "Assist", n: "motor helping" };
+  return { v: "Steady", n: "at rest" };
+}
+
 // ---------------------------------------------------------------- the scales
 //
 // `get` formats a reading for reading; `read` returns the same reading as a
@@ -357,23 +382,65 @@ function learnedKey(car) {
 export { TILES as READINGS };
 export { num, raw, asTemp, pct, learnedFor, learnedKey };
 
-// LIVE, ABSENT OR WAITING. Never a zero standing in for a missing value.
+// LIVE, PAUSED, ABSENT OR WAITING. Never a zero standing in for a missing
+// value, and never an old value standing in for a current one.
 //
 //   live     the value is in the sample: draw get()'s output
+//   paused   a hand-off: the daemon has lent the adapter to a command and
+//            republishes the last values it read (records.live() marks the
+//            sample `handover`). Draw get()'s output DIMMED, with no source
+//            and no colour, and say so in pausedNote()'s words
 //   absent   the car answered the supported-PIDs question and this was not in
 //            the answer: say "Not on this car"
 //   waiting  no car, or a supported reading that has not arrived yet: say
 //            "Waiting for the car"
 //
-// A reading with no pid is derived (economy, odometer, a fault count) and its
-// get() already draws a dash when it has nothing, so it is always "live".
+// A reading with no pid is derived, and its get() already draws a dash when
+// it has nothing. One derived from the snapshot (odometer, a fault count) is
+// always "live"; one worked out from the sample itself (`sampled`: economy
+// now, range) pauses with the sample.
+//
+// A hand-off is decided before `connected`, because it reads connected: false
+// like a dropped adapter and is not one. A truly stale sample (no daemon,
+// `stale_for`) carries no handover flag and stays "waiting".
 export function readingState(def, sample) {
-  if (!def || !def.pid) return "live";
   const s = sample || {};
-  if (!s.connected) return "waiting";
+  if (!def || !def.pid) return def && def.sampled && s.handover ? "paused" : "live";
   const v = (s.values || {})[def.pid];
-  if (v !== null && v !== undefined && !Number.isNaN(v)) return "live";
+  const has = v !== null && v !== undefined && !Number.isNaN(v);
   const sup = s.supported;
-  if (Array.isArray(sup) && sup.length && !sup.includes(def.pid)) return "absent";
+  const unsupported = Array.isArray(sup) && sup.length > 0 && !sup.includes(def.pid);
+  if (s.handover) return !has && unsupported ? "absent" : "paused";
+  if (!s.connected) return "waiting";
+  if (has) return "live";
+  if (unsupported) return "absent";
   return "waiting";
+}
+
+// THE WORDS FOR A PAUSED READING, in one place.
+//
+// Short on a tile ("Paused"), with the reason on the one line a screen gives
+// it ("Paused · adapter in use"). The daemon says only that "a command is
+// using the adapter" -- the drive recorder's CAN capture, the DTC sweep, a scan
+// and a reset all look the same from here -- so the reason names the adapter
+// rather than guessing which. How long is added once a hand-off has lasted a
+// minute, in whole minutes, so it changes once a minute instead of ticking
+// beside the speed. `since` is store.pausedSince.
+export const PAUSED = "Paused";
+export const PAUSED_WHY = "adapter in use";
+const PAUSE_TIMED_AFTER_S = 60;
+
+export function pausedNote(since, why = false, now = Date.now()) {
+  const out = [PAUSED];
+  if (why) out.push(PAUSED_WHY);
+  const secs = since ? (now - since) / 1000 : 0;
+  if (secs >= PAUSE_TIMED_AFTER_S) out.push(`${Math.floor(secs / 60)} min`);
+  return out.join(" · ");
+}
+
+// What a renderer is handed for a reading in `state`: get()'s output, less its
+// tone while paused. A red coolant figure is a claim about now, and a paused
+// value makes none -- it is drawn in the one dimmed ink (app.css, "paused").
+export function drawnAs(out, state) {
+  return state === "paused" ? Object.assign({}, out, { tone: "" }) : out;
 }

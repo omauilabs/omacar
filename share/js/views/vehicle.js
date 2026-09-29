@@ -181,7 +181,7 @@ export default function vehicle(root) {
       text(co.querySelector(".co-v"), WORD[st]);
     }
     srcRow.hidden = !((car && car.signals) || []).length;
-    for (const t of tiles) t.paint(car, store.sample);
+    for (const t of tiles) t.paint(car, store.shown);
     paintCodes(car);
   }
 

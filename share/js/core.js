@@ -349,10 +349,35 @@ class Store extends EventTarget {
     // car was moving when last seen is kept here, where every sample passes,
     // and a screen mounted after the drop still knows it.
     this.lastMoving = false;
+    // A HAND-OFF, AS THE SCREENS DRAW IT. records.live() marks a sample
+    // `handover` while the daemon has lent the adapter to a command, and every
+    // live reading then shows as paused (readings.js readingState()). Two
+    // things about it are only knowable here, where every sample passes:
+    // when it began, for pausedNote()'s "· 2 min", and the last values read
+    // before it, for the hand-off that arrives with none of its own (see
+    // `shown` below). Neither is touched by anything that decides a lock.
+    this.pausedSince = null;  // ms since the epoch, or null when not paused
+    this.held = {};           // the last values a sample carried, kept through a hand-off
   }
   emit(what) {
     if (this.connected) this.lastMoving = this.state === "driving";
+    this.notePause();
     this.dispatchEvent(new CustomEvent(what));
+  }
+
+  notePause() {
+    const s = this.sample;
+    const vals = s.values && Object.keys(s.values).length ? s.values : null;
+    if (s.handover) {
+      if (this.pausedSince === null) this.pausedSince = Date.now();
+      if (vals) this.held = vals;
+    } else {
+      // Anything else ends the hand-off, and a sample with no values of its
+      // own (a lost adapter, a stale file) ends what was held with it: a
+      // later bare hand-off must not bring back a number from before that.
+      this.pausedSince = null;
+      this.held = vals || {};
+    }
   }
   on(what, fn) { this.addEventListener(what, fn); return () => this.removeEventListener(what, fn); }
 
@@ -433,6 +458,25 @@ class Store extends EventTarget {
   }
   get values() { return this.sample.values || {}; }
   get connected() { return !!this.sample.connected; }
+  get paused() { return !!this.sample.handover; }
+
+  // THE SAMPLE TO DRAW, WHICH IS NOT ALWAYS THE SAMPLE TO ACT ON.
+  //
+  // During a hand-off the daemon republishes its last complete sample
+  // (lib/daemon.py yield_snapshot()), so this is normally `sample` itself. But
+  // a lease that lands while the daemon is between connections -- two
+  // commands back to back, or one while it waits for the car -- is published
+  // with no values at all, and every paused reading would go blank for it.
+  // Drawn from here it keeps the last values read, dimmed and marked paused.
+  //
+  // DRAWING ONLY. Anything that locks or unlocks a control (Begin, Customise,
+  // the moving/parked logic, the write screens) keeps reading `sample`,
+  // `values` and `state`, exactly as before.
+  get shown() {
+    const s = this.sample;
+    if (!s.handover || (s.values && Object.keys(s.values).length)) return s;
+    return Object.assign({}, s, { values: this.held });
+  }
   get state() {
     if (!this.connected) return "offline";
     const v = this.values;

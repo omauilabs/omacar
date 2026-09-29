@@ -978,6 +978,21 @@ textarea { resize: vertical; min-height: 66px; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- paused: a hand-off ----
+   While the daemon has lent the adapter to a command (records.live()
+   `handover`), every live number on screen is the last one read, not now.
+   readingState() in readings.js calls that "paused", each screen marks what
+   it draws with data-state="paused" and says so in pausedNote()'s words, and
+   this is the one look for it on every screen: the number stays, in --faint,
+   and whatever places it on a scale goes the --ghost of disabled chrome, as
+   a dead needle already does. Never hidden: the driver keeps a value, and can
+   see that it is old. Theme-following, like every other ink here. */
+[data-state="paused"] .sig-v,
+[data-state="paused"] .sig-u { color: var(--faint); }
+[data-state="paused"] .g-value { fill: var(--faint); }
+[data-state="paused"] .g-arc-fill { stroke: var(--ghost); }
+[data-state="paused"] .g-needle { fill: var(--ghost); }
+
 .drive-trip { text-align: center; color: var(--dim); font-size: clamp(.75rem, 1.8cqh, 1.05rem); }
 
 /* One target, the width of a thumb and then some. */

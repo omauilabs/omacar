@@ -2,13 +2,15 @@
 // minutes. Home and Vehicle use the same one, so the same reading can never
 // look different on two screens.
 //
-// It draws a number only when the reading is live, and then it says where the
-// number came from (data-src). Otherwise it draws words: "Not on this car" or
-// "Waiting for the car". A zero is never a stand-in.
+// It draws a number as current only when the reading is live, and then it says
+// where the number came from (data-src). During a hand-off it draws the last
+// number read, dimmed, with "Paused" beside it and no source. Otherwise it
+// draws words: "Not on this car" or "Waiting for the car". A zero is never a
+// stand-in.
 
-import { h, icon } from "./core.js";
+import { h, icon, store } from "./core.js";
 import { ICONS } from "./icons.js";
-import { READINGS, readingState } from "./readings.js";
+import { READINGS, readingState, pausedNote, raw } from "./readings.js";
 import { trail } from "./trail.js";
 import { sparkPath } from "./spark.js";
 import { sourceKey } from "./provenance.js";
@@ -60,16 +62,30 @@ export function makeSignalTile(id, { label, def } = {}) {
           ? trail(d.pid).map(([t, r]) => [t, d.read({ [d.pid]: r }, s, car)]).filter((p) => p[1] !== null)
           : [];
         path.setAttribute("d", sparkPath(pts, 120, 28, sc ? sc.min : null, sc ? sc.max : null));
+      } else if (st === "paused" && (!d.pid || raw((s.values || {})[d.pid]) !== null)) {
+        // THE LAST VALUE, NOT NOW. Drawn so the driver keeps a number, in the
+        // dimmed ink app.css gives data-state="paused", and never with what
+        // makes a number current: a source, a colour, a scale or a trail.
+        const out = d.get(s.values || {}, s, car);
+        text(v, String(out.v));
+        text(u, out.n || "");
+        text(note, pausedNote(store.pausedSince));
+        node.dataset.tone = "";
+        delete node.dataset.src;
+        text(lo, "");
+        text(hi, "");
+        path.setAttribute("d", "");
       } else {
         text(v, "");
         text(u, "");
-        text(note, st === "absent" ? "Not on this car" : "Waiting for the car");
+        text(note, st === "paused" ? pausedNote(store.pausedSince)
+          : st === "absent" ? "Not on this car" : "Waiting for the car");
         node.dataset.tone = "";
         delete node.dataset.src;
-        // AN ABSENT OR WAITING TILE HAS NO VALUE TO PLACE ON EITHER ONE. A
-        // "0 ... 100" scale under an empty number, or a sparkline with
-        // nothing on it, both read as a real (if boring) measurement rather
-        // than as "nothing has been read yet".
+        // AN ABSENT, WAITING OR EMPTY PAUSED TILE HAS NO VALUE TO PLACE ON
+        // EITHER ONE. A "0 ... 100" scale under an empty number, or a
+        // sparkline with nothing on it, both read as a real (if boring)
+        // measurement rather than as "nothing has been read yet".
         text(lo, "");
         text(hi, "");
         path.setAttribute("d", "");
