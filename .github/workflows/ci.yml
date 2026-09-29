@@ -32,6 +32,15 @@ jobs:
     name: Tests — needs no car
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # THE IMAGE'S REAL CHROME, NOT THE SNAP WRAPPER. On ubuntu-latest,
+    # /usr/bin/chromium is the snap shim, and headless Chromium under it hung
+    # every app test for 120 s from 2026-09-17 on, while the same test passed on
+    # the owner's Arch box. The runner image ships Google Chrome as a plain
+    # binary; the browser tests take OMACAR_CHROME first, and fail rather than
+    # skip if it names nothing runnable, so this can never go green by quietly
+    # not running.
+    env:
+      OMACAR_CHROME: google-chrome
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +49,7 @@ jobs:
           echo "python3: $(python3 --version 2>&1)"
           echo "bash:    ${BASH_VERSION}"
           echo "sqlite3: $(sqlite3 --version 2>/dev/null || echo 'absent')"
+          echo "chrome:  $("$OMACAR_CHROME" --version 2>/dev/null || echo "absent: $OMACAR_CHROME")"
 
       # WITHOUT A VENV, THE PROSPECTOR TESTS SKIP -- and a suite that skips
       # quietly is the exact thing this project exists to not be. Building it
