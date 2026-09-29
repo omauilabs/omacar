@@ -15,9 +15,16 @@
 // (alertplayer.js), the gate opens only when the next sound starts at
 // silence, and it closes only after the last sound has faded to silence.
 
+import { dbAt, planOnto } from "./ramps.js";
+
 export const MUSIC_DB = -12;
 export const ALERT_MAX_DB = 0;
 export const FLOOR_DB = -60;        // quiet enough to count as silence
+// The limiter's threshold. Everything the stage carries is planned to peak
+// under it (alertplayer.js keeps the budget), so the limiter is a safety net
+// that never moves in normal use: a limiter that engages pumps the level
+// faster than 3 dB per 100 ms.
+export const LIMIT_DB = -1;
 
 export function dbToGain(db) { return db <= -120 ? 0 : Math.pow(10, db / 20); }
 export function gainToDb(g) { return g > 0 ? 20 * Math.log10(g) : -Infinity; }
@@ -25,6 +32,11 @@ export function headroomDb(musicDb = MUSIC_DB, alertDb = ALERT_MAX_DB) { return 
 
 let ctx = null;
 const node = {};
+// What each bus's automation has been told to do, as [t, dB] events in
+// context time (ramps.js planOnto). The page's clock and gain.value can only
+// say where a bus is NOW; the next plan has to start where the bus will be
+// when that plan begins, mid-ramp or not, or it starts with a step.
+const planned = {};
 
 function ensure() {
   if (ctx) return;
@@ -32,12 +44,13 @@ function ensure() {
   ctx = new AC();
   node.music = ctx.createGain();
   node.music.gain.value = dbToGain(MUSIC_DB);
+  planned.music = [[0, MUSIC_DB]];
   node.alert = ctx.createGain();
   node.alert.gain.value = 0;
   // Music plus a full-scale alert can pass 0 dBFS by a decibel or two; the
   // limiter takes that off rather than letting the output clip.
   node.limit = ctx.createDynamicsCompressor();
-  node.limit.threshold.value = -1;
+  node.limit.threshold.value = LIMIT_DB;
   node.limit.knee.value = 0;
   node.limit.ratio.value = 20;
   node.limit.attack.value = 0.003;
@@ -67,9 +80,17 @@ export async function resume() {
 // Where a bus is now, in dB.
 export function currentDb(bus) { ensure(); return gainToDb(node[bus].gain.value); }
 
+// Where a bus's automation will have it at `t` (the context's clock), in dB:
+// the level a plan starting at `t` must start from.
+export function levelAt(bus, t) {
+  ensure();
+  return planned[bus] ? dbAt(planned[bus], t) : currentDb(bus);
+}
+
 // Run a ramp plan's points ([seconds, dB] pairs from ramps.js) on a bus from
 // `at` (the context's clock). `append` continues after what is already
-// scheduled instead of replacing it.
+// scheduled instead of replacing it. Says whether it ran: a caller whose plan
+// was refused must not append the rest of it to a plan that never started.
 export function schedule(bus, points, at, append = false) {
   ensure();
   const g = node[bus].gain;
@@ -90,10 +111,18 @@ export function schedule(bus, points, at, append = false) {
       // all: this call is skipped and the bus is left exactly where its
       // last scheduled plan already has it, mid-ramp or not, rather than
       // stepping the level to "fix" it.
-      return;
+      return false;
     }
   }
   for (const [t, db] of points) g.linearRampToValueAtTime(dbToGain(db), at + t);
+  const was = planned[bus] || [[0, gainToDb(g.value)]];
+  // Only what can still matter is kept: the last event at or before now, and
+  // everything after it.
+  const now = ctx.currentTime;
+  let from = 0;
+  while (from + 1 < was.length && was[from + 1][0] <= now) from++;
+  planned[bus] = planOnto(was.slice(from), at, points, append);
+  return true;
 }
 
 // Open the alert gate at `openAt`, when the sound starting then is at silence,

@@ -1,0 +1,22 @@
+{
+  "_comment": "Drowsy mode's numbers, from doc/design/2026-09-28-cameras-drowsy.md. Read through GET /api/drowsy, which lays ~/.config/omarchy/omacar-drowsy.json over these (lib/drowsycfg.py). Seconds, degrees, and PERCLOS as a fraction. Sensitive lowers every trigger threshold by 20% (share/js/ladder.js, scaled()). alert_continues_below_gate: true (the default the controller recommended, 2026-09-28) lets an alert already sounding carry on, repeats and all, below the 30 mph gate until 'I'm awake' or a stopped car; false silences it there while its card stays. The gate always decides whether a NEW alert may start. The owner's answer is this one line. level2: each rotation sound has a turn of repeat_secs, the voice a turn of voice_slot_secs so its line is heard whole after its rise; voice false keeps the voice to Levels 1 and 3 (pending the owner's answer, 2026-09-28).",
+  "enabled": true,
+  "sensitivity": "standard",
+  "name": "James",
+  "sounds": ["bark", "voice", "alarm"],
+  "min_speed_mph": 30,
+  "alert_continues_below_gate": true,
+  "eyes": { "baseline_secs": 60, "closed_over_baseline": 0.35, "closed_cap": 0.8 },
+  "perclos": { "window_secs": 60, "min_secs": 30 },
+  "yawn": { "jaw_open": 0.6, "hold_secs": 1.5 },
+  "nod": { "below_deg": 15, "hold_secs": 0.5 },
+  "face_lost_secs": 5,
+  "stop": { "still_secs": 300 },
+  "level1": { "perclos": 0.15, "yawns": 3, "nods": 3, "count_window_secs": 300,
+              "since_stop_secs": 7200, "night_from_hour": 2, "night_to_hour": 6,
+              "camera_free_every_secs": 3600 },
+  "level2": { "closed_secs": 1.0, "perclos": 0.25, "repeat_secs": 5, "voice_slot_secs": 7, "voice": true },
+  "level3": { "closed_secs": 2.0, "level2_count": 2, "level2_window_secs": 300, "voice_repeat_secs": 15 },
+  "release": { "open_secs": 5 },
+  "banner_stopped_secs": 120
+}

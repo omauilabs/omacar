@@ -19,11 +19,16 @@
 // enough to working to be believed at sixty miles an hour.
 
 import { h, clear, store, api } from "../core.js";
+import { showAux } from "../audiostate.js";
 
 const POLL_MS = 400;
 // Long enough that the last line can be read before the screen changes, short
 // enough that nobody sitting in a running car thinks it has hung.
 const HANDOVER_MS = 900;
+
+// Begin's chime, reached through here so that a test can press Begin in
+// silence: nothing a test does may sound on the box's speakers.
+export const beginSound = { play: () => import("../alertplayer.js").then((m) => m.beginChime()) };
 
 export default function launcher(root) {
   let timer = null;
@@ -35,13 +40,25 @@ export default function launcher(root) {
   const btn = h("button.launch-go", { onclick: press }, "Begin");
   const steps = h("div.launch-steps");
   const foot = h("div.launch-foot");
+  // THE CAR CANNOT BE ASKED WHICH SOURCE ITS RADIO IS ON, so this says it.
+  const aux = h("div.launch-aux", {},
+    "Sound reaches the car through the AUX cable. Keep the car's radio on AUX: "
+    + "OmaCar cannot see which source it is on, and the chime you hear on Begin is the check.");
+  // BUT THE TABLET CAN SEE ITS OWN PORT: when sound is going to its speakers
+  // and not down the cable, that is said outright, not left to the chime.
+  const unplugged = h("div.aux-warn", { hidden: true });
 
   clear(root);
-  root.appendChild(h("div.launch", {}, title, sub, btn, steps, foot));
+  root.appendChild(h("div.launch", {}, title, sub, btn, aux, unplugged, steps, foot));
+  const offAux = showAux(unplugged);
 
   function press() {
     if (started) return;
     started = true;
+    // THE CHIME SAYS THE PATH WORKS: from the tablet, down the AUX cable, out
+    // of the car's speakers, rising from silence like every alert. No sound
+    // is not a failed start, so it cannot stop the sequence.
+    beginSound.play().catch(() => {});
     btn.disabled = true;
     btn.textContent = "Getting ready";
     sub.textContent = "One port, one owner — checking each step";
@@ -131,6 +148,7 @@ export default function launcher(root) {
   return () => {
     offLive();
     offCar();
+    offAux();
     if (timer) clearInterval(timer);
     if (handover) clearTimeout(handover);
   };

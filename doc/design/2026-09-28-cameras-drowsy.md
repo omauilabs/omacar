@@ -150,7 +150,7 @@ Today OmaCar has no camera support at all: the Cameras tab is a placeholder. Sou
   - **Voice:** Piper TTS rendered ahead of time. The phrases are pre-rendered once on the box with Piper and a permissively licensed US English voice, into `share/assets/private/voice/*.ogg`: private because they carry the owner's name. They are listed in the assets manifest. The tablet has no speech engine installed, so nothing depends on one in the car.
 
 **Screens.**
-- **Home and the top bar** carry a small drowsy status chip: `Watching`, `Can't see you`, `Paused · parked`, `Off`.
+- **Home and the top bar** carry a small drowsy status chip: `Watching`, `Can't see you`, `Paused · stopped`, `Paused · no car data`, `Stopped · face tracker error`, `Off`. (Amended by the controller, 2026-09-29: "no car data" for a dropped link or an unreadable speed; "face tracker error" when the tracker has stopped after repeated failures; and "stopped", not "parked", because drowsy mode cannot know Park and a car at a red light is not parked.)
 - **Settings → Drowsy mode:**
   - on or off;
   - sensitivity (Standard, or Sensitive with thresholds −20%);

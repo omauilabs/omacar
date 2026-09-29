@@ -80,8 +80,13 @@ def main():
                     break
             except OSError:
                 continue
+        # --mute-audio: the units build the page's real AudioContext (the
+        # audio stage, the alert player), and nothing a test does may ever
+        # sound on this machine's speakers. The sound tests render into
+        # OfflineAudioContexts, which never reach an output at all; this is
+        # the second lock on the same door.
         r = subprocess.run(
-            [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            [exe, "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
              f"--user-data-dir={prof}", "--virtual-time-budget=8000",
              "--dump-dom", f"http://127.0.0.1:{port}/_run.html"],
             capture_output=True, text=True, timeout=120)

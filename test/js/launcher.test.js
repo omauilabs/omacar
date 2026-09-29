@@ -3,8 +3,9 @@
 // more, but the button itself also refuses while the car is moving, or was
 // last seen moving, and says why -- the same rule as every write screen.
 import { eq } from "./assert.js";
-import launcher from "../js/views/launcher.js";
+import launcher, { beginSound } from "../js/views/launcher.js";
 import { store, api } from "../js/core.js";
+import { audio } from "../js/audiostate.js";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -12,6 +13,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // minute of stopped-and-connected before it calls a car parked.
 const clock = { t: 1e12 };
 const realClock = store.clock;
+
+// BEGIN'S CHIME NEVER SOUNDS HERE: every mount swaps it for a counter, so a
+// press in a test reaches no speaker, and the test can still see it asked.
+let chimes = 0;
+beginSound.play = async () => { chimes++; };
+
 function mount(before) {
   store.clock = () => clock.t;
   store.motionLatched = false;
@@ -103,5 +110,39 @@ export default [
       eq([m.btn.disabled, m.btn.title], [true, "Available when you stop"],
          "the lock is re-applied from the car's current state, not blindly re-enabled");
     } finally { api.beginStart = wasStart; api.beginStatus = wasStatus; m.done(); }
+  }],
+
+  // Task 7: the chime, and AUX.
+  ["Begin plays the chime that proves the AUX path, once per press", async () => {
+    const wasStart = api.beginStart, wasStatus = api.beginStatus;
+    api.beginStart = async () => ({});
+    api.beginStatus = async () => ({ steps: [], running: true });
+    const m = mount(() => live({ SPEED: 0, RPM: 0 }));
+    try {
+      const before = chimes;
+      m.btn.click();
+      m.btn.click();
+      eq(chimes - before, 1, "one chime for one Begin");
+    } finally { api.beginStart = wasStart; api.beginStatus = wasStatus; m.done(); }
+  }],
+  ["Begin says to keep the car's radio on AUX", () => {
+    const m = mount(() => live({ SPEED: 0, RPM: 0 }));
+    try {
+      const t = m.root.querySelector(".launch-aux").textContent;
+      eq([t.includes("Keep the car's radio on AUX"), t.includes("the chime you hear on Begin is the check")], [true, true]);
+    } finally { m.done(); }
+  }],
+  ["and says AUX is disconnected exactly while sound is on the tablet's speakers", () => {
+    const was = audio.last;
+    const seen = [];
+    try {
+      for (const a of [{ aux: false }, { aux: true }, null]) {
+        const m = mount(() => { audio.last = a; live({ SPEED: 0, RPM: 0 }); });
+        const w = m.root.querySelector(".aux-warn");
+        seen.push([w.hidden, w.textContent]);
+        m.done();
+      }
+    } finally { audio.last = was; }
+    eq(seen, [[false, "AUX disconnected — sound is on the tablet's speakers"], [true, ""], [true, ""]]);
   }],
 ];
