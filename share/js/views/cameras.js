@@ -5,9 +5,23 @@
 // NOTHING HERE OPENS A CAMERA. A V4L2 device has one owner and it is the
 // recorder (lib/cams.py). The feeds are its live pictures as MJPEG, which an
 // <img> shows with no decoder; playback is its clips through a <video>, which
-// can seek because the server answers Range requests. Three feeds and drowsy
-// mode's cabin stream hold four of the six connections Chromium allows to one
-// host, which leaves two for everything else: do not add a fifth stream.
+// can seek because the server answers Range requests.
+//
+// SIX CONNECTIONS. serve.py speaks HTTP/1.1, so Chromium allows six open
+// connections to it, and every stream holds one for as long as it is open:
+// the three feeds; drowsy mode's cabin stream while the car rolls
+// (facewatch.js); OmaPlay's phone picture while the phone layer is up, even
+// hidden (omaplay/source.js); and a playing clip, for its whole length, since
+// Chromium buffers ahead and then stops reading. All of them at once is six,
+// and then drowsy mode's /api/live poll waits behind them: "Paused · no car
+// data", and no alert can start. So WHILE A CLIP PLAYS THE FEEDS LET GO OF
+// THEIR STREAMS (final review, I2): the main feed's under the video and both
+// side feeds, which say "Paused while a clip plays" instead. They take them
+// up again when playback ends, and leaving the tab ends it. Drowsy mode's
+// cabin stream is never let go of for playback: it is the safety feature.
+// Live, the tab holds three, and with drowsy mode and the phone layer that is
+// five, one left for every poll on the page; playing, the tab holds one, and
+// three are left. Do not add a stream.
 
 import { h, clear, icon, toast } from "../core.js";
 import { ICONS } from "../icons.js";
@@ -33,8 +47,14 @@ const G = {
 };
 
 const pct = (x) => (x * 100).toFixed(3) + "%";
+// What a side feed says in place of its picture while a clip plays.
+const PAUSED_FOR_CLIP = "Paused while a clip plays";
 
-export default function camerasView(root) {
+// `get`, `post`, `every` and `stopEvery` are for the tests (test/js/cameras.test.js);
+// the page uses the defaults.
+export default function camerasView(root, { get = getJSON, post = postJSON,
+                                            every = (fn, ms) => setInterval(fn, ms),
+                                            stopEvery = (id) => clearInterval(id) } = {}) {
   let alive = true;
   let ov = null;
   let clips = [], events = [];
@@ -133,14 +153,22 @@ export default function camerasView(root) {
     badge.className = "tb-src cam-badge" + (b.tone ? " " + b.tone : "");
     for (const role of ROLES) {
       const s = feedState(ov, role), f = feeds[role];
+      // While a clip plays no feed streams (see the header). A side feed
+      // with a picture to show says why it shows none; one with no picture
+      // anyway keeps its own reason. The main feed is under the video.
+      const why = playing && s.live ? (role === playing.role ? null : PAUSED_FOR_CLIP) : s.why;
+      const want = s.live && !playing;
       f.title.textContent = s.title;
       f.rec.hidden = !s.rec;
       f.sim.hidden = !s.sim;
-      f.why.hidden = !s.why;
-      f.why.textContent = s.why || "";
+      f.why.hidden = !why;
+      f.why.textContent = why || "";
       f.node.dataset.rec = s.rec ? "1" : "0";
-      if (s.live && !streaming[role]) { f.img.src = liveUrl(role); streaming[role] = true; }
-      if (!s.live && streaming[role]) { f.img.removeAttribute("src"); streaming[role] = false; }
+      if (want && !streaming[role]) { f.img.src = liveUrl(role); streaming[role] = true; }
+      // Let go of the source even when the stream had already failed (the
+      // error handler above): the attribute is what the tab holds.
+      if (!want && f.img.hasAttribute("src")) f.img.removeAttribute("src");
+      if (!want) streaming[role] = false;
     }
     const st = ov && ov.storage;
     storage.textContent = storageLine(st);
@@ -191,14 +219,14 @@ export default function camerasView(root) {
   }
 
   async function refresh() {
-    try { ov = await getJSON("/api/cams"); } catch { ov = null; }
+    try { ov = await get("/api/cams"); } catch { ov = null; }
     if (alive) paint();
   }
 
   async function refreshClips() {
     const from = Math.floor(Date.now() / 1000) - 3600;
     try {
-      const d = await getJSON(`/api/cams/clips?from=${from}`);
+      const d = await get(`/api/cams/clips?from=${from}`);
       clips = d.clips;
       events = d.events;
     } catch { /* keep what was there */ }
@@ -209,6 +237,7 @@ export default function camerasView(root) {
     const c = clips.find((k) => k.role === role && k.file === file);
     if (!c) return;
     playing = { role, file, start: c.start };
+    paint();                       // the feeds let go first, so the clip never waits behind them
     const f = feeds[role];
     f.node.appendChild(video);
     f.node.classList.add("is-playing");
@@ -231,6 +260,7 @@ export default function camerasView(root) {
     video.remove();
     f.node.classList.remove("is-playing");
     playing = null;
+    paint();                       // and the feeds take their streams up again
     paintPlay();
     drawTimeline();
   }
@@ -268,7 +298,7 @@ export default function camerasView(root) {
   async function saveClip() {
     const t = playing ? playing.start + video.currentTime : Date.now() / 1000;
     try {
-      await postJSON("/api/cams/lock", { t });
+      await post("/api/cams/lock", { t });
       toast(`Saved: the minute around ${hhmmss(t)} is kept, on every camera.`);
       refreshClips();
     } catch (e) { toast("Could not save the clip: " + e.message, "bad"); }
@@ -276,7 +306,7 @@ export default function camerasView(root) {
 
   async function markEvent() {
     try {
-      await postJSON("/api/cams/mark", {});
+      await post("/api/cams/mark", {});
       toast("Marked. The minute around now is kept, on every camera.");
       refreshClips();
     } catch (e) { toast("Could not mark the event: " + e.message, "bad"); }
@@ -286,12 +316,12 @@ export default function camerasView(root) {
   paintPlay();
   refresh();
   refreshClips();
-  const timers = [setInterval(refresh, 2000), setInterval(refreshClips, 10000),
-                  setInterval(tickClock, 250), setInterval(drawTimeline, 5000)];
+  const timers = [every(refresh, 2000), every(refreshClips, 10000),
+                  every(tickClock, 250), every(drawTimeline, 5000)];
 
   return () => {
     alive = false;
-    for (const t of timers) clearInterval(t);
+    for (const t of timers) stopEvery(t);
     for (const r of ROLES) feeds[r].img.removeAttribute("src");
     video.pause();
     video.removeAttribute("src");
