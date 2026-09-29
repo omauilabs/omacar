@@ -15,6 +15,7 @@ measures log beside the recorded cabin clips.
 """
 
 import json
+import math
 import os
 import sys
 import time
@@ -28,6 +29,8 @@ SENSITIVITIES = ("standard", "sensitive")
 # (tools/render_voice.py). "" is the clips with no name.
 NAMES = ("James", "")
 SOUNDS = ("bark", "voice", "alarm")
+# A speed an event may carry, in km/h: anything else is a bug, not a car.
+MAX_KPH = 400
 
 
 def user_path():
@@ -69,7 +72,20 @@ def _overlay(base, over):
 
 
 def load():
-    return _overlay(_read(DEFAULTS), _read(user_path()))
+    defaults = _read(DEFAULTS)
+    out = _overlay(defaults, _read(user_path()))
+    # The rotation, from a hand-edited file, keeps only sounds that exist
+    # (Task 9 fix round 1): an unknown name is dropped with a warning, and a
+    # list with none left is the spec's own.
+    if "sounds" in out:
+        raw = out["sounds"]
+        kept = list(dict.fromkeys(x for x in raw if isinstance(x, str) and x in SOUNDS))
+        unknown = [x for x in raw if not (isinstance(x, str) and x in SOUNDS)]
+        if unknown:
+            print(f"drowsycfg: {user_path()}: unknown sounds {unknown!r} dropped; the sounds are {list(SOUNDS)}",
+                  file=sys.stderr)
+        out["sounds"] = kept or list(defaults.get("sounds") or SOUNDS)
+    return out
 
 
 def _read_for_save():
@@ -130,8 +146,18 @@ def log_event(data):
     t = data.get("t")
     if isinstance(t, bool) or not isinstance(t, (int, float)) or not t:
         t = time.time()
-    payload = {"t": t, "level": level, "trigger": trigger,
-               "speed_kph": data.get("speed_kph"), "measures": data.get("measures") or {}}
+    # The speed is unknown (None) or a real one; the measures an object
+    # (Task 9 fix round 1). Anything else is refused, not written as-is.
+    kph = data.get("speed_kph")
+    if kph is not None and (isinstance(kph, bool) or not isinstance(kph, (int, float))
+                            or not math.isfinite(kph) or not 0 <= kph <= MAX_KPH):
+        raise ValueError(f"speed_kph must be a speed from 0 to {MAX_KPH} km/h, or null")
+    measures = data.get("measures")
+    if measures is None:
+        measures = {}
+    if not isinstance(measures, dict):
+        raise ValueError("measures must be an object")
+    payload = {"t": t, "level": level, "trigger": trigger, "speed_kph": kph, "measures": measures}
     return {"id": records.write_record("drowsy", f"Drowsy · Level {level} · {trigger}", payload)}
 
 

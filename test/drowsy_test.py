@@ -136,6 +136,30 @@ check("and the file is still the owner's", open(drowsycfg.user_path(), "rb").rea
 os.remove(drowsycfg.user_path())
 check("with no file at all a save still works", drowsycfg.save({"enabled": True})["enabled"], True)
 
+head("fix round 1 minors: an event's speed and measures, and the owner's sounds")
+for wrong in ({"speed_kph": "fast"}, {"speed_kph": True}, {"speed_kph": -5}, {"speed_kph": 1000},
+              {"speed_kph": float("nan")}, {"measures": "x"}, {"measures": [0.2]}):
+    check(f"an event with {wrong!r} is refused",
+          raises(lambda w=wrong: drowsycfg.log_event(dict({"level": 2, "trigger": "closed"}, **w))), True)
+ok_ids = [drowsycfg.log_event({"level": 2, "trigger": "closed", "speed_kph": v, "measures": m})["id"]
+          for v, m in ((None, None), (0, {}), (104.6, {"perclos": 0.2}))]
+check("an unknown speed (None), 0 and 104.6 km/h, and an object or no measures, are written", len(ok_ids), 3)
+import contextlib  # noqa: E402
+import io  # noqa: E402
+with open(drowsycfg.user_path(), "w", encoding="utf-8") as f:
+    json.dump({"sounds": ["bark", "horn", 5, "alarm", "bark"]}, f)
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    c = drowsycfg.load()
+check("unknown sounds in the owner's file are dropped", c["sounds"], ["bark", "alarm"])
+check("with a warning that names them", ("horn" in err.getvalue(), "5" in err.getvalue()), (True, True))
+with open(drowsycfg.user_path(), "w", encoding="utf-8") as f:
+    json.dump({"sounds": ["horn"]}, f)
+with contextlib.redirect_stderr(io.StringIO()):
+    c = drowsycfg.load()
+check("and a rotation with none known left is the spec's", c["sounds"], ["bark", "voice", "alarm"])
+os.remove(drowsycfg.user_path())
+
 shutil.rmtree(SCRATCH, ignore_errors=True)
 print()
 if fails:
