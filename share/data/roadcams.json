@@ -1,6 +1,5 @@
 {
-  "_comment": "Road cameras beyond Caltrans' own feed, and the commute pinned by default. Read by lib/roadcams.py, which checks every entry: an embed's url must be https on a host in embed_hosts, or it is dropped. Pins are camera ids; a Caltrans camera may also be named by its locationName exactly as the feed spells it, which is resolved to its id when the feed is read.",
-  "embed_hosts": ["app.truelook.cloud"],
+  "_comment": "Road cameras beyond Caltrans' own feed, and the commute pinned by default. Read by lib/roadcams.py, which checks every entry: an embed's url must be https on a host in its EMBED_HOSTS, which is in the code rather than here, or it is dropped. Pins are camera ids; a Caltrans camera may also be named by its locationName exactly as the feed spells it, which is resolved to its id when the feed is read.",
   "embeds": [
     {
       "id": "imjin-1",

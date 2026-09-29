@@ -43,6 +43,10 @@ FEED_URL = "https://cwwp2.dot.ca.gov/data/d5/cctv/cctvStatusD05.json"
 SOURCE = "Caltrans District 5"
 # The only hosts this server will ever fetch from.
 HOSTS = frozenset({"cwwp2.dot.ca.gov"})
+# The only hosts the browser may frame a construction camera from. In code,
+# not in the data file beside the URLs it checks, so one edit to that file
+# cannot add both a host and a page on it.
+EMBED_HOSTS = frozenset({"app.truelook.cloud"})
 COUNTY = "Monterey"
 ROUTE_ORDER = ("US-101", "SR-1", "SR-68", "SR-156", "SR-183")
 EMBED_GROUP = "Imjin Parkway"
@@ -57,8 +61,9 @@ MAX_PINS = 12
 
 # A camera id: Caltrans' own image folder name (sr1imjinparkway), or an embed's
 # id from the data file (imjin-1). Nothing else is looked up.
-ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-_IMAGE_PATH = re.compile(r"^/data/d5/cctv/image/([a-z0-9-]{1,64})/[a-z0-9-]{1,64}\.jpg$")
+# \Z, not $: a $ also matches before a trailing newline.
+ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
+_IMAGE_PATH = re.compile(r"^/data/d5/cctv/image/([a-z0-9-]{1,64})/[a-z0-9-]{1,64}\.jpg\Z")
 
 
 def _xdg(var, default):
@@ -164,7 +169,7 @@ def http_get(url, limit):
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
-    t.join(TIMEOUT + 0.5)
+    t.join(TIMEOUT)
     now = time.time()
     if "ok" in box:
         _NET.update(ok_at=now)
@@ -180,22 +185,45 @@ def http_get(url, limit):
 
 
 def _write(path, data):
+    """Atomically or not at all: a failed write leaves no .tmp file behind."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ---- the list ---------------------------------------------------------------
+#
+# TWO LOCKS, AND NEITHER IS HELD WHILE ANOTHER REQUEST WAITS ON THE NETWORK.
+# _STATE_LOCK guards the copies and the failure note and is only ever held for
+# a moment. _REFRESH_LOCK lets one download of the list run at a time; a caller
+# who finds one under way takes the list already in hand rather than queueing
+# behind it, and a still never waits for the list at all while any copy of it
+# exists (see _index()).
+#
+# THE LAST GOOD LIST IS KEPT IN MEMORY AS WELL AS ON DISK. A full or read-only
+# disk costs the copy that survives a restart, not the list: it is served from
+# memory for its six hours, with a warning, instead of being downloaded again
+# on every request.
 
 def _feed_file():
     return os.path.join(STATE, "d5-cctv.json")
 
 
-_FEED_LOCK = threading.Lock()
-_FEED_MEM = {"stamp": None, "doc": None}
+_STATE_LOCK = threading.Lock()
+_REFRESH_LOCK = threading.Lock()
+_FEED_MEM = {"stamp": None, "doc": None}      # the copy on disk, as last read
+_FEED_GOOD = {"doc": None}                    # the last good list this process fetched
 _FEED_FAIL = {"at": None, "error": None, "offline": False}
+_FEED_WARN = {"text": None}                   # why the list is not on disk
 
 
 def _read_cache():
@@ -218,53 +246,113 @@ def _read_cache():
     return doc
 
 
-def feed(now=None, force=False):
-    """(the feed as Caltrans published it, or None; what to say about it)."""
+def _current():
+    """The newest good list at hand, from memory or from disk, or None."""
+    disk = _read_cache()
+    mem = _FEED_GOOD["doc"]
+    if mem and (not disk or mem["fetched_at"] >= disk["fetched_at"]):
+        return mem
+    return disk
+
+
+def _fresh(doc, now):
+    return bool(doc) and 0 <= now - doc["fetched_at"] < FEED_TTL
+
+
+def _served(doc, now):
+    """What is at hand, with whatever is known to be wrong with it."""
+    if not doc:
+        return None, _nothing(_FEED_FAIL["error"], _FEED_FAIL["offline"])
+    fresh = _fresh(doc, now)
+    return doc["feed"], _meta(doc, now, from_cache=True,
+                              error=None if fresh else _FEED_FAIL["error"],
+                              offline=False if fresh else _FEED_FAIL["offline"])
+
+
+def feed(now=None, force=False, stale_ok=False):
+    """(the feed as Caltrans published it, or None; what to say about it).
+
+    `stale_ok`: any copy at hand will do, however old, and only a caller with
+    nothing at all waits for a download. The stills ask this way: which URL a
+    camera has does not change from one hour to the next.
+    """
     now = time.time() if now is None else now
-    with _FEED_LOCK:
-        cached = _read_cache()
-        fresh = bool(cached) and 0 <= now - cached["fetched_at"] < FEED_TTL
+    with _STATE_LOCK:
+        cached = _current()
         # A failure a moment ago is not asked again on every request: with no
         # signal each ask costs the full TIMEOUT, and the screen would wait
-        # ten seconds for a list it already has on disk.
+        # ten seconds for a list it already has.
         failed = _FEED_FAIL["at"]
         backoff = failed is not None and 0 <= now - failed < FEED_RETRY
-        if not force and (fresh or backoff):
-            if cached:
-                return cached["feed"], _meta(
-                    cached, now, from_cache=True,
-                    error=None if fresh else _FEED_FAIL["error"],
-                    offline=False if fresh else _FEED_FAIL["offline"])
-            return None, _nothing(_FEED_FAIL["error"], _FEED_FAIL["offline"])
+        if not force and (_fresh(cached, now) or backoff or (stale_ok and cached)):
+            return _served(cached, now)
+    wait = cached is None
+    if not _REFRESH_LOCK.acquire(blocking=wait, timeout=TIMEOUT + 1 if wait else -1):
+        return _served(cached, now)
+    try:
+        with _STATE_LOCK:
+            cached = _current()
+        if not force and _fresh(cached, now):
+            return _served(cached, now)          # somebody else just fetched it
+        return _download(now, cached)
+    finally:
+        _REFRESH_LOCK.release()
+
+
+def _download(now, cached):
+    try:
+        _status, _h, body = http_get(FEED_URL, FEED_LIMIT)
         try:
-            _status, _h, body = http_get(FEED_URL, FEED_LIMIT)
             doc = json.loads(body.decode("utf-8"))
-            if not (isinstance(doc, dict) and isinstance(doc.get("data"), list)):
-                raise Refused("Caltrans sent a list this does not recognise")
-        except (Unreachable, Refused, ValueError) as e:
-            offline = isinstance(e, Unreachable)
-            why = (f"No connection ({e})" if offline else str(e))
+        except ValueError:
+            raise Refused("Caltrans sent a web page, not the list") from None
+        if not (isinstance(doc, dict) and isinstance(doc.get("data"), list)):
+            raise Refused("the list is not in the shape Caltrans uses")
+        # A LIST THAT PARSES IS NOT YET A GOOD LIST. One with no Monterey
+        # cameras, or with less than half as many as the last good one, is a
+        # maintenance page or a changed format, and replacing the good copy
+        # with it would say "fresh" for six hours with every pin missing.
+        got = len(cameras(doc))
+        had = len(cameras(cached["feed"])) if cached else 0
+        if got == 0:
+            raise Refused("it listed no Monterey County cameras")
+        if had and got * 2 < had:
+            raise Refused(f"it listed {got} Monterey County cameras, down from {had}")
+    except (Unreachable, Refused) as e:
+        offline = isinstance(e, Unreachable)
+        why = (f"No connection ({e})" if offline
+               else f"Caltrans' camera list didn't load ({e})")
+        with _STATE_LOCK:
             _FEED_FAIL.update(at=now, error=why, offline=offline)
-            if cached:
-                return cached["feed"], _meta(cached, now, from_cache=True,
-                                             error=why, offline=offline)
-            return None, _nothing(why, offline)
+        if cached:
+            return cached["feed"], _meta(cached, now, from_cache=True,
+                                         error=why, offline=offline)
+        return None, _nothing(why, offline)
+    wrapped = {"fetched_at": now, "url": FEED_URL, "feed": doc}
+    with _STATE_LOCK:
         _FEED_FAIL.update(at=None, error=None, offline=False)
-        wrapped = {"fetched_at": now, "url": FEED_URL, "feed": doc}
+        _FEED_GOOD["doc"] = wrapped
+    try:
         _write(_feed_file(), json.dumps(wrapped).encode("utf-8"))
-        _FEED_MEM.update(stamp=None, doc=None)
-        return doc, _meta(wrapped, now, from_cache=False, error=None, offline=False)
+        _FEED_WARN["text"] = None
+    except OSError as e:
+        _FEED_WARN["text"] = (f"The camera list could not be kept on disk "
+                              f"({e.strerror or e}), so it is held in memory "
+                              f"until OmaCar restarts.")
+    _FEED_MEM.update(stamp=None, doc=None)
+    return doc, _meta(wrapped, now, from_cache=False, error=None, offline=False)
 
 
 def _nothing(error, offline):
     return {"source": SOURCE, "url": FEED_URL, "fetched_at": None, "age": None,
-            "from_cache": False, "error": error, "offline": offline}
+            "from_cache": False, "error": error, "offline": offline,
+            "warning": _FEED_WARN["text"]}
 
 
 def _meta(doc, now, from_cache, error, offline):
     return {"source": SOURCE, "url": FEED_URL, "fetched_at": doc["fetched_at"],
             "age": max(0, int(now - doc["fetched_at"])), "from_cache": from_cache,
-            "error": error, "offline": offline}
+            "error": error, "offline": offline, "warning": _FEED_WARN["text"]}
 
 
 def _route(raw):
@@ -352,9 +440,9 @@ def data_file(path=None):
 
 
 def embeds(data=None):
-    """The construction cameras, each checked: an unknown host is dropped."""
+    """The construction cameras, each checked: a host not in EMBED_HOSTS is dropped."""
     data = data_file() if data is None else data
-    hosts = frozenset(h for h in data.get("embed_hosts") or [] if isinstance(h, str))
+    hosts = EMBED_HOSTS
     out, seen = [], set()
     for e in data.get("embeds") or []:
         if not isinstance(e, dict):
@@ -443,7 +531,7 @@ def save_pins(data):
         raise ValueError("pins must be a list of camera ids")
     if len(pins) > MAX_PINS:
         raise ValueError(f"at most {MAX_PINS} cameras can be pinned")
-    doc, _meta_ = feed()
+    doc, _meta_ = feed(stale_ok=True)
     cams = cameras(doc) if doc else []
     embs = embeds()
     known = {c["id"]: c["name"] for c in cams + embs}
@@ -498,7 +586,7 @@ _INDEX = {"key": None, "cams": {}}
 
 
 def _index():
-    doc, meta = feed()
+    doc, meta = feed(stale_ok=True)
     if doc is None:
         raise Unreachable(meta.get("error") or "the camera list is not available")
     key = meta["fetched_at"]

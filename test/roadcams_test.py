@@ -113,6 +113,8 @@ def reset():
     except FileNotFoundError:
         pass
     roadcams._FEED_MEM.update(stamp=None, doc=None)
+    roadcams._FEED_GOOD["doc"] = None
+    roadcams._FEED_WARN["text"] = None
     roadcams._FEED_FAIL.update(at=None, error=None, offline=False)
     roadcams._IMG_MEM.clear()
     roadcams._INDEX.update(key=None, cams={})
@@ -232,6 +234,49 @@ def main():
           roadcams._NoRedirect().redirect_request(None, None, 302, "Found", {},
                                                   "https://example.com/"), None)
 
+    # AND END TO END: a real HTTP answer of 302, through the real opener and
+    # the real http_get, on 127.0.0.1 only -- `allowed` is widened for this one
+    # check, and the place the redirect names must never be asked.
+    hits = {"from": 0, "to": 0}
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/to"):
+                hits["to"] += 1
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"followed")
+                return
+            hits["from"] += 1
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{self.server.server_address[1]}/to")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    rsrv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Redirector)
+    threading.Thread(target=rsrv.serve_forever, daemon=True).start()
+    was_allowed = roadcams.allowed
+    try:
+        roadcams.allowed = lambda url, hosts=roadcams.HOSTS: url.startswith("http://127.0.0.1:")
+        roadcams._fetch = REAL_FETCH
+        err = None
+        try:
+            real_http_get(f"http://127.0.0.1:{rsrv.server_address[1]}/from", 1000)
+        except roadcams.Refused as e:
+            err = e
+        check("a real 302 comes back as a refusal carrying its status",
+              (type(err).__name__, getattr(err, "status", None)), ("Refused", 302))
+        check("and the place it named was never asked", (hits["from"], hits["to"]), (1, 0))
+    finally:
+        roadcams.allowed = was_allowed
+        roadcams._fetch = _no_internet
+        rsrv.shutdown()
+
+    check("an id with a newline after it is not an id", bool(roadcams.ID.match("sr1imjinparkway\n")),
+          False)
+
     # Every request is over in TIMEOUT, name lookup included: a request that
     # hangs is abandoned, and says it was the network.
     was = roadcams.TIMEOUT
@@ -242,8 +287,8 @@ def main():
     took = time.time() - t0
     roadcams._fetch = _no_internet
     roadcams.TIMEOUT = was
-    check(f"a request that hangs is given up on in time ({took:.2f} s)",
-          bool(why) and took < 1.5, True)
+    check(f"a request that hangs is given up on at TIMEOUT, not after it ({took:.2f} s)",
+          bool(why) and took < 0.2 + 0.15, True)
     check("and the timeout is at most ten seconds", roadcams.TIMEOUT <= 10, True)
 
     # The reading loop itself, against a fake opener: too big is refused.
@@ -325,9 +370,112 @@ def main():
 
     net = reset()
     net.feed = b"<html>maintenance</html>"
+    page = roadcams.listing()["feed"]["error"] or ""
     check("a list that is not Caltrans' JSON is not kept",
-          (roadcams.listing()["feed"]["error"] is not None,
-           os.path.exists(os.path.join(roadcams.STATE, "d5-cctv.json"))), (True, False))
+          (bool(page), os.path.exists(os.path.join(roadcams.STATE, "d5-cctv.json"))), (True, False))
+    check(f"and the screen is told so in words, not with the parser's message ({page!r})",
+          page.startswith("Caltrans' camera list didn't load") and "Expecting" not in page, True)
+
+    head("A list that parses is not yet a good list")
+
+    # A good list seven hours old, then the download that should replace it.
+    def good_then(bad_feed, how):
+        net = reset()
+        t0 = time.time()
+        roadcams.listing(now=t0 - 7 * 3600)
+        net.feed = bad_feed
+        return net, None, roadcams.listing(now=t0)
+
+    def only(n):
+        d = json.loads(FEED)
+        mont = [x for x in d["data"] if x["cctv"]["location"]["county"] == "Monterey"]
+        d["data"] = mont[:n]
+        return json.dumps(d).encode()
+
+    renamed = json.loads(FEED)
+    renamed["data"] = [{"camera": x["cctv"]} for x in renamed["data"]]
+    for why, bad_feed in (("an empty list", b'{"data": []}'),
+                          ("a list whose items changed shape", json.dumps(renamed).encode()),
+                          ("a list with under half the cameras", only(3))):
+        net, _, after = good_then(bad_feed, why)
+        f = after["feed"]
+        check(f"{why} does not replace the good one: the last good list is still served "
+              f"({f['count']} cameras, {f['age']} s old)", (f["count"], f["age"]), (8, 7 * 3600))
+        check(f"and it says why ({f['error']!r})",
+              (f["error"] or "").startswith("Caltrans' camera list didn't load"), True)
+        kept = json.load(open(os.path.join(roadcams.STATE, "d5-cctv.json")))
+        check("and the copy on disk is still the good one",
+              len(roadcams.cameras(kept["feed"])), 8)
+    net, _, after = good_then(only(5), "five of eight")
+    check("a list with at least half as many is accepted (five of eight)",
+          (after["feed"]["count"], after["feed"]["error"]), (5, None))
+
+    head("A disk that will not take the list")
+    net = reset()
+    was_state = roadcams.STATE
+    try:
+        # The cache file's place is taken by a directory: the write fails
+        # after its .tmp is made, which is the case that left one behind.
+        os.makedirs(os.path.join(roadcams.STATE, "d5-cctv.json"))
+        first = roadcams.listing()
+        check("the list is still served", first["feed"]["count"], 8)
+        check(f"with a warning ({first['feed']['warning']!r})",
+              "could not be kept on disk" in (first["feed"]["warning"] or ""), True)
+        check("and no .tmp file is left behind",
+              [f for f in os.listdir(roadcams.STATE) if f.endswith(".tmp")], [])
+        for _ in range(3):
+            roadcams.listing()
+        roadcams.image("sr1imjinparkway")
+        check("it is not downloaded again on every request: once for four listings and a still",
+              sum(1 for u in net.calls if u == roadcams.FEED_URL), 1)
+        # Nothing writable under the state directory at all: a file where
+        # the directory should be.
+        net = reset()
+        open(os.path.join(SCRATCH, "not-a-dir"), "w").close()
+        roadcams.STATE = os.path.join(SCRATCH, "not-a-dir", "roadcams")
+        got = roadcams.listing()
+        check("with no state directory at all it still answers, from memory",
+              (got["feed"]["count"], bool(got["feed"]["warning"])), (8, True))
+        still = roadcams.image("sr1imjinparkway")
+        check("and the stills still come, only without the copy on disk",
+              still["body"], JPEG)
+    finally:
+        roadcams.STATE = was_state
+        shutil.rmtree(os.path.join(SCRATCH, "not-a-dir"), ignore_errors=True)
+        try:
+            os.remove(os.path.join(SCRATCH, "not-a-dir"))
+        except OSError:
+            pass
+
+    head("A still never waits behind a download of the list")
+    net = reset()
+    roadcams.listing(now=time.time() - 7 * 3600)      # a list, seven hours old
+    slow = threading.Event()
+    plain = net.__call__
+
+    def slow_feed(url, limit):
+        if url == roadcams.FEED_URL:
+            slow.set()
+            time.sleep(1.5)
+        return plain(url, limit)
+
+    roadcams.http_get = slow_feed
+    bg = threading.Thread(target=roadcams.listing, daemon=True)
+    bg.start()
+    slow.wait(2)
+    t0 = time.time()
+    got = roadcams.image("sr1imjinparkway")
+    took_img = time.time() - t0
+    t0 = time.time()
+    other = roadcams.listing()
+    took_list = time.time() - t0
+    bg.join(5)
+    check(f"a still asked for mid-download comes at once ({took_img:.2f} s)",
+          (got["body"], took_img < 0.5), (JPEG, True))
+    check(f"and so does a second listing, from the list in hand ({took_list:.2f} s)",
+          (other["feed"]["count"], took_list < 0.5), (8, True))
+    check("and only one download of the list was made",
+          sum(1 for u in net.calls if u == roadcams.FEED_URL), 2)
 
     head("The groups, in the owner's order")
     net = reset()
@@ -351,6 +499,10 @@ def main():
     data["embeds"].append({"id": "plain", "name": "x", "url": "http://app.truelook.cloud/?code=1"})
     check("an embed on another host, or over http, is dropped",
           [e["id"] for e in roadcams.embeds(data)], ["imjin-1", "imjin-2", "imjin-3"])
+    data["embed_hosts"] = ["example.com"]
+    check("and the data file cannot allow a host of its own: that list is in the code",
+          ([e["id"] for e in roadcams.embeds(data)], sorted(roadcams.EMBED_HOSTS)),
+          (["imjin-1", "imjin-2", "imjin-3"], ["app.truelook.cloud"]))
 
     # ------------------------------------------------------------- the stills
     head("A still is kept a minute, and carries its own age")
@@ -489,6 +641,29 @@ def main():
               (st, hd.get("X-Roadcam-Source"), body), (200, "saved", JPEG))
         st, hd, body = get("/api/roadcams")
         check("the listing is still a 200 with no connection", st, 200)
+        net.offline = False
+        roadcams._IMG_MEM.clear()
+        net.ctype, net.image = "text/html", b"<html>busy</html>"
+        st, hd, body = get("/api/roadcams/sr1imjinparkway/image")
+        err = json.loads(body or b"{}")
+        check("a refusal from Caltrans says a last good picture is kept, too",
+              (st, err.get("offline"), err.get("saved")), (502, False, True))
+        net.ctype, net.image = "image/jpeg", JPEG
+        gone = json.loads(FEED)
+        gone["data"] = [x for x in gone["data"] if "sr1imjinparkway" not in json.dumps(x)]
+        net.feed = json.dumps(gone).encode()
+        roadcams.feed(force=True)
+        st, hd, body = get("/api/roadcams/sr1imjinparkway/image")
+        err = json.loads(body or b"{}")
+        check("and so does a 404 for a camera that has just left the list",
+              (st, err.get("saved")), (404, True))
+        net.feed = FEED
+        roadcams.feed(force=True)
+        roadcams._IMG_MEM.clear()
+        net.modified = "Tuesday, 29-Sep-26 06:47:10 GMT"       # RFC 850, still valid
+        st, hd, body = get("/api/roadcams/sr1imjinparkway/image")
+        check("Last-Modified is written out again from the parsed time, not passed through",
+              hd.get("Last-Modified"), "Tue, 29 Sep 2026 06:47:10 GMT")
     finally:
         srv.shutdown()
     serve.ALLOW_CONTROL = False

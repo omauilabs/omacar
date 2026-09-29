@@ -1238,7 +1238,12 @@ def handle_get(path, query):
         # list from disk, saying how old it is, or an empty one saying why.
         # The stills themselves are served by serve.py, which owns the socket.
         import roadcams
-        return 200, roadcams.listing()
+        try:
+            return 200, roadcams.listing()
+        except Exception as e:                                # noqa: BLE001
+            # A backstop, not a path: a JSON answer the screen can show
+            # rather than a dropped connection it reads as a dead server.
+            return 500, {"error": f"road cameras: {type(e).__name__}: {e}"}
     if path == "/api/concerns":
         return 200, {"concerns": concerns.assess()}
     if path == "/api/snapshots":

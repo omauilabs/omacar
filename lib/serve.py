@@ -432,31 +432,43 @@ class Handler(SimpleHTTPRequestHandler):
         `?cached=1` is the copy on disk, for a screen that has no picture at all
         and no connection to get one: it never reaches the network.
         """
+        import email.utils
         import roadcams
         cached = (parse_qs(query).get("cached") or [""])[0] == "1"
+
+        # Whether a last good picture is on disk, said with every failure, so
+        # the screen can put it up -- marked as the last good one -- whatever
+        # went wrong: no connection, a refusal, or a camera that has just left
+        # the list.
+        def kept():
+            keep = roadcams.saved(cid) if not cached else None
+            return {"saved": bool(keep),
+                    "saved_modified": keep.get("modified") if keep else None}
         try:
             got = roadcams.image(cid, cached_only=cached)
         except roadcams.NotFound as e:
-            return self._json({"error": str(e)}, 404)
+            return self._json(dict({"error": str(e), "offline": False}, **kept()), 404)
         except roadcams.Unreachable as e:
-            keep = roadcams.saved(cid)
-            return self._json({"error": f"No connection: {e}", "offline": True,
-                               "saved": bool(keep),
-                               "saved_modified": keep.get("modified") if keep else None},
-                              504)
+            return self._json(dict({"error": f"No connection: {e}", "offline": True},
+                                   **kept()), 504)
         except roadcams.Refused as e:
-            return self._json({"error": str(e), "offline": False,
-                               "status": e.status}, 502)
+            return self._json(dict({"error": str(e), "offline": False,
+                                    "status": e.status}, **kept()), 502)
+        except Exception as e:                                # noqa: BLE001
+            return self._json({"error": f"road cameras: {type(e).__name__}: {e}",
+                               "offline": False}, 500)
         body = got["body"]
         self.send_response(200)
         self.send_header("Content-Type", got.get("content_type") or "image/jpeg")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        # The picture's own Last-Modified, as Caltrans sent it, and the same
-        # instant as an age the screen can count on from: the tablet's clock
-        # is not trusted to agree with Caltrans'.
-        if got.get("last_modified"):
-            self.send_header("Last-Modified", got["last_modified"])
+        # The picture's own Last-Modified, written out again from the time it
+        # parsed to rather than passed through as sent, and the same instant as
+        # an age the screen can count on from: the tablet's clock is not
+        # trusted to agree with Caltrans'.
+        if got.get("modified") is not None:
+            self.send_header("Last-Modified",
+                             email.utils.formatdate(got["modified"], usegmt=True))
         for name, key in (("X-Roadcam-Age", "age"), ("X-Roadcam-Modified", "modified"),
                           ("X-Roadcam-Fetched", "fetched_at")):
             if got.get(key) is not None:
