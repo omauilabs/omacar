@@ -151,8 +151,9 @@ class Scratch:
             PATH=self.bin + os.pathsep + os.environ.get("PATH", ""),
             OMACAR_PORTS=str(port),
             OMACAR_WATCH_EVERY=str(every),
-            # So a server that is killed hard says why, in its log, in a form
-            # this test can look for. (serve.py does not turn this on itself.)
+            # Python's fault handler on from outside, so the log tests do not
+            # lean on serve.py's own. test_says_so takes it away again to show
+            # that serve.py turns it on for itself.
             PYTHONFAULTHANDLER="1",
         )
         m = self.marks
