@@ -53,6 +53,13 @@ PY = sys.executable
 
 fails = 0
 
+# Everything this suite has started carries one of these: a scratch port on its
+# server's and watcher's command lines, or a scratch directory on its
+# stand-ins'. The end of the run sweeps on them and on nothing else, so it can
+# never reach a process that somebody else started from this same checkout.
+SCRATCH_PORTS = set()
+SCRATCH_DIRS = set()
+
 
 def ok(msg):
     print(f"    ok  {msg}")
@@ -104,6 +111,17 @@ def server_pids(port):
     return pgrep(f"{SERVE} {port} ")
 
 
+def started_by_us():
+    """Every process that carries one of this suite's scratch ports or dirs."""
+    found = set()
+    for port in SCRATCH_PORTS:
+        found |= set(pgrep(f"{SERVE} {port} "))
+        found |= set(pgrep(f"{OMACAR} server watch {port}"))
+    for d in SCRATCH_DIRS:
+        found |= set(pgrep(d))
+    return sorted(found)
+
+
 def alive(pid):
     try:
         os.kill(pid, 0)
@@ -129,10 +147,13 @@ class Scratch:
     real is ever the thing that answers.
     """
 
-    def __init__(self, port, every=1):
+    def __init__(self, port, every=1, register=True):
         self.dir = tempfile.mkdtemp(prefix="omacar-srvwatch-")
         d = self.dir
         self.port = port
+        if register:
+            SCRATCH_PORTS.add(port)
+            SCRATCH_DIRS.add(d)
         self.state = os.path.join(d, "state", "omacar")
         self.bin = os.path.join(d, "bin")
         self.marks = os.path.join(d, "marks")
@@ -185,6 +206,43 @@ class Scratch:
                         f"{OMACAR} server watch {self.port}"):
             subprocess.run(["pkill", "-9", "-f", pattern])
         shutil.rmtree(self.dir, ignore_errors=True)
+
+
+class Bystander:
+    """What a live install looks like on a machine that runs this suite.
+
+    A kiosk, its watcher and its server, from THIS checkout, started by
+    somebody else. The suite must never touch them: on the tablet the install
+    IS this checkout, so a test that swept up "everything of this checkout"
+    would kill the running dashboard, which is the failure this whole branch
+    exists to prevent. It has its own scratch tree, kept out of the suite's own
+    bookkeeping, so nothing in it can be mistaken for the suite's.
+    """
+
+    def __init__(self):
+        self.port = free_port()
+        self.s = Scratch(self.port, every=60, register=False)
+        self.kiosk = subprocess.Popen(
+            [OMACAR, "kiosk", "hub"], env=self.s.env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        self.up = wait_for(lambda: answers(self.port) and self.watchers(), 10) is not None
+
+    def watchers(self):
+        return pgrep(f"{OMACAR} server watch {self.port} {self.kiosk.pid}$")
+
+    def alive(self):
+        return (self.kiosk.poll() is None and answers(self.port)
+                and bool(self.watchers()))
+
+    def stop(self):
+        open(os.path.join(self.s.marks, "stop"), "w").close()
+        if self.kiosk.poll() is None:
+            try:
+                os.killpg(self.kiosk.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        self.s.clean()
 
 
 # ---- the server's output is kept, and kept small ----------------------------
@@ -578,20 +636,36 @@ def main():
         print("    (skipping: this drives bash, setsid and ss, which are Linux)")
         return 0
 
-    for test in (test_log, test_restart, test_unwritable_watch_log,
-                 test_unwritable_serve_log,
-                 test_foreign_port, test_parent_exit,
-                 test_kiosk, test_says_so):
-        try:
-            test()
-        except Exception as e:                       # noqa: BLE001
-            bad(f"{test.__name__} stopped early: {e!r}")
+    live = Bystander()
+    try:
+        if not live.up:
+            bad("the stand-in for a live install never came up")
+        for test in (test_log, test_restart, test_unwritable_watch_log,
+                     test_unwritable_serve_log,
+                     test_foreign_port, test_parent_exit,
+                     test_kiosk, test_says_so):
+            try:
+                test()
+            except Exception as e:                       # noqa: BLE001
+                bad(f"{test.__name__} stopped early: {e!r}")
 
-    print()
-    left = pgrep(f"{ROOT}/(bin/omacar|lib/serve.py)")
-    check("nothing this test started is still running", not left)
-    for pid in left:
-        os.kill(pid, signal.SIGKILL)
+        print("\n  The end of the run touches only what it started\n")
+        left = started_by_us()
+        check("nothing this test started is still running", not left)
+        for pid in left:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        check("and a live install's kiosk, watcher and server, from this same"
+              " checkout, are still running", live.alive())
+        # Anything else of this checkout's that is running was not started by
+        # this suite. It is reported, never killed and never failed on.
+        others = set(pgrep(f"{ROOT}/(bin/omacar|lib/serve.py)")) - set(left)
+        print(f"    ({len(others)} other process(es) of this checkout were running,"
+              f" none of them this suite's; left alone)")
+    finally:
+        live.stop()
     print(f"\n  {'all good' if not fails else f'{fails} failed'}\n")
     return 1 if fails else 0
 
