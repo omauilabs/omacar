@@ -61,6 +61,14 @@ jobs:
             echo "::warning::no venv, so the prospector tests will skip"
           fi
 
+      # THE FACE TRACKER'S FILES ARE NOT IN GIT. Drowsy mode's MediaPipe bundle,
+      # its wasm and the face model are fetched once and pinned by sha256
+      # (share/assets/manifest.json), so the vendor suites fail here unless they are
+      # fetched first. The pin is checked on every download: a changed file
+      # fails this step rather than reaching the tests.
+      - name: The face tracker's files (fetched, pinned, never committed)
+        run: ./bin/omacar assets fetch
+
       # The suite installs into a scratch HOME and asserts the real state
       # directory was never touched, so it is safe to run on a machine that has
       # OmaCar on it. It says so out loud at the end.
