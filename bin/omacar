@@ -123,9 +123,16 @@ serve_py() { [[ -x "$OMACAR_PY" ]] && echo "$OMACAR_PY" || echo python3; }
 # traceback, if there was one, had been thrown away. The log is appended to and
 # only ever trimmed, never truncated at a start, because a start is very often
 # the moment right after a death and the death is what the log is for.
+#
+# A LOG THAT CANNOT BE OPENED MUST NOT STOP THE SERVER STARTING. /dev/null could
+# not fail, and the log is only there to say what happened, so if it cannot be
+# opened for appending the server goes back to /dev/null. Without this a
+# read-only state directory made app_base() give up and hand back file://, and
+# the kiosk exit 1 in a loop with no dashboard at all.
 serve_start() {
   local p="$1" i log="$OMACAR_STATE/serve.log"
-  log_trim "$log"
+  log_trim "$log" || true
+  { : >>"$log"; } 2>/dev/null || log=/dev/null
   printf '%s serve.py starting on port %s\n' "$(date '+%F %T')" "$p" >>"$log"
   setsid -f "$(serve_py)" "$ROOT/lib/serve.py" "$p" "$ROOT/share" >>"$log" 2>&1
   for i in 1 2 3 4 5 6 7 8 9 10; do

@@ -365,6 +365,50 @@ def test_unwritable_watch_log():
         s.clean()
 
 
+def test_unwritable_serve_log():
+    print("\n  A serve.log that cannot be opened does not stop the server starting\n")
+    if os.geteuid() == 0:
+        print("    (skipping: root can write a read-only file, so this cannot fail here)")
+        return
+    every = 1
+    port = free_port()
+    s = Scratch(port, every=every)
+    watcher = None
+    try:
+        os.makedirs(s.state, exist_ok=True)
+        log = s.path("serve.log")
+        with open(log, "w") as f:
+            f.write("earlier output\n")
+        os.chmod(log, 0o444)
+
+        subprocess.run([OMACAR, "open"], env=s.env, timeout=30, capture_output=True)
+        check("`omacar open` still starts the server",
+              wait_for(lambda: answers(port), 3) is not None)
+        wait_for(lambda: s.mark("browser.calls"), 3)      # setsid -f: a moment later
+        calls = s.mark("browser.calls")
+        check("and opens the page at it, not at the file:// fallback",
+              f"http://127.0.0.1:{port}/app.html" in calls and "file://" not in calls)
+        check("the log it could not write is left as it was",
+              read(log) == "earlier output\n")
+
+        # The watcher starts it the same way, so it has to survive the same thing.
+        watcher = start_watcher(s)
+        time.sleep(every * 1.5)
+        pids = server_pids(port)
+        if not pids:
+            bad("there is no server to kill")
+        else:
+            os.kill(pids[0], signal.SIGKILL)
+            wait_for(lambda: not alive(pids[0]), 2)
+            t = wait_for(lambda: answers(port), every + 4)
+            check(f"a killed server is restarted with the log still unwritable"
+                  f" ({'never' if t is None else f'{t:.1f}s'})", t is not None)
+    finally:
+        if watcher and watcher.poll() is None:
+            watcher.kill()
+        s.clean()
+
+
 def test_foreign_port():
     print("\n  A port held by something that is not ours is left alone\n")
     every = 0.5
@@ -532,6 +576,7 @@ def main():
         return 0
 
     for test in (test_log, test_restart, test_unwritable_watch_log,
+                 test_unwritable_serve_log,
                  test_foreign_port, test_parent_exit,
                  test_kiosk, test_says_so):
         try:
