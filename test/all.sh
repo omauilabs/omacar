@@ -85,7 +85,10 @@ rm -rf "$SCRATCH_HOME"
 #            undiscovered quantity never renders as a number
 #   sitrep   redaction, which is the promise that nothing leaving this
 #            machine says whose car it is
-for suite in ima sitrep; do
+#   drive_report
+#            a day into drives, the figures on the page, and the same promise
+#            for a page that is made to be shown to strangers
+for suite in ima sitrep drive_report; do
   if [[ -x "$VENV/bin/python" ]]; then
     "$VENV/bin/python" "$ROOT/test/${suite}_test.py" || fails=$((fails + 1))
   else
