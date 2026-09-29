@@ -182,7 +182,7 @@ function agentCard() {
 const MAKERS = {
   dial: dialCard,
   car: carCard,
-  nav: () => soonCard(ICONS.nav, "Navigation", "Offline maps and turn-by-turn arrive with the navigation step.", "navigation"),
+  nav: () => soonCard(ICONS.nav, "Road cameras", "Your commute: SR-1 at Imjin, Lightfighter, SR-68", "roadcams"),
   dashcam: () => soonCard(ICONS.camera, "Dashcams", "Front, rear and cabin recording arrive with the cameras step.", "cameras"),
   phone: phoneCard,
   agent: agentCard,

@@ -137,6 +137,7 @@ import drive from "./views/drive.js";
 import concernsView from "./views/concerns.js";
 import live from "./views/live.js";
 import navigationView from "./views/navigation.js";
+import roadcamsView from "./views/roadcams.js";
 import camerasView from "./views/cameras.js";
 import workView from "./views/work.js";
 import { badge } from "./provenance.js";
@@ -172,9 +173,14 @@ const TABS = [
     views: [
       { id: "home", label: "Home", title: "Home", mount: home, fast: true },
     ] },
+  // Road cameras first, because they work today; the maps are still to come.
+  // FAST, because what the screen shows depends on whether the car is moving
+  // (share/js/roadcams.js), and the twenty-second snapshot is too slow a
+  // clock to know.
   { id: "navigation", label: "Navigation", icon: ICONS.nav,
     views: [
-      { id: "navigation", label: "Navigation", title: "Navigation", mount: navigationView },
+      { id: "roadcams",   label: "Road cameras", title: "Road cameras", mount: roadcamsView, fast: true },
+      { id: "navigation", label: "Maps",         title: "Maps",         mount: navigationView },
     ] },
   { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [

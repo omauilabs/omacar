@@ -54,8 +54,12 @@ driver would name:
                   the car, four readings that each say where their number came
                   from, the phone, and the advisor's last answer. Its cards can
                   be rearranged and resized by hand, while parked.
-  **Navigation**  offline maps and turn-by-turn, still to come (the Surface
-                  has no GPS; it needs a receiver)
+  **Navigation**  road cameras: every Caltrans camera in Monterey County and
+                  the Imjin Parkway construction cameras, the commute pinned
+                  first, each still saying how old it is; while the car moves,
+                  one small still and nothing to scroll. Offline maps and
+                  turn-by-turn are still to come (the Surface has no GPS; it
+                  needs a receiver)
   **Cameras**     front, rear and cabin recording, still to come
   **Vehicle**     the car system by system on its X-ray, then every workshop
                   screen in six groups: Overview; Diagnose (every code with

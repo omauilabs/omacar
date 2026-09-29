@@ -1,0 +1,338 @@
+{
+ "_comment": "Trimmed from Caltrans District 5's cctvStatusD05.json as published on 2026-09-28: eight Monterey County cameras and one from Santa Cruz County, each item as Caltrans wrote it except that reference images 2 to 12 are cut. test/roadcams_test.py reads it; nothing in the suite fetches the real one.",
+ "data": [
+  {
+   "cctv": {
+    "index": "1",
+    "recordTimestamp": {
+     "recordDate": "2025-02-27",
+     "recordTime": "12:31:35",
+     "recordEpoch": "1740688295"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "US-101 : North Main Street",
+     "nearbyPlace": "Salinas",
+     "longitude": "-121.653231",
+     "latitude": "36.687188",
+     "elevation": "52",
+     "direction": "South",
+     "county": "Monterey",
+     "route": "US-101",
+     "routeSuffix": "",
+     "postmilePrefix": "R",
+     "postmile": "88.28",
+     "alignment": "",
+     "milepost": "328.5"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/101atMainSt-Route183.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/us101northmainstreet/us101northmainstreet.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/us101northmainstreet/previous/us101northmainstreet-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "99",
+    "recordTimestamp": {
+     "recordDate": "2022-11-14",
+     "recordTime": "10:27:39",
+     "recordEpoch": "1668450459"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "US-101 : Airport Blvd",
+     "nearbyPlace": "Salinas",
+     "longitude": "-121.623432",
+     "latitude": "36.662222",
+     "elevation": "55",
+     "direction": "North",
+     "county": "Monterey",
+     "route": "US-101",
+     "routeSuffix": "",
+     "postmilePrefix": "",
+     "postmile": "85.72",
+     "alignment": "",
+     "milepost": "325.94"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/101atAirportBlvd.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/us101airportblvd/us101airportblvd.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/us101airportblvd/previous/us101airportblvd-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "96",
+    "recordTimestamp": {
+     "recordDate": "2022-10-21",
+     "recordTime": "07:40:54",
+     "recordEpoch": "1666363254"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-1 : Lightfighter Drive",
+     "nearbyPlace": "Seaside",
+     "longitude": "-121.81595",
+     "latitude": "36.64617",
+     "elevation": "150",
+     "direction": "North",
+     "county": "Monterey",
+     "route": "SR-1",
+     "routeSuffix": "",
+     "postmilePrefix": "R",
+     "postmile": "82.8",
+     "alignment": "",
+     "milepost": "324.37"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/1atLightFighterDr.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr1lightfighterdrive/sr1lightfighterdrive.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr1lightfighterdrive/previous/sr1lightfighterdrive-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "95",
+    "recordTimestamp": {
+     "recordDate": "2022-10-21",
+     "recordTime": "07:41:13",
+     "recordEpoch": "1666363273"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-1 : Imjin Parkway",
+     "nearbyPlace": "Marina",
+     "longitude": "-121.814282",
+     "latitude": "36.6666",
+     "elevation": "52",
+     "direction": "North",
+     "county": "Monterey",
+     "route": "SR-1",
+     "routeSuffix": "",
+     "postmilePrefix": "R",
+     "postmile": "84.27",
+     "alignment": "",
+     "milepost": "325.84"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/1atImjinPkwy.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr1imjinparkway/sr1imjinparkway.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr1imjinparkway/previous/sr1imjinparkway-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "115",
+    "recordTimestamp": {
+     "recordDate": "2022-09-30",
+     "recordTime": "17:20:52",
+     "recordEpoch": "1664583652"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-68 : Reservation Road / River Road",
+     "nearbyPlace": "Salinas",
+     "longitude": "-121.681065",
+     "latitude": "36.625539",
+     "elevation": "36",
+     "direction": "West",
+     "county": "Monterey",
+     "route": "SR-68",
+     "routeSuffix": "",
+     "postmilePrefix": "R",
+     "postmile": "17.26",
+     "alignment": "",
+     "milepost": "17.46"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/68atReservationRd_RiverRd.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr68reservationroadriverroad/sr68reservationroadriverroad.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr68reservationroadriverroad/previous/sr68reservationroadriverroad-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "108",
+    "recordTimestamp": {
+     "recordDate": "2022-10-21",
+     "recordTime": "07:45:27",
+     "recordEpoch": "1666363527"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-68 : York Road",
+     "nearbyPlace": "Monterey",
+     "longitude": "-121.808567",
+     "latitude": "36.571675",
+     "elevation": "196",
+     "direction": "West",
+     "county": "Monterey",
+     "route": "SR-68",
+     "routeSuffix": "",
+     "postmilePrefix": "",
+     "postmile": "8.14",
+     "alignment": "",
+     "milepost": "8.34"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/68atYorkRd.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr68yorkroad/sr68yorkroad.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr68yorkroad/previous/sr68yorkroad-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "29",
+    "recordTimestamp": {
+     "recordDate": "2022-09-02",
+     "recordTime": "07:56:43",
+     "recordEpoch": "1662130603"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-156 West : US-101",
+     "nearbyPlace": "Salinas",
+     "longitude": "-121.667956",
+     "latitude": "36.789334",
+     "elevation": "108",
+     "direction": "West",
+     "county": "Monterey",
+     "route": "SR-156",
+     "routeSuffix": "",
+     "postmilePrefix": "T",
+     "postmile": "5.19",
+     "alignment": "",
+     "milepost": "6.13"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/101at156WestPrunedale.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr156westus101/sr156westus101.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr156westus101/previous/sr156westus101-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "53",
+    "recordTimestamp": {
+     "recordDate": "2022-11-14",
+     "recordTime": "10:28:14",
+     "recordEpoch": "1668450494"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-183 : Salinas St",
+     "nearbyPlace": "Salinas",
+     "longitude": "-121.655766",
+     "latitude": "36.677438",
+     "elevation": "55",
+     "direction": "South",
+     "county": "Monterey",
+     "route": "SR-183",
+     "routeSuffix": "",
+     "postmilePrefix": "",
+     "postmile": "0.72",
+     "alignment": "",
+     "milepost": "0.72"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/183atMarketSt.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr183salinasst/sr183salinasst.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr183salinasst/previous/sr183salinasst-1.jpg"
+     }
+    }
+   }
+  },
+  {
+   "cctv": {
+    "index": "20",
+    "recordTimestamp": {
+     "recordDate": "2021-06-28",
+     "recordTime": "16:41:39",
+     "recordEpoch": "1624923699"
+    },
+    "location": {
+     "district": "5",
+     "locationName": "SR-1 : East of Morrissey Blvd",
+     "nearbyPlace": "Santa Cruz",
+     "longitude": "-121.998833",
+     "latitude": "36.98836",
+     "elevation": "101",
+     "direction": "North",
+     "county": "Santa Cruz",
+     "route": "SR-1",
+     "routeSuffix": "",
+     "postmilePrefix": "",
+     "postmile": "15.57",
+     "alignment": "",
+     "milepost": "357.97"
+    },
+    "inService": "true",
+    "imageData": {
+     "imageDescription": "",
+     "streamingVideoURL": "https://wzmedia.dot.ca.gov/D5/1atEastofMorriseyBlvd.stream/playlist.m3u8",
+     "static": {
+      "currentImageUpdateFrequency": "2",
+      "currentImageURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr1eastofmorrisseyblvd/sr1eastofmorrisseyblvd.jpg",
+      "referenceImageUpdateFrequency": "15",
+      "referenceImage1UpdateAgoURL": "https://cwwp2.dot.ca.gov/data/d5/cctv/image/sr1eastofmorrisseyblvd/previous/sr1eastofmorrisseyblvd-1.jpg"
+     }
+    }
+   }
+  }
+ ]
+}
