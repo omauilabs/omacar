@@ -342,14 +342,22 @@ class Elm:
             # line noise, and the handshake then fails on a link that was
             # perfectly capable.
             said = self.ser.read_until(b"\r")
-            self._heard("ATBRD OK", said, t)
             if b"OK" not in said.upper():
+                self._heard("ATBRD OK", said, t)
                 # It may still have switched on us -- see _settle().
                 trail["settled"] = self._settle(cur, target)
                 return False
+            self.ser.baudrate = target
+            # RECORDED AFTER THE SWITCH, NOT BEFORE IT. From the OK to the
+            # host's switch the adapter may already be sending its
+            # identification at the new rate, so nothing is added to that
+            # window: it holds exactly what it held before this record
+            # existed. So ATBRD's `ms` includes the host's switch, and the
+            # ident's starts after it. A switch that raises is reported at
+            # this step.
+            self._heard("ATBRD OK", said, t)
             trail["failed_at"] = "ident"
             t = time.time()
-            self.ser.baudrate = target
             said = self.ser.read_until(b"\r")
             self._heard("ident", said, t)
             ident = said.upper()

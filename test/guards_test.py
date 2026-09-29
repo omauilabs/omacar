@@ -2762,6 +2762,36 @@ _h.raise_baud(500000)
 check("the handshake writes exactly ATE0, ATBRD and the confirming CR",
       _writes, [b"ATE0\r", b"ATBRD 08\r", b"\r"])
 
+# NOR NEW TIME IN THE ONE WINDOW THAT MATTERS. Between reading ATBRD's OK and
+# switching the host's rate, the adapter may already be sending its
+# identification at the new rate -- that gap is one of the report's two
+# leading reasons the raise fails on the car. So the record of ATBRD's answer
+# is written after the switch, and the window holds what it always held.
+
+
+class _SwitchWatch(_HandshakeElm):
+    """Notes what the record held at the moment the host switched to 500000."""
+
+    def __setattr__(self, name, value):
+        owner = self.__dict__.get("owner")
+        if (name == "baudrate" and value == 500000 and owner is not None
+                and "at_switch" not in self.__dict__):
+            trail = getattr(owner, "fastbaud", None) or {}
+            self.__dict__["at_switch"] = (
+                [s.get("step") for s in trail.get("steps") or []],
+                trail.get("failed_at"))
+        object.__setattr__(self, name, value)
+
+
+_h = elm.Elm.__new__(elm.Elm)
+_h.ser = _SwitchWatch()
+_h.ser.owner = _h
+check("the watched handshake still raises", _h.raise_baud(500000), True)
+check("nothing is recorded between reading ATBRD's OK and the host's switch",
+      _h.ser.__dict__.get("at_switch"), (["echo-off"], "ATBRD OK"))
+check("ATBRD's answer is still recorded, just after the switch",
+      _said(_h, "ATBRD OK"), "OK\r")
+
 if _keep_env is None:
     os.environ.pop("OMACAR_FASTBAUD", None)
 else:
