@@ -23,12 +23,16 @@ pin() NEVER JUMPS THE LEVEL, because the jack drives the car's speakers and a
 jump startles the driver. It is a closed loop: every move is decided from a
 fresh read of the real sink, never from where pin() thinks it left it, and is
 re-read again immediately before it is made. It climbs at most 3 dB per
-100 ms, measured from the lowest real level the read allows. It sets a muted
-sink to a quiet floor before unmuting it, and it stops, saying so, when
-something else raises the level under it. It is single-flight (a second call
-returns `busy` and touches nothing), bounded in iterations and seconds, and
-it says `pinned: true` only on a read showing the target. The rules and the
-one window it cannot close are in _pin_locked()'s docstring.
+100 ms, measured from the lowest real level the read allows, and every step
+up is wpctl's own relative step (`wpctl set-volume -l <target> SINK <step>+`),
+so it adds to whatever the level is when wpctl applies it and never passes
+the target. It sets a muted sink to a quiet floor before unmuting it, reads
+again the moment it has unmuted, and re-mutes if something raised the level
+in between. It stops, saying so, when something else raises the level under
+it. It is single-flight (a second call returns `busy` and touches nothing),
+bounded in iterations and seconds, and it says `pinned: true` only on a read
+showing the target. The rules, and the windows it cannot close, are in
+_pin_locked()'s docstring.
 """
 
 import fcntl
@@ -43,12 +47,15 @@ import time
 SINK = "@DEFAULT_AUDIO_SINK@"
 
 # wpctl's volume knob is CUBIC: dB = 60*log10(v), v the number wpctl takes
-# (0..1 and a bit beyond). wpctl prints two decimals and pin() sets two, so a
-# read of v means a real level anywhere from v - READ_SLACK up.
+# (0..1 and a bit beyond). wpctl prints two decimals, and a relative step
+# lands wherever the level was plus the step, on the grid or not, so a read
+# of v means a real level anywhere from v - READ_SLACK up to v + READ_SLACK.
 TICK = 0.01
 READ_SLACK = TICK / 2
 # Each step aims for STEP_DB above the lowest real level the read allows, and
-# is never more than STEP_DB_MAX (the plan's ceiling) above it.
+# is never more than STEP_DB_MAX (the plan's ceiling) above it. Near the top
+# that makes the largest step 0.09 (from a read of 0.90, 0.91 or 0.92), which
+# is what bounds an outside drop landing just before a step (_pin_locked()).
 STEP_DB = 2.5
 STEP_DB_MAX = 3.0
 STEP_SECS = 0.1
@@ -158,33 +165,73 @@ def _read():
 
 
 def _set_volume(v):
+    """An absolute set: used only for the floor, while muted or from below
+    it, where no level it can land on is loud."""
     rc, _ = _run(["wpctl", "set-volume", SINK, f"{v:.2f}"], timeout=TOOL_TIMEOUT)
     return rc == 0
 
 
-def _heard_db(vol, muted):
+def _step(delta, target):
+    """wpctl's own relative step, as its help gives it: `VOL+` steps the
+    volume up by VOL, and `-l` "limits the final volume ... to below this
+    value". wpctl reads the level itself as it applies the set, adds
+    `delta`, and stops at `target`. `-l` is a set-volume option, so it goes
+    after the command (wpctl takes the command from argv[1]), as in
+    Hyprland's own `wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+`."""
+    rc, _ = _run(["wpctl", "set-volume", "-l", f"{target:.2f}", SINK, f"{delta:.2f}+"],
+                 timeout=TOOL_TIMEOUT)
+    return rc == 0
+
+
+def _mute(on):
+    rc, _ = _run(["wpctl", "set-mute", SINK, "1" if on else "0"], timeout=TOOL_TIMEOUT)
+    return rc == 0
+
+
+def _heard_db(vol, muted, slack=0.0):
     """The level a driver hears, for spotting a rise: muted, or anywhere
     below the floor, counts as the floor. So pin()'s own unmute and its own
     move up to the floor are not rises, and nothing that stays below the
-    floor is either."""
-    return FLOOR_DB if muted or vol < FLOOR_V else 60.0 * math.log10(vol)
+    floor is either. `slack` moves the read within the real levels it
+    allows (±READ_SLACK)."""
+    v = vol + slack
+    return FLOOR_DB if muted or v < FLOOR_V else 60.0 * math.log10(v)
+
+
+def _rose(before, after):
+    """True when the real level certainly rose more than STEP_DB_MAX between
+    two reads: from the highest level `before` allows to the lowest `after`
+    allows. Reads round, so read-to-read can overstate a step: a real 0.155
+    reads 0.15, and one 0.01 step later a real 0.165 reads 0.17, which looks
+    like 3.3 dB for a real 1.6. Judged this way, pin()'s own steps (at most
+    STEP_DB from the real level) can never trip it."""
+    return _heard_db(*after, -READ_SLACK) - _heard_db(*before, READ_SLACK) > STEP_DB_MAX + 1e-9
 
 
 def _step_up(vol, target):
-    """The next level from an unmuted read of `vol` (at or above the floor):
-    STEP_DB above the lowest real level that reads as `vol`, capped at the
-    target and rounded DOWN to two decimals, so rounding can only hold a step
-    back. If that rounds back onto `vol`, the next tick instead, when it is
-    within STEP_DB_MAX. None when no step is safe, which the floor above
+    """The relative step Δ for the next move from an unmuted read of `vol`
+    (at or above the floor), sent by _step() as `Δ+` under `-l target`.
+
+    Sized from the lowest real level that reads as `vol` (vol - READ_SLACK):
+    the rise that is STEP_DB above it, rounded DOWN to two decimals, so
+    rounding can only hold a step back; at least one tick, when that tick is
+    within STEP_DB_MAX of it; and never more than it takes to reach the
+    target from it (rounded up to the tick, which -l then stops at the
+    target). From any real level the read allows, the landing is at most
+    STEP_DB above it, because a higher start makes the same Δ a smaller
+    step. From a read above the target Δ is 0, and -l alone brings the
+    level down to the target. None when no step is safe, which the floor
     makes impossible from 0.13 up."""
-    low_db = 60.0 * math.log10(vol - READ_SLACK)
-    raw = min(target, 10 ** ((low_db + STEP_DB) / 60.0))
-    v = math.floor(raw * 100 + 1e-9) / 100.0
-    if v <= round(vol, 2) + 1e-9:
-        v = min(target, round(vol + TICK, 2))
-        if 60.0 * math.log10(v) - low_db > STEP_DB_MAX + 1e-9:
+    low = vol - READ_SLACK
+    need = target - low
+    if need <= 0:
+        return 0.0
+    d = math.floor(low * (10 ** (STEP_DB / 60.0) - 1) * 100 + 1e-9) / 100.0
+    if d < TICK - 1e-9:
+        d = TICK
+        if 60.0 * math.log10((low + d) / low) > STEP_DB_MAX + 1e-9:
             return None
-    return v
+    return min(d, math.ceil(need * 100 - 1e-9) / 100.0)
 
 
 def status():
@@ -207,44 +254,73 @@ def _pin_locked(target):
     1. Every move is decided from a fresh read of the real sink, never from
        where the last move meant to leave it. A failed read, or a failed
        set, sets nothing; the next iteration reads again.
-    2. Immediately before every set-volume and set-mute, the sink is read
+    2. Immediately before every set-volume and unmute, the sink is read
        again. If that read differs at all from the one the move was decided
        from, nothing is set, and the move is decided again from the new
        read. (The ruling allowed one 0.01 tick of slack. There is none,
        because only an outside actor changes the sink between two reads
-       milliseconds apart, and a step sized for the higher read can be over
-       3 dB from the lower one: 0.21 over a real 0.1851, which reads 0.19,
-       is 3.3 dB.)
-    3. Every read is checked against the one before it. A rise of more than
-       STEP_DB_MAX, in what a driver hears, is not pin()'s doing, because its
-       own steps are smaller. So pin() takes no further step, and returns
-       pinned: false saying an outside change interfered. It does not ramp
-       on from a level it did not set.
+       milliseconds apart, and a step is sized for the lowest level its
+       read allows, so from a lower level the same step is a bigger one.)
+    3. Every read is checked against the one before it (_rose()). A rise of
+       more than STEP_DB_MAX, in what a driver hears, judged from the
+       highest real level the earlier read allows to the lowest the later
+       one allows, is not pin()'s doing, because its own steps are at most
+       STEP_DB from the real level. So pin() takes no further step, and
+       returns pinned: false saying an outside change interfered. It does
+       not ramp on from a level it did not set, and it does not undo the
+       rise: the level stays where the outside change put it.
     4. Muted, the only move is to the floor, inaudibly. The unmute happens
        only when two reads in a row show muted at or below the floor.
-       Unmuted and below the floor, one step goes straight to it: nothing
-       down there is loud enough to startle anybody. From the floor up,
-       each step is _step_up(): at most STEP_DB_MAX above the lowest real
-       level the read allows, and STEP_SECS after the last audible move.
+       Unmuted and below the floor, one absolute set goes straight to it:
+       nothing down there is loud enough to startle anybody. From the floor
+       up, each step is wpctl's own relative step, _step(): Δ from
+       _step_up(), at most STEP_DB above the lowest real level the read
+       allows, never past the target, and STEP_SECS after the last move up.
     5. Bounded: MAX_ITERATIONS, no iteration starts after LAST_START_SECS,
-       no call starts after MAX_SECS, and every call has TOOL_TIMEOUT.
+       no call starts after MAX_SECS, and every call has TOOL_TIMEOUT. An
+       unmute starts only while there is room for the two calls (7) may
+       make after it, so those also start before MAX_SECS.
     6. pinned: true comes only from a read showing the target, unmuted.
+    7. The moment pin() has unmuted, it reads again. If the level is more
+       than STEP_DB_MAX above the floor, a rise landed between the read in
+       (2) and the unmute. If the read fails, nothing shows that it did
+       not. Either way pin() mutes again at once, rests, and goes round
+       from (1), which sets the floor again before the next unmute. If
+       that mute fails, pin() stops, not pinned, and says so.
 
-    THE WINDOW THIS CANNOT CLOSE. A window of milliseconds remains between
-    the read in (2) and the set that follows it: the reading wpctl
-    exiting, then the setting wpctl starting and connecting to PipeWire.
-    That is about one wpctl call, 9 ms median on the box; it has not been
-    measured on the tablet. An outside change landing exactly there -- a
-    volume key, or the headphone route restoring its own level -- is
-    overwritten by a set sized for the level before it. If that change
-    was a drop, the set is a jump. Closing the window would take a set
-    that applies only if the level is still what was read, a
-    compare-and-set, and wpctl has none: it takes a volume as a plain
-    value, so any read-then-set leaves this gap. (2) keeps the gap at
-    that minimum. No decision, sleep or other call ever sits between the
-    last read and the set. But (2) cannot make the gap shorter than one
-    call, and a single read followed at once by the set was already that
-    short. (3) catches any rise the gap lets through, at the next read.
+    THE WINDOWS THIS CANNOT CLOSE. wpctl has no compare-and-set. Every set
+    and every unmute is its own wpctl process, which starts, connects to
+    PipeWire and acts some milliseconds after the read in (2). That is
+    about one wpctl call: 9 ms median, 39.6 ms at most on the box, not
+    measured on the tablet. An outside change can land in that gap -- a
+    volume key, or the headphone route restoring its own level -- and (2)
+    cannot see it. (2) keeps each gap to that one call. No decision, sleep
+    or other call sits between the last read and the move.
+
+    Before a step up, the danger is a drop. A plain set would overwrite
+    the drop with a level sized for the read before it: a drop to 0.25
+    just before a set to 1.00 is +36.1 dB. A relative step is added to the
+    level wpctl finds instead, so the sink lands at most Δ above where the
+    drop left it, and never above the target. Δ is at most 0.09. So a drop
+    to the floor costs at most 0.13 -> 0.22, +13.7 dB (-53.2 to -39.5 dBFS),
+    and a drop to 0.25 costs 0.25 -> 0.34, +8.0 dB. Below the floor the
+    ratio is larger, but nothing lands louder than 0.22.
+    - What remains is inside wpctl itself. It learns the level when it
+      connects, and adds Δ to that. A drop between then and PipeWire
+      applying the set is still overwritten, by at most the target. That
+      window is a fraction of one call and has not been measured.
+    - pin() does not see any of this. The sink lands lower than the step
+      would have left it without the drop, so (3) does not fire.
+
+    Before the unmute, the danger is a rise on the still-muted sink. The
+    unmute exposes it. (7) detects it and cuts it short; it does not stop
+    it being heard. From the unmute landing to the re-mute landing is
+    about two wpctl calls: the read in (7), then the re-mute's own
+    start-up. That is ~18 ms at the box's median. For that time the level
+    is whatever the outside change set, up to full scale.
+
+    (3), likewise, only detects: a rise it sees between two reads has
+    already been heard.
     """
     start = _now()
     iterations = 0
@@ -271,7 +347,7 @@ def _pin_locked(target):
             _sleep(STEP_SECS)
 
     def outside_rise(reading):
-        return last is not None and _heard_db(*reading) - _heard_db(*last) > STEP_DB_MAX + 1e-9
+        return last is not None and _rose(last, reading)
 
     def interfered(reading):
         return dict(result(False, (
@@ -303,17 +379,17 @@ def _pin_locked(target):
 
         # (4) Decide the move.
         if muted:
-            move = ("unmute", None) if vol <= FLOOR_V + 1e-9 else ("set", FLOOR_V)
+            move = ("unmute", None) if vol <= FLOOR_V + 1e-9 else ("floor", FLOOR_V)
         elif vol < FLOOR_V - 1e-9:
-            move = ("set", FLOOR_V)
+            move = ("floor", FLOOR_V)
         elif abs(60.0 * math.log10(vol) - target_db) <= TARGET_TOL_DB:
             return result(True, None)                            # (6)
         else:
-            v_next = _step_up(vol, target)
-            if v_next is None:
+            delta = _step_up(vol, target)
+            if delta is None:
                 return result(False, f"stuck at {vol * 100:.0f}%: no step within "
                                      f"{STEP_DB_MAX:g} dB is available")
-            move = ("set", v_next)
+            move = ("step", delta)
 
         # (2) Read again, immediately before acting on it.
         if elapsed() >= MAX_SECS:
@@ -325,18 +401,33 @@ def _pin_locked(target):
         if outside_rise(check):                                  # (3)
             return interfered(check)
         last = check
-        if (round(check[0], 2), check[1]) != (round(vol, 2), muted):
+        if check != (vol, muted):
             carried = check
             continue
 
-        if elapsed() >= MAX_SECS:
+        # (5) An unmute needs room for the read and the mute (7) may follow it with.
+        if elapsed() >= MAX_SECS - (2 * TOOL_TIMEOUT if move[0] == "unmute" else 0):
             return short("ran out of time")
         if move[0] == "unmute":
-            _run(["wpctl", "set-mute", SINK, "0"], timeout=TOOL_TIMEOUT)
-        else:
+            _mute(False)
+            after = _read()                                      # (7)
+            if after[0] is None or _rose((FLOOR_V, True), after):
+                if not _mute(True):
+                    return dict(result(False, (
+                        "could not read the level straight after unmuting" if after[0] is None
+                        else f"an outside change interfered: the volume rose to "
+                             f"{after[0] * 100:.0f}% in the moment before pin() unmuted it")
+                        + ", and muting again failed, so the sink is unmuted there"),
+                        volume=after[0])
+                rest()
+                continue
+            last = after
+        elif move[0] == "floor":
             _set_volume(move[1])
             if muted:
                 continue          # inaudible while muted: re-read and confirm at once
+        else:
+            _step(move[1], target)
         rest()
 
 

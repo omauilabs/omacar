@@ -15,10 +15,13 @@ Every judgement is made against the fake sink's REAL state -- its level at
 full precision, and whether it is muted -- never against what pin() read or
 meant to set: a step is measured from the level the sink was really at when
 the set landed, and `pinned: true` is checked against the level the sink is
-really at afterwards. The numbers the rulings fixed (the 0.13 floor, 3 dB,
-100 ms, 40 iterations, 7 s, 8 s, the 1 s timeouts, 13 s for apply()) are
-written out here, not read from lib/audio.py, so changing one there fails a
-test rather than moving the goalposts with it.
+really at afterwards. The fake's set-volume is wpctl's: a relative `VOL+`
+is added to the level the sink is at when the set lands, `-l` stops it at
+the limit, and argv wpctl would refuse is refused. The numbers the rulings
+fixed (the 0.13 floor, 3 dB, 100 ms, 40 iterations, 7 s, 8 s, the 1 s
+timeouts, 13 s for apply(), the largest step of 0.09) are written out here,
+not read from lib/audio.py, so changing one there fails a test rather than
+moving the goalposts with it.
 """
 
 import json
@@ -59,6 +62,12 @@ MAX_SECS = 8.0
 TOOL_TIMEOUT = 1.0
 APPLY_WORST = 13.0           # 3 s status() + 9 s pin() + 1 s read after
 PAGE_MARGIN = 2.0            # what the page's abort must leave over that
+# The largest relative step: 2.5 dB above the lowest real level a read
+# allows, rounded down to 0.01, and no more than it takes to reach 1.00 from
+# there. That is 0.09, from reads of 0.90, 0.91 and 0.92. So an outside drop
+# to the floor just before a step lands at most 0.13 + 0.09 = 0.22.
+DELTA_MAX = 0.09
+GAP_WORST_DB = 60.0 * math.log10((FLOOR + DELTA_MAX) / FLOOR)     # 13.71 dB
 
 fails = 0
 
@@ -121,27 +130,81 @@ check("an unknown default sink is unknown, never AUX", audio.port_of(SINKS, "oth
 # Outside changes, the things pin() has to survive: `external_at_sleep`
 # ({sleep number: (vol, muted), or a function of (vol, muted)}) lands during
 # one of pin()'s own sleeps; `after_get` (a function of the sink and the read
-# it just served) lands right after a read, before pin()'s next call.
+# it just served) lands right after a read, before pin()'s next call;
+# `before_move` (a function of the sink and the argv) lands inside a
+# set-volume or set-mute call, just before it applies -- the gap between
+# pin()'s last read and wpctl acting, which pin() cannot see.
+#
+# set-volume is wpctl 0.5.17's, as its `set-volume --help` gives it and its
+# source (src/tools/wpctl.c) does it:
+#   - the command is argv[1] (wpctl finds it there, so an option before it
+#     is refused);
+#   - the command's options, `-l/--limit VALUE`, may sit after it;
+#   - what is left must be ID and VOL[%][-/+];
+#   - `VOL+` / `VOL-` step up/down from the level the sink is at when the
+#     set lands, `VOL` sets it, a result below 0 is 0, and with -l a result
+#     above the limit is the limit.
+# (wpctl reads VOL with strtof, single precision; this reads it as a double.
+# The difference is under 1e-8, below anything measured here.) `decimals` is
+# how many places get-volume prints: 2, as wpctl does, unless a case needs
+# to tell apart levels wpctl itself would print alike.
+WPCTL_COMMANDS = ("status", "list", "get-volume", "inspect", "set-default", "set-volume",
+                  "set-mute", "set-profile", "set-route", "clear-default", "settings",
+                  "set-log-level", "reset")
+WPCTL_VOL = re.compile(r"^(\d*\.?\d*)(%?)([-+]?)$")
+
+
+def wpctl_set_volume_args(args):
+    """(relative, value, limit) from a set-volume argv, parsed the way
+    wpctl 0.5.17 parses it, or None where wpctl would refuse it."""
+    rest, limit = [], 0.0
+    it = iter(args[2:])
+    for a in it:
+        if a in ("-l", "--limit"):
+            try:
+                limit = float(next(it))
+            except (StopIteration, ValueError):
+                return None
+        elif a.startswith("-") and len(a) > 1:
+            return None                  # an option wpctl does not have (or -p, never used)
+        else:
+            rest.append(a)
+    m = WPCTL_VOL.match(rest[1]) if len(rest) == 2 else None
+    if not m or not m.group(1):
+        return None
+    value = float(m.group(1)) / (100 if m.group(2) else 1)
+    return m.group(3) != "", (-value if m.group(3) == "-" else value), limit
+
+
 class FakeSink:
     def __init__(self, vol=0.25, muted=False, *, fail_sets=(), fail_set_if=None,
-                 get_fail=(), get_fail_always=False, external_at_sleep=None,
-                 after_get=None, call_secs=0.0, lock=None):
+                 fail_mute_if=None, get_fail=(), get_fail_always=False, fail_get_if=None,
+                 external_at_sleep=None, after_get=None, before_move=None,
+                 call_secs=0.0, decimals=2, lock=None):
         self.vol = vol
         self.muted = muted
         self.log = []
         self.t = 0.0
         self.fail_sets = set(fail_sets)        # 1-based set-volume numbers that fail
-        self.fail_set_if = fail_set_if         # or a function of (sink, requested level)
+        self.fail_set_if = fail_set_if         # or a function of (sink, level it would land at)
+        self.fail_mute_if = fail_mute_if       # a function of (sink, "0"|"1")
         self.get_fail = set(get_fail)          # 1-based get-volume numbers that fail
         self.get_fail_always = get_fail_always
+        self.fail_get_if = fail_get_if         # or a function of the sink
         self.external_at_sleep = external_at_sleep or {}
         self.after_get = after_get
+        self.before_move = before_move
         self.call_secs = call_secs
+        self.decimals = decimals
         self.sets = self.gets = self.sleeps = 0
         self._lock = lock or threading.Lock()
 
     def now(self):
         return self.t
+
+    def show(self):
+        """The level as get-volume prints it."""
+        return f"{self.vol:.{self.decimals}f}"
 
     def outside(self, vol, muted):
         self.vol, self.muted = vol, muted
@@ -153,13 +216,18 @@ class FakeSink:
             limit = 60.0 if timeout is None else timeout
             hung = self.call_secs >= limit
             self.t += limit if hung else self.call_secs
+            if args[0] == "wpctl" and (len(args) < 2 or args[1] not in WPCTL_COMMANDS):
+                e["kind"] = "refused"
+                self.log.append(e)
+                return 1, ""
             if args[:2] == ["wpctl", "get-volume"]:
                 self.gets += 1
-                if hung or self.get_fail_always or self.gets in self.get_fail:
+                if (hung or self.get_fail_always or self.gets in self.get_fail
+                        or (self.fail_get_if and self.fail_get_if(self))):
                     e["kind"] = "get-fail"
                     self.log.append(e)
                     return (127 if hung else 1), ""
-                shown = f"{self.vol:.2f}"
+                shown = self.show()
                 out = f"Volume: {shown}{' [MUTED]' if self.muted else ''}\n"
                 e.update(kind="get", vol=self.vol, muted=self.muted, shown=float(shown))
                 self.log.append(e)
@@ -167,21 +235,39 @@ class FakeSink:
                     self.after_get(self, e)      # lands after this read, before the next call
                 return 0, out
             if args[:2] == ["wpctl", "set-volume"]:
+                parsed = wpctl_set_volume_args(args)
+                if parsed is None:
+                    e["kind"] = "refused"
+                    self.log.append(e)
+                    return 1, ""
                 self.sets += 1
-                req = float(args[3])
+                rel, value, cap = parsed
+                if self.before_move:
+                    self.before_move(self, args)  # lands in the gap, before the set applies
+                land = max(0.0, self.vol + value if rel else value)
+                if cap > 0 and land > cap:
+                    land = cap
                 good = (not hung and self.sets not in self.fail_sets
-                        and not (self.fail_set_if and self.fail_set_if(self, req)))
-                e.update(kind="set", req=req, ok=good, before=self.vol, before_muted=self.muted)
+                        and not (self.fail_set_if and self.fail_set_if(self, land)))
+                e.update(kind="set", rel=rel, value=value, cap=cap or None, req=land, ok=good,
+                         before=self.vol, before_muted=self.muted)
                 if good:
-                    self.vol = req
+                    self.vol = land
                 self.log.append(e)
                 return (0, "") if good else ((127 if hung else 1), "")
             if args[:2] == ["wpctl", "set-mute"]:
-                e.update(kind="mute", ok=not hung, before=self.vol, before_muted=self.muted)
-                if not hung:
-                    self.muted = args[3] != "0"
+                if len(args) != 4 or args[3] not in ("0", "1", "toggle"):
+                    e["kind"] = "refused"
+                    self.log.append(e)
+                    return 1, ""
+                if self.before_move:
+                    self.before_move(self, args)
+                good = not hung and not (self.fail_mute_if and self.fail_mute_if(self, args[3]))
+                e.update(kind="mute", ok=good, before=self.vol, before_muted=self.muted)
+                if good:
+                    self.muted = (not self.muted) if args[3] == "toggle" else args[3] == "1"
                 self.log.append(e)
-                return (0, "") if not hung else (127, "")
+                return (0, "") if good else ((127 if hung else 1), "")
             e["kind"] = "other"
             self.log.append(e)
             if hung:
@@ -229,11 +315,12 @@ def audible_steps(sink):
     """Every set-volume that landed while the sink was really unmuted,
     measured from the sink's REAL level just before it -- not from what
     pin() read, and not from what it meant to set. `floor_jump` marks the
-    one step the rulings exempt from the 3 dB ceiling: from below the floor
-    to exactly the floor, where nothing is loud enough to startle anybody."""
-    return [{"t": e["t"], "before": e["before"], "after": e["req"],
+    one step the rulings exempt from the 3 dB ceiling: an absolute set from
+    below the floor to exactly the floor, where nothing is loud enough to
+    startle anybody."""
+    return [{"t": e["t"], "before": e["before"], "after": e["req"], "rel": e["rel"],
              "delta_db": _db(e["req"]) - _db(e["before"]),
-             "floor_jump": e["req"] == FLOOR and e["before"] < FLOOR}
+             "floor_jump": not e["rel"] and e["req"] == FLOOR and e["before"] < FLOOR}
             for e in sink.log if e["kind"] == "set" and e["ok"] and not e["before_muted"]]
 
 
@@ -253,30 +340,39 @@ def steps_ok(steps):
     return all(s["delta_db"] <= MAX_STEP_DB + 1e-6 for s in steps)
 
 
+def is_unmute(e):
+    return e["kind"] == "mute" and e["args"][3] == "0"
+
+
+def is_up_move(e):
+    """A call that can make the sink louder: any set-volume, or an unmute.
+    A mute only ever silences it, so pin() may mute on less than two reads."""
+    return e["kind"] == "set" or is_unmute(e)
+
+
 def unmutes(sink):
     """The sink's REAL level at every unmute."""
-    return [e["before"] for e in sink.log if e["kind"] == "mute" and e["args"][3] == "0"]
+    return [e["before"] for e in sink.log if is_unmute(e)]
 
 
 def gaps_ok(sink):
-    """Every call that can change what is heard -- an unmute, or a
-    set-volume while the sink is really unmuted, landed or not -- comes at
-    least 100 ms after the last one. A set made while muted is inaudible."""
+    """Every call that can make it louder -- an unmute, or a set-volume while
+    the sink is really unmuted, landed or not -- comes at least 100 ms after
+    the last one. A set made while muted is inaudible, and a mute is quieter."""
     times = [e["t"] for e in sink.log
-             if (e["kind"] == "mute" or (e["kind"] == "set" and not e["before_muted"]))]
+             if is_unmute(e) or (e["kind"] == "set" and not e["before_muted"])]
     return all(b - a >= MIN_GAP - 1e-9 for a, b in zip(times, times[1:]))
 
 
 def unread_moves(sink):
-    """Every set-volume or set-mute NOT made on the strength of two
-    successful reads in a row, showing the same thing, the second one
-    immediately before it. Empty is right: nothing is ever set after a
-    failed read, on a remembered level, or on a read something else has
-    since overtaken."""
+    """Every set-volume or unmute NOT made on the strength of two successful
+    reads in a row, showing the same thing, the second one immediately
+    before it. Empty is right: nothing is ever set after a failed read, on a
+    remembered level, or on a read something else has since overtaken."""
     cs = calls(sink)
     bad_at = []
     for i, e in enumerate(cs):
-        if e["kind"] in ("set", "mute"):
+        if is_up_move(e):
             a, b = (cs[i - 2], cs[i - 1]) if i >= 2 else (None, None)
             if not (a and a["kind"] == "get" and b["kind"] == "get"
                     and (a["shown"], a["muted"]) == (b["shown"], b["muted"])):
@@ -287,7 +383,22 @@ def unread_moves(sink):
 def moves_after_failed_read(sink):
     cs = calls(sink)
     return [(i, e["kind"]) for i, e in enumerate(cs)
-            if e["kind"] in ("set", "mute") and i > 0 and cs[i - 1]["kind"] == "get-fail"]
+            if is_up_move(e) and i > 0 and cs[i - 1]["kind"] == "get-fail"]
+
+
+def refused(sink):
+    """Calls wpctl itself would have refused: a wrong argv."""
+    return [e["args"] for e in sink.log if e["kind"] == "refused"]
+
+
+def steps_not_relative(sink):
+    """Every set-volume made on an unmuted sink from at or above the floor
+    must be wpctl's relative step under -l 1.00; only the floor itself (from
+    below it, or while muted) is an absolute set."""
+    return [(e["args"][2:], e["before"]) for e in sink.log
+            if e["kind"] == "set" and not e["before_muted"] and e["before"] >= FLOOR
+            and not (e["rel"] and e["value"] >= 0 and e["cap"] == 1.0)
+            and not (not e["rel"] and e["req"] == FLOOR)]
 
 
 def honest(result, sink, target=1.0):
@@ -296,7 +407,7 @@ def honest(result, sink, target=1.0):
     against the fake sink's own state, never against the result's claim."""
     if not result.get("pinned"):
         return True
-    shown = float(f"{sink.vol:.2f}")
+    shown = float(sink.show())
     return (not sink.muted and abs(_db(shown) - _db(target)) <= 0.1 + 1e-9
             and result.get("volume") == shown)
 
@@ -322,10 +433,40 @@ def ramp_checks(name, sink, result, *, pinned=True):
     check(f"{name}: audible moves are >= 100 ms apart", gaps_ok(sink), True)
     check(f"{name}: every move was made on two matching reads, the second "
           "immediately before it", few(unread_moves(sink)), (0, []))
+    check(f"{name}: every step from the floor up is wpctl's relative step under -l 1.00, "
+          "and wpctl would have taken every call", (few(steps_not_relative(sink)), refused(sink)),
+          ((0, []), []))
 
 
 head("the floor is the ruled 0.13 (-53.2 dB)")
 check("FLOOR_V", audio.FLOOR_V, FLOOR)
+
+
+head("the fake's set-volume is wpctl 0.5.17's: relative steps, -l, and its argv")
+# One sink, the calls in turn: each starts from where the one before left it.
+_w = FakeSink(vol=0.50)
+for argv, want in (
+        (["wpctl", "set-volume", "-l", "1.00", "@DEFAULT_AUDIO_SINK@", "0.09+"], 0.59),
+        (["wpctl", "set-volume", "-l", "1.00", "@DEFAULT_AUDIO_SINK@", "0.60+"], 1.0),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.60+"], 1.6),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.20-"], 1.4),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-"], 1.35),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "2-"], 0.0),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.40"], 0.40),
+        (["wpctl", "set-volume", "-l", "0.30", "@DEFAULT_AUDIO_SINK@", "0.40"], 0.30),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.30+", "-l", "0.45"], 0.45),
+        (["wpctl", "-l", "1.00", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.10+"], "refused"),
+        (["wpctl", "set-volume", "-l", "1.00", "0.10+", "@DEFAULT_AUDIO_SINK@"], "refused"),
+        (["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@"], "refused")):
+    _rc, _ = _w.run(argv, 1)
+    got = "refused" if _w.log[-1]["kind"] == "refused" else round(_w.vol, 4)
+    check(f"{' '.join(argv[1:])}: {want}", (got, _rc == 0), (want, want != "refused"))
+_cap = []
+_c = FakeSink(vol=0.91, before_move=lambda s, a: _cap.append(list(a)))
+use(_c)
+audio._step(audio._step_up(0.91, 1.0), 1.0)
+check("pin()'s step is sent in that order: the command, -l and the target, the sink, then Δ+",
+      _cap, [["wpctl", "set-volume", "-l", "1.00", "@DEFAULT_AUDIO_SINK@", "0.09+"]])
 
 
 head("apply() touches the volume only where it was asked to")
@@ -407,19 +548,27 @@ check("E: both outside changes happened",
       len([e for e in sinkE.log if e["kind"] == "outside"]), 2)
 
 
-head("H, I, J: from below the floor -- one jump to the floor, then an ordinary ramp")
-for name, start, first_read in (("H", 0.05, 0.05), ("I", 0.01, 0.01),
-                                ("J", 0.0051, 0.01)):
-    sinkX = FakeSink(vol=start)
+head("H, I, J, J0: from below the floor -- one jump to the floor, then an ordinary ramp")
+# J0 starts at exactly 0.002. wpctl prints that as 0.00, the same text as C,
+# so J0's fake prints three decimals: its read shows 0.002, and pin() has to
+# act on a level that is not zero.
+readsJ0 = None
+for name, start, first_read, places in (("H", 0.05, 0.05, 2), ("I", 0.01, 0.01, 2),
+                                        ("J", 0.0051, 0.01, 2), ("J0", 0.002, 0.002, 3)):
+    sinkX = FakeSink(vol=start, decimals=places)
     resultX = drive(sinkX)
     ramp_checks(name, sinkX, resultX)
     check(f"{name}: exactly one floor-jump, from the real {start} to the floor",
           [(s["before"], s["after"]) for s in floor_jumps(sinkX)], [(start, FLOOR)])
     check(f"{name}: its first read shows {first_read}", reads(sinkX)[0]["shown"], first_read)
+    if name == "J0":
+        readsJ0 = reads(sinkX)
 check("J is not C: C's first read shows 0.00, J's 0.01 -- 0.0051 is the quietest "
       "level wpctl prints as non-zero",
       (reads(sinkC)[0]["shown"], FakeSink(vol=0.0051).run(["wpctl", "get-volume", "x"], 1)[1]),
       (0.0, "Volume: 0.01\n"))
+check("J0 is not C either: J0's first read shows 0.002, not 0.00",
+      (readsJ0[0]["shown"] if readsJ0 else None, reads(sinkC)[0]["shown"]), (0.002, 0.0))
 
 
 head("K: off the 0.01 grid -- a read can hide up to 0.005 below it, so steps are "
@@ -488,7 +637,7 @@ ramp_checks("L", sinkL, resultL)
 
 
 head("L2: a ONE-TICK drop between those reads also stops the set -- the step "
-     "was sized for the higher read (0.21 over a real 0.1851 would be 3.3 dB)")
+     "was sized for the higher read, so it is decided again from the lower one")
 ticked = []
 
 
@@ -500,8 +649,11 @@ def tick_down(sink, e):
 
 sinkL2 = FakeSink(vol=0.20, after_get=tick_down)
 resultL2 = drive(sinkL2)
-check("L2: nothing was set to 0.21 while the sink was really at 0.1851",
-      [e["req"] for e in sinkL2.log if e["kind"] == "set" and e["before"] == 0.1851], [0.2])
+setsL2 = [e for e in sinkL2.log if e["kind"] == "set" and e["before"] == 0.1851]
+check("L2: the one step taken from the real 0.1851 was made on two reads showing 0.19, "
+      "and was 0.01, landing at 0.1951",
+      ([reads_before(sinkL2, e) for e in setsL2], [(e["value"], round(e["req"], 4)) for e in setsL2]),
+      ([[0.19, 0.19]], [(0.01, 0.1951)]))
 ramp_checks("L2", sinkL2, resultL2)
 
 
@@ -522,6 +674,178 @@ check("M: the rise happened", len(raised), 1)
 check("M: it unmuted exactly once, with the sink really at the floor",
       unmutes(sinkM), [FLOOR])
 ramp_checks("M", sinkM, resultM)
+
+
+head("W: an outside DROP inside the gap no read can see -- after pin()'s last read, "
+     "just before wpctl applies the step. The step is added to the dropped level: "
+     f"at most {DELTA_MAX} above it, never above 1.00 (a drop to the floor: at most "
+     f"+{GAP_WORST_DB:.2f} dB)")
+
+
+def gap_run(start, to=None, rise=None):
+    """pin() from `start`, with one outside change landing inside the first
+    step's own call -- the first set-volume on the unmuted sink from the
+    floor up, however it is written -- before it applies: a drop to `to`, or
+    a rise to `rise`. Returns the sink, the result, and that step's log
+    entry (None if no such step was made)."""
+    hit = []
+
+    def hook(sink, args):
+        if not hit and args[1] == "set-volume" and not sink.muted and sink.vol >= FLOOR - 1e-9:
+            hit.append(len(sink.log))
+            sink.outside(to if rise is None else rise, False)
+
+    sink = FakeSink(vol=start, before_move=hook)
+    result = drive(sink)
+    step = next((e for e in sink.log[hit[0]:] if e["kind"] == "set"), None) if hit else None
+    return sink, result, step
+
+
+gap_bad = []
+gap_worst = {}                  # drop level -> (worst landing - drop, worst dB, from start)
+biggest = 0.0
+for i in range(13, 100):
+    start = i / 100
+    for to in (FLOOR, 0.25, 0.05, 0.0):
+        if to >= start:
+            continue            # not a drop
+        sinkP, resultP, stepP = gap_run(start, to)
+        if stepP is None:
+            gap_bad.append((start, to, "no step in the gap"))
+            continue
+        rise = stepP["req"] - to
+        rise_db = _db(stepP["req"]) - _db(to) if to > 0 else float("inf")
+        biggest = max(biggest, stepP["value"] if stepP["rel"] else 0.0)
+        if rise > gap_worst.get(to, (-1,))[0]:
+            gap_worst[to] = (rise, rise_db, start)
+        others = [{"delta_db": _db(e["req"]) - _db(e["before"])} for e in sinkP.log
+                  if e is not stepP and e["kind"] == "set" and e["ok"] and not e["before_muted"]
+                  and not (not e["rel"] and e["req"] == FLOOR and e["before"] < FLOOR)]
+        problems = [what for what, good in (
+            (f"more than {DELTA_MAX} above the dropped level", rise <= DELTA_MAX + 1e-9),
+            ("above 1.00", stepP["req"] <= 1.0 + 1e-12),
+            (f"more than {GAP_WORST_DB:.2f} dB over a drop to the floor or above",
+             to < FLOOR or rise_db <= GAP_WORST_DB + 1e-9),
+            ("not pinned afterwards, or not honestly",
+             resultP["pinned"] and honest(resultP, sinkP)),
+            ("another step over 3.0 dB", steps_ok(others)),
+            ("a move not made on two matching reads", not unread_moves(sinkP)),
+            ("a call wpctl would refuse", not refused(sinkP))) if not good]
+        if problems:
+            gap_bad.append((start, to, problems))
+check(f"W: from every read 0.13-0.99, a drop to 0.13, 0.25, 0.05 or 0.00 just before the "
+      f"step: it lands at most {DELTA_MAX} above the drop and never above 1.00, then pins "
+      "honestly", few(gap_bad), (0, []))
+check(f"W: and the largest step any read makes is exactly {DELTA_MAX}, so that bound is "
+      "reached, not just respected", biggest, DELTA_MAX)
+worst_floor = gap_worst.get(FLOOR, (0, 0, None))
+check(f"W: the worst drop to the floor: 0.13 -> {FLOOR + worst_floor[0]:.2f}, "
+      f"+{worst_floor[1]:.2f} dB (from a read of {worst_floor[2]}), which is the computed "
+      f"+{GAP_WORST_DB:.2f} dB", round(worst_floor[1], 6), round(GAP_WORST_DB, 6))
+sinkP1, resultP1, stepP1 = gap_run(0.91, 0.25)
+check("W1: the re-review's probe -- a read of 0.91, then a drop to 0.25 in the gap: "
+      "0.25 -> 0.34, +8.0 dB (a plain set to 1.00 there was +36.1 dB)",
+      (round(stepP1["req"], 4), round(_db(stepP1["req"]) - _db(0.25), 1)) if stepP1 else None,
+      (0.34, 8.0))
+sinkP3 = FakeSink(vol=1.20)
+resultP3 = drive(sinkP3)
+check("W2: from 120%, above the target: one step of 0.00+ under -l 1.00 brings it to "
+      "exactly 1.00, and pins",
+      ([(e["args"][2:], e["req"]) for e in sinkP3.log if e["kind"] == "set"], resultP3["pinned"],
+       honest(resultP3, sinkP3)),
+      ([(["-l", "1.00", "@DEFAULT_AUDIO_SINK@", "0.00+"], 1.0)], True, True))
+sinkP4, resultP4, stepP4 = gap_run(1.20, 0.25)
+check("W3: and a drop to 0.25 in that step's gap stays at 0.25 -- nothing is added -- "
+      "then it ramps from there and pins honestly",
+      (stepP4 and (stepP4["before"], stepP4["req"]), resultP4["pinned"], honest(resultP4, sinkP4),
+       steps_ok(ramp_steps(sinkP4))),
+      ((0.25, 0.25), True, True, True))
+sinkP2, resultP2, stepP2 = gap_run(0.50, rise=0.98)
+check("W4: a RISE to 0.98 in the same gap: the step stops at 1.00, not 1.03, and pin() "
+      "then stops, not pinned, naming the outside change",
+      (stepP2 and stepP2["req"], resultP2["pinned"], "outside change" in (resultP2["error"] or "")),
+      (1.0, False, True))
+
+
+head("S: an outside RISE while muted, inside the gap before the unmute -- pin() reads "
+     "straight after unmuting, mutes again, and starts over from the floor")
+BOX_CALL = 0.009                 # the box's median wpctl call
+
+
+def rise_before_first_unmute(to):
+    done = []
+
+    def hook(sink, args):
+        if not done and args[1] == "set-mute" and args[3] == "0":
+            done.append(1)
+            sink.outside(to, True)
+    return hook
+
+
+def after_first_unmute(sink):
+    """The calls straight after the first unmute, and the time from that
+    unmute to the first mute after it."""
+    cs = calls(sink)
+    i = next((k for k, e in enumerate(cs) if is_unmute(e)), len(cs))
+    j = next((k for k in range(i + 1, len(cs))
+              if cs[k]["kind"] == "mute" and cs[k]["args"][3] == "1"), None)
+    return i, cs, (None if j is None else cs[j]["t"] - cs[i]["t"])
+
+
+sinkS = FakeSink(vol=1.0, muted=True, before_move=rise_before_first_unmute(1.0),
+                 call_secs=BOX_CALL)
+resultS = drive(sinkS)
+iS, csS, exposedS = after_first_unmute(sinkS)
+check("S: the first unmute exposed the outside 1.00; the second came with the sink at the floor",
+      unmutes(sinkS), [1.0, FLOOR])
+check("S: straight after that unmute: one read (showing 1.00 unmuted), then the mute",
+      [(c["kind"], c.get("shown"), c.get("muted"), c["args"][3] if c["kind"] == "mute" else None)
+       for c in csS[iS + 1:iS + 3]],
+      [("get", 1.0, False, None), ("mute", None, None, "1")])
+check(f"S: heard for two wpctl calls -- the read, then the mute's own start-up -- "
+      f"{2 * BOX_CALL * 1000:.0f} ms at the box's median", round(exposedS or -1, 9),
+      round(2 * BOX_CALL, 9))
+ramp_checks("S", sinkS, resultS)
+
+sinkS2 = FakeSink(vol=1.0, muted=True, before_move=rise_before_first_unmute(1.0),
+                  fail_mute_if=lambda s, v: v == "1")
+resultS2 = drive(sinkS2)
+iS2, csS2, _ = after_first_unmute(sinkS2)
+check("S2: the mute after it fails: not pinned, says so, reports what the sink shows, "
+      "and moves nothing after",
+      (resultS2["pinned"], "muting again failed" in (resultS2["error"] or ""),
+       resultS2["volume"], sinkS2.muted, [c["kind"] for c in csS2[iS2 + 1:]]),
+      (False, True, 1.0, False, ["get", "mute"]))
+
+failed_after = []
+
+
+def fail_read_after_unmute(sink):
+    last = next((e for e in reversed(sink.log) if e["kind"] != "outside"), None)
+    if not failed_after and last is not None and is_unmute(last):
+        failed_after.append(1)
+        return True
+    return False
+
+
+sinkS3 = FakeSink(vol=1.0, muted=True, fail_get_if=fail_read_after_unmute)
+resultS3 = drive(sinkS3)
+iS3, csS3, _ = after_first_unmute(sinkS3)
+check("S3: the read straight after the unmute fails: nothing shows the level is safe, so it "
+      "mutes again, then unmutes at the floor once more",
+      ([c["kind"] for c in csS3[iS3 + 1:iS3 + 3]], unmutes(sinkS3)),
+      (["get-fail", "mute"], [FLOOR, FLOOR]))
+ramp_checks("S3", sinkS3, resultS3)
+
+
+head("U: MUTED part-way up (0.60, 0.14) -- the floor comes before the unmute from "
+     "any level, not only from 100%")
+for start in (0.60, 0.14):
+    sinkU = FakeSink(vol=start, muted=True)
+    resultU = drive(sinkU)
+    check(f"U {start}: unmuted exactly once, with the sink really at the floor (0.13) -- "
+          "never above it", unmutes(sinkU), [FLOOR])
+    ramp_checks(f"U {start}", sinkU, resultU)
 
 
 head("N: an outside RISE of more than 3 dB -- pin() takes no further step, and "
@@ -610,32 +934,38 @@ head("T: the time bounds -- with slow or hung wpctl, no iteration starts after "
 
 def decision_starts(sink):
     """When each iteration's first call began: a read that follows a sleep,
-    a set, a mute, or nothing."""
+    a set, a mute, or nothing -- but not the read straight after an unmute,
+    which belongs to the unmute's own iteration."""
     cs = calls(sink)
     return [e["t"] for i, e in enumerate(cs)
             if e["kind"] in ("get", "get-fail")
-            and (i == 0 or cs[i - 1]["kind"] in ("sleep", "set", "mute"))]
+            and (i == 0 or (cs[i - 1]["kind"] in ("sleep", "set", "mute")
+                            and not is_unmute(cs[i - 1])))]
 
 
-for secs in (float("inf"), 0.99, 0.7, 0.5, 0.3):
-    for start_vol, start_muted in ((0.25, False), (1.0, True)):
-        sinkT = FakeSink(vol=start_vol, muted=start_muted, call_secs=secs)
-        resultT = drive(sinkT)
-        tool_calls = [e for e in calls(sinkT) if e["kind"] != "sleep"]
-        label = f"T: {'hung' if secs == float('inf') else f'{secs} s'} wpctl, from " \
-                f"{start_vol}{' muted' if start_muted else ''}"
-        problems = [what for what, good in (
-            ("ended after 9 s", sinkT.t <= MAX_SECS + TOOL_TIMEOUT + 1e-9),
-            ("an iteration started at 7 s or later",
-             all(t < LAST_START for t in decision_starts(sinkT))),
-            ("a call started at 8 s or later", all(e["t"] < MAX_SECS for e in tool_calls)),
-            ("a call without a 1 s timeout",
-             all(e["timeout"] is not None and e["timeout"] <= TOOL_TIMEOUT for e in tool_calls)),
-            ("claimed pinned", not resultT["pinned"]),
-            ("a step over 3.0 dB", steps_ok(ramp_steps(sinkT)))) if not good]
-        check(f"{label}: took {sinkT.t:.2f} s -- ends by 9 s, no iteration starts at 7 s "
-              f"or later, no call at 8 s or later, every call has a 1 s timeout, not "
-              f"pinned", problems, [])
+# The last case puts the unmute's check read at 7.13 s: an unmute then would
+# start past 7 s, and the read and the mute it can bring would start past 8 s.
+T_CASES = [(secs, vol, muted, ()) for secs in (float("inf"), 0.99, 0.7, 0.5, 0.3)
+           for vol, muted in ((0.25, False), (1.0, True))] + [(0.99, 1.0, True, (1, 2))]
+for secs, start_vol, start_muted, get_fail in T_CASES:
+    sinkT = FakeSink(vol=start_vol, muted=start_muted, call_secs=secs, get_fail=get_fail)
+    resultT = drive(sinkT)
+    tool_calls = [e for e in calls(sinkT) if e["kind"] != "sleep"]
+    label = f"T: {'hung' if secs == float('inf') else f'{secs} s'} wpctl, from " \
+            f"{start_vol}{' muted' if start_muted else ''}" \
+            f"{', the first two reads failing' if get_fail else ''}"
+    problems = [what for what, good in (
+        ("ended after 9 s", sinkT.t <= MAX_SECS + TOOL_TIMEOUT + 1e-9),
+        ("an iteration started at 7 s or later",
+         all(t < LAST_START for t in decision_starts(sinkT))),
+        ("a call started at 8 s or later", all(e["t"] < MAX_SECS for e in tool_calls)),
+        ("a call without a 1 s timeout",
+         all(e["timeout"] is not None and e["timeout"] <= TOOL_TIMEOUT for e in tool_calls)),
+        ("claimed pinned", not resultT["pinned"]),
+        ("a step over 3.0 dB", steps_ok(ramp_steps(sinkT)))) if not good]
+    check(f"{label}: took {sinkT.t:.2f} s -- ends by 9 s, no iteration starts at 7 s "
+          f"or later, no call at 8 s or later, every call has a 1 s timeout, not "
+          f"pinned", problems, [])
 
 
 head("V: apply() fits inside the page's abort, with slow or hung tools")
