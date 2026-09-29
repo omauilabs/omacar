@@ -70,11 +70,14 @@ export function gateOf(sample, cfg) {
            parked: live && kph === 0 };
 }
 
-// The status chip, in the spec's four words. Simulated driving is "Off":
-// drowsy mode ignores it.
+// The status chip, in the spec's words. Simulated driving is "Off": drowsy
+// mode ignores it. "Paused · parked" is only a car that said 0 km/h; a
+// dropped link, an unreadable speed or no sample at all is "Paused · no car
+// data" (controller, 2026-09-29: the chip says only what is known).
 export function chipOf({ enabled, gate, measures, cabinLive }) {
   if (!enabled || (gate && gate.simulated)) return "Off";
-  if (!gate || !gate.moving) return "Paused · parked";
+  if (!gate || !gate.connected || gate.kph === null || gate.kph === undefined) return "Paused · no car data";
+  if (!gate.moving) return "Paused · parked";
   if (!cabinLive || !measures || measures.faceLost) return "Can't see you";
   return "Watching";
 }

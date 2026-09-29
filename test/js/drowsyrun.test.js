@@ -7,7 +7,8 @@ import * as player from "../js/alertplayer.js";
 import * as audiostate from "../js/audiostate.js";
 
 const cfg = { min_speed_mph: 30 };
-const moving = { moving: true };
+// A real gate, not the brief's { moving: true }: the chip now asks whether a car is there.
+const moving = gateOf({ connected: true, values: { SPEED: 50 } }, cfg);
 
 // ---- the rig: drowsy mode's engine with everything outside it handed in.
 // No wall clock anywhere: `r.t` is the frame clock, moved only by the test.
@@ -95,13 +96,25 @@ export default [
   ["no car is neither active nor parked: a dropped link must not clear an alert", () =>
     eq([gateOf({ connected: false }, cfg).active, gateOf({ connected: false }, cfg).parked], [false, false])],
   ["stationary and connected is parked", () => eq(gateOf({ connected: true, values: { SPEED: 0 } }, cfg).parked, true)],
-  ["the chip says one of four things", () =>
+  // Amended before review (controller, 2026-09-29): a fifth chip text, for
+  // no car data. The brief's partial gate ({ moving: false }) is now a real
+  // connected-at-0 gate, since "parked" needs a car that said 0 km/h.
+  ["the chip says one of five things", () =>
     eq([chipOf({ enabled: false }),
-        chipOf({ enabled: true, gate: { moving: false } }),
+        chipOf({ enabled: true, gate: gateOf({ connected: true, values: { SPEED: 0 } }, cfg) }),
         chipOf({ enabled: true, gate: moving, cabinLive: false }),
         chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: true } }),
-        chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: false } })],
-       ["Off", "Paused · parked", "Can't see you", "Can't see you", "Watching"])],
+        chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: false } }),
+        chipOf({ enabled: true, gate: gateOf({ connected: false }, cfg) })],
+       ["Off", "Paused · parked", "Can't see you", "Can't see you", "Watching", "Paused · no car data"])],
+  ["no car data is not parked: a dropped link, an unreadable speed, or no sample at all", () => {
+    const chip = (s) => chipOf({ enabled: true, gate: s === undefined ? null : gateOf(s, cfg), cabinLive: true,
+                                 measures: { faceLost: false } });
+    eq([chip({ connected: false }), chip({ connected: true, values: {} }), chip({ connected: true, values: { SPEED: "x" } }),
+        chip(null), chip(undefined), chip({ connected: true, values: { SPEED: 0 } })],
+       ["Paused · no car data", "Paused · no car data", "Paused · no car data", "Paused · no car data",
+        "Paused · no car data", "Paused · parked"]);
+  }],
   ["the simulator's numbers never open the gate, and the chip says Off", () => {
     const g = gateOf({ connected: true, simulated: true, values: { SPEED: 100 } }, cfg);
     eq([g.active, g.moving, g.parked, chipOf({ enabled: true, gate: g, cabinLive: true, measures: { faceLost: false } })],
@@ -486,6 +499,15 @@ export default [
     const d = r.eng.state.chip;
     await r.drive(0);
     eq([a, b, c, d, r.eng.state.chip], ["Watching", "Can't see you", "Watching", "Can't see you", "Paused · parked"]);
+  }],
+  ["the link dropping while driving reads 'Paused · no car data', never 'Paused · parked'", async () => {
+    const r = await rig();
+    await r.drive(90);
+    const driving = r.eng.state.chip;
+    await r.drive(null);
+    const dropped = r.eng.state.chip;
+    await r.drive(0);
+    eq([driving, dropped, r.eng.state.chip], ["Watching", "Paused · no car data", "Paused · parked"]);
   }],
   ["each alert goes to the records book with its level, trigger, speed and measures", async () => {
     const r = await rig();
