@@ -127,7 +127,7 @@ Today OmaCar has no camera support at all: the Cameras tab is a placeholder. Sou
 
 | Level | Trigger | What happens |
 |---|---|---|
-| 1 · Notice | PERCLOS ≥ 15%, or 3 yawns in 5 min, or 3 nods in 5 min, or 2 h since a stop, or night hours (once an hour) | A soft two-note chime. The voice says "James, you seem tired. Plan a break soon." The radio rises +6 dB over 10 s, then settles back over 30 s. A card appears on screen. |
+| 1 · Notice | PERCLOS ≥ 15% (at most once every 5 min; `level1.perclos_every_secs`, default 300, and 0 turns it off), or 3 yawns in 5 min, or 3 nods in 5 min, or 2 h since a stop, or night hours (once an hour) | A soft two-note chime. The voice says "James, you seem tired. Plan a break soon." The radio rises +6 dB over 10 s, then settles back over 30 s. A card appears on screen. |
 | 2 · Wake | Eyes closed ≥ 1.0 s, or PERCLOS ≥ 25% | Music ducks −12 dB over 0.5 s. An alert rises over 1.5 s to its target, rotating between the synthesized bark, the voice ("James, are you with me?") and a two-tone alarm (500–1500 Hz, per ISO 7731's range). A full-screen card appears with a large "I'm awake" button. |
 | 3 · Pull over | Eyes closed ≥ 2.0 s, or two Level 2 alerts within 5 min | A continuous alarm rises to full over 3 s. The voice says "Pull over now." A full-screen card stays up. |
 
