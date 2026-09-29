@@ -240,6 +240,28 @@ export default [
     eq([before, after], [[1, 1], [0, 0]]);
   }],
 
+  ["leaving the tab while Play from live waits on the clip list starts no clip on the gone view", async () => {
+    // The first clip list is answered, so the tab has clips; then the server stops answering.
+    const srv = hung();
+    let listed = false;
+    const get = (path, opts) => {
+      if (path === "/api/cams") return Promise.resolve(OV);
+      if (!listed) { listed = true; return Promise.resolve({ clips: clips(), events: [] }); }
+      return srv.get(path, opts);
+    };
+    const v = await mount({ get });
+    try {
+      v.fire(10000);                                     // the clip list poll comes round and hangs
+      await settle();
+      const said = v.toasts().length;
+      await v.play();                                    // Play from live asks for the clip list, and waits on that request
+      const waiting = [srv.out()[1], v.q.files.length];
+      v.stop();                                          // the tab is left: the request is aborted, and the wait ends
+      await settle();
+      eq([waiting, v.held(), v.q.files, v.toasts().slice(said)], [[1, 0], [], [], []]);
+    } finally { v.done(); }
+  }],
+
   // ---- a clip that will not play (final review, m3)
   ["a clip that fails to play gives the feeds their streams back and says in words that it could not play", async () => {
     const v = await mount();

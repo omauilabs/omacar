@@ -302,6 +302,10 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
   async function step(delta) {
     if (!playing) {
       await refreshClips();
+      // Leaving the tab aborts the request this waits on, and ends the wait.
+      // A gone view starts no clip: its <video> would hold a connection that
+      // drowsy mode's polls need, and its toast would land on another view.
+      if (!alive) return;
       const hit = clipAt(clips, main, Date.now() / 1000 + delta);
       if (hit) play(main, hit.file, hit.pos); else toast("Nothing recorded to go back to yet.");
       return;
