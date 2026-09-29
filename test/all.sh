@@ -40,6 +40,11 @@ python3 "$ROOT/test/phone_test.py" || fails=$((fails + 1))
 # thing that ever runs the listening path without a car.
 python3 "$ROOT/test/listen_test.py" || fails=$((fails + 1))
 
+# The loopback server the kiosk's screen is served from: its output is kept,
+# and kept small, where the next death can be read. Real server, real shell;
+# every port and directory is a scratch one.
+python3 "$ROOT/test/srvwatch_test.py" || fails=$((fails + 1))
+
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
 #

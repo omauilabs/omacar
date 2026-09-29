@@ -79,7 +79,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 APP="$ROOT/share/app.html"
 MARK="omacar-server"
-PORTS="7560 7561 7562 7563 7564"
+# OMACAR_PORTS is for the tests, which must never go looking on the real ports.
+PORTS="${OMACAR_PORTS:-7560 7561 7562 7563 7564}"
 
 source "$ROOT/lib/env.sh"
 
@@ -90,25 +91,56 @@ open_url() {
 
 ours() { [[ "$(curl -fsS --max-time 1 "http://127.0.0.1:$1/.mark" 2>/dev/null)" == *"$MARK"* ]]; }
 
+port_taken() { ss -ltn "sport = :$1" 2>/dev/null | tail -n +2 | grep -q .; }
+
+# Keep a log to its last megabyte.
+#
+# Cut from the front, so it is the end that survives: the end is where whatever
+# killed a process is written. Cut in place, because a process that has the file
+# open for append carries on writing into the trimmed file.
+log_trim() {
+  local f="$1" keep=$((1024 * 1024)) size
+  size=$(stat -c %s "$f" 2>/dev/null || echo 0)
+  (( size > keep )) || return 0
+  if tail -c "$keep" "$f" >"$f.trim"; then cat "$f.trim" >"$f" || true; fi
+  rm -f "$f.trim"
+}
+
+# The interpreter the server runs under: the venv's when there is one, the
+# system python otherwise.
+#
+# serve.py itself needs nothing special, but the API it exposes reaches into
+# modules that import pyserial -- which lives only in the venv. Started under
+# the system python, /api/learn could not import the discovery code at all,
+# so "Learn this car" failed for a reason that had nothing to do with the car.
+serve_py() { [[ -x "$OMACAR_PY" ]] && echo "$OMACAR_PY" || echo python3; }
+
+# Start the server on port $1, detached, and say whether it answered.
+#
+# ITS OUTPUT GOES TO serve.log, NOT TO /dev/null. It went to /dev/null, and
+# when the server died in the middle of a drive there was nothing to read: the
+# traceback, if there was one, had been thrown away. The log is appended to and
+# only ever trimmed, never truncated at a start, because a start is very often
+# the moment right after a death and the death is what the log is for.
+serve_start() {
+  local p="$1" i log="$OMACAR_STATE/serve.log"
+  log_trim "$log"
+  printf '%s serve.py starting on port %s\n' "$(date '+%F %T')" "$p" >>"$log"
+  setsid -f "$(serve_py)" "$ROOT/lib/serve.py" "$p" "$ROOT/share" >>"$log" 2>&1
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.2
+    ours "$p" && return 0
+  done
+  return 1
+}
+
 app_base() {
-  local p i
+  local p
   for p in $PORTS; do ours "$p" && { echo "http://127.0.0.1:$p/app.html"; return; }; done
-  # The venv interpreter when there is one, the system python otherwise.
-  #
-  # serve.py itself needs nothing special, but the API it exposes reaches into
-  # modules that import pyserial -- which lives only in the venv. Started under
-  # the system python, /api/learn could not import the discovery code at all,
-  # so "Learn this car" failed for a reason that had nothing to do with the car.
-  local PY="python3"
-  [[ -x "$OMACAR_PY" ]] && PY="$OMACAR_PY"
-  command -v "$PY" >/dev/null || { echo "file://$APP"; return; }
+  command -v "$(serve_py)" >/dev/null || { echo "file://$APP"; return; }
   for p in $PORTS; do
-    ss -ltn "sport = :$p" 2>/dev/null | tail -n +2 | grep -q . && continue
-    setsid -f "$PY" "$ROOT/lib/serve.py" "$p" "$ROOT/share" >/dev/null 2>&1
-    for i in 1 2 3 4 5 6 7 8 9 10; do
-      sleep 0.2
-      ours "$p" && { echo "http://127.0.0.1:$p/app.html"; return; }
-    done
+    port_taken "$p" && continue
+    serve_start "$p" && { echo "http://127.0.0.1:$p/app.html"; return; }
   done
   echo "file://$APP"
 }
