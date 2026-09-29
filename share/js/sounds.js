@@ -24,6 +24,20 @@ export const ALARM = { tones: [700, 1000], toneSecs: 0.25, peak: 0.6 };
 export const BARK = { gap: 0.3, callEvery: 0.8, sweepFrom: 540, sweepTo: 260, secs: 0.16,
                       formants: [1100, 2400], noiseHz: 1700, attack: 0.006, peak: 0.8 };
 
+// THE LOUDEST EACH SOUND'S OWN CONTENT GETS, as a fraction of full scale, at
+// an envelope of 0 dB. Its heard peak is this times its envelope's gain, and
+// alertplayer.js keeps the sum of every heard peak plus the music's under the
+// limiter's threshold (fix round 1): the limiter is a safety net, never part
+// of how anything sounds. Each is a bound the rendered tests hold it to:
+//   chime  the three partials' amplitudes added up (0.8 + 0.12 + 0.04)
+//   alarm  the triangle's own peak
+//   bark   measured on the box at about 0.49 (rendered, all calls); 0.7 bounds it
+//   voice  every clip is trimmed so its loudest sample is no louder than this.
+//          Task 12 renders at a true peak of -1.5 dBFS; -2 leaves room for
+//          the decoder, and a clip already under it is left as it is.
+export const VOICE_PEAK_DB = -2;
+export const PEAK = { chime: 0.96, alarm: ALARM.peak, bark: 0.7, voice: dbToGain(VOICE_PEAK_DB) };
+
 // A source is stopped this long after its envelope reaches silence.
 const TAIL_SECS = 0.05;
 // Without cancelAndHoldAtTime, a release cancels only what comes this long
@@ -200,15 +214,33 @@ export function loadClip(url) {
   return decoded.get(url);
 }
 
+// How much a clip is turned down so its loudest sample sits at VOICE_PEAK_DB
+// at most: 1 for a clip already under it. Measured once per clip.
+const trims = new WeakMap();
+export function clipTrim(buffer) {
+  if (trims.has(buffer)) return trims.get(buffer);
+  let peak = 0;
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const d = buffer.getChannelData(c);
+    for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peak) peak = a; }
+  }
+  const trim = peak > PEAK.voice ? PEAK.voice / peak : 1;
+  trims.set(buffer, trim);
+  return trim;
+}
+
 // The line, said at each of v.plays (seconds after the start), inside the
-// voice's one envelope.
+// voice's one envelope, through a fixed trim set before anything sounds.
 export function playVoice(v, buffer, stage = alertStage()) {
   const { ctx } = stage, g = levelNode(stage, v), sources = [];
+  const trim = ctx.createGain();
+  trim.gain.value = clipTrim(buffer);
+  trim.connect(g);
   const stopAt = Number.isFinite(v.end) ? v.end + TAIL_SECS : Infinity;
   for (const p of v.plays) {
     const s = ctx.createBufferSource();
     s.buffer = buffer;
-    s.connect(g);
+    s.connect(trim);
     s.start(v.start + p);
     if (Number.isFinite(stopAt)) s.stop(stopAt);
     sources.push({ node: s, stopAt });

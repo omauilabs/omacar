@@ -20,6 +20,11 @@ import { dbAt, planOnto } from "./ramps.js";
 export const MUSIC_DB = -12;
 export const ALERT_MAX_DB = 0;
 export const FLOOR_DB = -60;        // quiet enough to count as silence
+// The limiter's threshold. Everything the stage carries is planned to peak
+// under it (alertplayer.js keeps the budget), so the limiter is a safety net
+// that never moves in normal use: a limiter that engages pumps the level
+// faster than 3 dB per 100 ms.
+export const LIMIT_DB = -1;
 
 export function dbToGain(db) { return db <= -120 ? 0 : Math.pow(10, db / 20); }
 export function gainToDb(g) { return g > 0 ? 20 * Math.log10(g) : -Infinity; }
@@ -45,7 +50,7 @@ function ensure() {
   // Music plus a full-scale alert can pass 0 dBFS by a decibel or two; the
   // limiter takes that off rather than letting the output clip.
   node.limit = ctx.createDynamicsCompressor();
-  node.limit.threshold.value = -1;
+  node.limit.threshold.value = LIMIT_DB;
   node.limit.knee.value = 0;
   node.limit.ratio.value = 20;
   node.limit.attack.value = 0.003;

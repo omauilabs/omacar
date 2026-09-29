@@ -1,5 +1,5 @@
 import { eq } from "./assert.js";
-import { createLadder, createStopClock, scaled, isNight } from "../js/ladder.js";
+import { createLadder, createStopClock, scaled, isNight, slotsOf, MIN_SLOT_SECS } from "../js/ladder.js";
 import { createMeasures } from "../js/drowsy.js";
 
 const CFG = async () => (await fetch("../data/drowsy.json")).json();
@@ -146,10 +146,31 @@ export default [
     const [o] = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 1.0 }]]);
     eq([o.level, o.trigger, kinds(o)], [2, "closed", ["duck", "bark"]]);
   }],
-  ["Level 2 repeats every 5 s, rotating bark, voice, alarm", async () => {
+  // Task 7 fix round 1: the voice's turn is level2.voice_slot_secs (7 s), so
+  // the alarm after it comes at 12 s, not 10.
+  ["Level 2 repeats every 5 s, rotating bark, voice, alarm, and gives the voice a 7 s turn", async () => {
     const out = drive(createLadder(await CFG()), [[0, { closed: true, closedFor: 1.0 }], [2, { face: false }],
-      [5, { face: false }], [10, { face: false }], [15, { face: false }]]);
-    eq(out.map(kinds), [["duck", "bark"], [], ["voice:l2"], ["alarm"], ["bark"]]);
+      [5, { face: false }], [10, { face: false }], [12, { face: false }], [17, { face: false }]]);
+    eq(out.map(kinds), [["duck", "bark"], [], ["voice:l2"], [], ["alarm"], ["bark"]]);
+  }],
+  ["the turns come from the settings, and none is shorter than a sound's own rise and fall", async () => {
+    const c = await CFG();
+    eq([slotsOf(c), slotsOf({}), slotsOf({ level2: { repeat_secs: 2, voice_slot_secs: 9 } })],
+       [{ repeat: 5, voice: 7 }, { repeat: 5, voice: 7 }, { repeat: MIN_SLOT_SECS, voice: 9 }]);
+    c.level2.repeat_secs = 6;
+    c.level2.voice_slot_secs = 8;
+    const out = drive(createLadder(c), [[0, { closed: true, closedFor: 1.0 }], [5, { face: false }], [6, { face: false }],
+      [13, { face: false }], [14, { face: false }], [20, { face: false }]]);
+    eq(out.map(kinds), [["duck", "bark"], [], ["voice:l2"], [], ["alarm"], ["bark"]]);
+  }],
+  ["level2.voice false keeps the voice to Levels 1 and 3: one line of settings", async () => {
+    const c = await CFG();
+    c.level2.voice = false;
+    const out = drive(createLadder(c), [[0, { closed: true, closedFor: 1.0 }], [5, { face: false }],
+      [10, { face: false }], [11, { closed: true, closedFor: 2.0 }]]);
+    eq(out.map(kinds), [["duck", "bark"], ["alarm"], ["bark"], ["duck", "alarm", "voice:l3"]]);
+    const one = drive(createLadder(c, ["voice"]), [[0, { closed: true, closedFor: 1.0 }], [5, { face: false }]]);
+    eq(one.map(kinds), [["duck", "alarm"], ["alarm"]], "a rotation of the voice alone falls back to the alarm");
   }],
   ["only the sounds the driver chose rotate", async () => {
     const out = drive(createLadder(await CFG(), ["alarm"]), [[0, { closed: true, closedFor: 1.0 }], [5, { face: false }]]);

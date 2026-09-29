@@ -1,6 +1,7 @@
 import { eq, ok } from "./assert.js";
 import { CHIME, ALARM, BARK, alarmModulation, barkCalls } from "../js/sounds.js";
 import { playChimeNote, playAlarm, playBark, playVoice } from "../js/sounds.js";
+import { PEAK, VOICE_PEAK_DB, clipTrim } from "../js/sounds.js";
 import { voicesFor, releaseVoices, ALERT_DB, CHIME_NOTE_DB } from "../js/alertplayer.js";
 import { SILENCE_DB, dbAt } from "../js/ramps.js";
 
@@ -38,21 +39,25 @@ function peakDb({ data, rate }, from, to) {
   for (let i = Math.max(0, Math.floor(from * rate)); i < Math.min(data.length, Math.ceil(to * rate)); i++) m = Math.max(m, Math.abs(data[i]));
   return db(m);
 }
-// A constant line, so the rendered voice IS its level node's gain, sample by sample.
-function flat(ctx, secs) {
+// A constant line, so the rendered voice IS its level node's gain, sample by
+// sample, LINE_DB under it. LINE_DB is the loudest a clip may be (sounds.js
+// trims anything louder), so this one passes untrimmed.
+const LINE_DB = VOICE_PEAK_DB;
+function flat(ctx, secs, value = PEAK.voice) {
   const b = ctx.createBuffer(1, Math.ceil(secs * ctx.sampleRate), ctx.sampleRate);
-  b.getChannelData(0).fill(1);
+  b.getChannelData(0).fill(value);
   return b;
 }
 // The rendered level of a flat voice between two times: its worst 100 ms, its
 // largest sample-to-sample move, and its greatest distance from the plan.
 function measure(r, env, from, to) {
-  const at = (t) => db(r.data[Math.round(t * r.rate)]);
+  const lv = (x) => db(x) - LINE_DB;
+  const at = (t) => lv(r.data[Math.round(t * r.rate)]);
   let step = 0, jump = 0, off = 0;
   for (let t = from; t + 0.1 <= to; t += 0.01) step = Math.max(step, Math.abs(at(t + 0.1) - at(t)));
   const i0 = Math.ceil(from * r.rate), i1 = Math.floor(to * r.rate);
   for (let i = i0 + 1; i <= i1; i++) jump = Math.max(jump, Math.abs(db(r.data[i]) - db(r.data[i - 1])));
-  for (let i = i0; i <= i1; i += 8) off = Math.max(off, Math.abs(db(r.data[i]) - dbAt(env, i / r.rate)));
+  for (let i = i0; i <= i1; i += 8) off = Math.max(off, Math.abs(lv(r.data[i]) - dbAt(env, i / r.rate)));
   return { step, jump, off };
 }
 // Take cancelAndHoldAtTime away, as Firefox has none, for the length of fn.
@@ -122,7 +127,7 @@ export default [
   ["a voice line, rendered flat, follows its envelope from silence to silence, sample by sample", async () => {
     const v = Object.assign(voicesFor({ kind: "voice", clip: "l1" }, 1, 0.1, 2.8)[0], { plays: [0] });
     const r = await render(9.2, 3200, (st) => playVoice(v, flat(st.ctx, 9.2), st));
-    eq(+db(r.data[Math.round(0.1 * 3200)]).toFixed(2), SILENCE_DB, "its first sample");
+    eq(+(db(r.data[Math.round(0.1 * 3200)]) - LINE_DB).toFixed(2), SILENCE_DB, "its first sample");
     const m = measure(r, v.env, 0.1, v.end - 0.01);
     ok(m.step <= 3.05 && m.jump <= 0.1 && m.off <= 0.1, JSON.stringify(m));
   }],
@@ -165,5 +170,31 @@ export default [
       ok(peakDb(r, rel.end - 1.6, rel.end - 1.5) - full < -20, "falling all the way, not held and then cut");
       eq(peakDb(r, rel.end + 0.06, 7.2), -Infinity, "and then nothing: its oscillators have stopped");
     }
+  }],
+
+  // ---- fix round 1: each sound's content peak is what the budget says ------
+  ["each sound, rendered at its level, peaks no higher than its budget says", async () => {
+    const check = (kind, r, from, to, env) => {
+      const p = peakDb(r, from, to), bound = env + db(PEAK[kind]);
+      ok(p <= bound + 0.01, `${kind}: ${p.toFixed(2)} dBFS against a budget of ${bound.toFixed(2)}`);
+    };
+    const [c] = voicesFor({ kind: "chime" }, 1, 0.1);
+    check("chime", await render(3, 8000, (st) => playChimeNote(c, st)), 1.6, 2.6, CHIME_NOTE_DB);
+    const [a] = voicesFor({ kind: "alarm", hold: true }, 3, 0.1);
+    check("alarm", await render(4, 16000, (st) => playAlarm(a, st)), 3.1, 4, ALERT_DB[3]);
+    for (let i = 0; i < 4; i++) {
+      const [b] = voicesFor({ kind: "bark" }, 2, 0.1);
+      check("bark", await render(2.3, 16000, (st) => playBark(b, st)), 0.1, 2.3, ALERT_DB[2]);
+    }
+  }],
+  ["a clip louder than the voice's peak is trimmed to it, once; a quieter one is left as it is", async () => {
+    const ctx = new OfflineAudioContext(1, 800, 8000);
+    const loud = flat(ctx, 0.1, 1), quiet = flat(ctx, 0.1, 0.5);
+    eq([+db(clipTrim(loud)).toFixed(6), clipTrim(quiet), clipTrim(loud) === clipTrim(loud)], [VOICE_PEAK_DB, 1, true]);
+    const v = Object.assign(voicesFor({ kind: "voice", clip: "l1" }, 1, 0.1, 2.8)[0], { plays: [0] });
+    const r = await render(6, 3200, (st) => playVoice(v, flat(st.ctx, 6, 1), st));
+    const held = v.start + v.rise + 0.5;   // on its hold, at its level
+    eq([+dbAt(v.env, held).toFixed(6), +peakDb(r, held, held + 0.2).toFixed(2)], [-7, -7 + VOICE_PEAK_DB],
+       "a full-scale line plays at its level less 2 dB");
   }],
 ];

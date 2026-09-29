@@ -46,6 +46,13 @@ function ramp(from, to, minSecs) {
   return { secs, points };
 }
 
+// Any glide from one level to another taking at least minSecs, stretched
+// to 3 dB per 100 ms where the span asks for more: the Level 3 alarm stepping
+// aside under a line, and back.
+export function glidePlan(from, to, minSecs) {
+  return ramp(from, to, minSecs);
+}
+
 export function rampPlan(level, from, to) {
   const spec = RAMP_SECS[level];
   if (!spec) throw new Error(`no ramp for level ${level}`);

@@ -263,6 +263,21 @@ export function createStopClock(cfg) {
   };
 }
 
+// LEVEL 2'S TURNS (Task 7 fix round 1). Each Level 2 rotation sound gets a
+// turn of level2.repeat_secs (5 s by default) before the next cue, and the
+// voice a longer turn of its own, level2.voice_slot_secs (7 s), so that its
+// line can start once its own rise is nearly done and still be heard whole
+// before the next sound (alertplayer.js holds every sound inside its turn).
+// A sound's own rise and fall alone take 4.5 s, so no turn is shorter than
+// MIN_SLOT_SECS. level2.voice: false leaves the voice out of the rotation
+// altogether -- the owner's one-line choice of "voice only at Levels 1 and 3".
+export const MIN_SLOT_SECS = 4.6;
+export function slotsOf(cfg) {
+  const L2 = (cfg && cfg.level2) || {};
+  const s = (x, d) => Math.max(MIN_SLOT_SECS, Number.isFinite(x) ? x : d);
+  return { repeat: s(L2.repeat_secs, 5), voice: s(L2.voice_slot_secs, 7) };
+}
+
 export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   let cfg, L1, L2, L3, rota;
   // New settings keep the ladder's memory: its level, the Level 2 history,
@@ -297,10 +312,18 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   const lastFree = {};
 
   function rotation() {
-    const s = rota[rot++ % rota.length];
+    let list = L2.voice === false ? rota.filter((x) => x !== "voice") : rota;
+    if (!list.length) list = ["alarm"];
+    const s = list[rot++ % list.length];
     if (s === "voice") return { kind: "voice", clip: "l2" };
     if (s === "alarm") return { kind: "alarm" };
     return { kind: "bark" };
+  }
+  // The next Level 2 cue comes once this one's turn is over.
+  function turn(cue, t) {
+    const slots = slotsOf(cfg);
+    nextRepeat = t + (cue.kind === "voice" ? slots.voice : slots.repeat);
+    return cue;
   }
 
   function raise(to, why, t, out) {
@@ -311,8 +334,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     if (to === 1) out.cues.push({ kind: "chime" }, { kind: "voice", clip: "l1" }, { kind: "swell" });
     if (to === 2) {
       rot = 0; // M1: each new Level 2 episode opens on the driver's first choice.
-      out.cues.push({ kind: "duck" }, rotation());
-      nextRepeat = t + L2.repeat_secs;
+      out.cues.push({ kind: "duck" }, turn(rotation(), t));
     }
     if (to === 3) {
       banner = true;
@@ -544,8 +566,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
       }
     }
     if (mayRepeat && level === 2 && nextRepeat !== null && t >= nextRepeat && !out.raised) {
-      out.cues.push(rotation());
-      nextRepeat = t + L2.repeat_secs;
+      out.cues.push(turn(rotation(), t));
     }
     if (mayRepeat && level === 3 && nextVoice !== null && t >= nextVoice && !out.raised && !alarmSilenced) {
       out.cues.push({ kind: "voice", clip: "l3" });
