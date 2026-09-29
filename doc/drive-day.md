@@ -176,6 +176,69 @@ one port. Then, in order:
    seven hundred times as much of the bus, recorded uncensored, for the
    same drive.
 
+## Telemetry versus capture
+
+The number above (31/122 ≈ 25%) is how much of the drive is a full-bus
+*capture*. The number that matters for a demo is the other side of the same
+cycle: how much of the drive the daemon has the port back and the gauges are
+alive — *telemetry*. A leg that captures more leaves less of that, and the
+trade is now three independent knobs, each an environment override read (and
+bounds-checked) at start-up in `lib/drivelog.py`, unset by default, no
+different in kind from `OMACAR_FASTBAUD` and `OMACAR_CAF0` above:
+
+- `OMACAR_DRIVELOG_BETWEEN` — seconds between legs (default `BETWEEN_LEGS`,
+  90s).
+- `OMACAR_DRIVELOG_LEG_LINES` — the line cap for one leg, passed straight to
+  `listen()` as `limit=` (default `listen.DEFAULT_LIMIT`, 60,000).
+- `OMACAR_DRIVELOG_QUIET` — the quiet timeout (default `QUIET_TIMEOUT`,
+  120s).
+- `OMACAR_DRIVELOG_END_ON_OVERFLOW=1` — end a leg the moment the adapter
+  itself says `BUFFER FULL` or `STOPPED` (`Capture.overflowed()`), instead of
+  waiting out the full quiet timeout afterwards. Off by default; see below.
+
+A bad value for any of the first three (unparseable, or outside a sane
+floor/ceiling) is logged and the default used instead — it costs the
+override, never the leg. `omacar drive status` shows whichever numbers a
+running supervisor actually started with, and the same line is written once
+to the day's trip log at start-up.
+
+| Setup | A leg holds the port for | Then the gap is | Cycle | Telemetry |
+|---|---|---|---|---|
+| Default (nothing set) | ~120s — a 75ms burst, then the 120s quiet timeout waits out the silence | 90s | ~210s | **~43%** |
+| Fast link alone, default gap — this is also the **balanced** preset below | ~31s — the 60,000-line default cap at the ~1,900 lines/s measured above | 90s | ~121s | **~74%** |
+| **Telemetry-first** preset below | ~5s — a 10,000-line cap at the same ~1,900 lines/s | 240s | ~245s | **~98%** |
+
+**Balanced** — the fast link, the gap left at its default:
+
+```
+mkdir -p ~/.config/systemd/user/omacar-drivelog.service.d
+cat > ~/.config/systemd/user/omacar-drivelog.service.d/balanced.conf <<'EOF'
+[Service]
+Environment=OMACAR_FASTBAUD=1
+EOF
+systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
+```
+
+**Telemetry-first** — the fast link, a 10,000-line cap (~5s of bus) and a
+240s gap, for ~98% telemetry and a ~5s CAN snapshot roughly every 4 minutes:
+
+```
+mkdir -p ~/.config/systemd/user/omacar-drivelog.service.d
+cat > ~/.config/systemd/user/omacar-drivelog.service.d/telemetry-first.conf <<'EOF'
+[Service]
+Environment=OMACAR_FASTBAUD=1 OMACAR_DRIVELOG_LEG_LINES=10000 OMACAR_DRIVELOG_BETWEEN=240
+EOF
+systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
+```
+
+Next to `fullbus.conf` above (both opt-ins, the default duty cycle): that
+drop-in is the "fast link alone" row in the table, still at its own default
+gap — `OMACAR_CAF0` changes what is recovered from each frame, not how long
+a leg runs, so it composes with any of the drop-ins here. systemd reads
+every `.conf` file in `omacar-drivelog.service.d/`, so two of them left in
+place at once both apply — remove whichever is no longer wanted before
+adding another, then `daemon-reload` and `restart` as above.
+
 ## On the road — the recorder
 
 Nothing to do. It watches `live.json`, records in twenty-minute legs, hands the
