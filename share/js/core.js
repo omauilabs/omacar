@@ -323,6 +323,36 @@ export const api = {
   aiHistory: () => req("/api/ai/history"),
 };
 
+// ---------------------------------------------------------------- a hand-off
+// IS THIS SAMPLE A HAND-OFF THAT IS STILL HAPPENING?
+//
+// records.live() marks every "yielded" sample `handover`, and never ages one
+// out: its staleness check only runs on a sample that says connected, and a
+// yield says connected: false. So a daemon that dies while the adapter is lent
+// out leaves "yielded" in live.json for ever, and every screen would say
+// "Paused · adapter in use · 40 min" about a process that no longer exists.
+//
+// A real hand-off re-stamps `t` about every 0.3 s (daemon.py yield_snapshot()),
+// so one whose `t` is past LIVE_STALE_S is a stopped daemon -- the rule
+// plugin/Panel.qml's liveFresh already applies, on the same 15 s as
+// records.LIVE_STALE. The bare hand-off (wait_for_car(), no `t` at all) has
+// only the store's own clock: it gives out once it has lasted longer than a
+// lease holds without a heartbeat, connect.YIELD_GRACE. `since` is
+// store.pausedSince; leave it out and a bare hand-off is taken at its word.
+//
+// Display only. Begin's lock and the lock inputs read store.sample.handover
+// itself; records.live() belongs to the red-light work.
+export const LIVE_STALE_S = 15;          // lib/records.py LIVE_STALE, Panel.qml liveStale
+export const BARE_HANDOFF_MAX_S = 90;    // lib/connect.py YIELD_GRACE
+
+export function handingOver(sample, since, now = Date.now()) {
+  const s = sample || {};
+  if (!s.handover) return false;
+  const t = Number(s.t) || 0;
+  if (t > 0) return now / 1000 - t <= LIVE_STALE_S;
+  return since === null || since === undefined || now - since <= BARE_HANDOFF_MAX_S * 1000;
+}
+
 // ---------------------------------------------------------------- the store
 // One object, one event. Views subscribe and re-render; nothing reaches into
 // anything else's DOM.
@@ -458,7 +488,8 @@ class Store extends EventTarget {
   }
   get values() { return this.sample.values || {}; }
   get connected() { return !!this.sample.connected; }
-  get paused() { return !!this.sample.handover; }
+  // A hand-off that is still happening (handingOver() above), for drawing.
+  get paused() { return handingOver(this.sample, this.pausedSince); }
 
   // THE SAMPLE TO DRAW, WHICH IS NOT ALWAYS THE SAMPLE TO ACT ON.
   //
@@ -469,12 +500,19 @@ class Store extends EventTarget {
   // with no values at all, and every paused reading would go blank for it.
   // Drawn from here it keeps the last values read, dimmed and marked paused.
   //
+  // AND A HAND-OFF THAT HAS STOPPED is drawn as what it is, a daemon that is
+  // not there: no hand-off, and no values, exactly as records.live() returns a
+  // stale sample. Otherwise its carried values would be drawn as current by
+  // every screen that draws whatever it is handed.
+  //
   // DRAWING ONLY. Anything that locks or unlocks a control (Begin, Customise,
   // the moving/parked logic, the write screens) keeps reading `sample`,
   // `values` and `state`, exactly as before.
   get shown() {
     const s = this.sample;
-    if (!s.handover || (s.values && Object.keys(s.values).length)) return s;
+    if (!s.handover) return s;
+    if (!this.paused) return Object.assign({}, s, { handover: false, status: "no daemon", values: {} });
+    if (s.values && Object.keys(s.values).length) return s;
     return Object.assign({}, s, { values: this.held });
   }
   get state() {

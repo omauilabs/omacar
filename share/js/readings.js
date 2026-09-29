@@ -8,7 +8,7 @@
 // Each entry now also names the PID it reads, so a tile can tell the two kinds
 // of empty apart: "the car does not report this" and "the car has not said yet".
 
-import { U, temp, econ, dist, vol, grouped } from "./core.js";
+import { U, temp, econ, dist, vol, grouped, handingOver } from "./core.js";
 
 // The IMA tile's memory. A pack's direction cannot be read from one sample, so
 // the last few are kept here -- in the view, not the store, because nothing
@@ -404,15 +404,19 @@ export { num, raw, asTemp, pct, learnedFor, learnedKey };
 //
 // A hand-off is decided before `connected`, because it reads connected: false
 // like a dropped adapter and is not one. A truly stale sample (no daemon,
-// `stale_for`) carries no handover flag and stays "waiting".
+// `stale_for`) carries no handover flag and stays "waiting" -- and so does a
+// hand-off whose `t` has stopped moving, which is a stopped daemon
+// (core.js handingOver()). A bare hand-off's own time limit needs the store's
+// clock; store.shown has already applied it to what the screens pass here.
 export function readingState(def, sample) {
   const s = sample || {};
-  if (!def || !def.pid) return def && def.sampled && s.handover ? "paused" : "live";
+  const paused = handingOver(s);
+  if (!def || !def.pid) return def && def.sampled && paused ? "paused" : "live";
   const v = (s.values || {})[def.pid];
   const has = v !== null && v !== undefined && !Number.isNaN(v);
   const sup = s.supported;
   const unsupported = Array.isArray(sup) && sup.length > 0 && !sup.includes(def.pid);
-  if (s.handover) return !has && unsupported ? "absent" : "paused";
+  if (paused) return !has && unsupported ? "absent" : "paused";
   if (!s.connected) return "waiting";
   if (has) return "live";
   if (unsupported) return "absent";

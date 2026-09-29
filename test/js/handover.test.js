@@ -440,6 +440,65 @@ const warnings = [
     }))],
 ];
 
+// ---------------------------------------------------------------- a hand-off that never ends
+//
+// While a hand-off is real the daemon re-stamps `t` about every 0.3 s. One
+// whose `t` has gone past records.LIVE_STALE (15 s) is a daemon that stopped
+// mid-hand-off, and live.json will say "yielded" for ever. That is no data,
+// not "Paused · adapter in use · 40 min". A hand-off with no `t` at all (the
+// bare one) has only the store's own clock, and gives out at the longest a
+// lease holds without a heartbeat (connect.YIELD_GRACE, 90 s).
+const QUIET = (ago) => Object.assign(HANDOVER(), { t: now() - ago });
+
+const deadDaemon = [
+  ["a hand-off whose t is past 15 s old is a stopped daemon: waiting, not paused", () =>
+    eq(["speed", "coolant", "charge"].map((id) => readingState(READINGS[id], QUIET(40))),
+       ["waiting", "waiting", "waiting"])],
+  ["one re-stamped within the last 15 s is still paused", () =>
+    eq(["speed", "coolant"].map((id) => readingState(READINGS[id], QUIET(10))), ["paused", "paused"])],
+  ["Home: a hand-off that stopped being re-stamped says No data, draws no number, and never Paused", () =>
+    withHome(() => feed(LIVE()), async (root) => {
+      feed(HANDOVER());
+      eq(root.querySelector(".hc-dial .g-svg").dataset.state, "paused", "paused while it is fresh");
+      feed(QUIET(40));
+      eq(marked(root).filter(([, st]) => st !== "waiting"), [], "readings not waiting");
+      eq(root.querySelector(".dial-rpm").textContent, "No data", "the dial's words");
+      eq(root.querySelector(".hc-dial .g-value").textContent, "—", "no last speed on the arc");
+      for (const s of root.querySelectorAll(".home-grid .sig")) {
+        eq([s.querySelector(".sig-v").textContent, s.querySelector(".sig-note").textContent],
+           ["", "Waiting for the car"], s.dataset.reading);
+      }
+      ok(!/Paused/.test(root.textContent), "nothing says paused");
+    })],
+  ["Gauges: a stopped hand-off is 'no link', with no last number", () =>
+    withGauges(() => feed(LIVE()), async (root) => {
+      feed(QUIET(40));
+      eq([root.querySelector(".drive-hero-slot").dataset.state, root.querySelector(".drive-speed").textContent,
+          root.querySelector(".drive-state").textContent], ["waiting", "—", "no link"]);
+    })],
+  ["the Cluster says 'no daemon' for it, as for any stale sample, not 'yielded' or paused", () =>
+    withCss(async () => {
+      feed(LIVE());
+      const m = await mounted(cluster);
+      try {
+        feed(QUIET(40));
+        eq([m.root.querySelector(".cluster").dataset.state, m.root.querySelector(".cl-speed").textContent,
+            m.root.querySelector("#live-status").textContent], ["waiting", "—", "no daemon"]);
+      } finally { m.done(); }
+    })],
+  ["a bare hand-off pauses, but not past the longest lease without a heartbeat", () =>
+    withHome(() => feed(LIVE()), async (root) => {
+      feed(BARE);
+      const cool = root.querySelector('.sig[data-reading="coolant"]');
+      eq([cool.dataset.state, cool.querySelector(".sig-v").textContent], ["paused", "194"], "at first");
+      store.pausedSince = Date.now() - 91000;
+      feed(BARE);
+      eq([cool.dataset.state, cool.querySelector(".sig-v").textContent,
+          cool.querySelector(".sig-note").textContent], ["waiting", "", "Waiting for the car"], "after 91 s");
+      eq(root.querySelector(".dial-rpm").textContent, "No data", "the dial's words");
+    })],
+];
+
 // ---------------------------------------------------------------- the IMA state
 //
 // The direction is the pack's own movement over a twelve-second window. A
@@ -556,5 +615,5 @@ const onBattery = [
     })],
 ];
 
-export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...direction,
+export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...deadDaemon, ...direction,
                 ...onCluster, ...onMusic, ...onRail, ...onBattery];
