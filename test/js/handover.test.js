@@ -117,6 +117,38 @@ function token(el, name) {
 }
 const ink = (el, prop = "color") => getComputedStyle(el)[prop];
 
+// A computed colour as [r, g, b] in 0..255, whether Chromium serialises it as
+// rgb() or, for a color-mix(), as color(srgb ...).
+function rgb(s) {
+  let m = /^rgba?\(([^)]+)\)/.exec(s);
+  if (m) return m[1].split(/[\s,/]+/).filter(Boolean).slice(0, 3).map(Number);
+  m = /^color\(srgb ([^)]+)\)/.exec(s);
+  if (m) return m[1].trim().split(/\s+/).slice(0, 3).map((x) => Number(x) * 255);
+  return null;
+}
+
+// How far `c` sits from `b` toward `a`, if it lies on the line between them:
+// 1 is all `a`, 0 is all `b`, null is some other colour entirely. A dimmed
+// warning is its warning colour part-way to the ground, so this says both
+// that it is still that colour and that it is dimmed, without fixing how much.
+function mixOf(c, a, b) {
+  const [C, A, B] = [rgb(c), rgb(a), rgb(b)];
+  if (!C || !A || !B) return null;
+  const ts = [];
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(A[i] - B[i]) < 8) {
+      if (Math.abs(C[i] - B[i]) > 3) return null;
+    } else ts.push((C[i] - B[i]) / (A[i] - B[i]));
+  }
+  if (!ts.length || Math.max(...ts) - Math.min(...ts) > 0.04) return null;
+  return ts.reduce((x, y) => x + y, 0) / ts.length;
+}
+const dimmedAs = (el, prop, name) => {
+  const t = mixOf(ink(el, prop), token(el, name), token(el, "--ground"));
+  ok(t !== null && t > 0.2 && t < 0.95,
+     `drawn ${ink(el, prop)}: wanted ${name} (${token(el, name)}) dimmed toward the ground, got mix ${t}`);
+};
+
 async function mounted(view, arg) {
   ensureHosts();
   const stage = document.createElement("div");
@@ -182,12 +214,12 @@ const rules = [
 
 // ---------------------------------------------------------------- a tile
 const tile = [
-  ["a signal tile in a hand-off draws the last value, paused, with no source and no colour", () => {
+  ["a signal tile in a hand-off draws the last value, paused, with no source", () => {
     const t = makeSignalTile("coolant");
     t.paint({}, HANDOVER(LIVE({ COOLANT_TEMP: 108 })));
     eq([t.node.dataset.state, t.node.querySelector(".sig-v").textContent,
         t.node.querySelector(".sig-note").textContent, "src" in t.node.dataset, t.node.dataset.tone],
-       ["paused", "226", "Paused", false, ""]);
+       ["paused", "226", "Paused", false, "bad"]);
   }],
   ["and on the next fresh sample it is live again, with its source and its colour", () => {
     const t = makeSignalTile("coolant");
@@ -285,13 +317,15 @@ const onHome = [
 const LAYOUT = { hero: "speed", heroKind: "digital", columns: 2, footer: "none",
                  tiles: ["coolant", "ima", "econ_now", "odometer"], kinds: { coolant: "dial" } };
 
-async function withGauges(before, fn) {
+async function withGauges(before, fn, layout = LAYOUT) {
   const was = api.driveLayout;
-  api.driveLayout = async () => JSON.parse(JSON.stringify(LAYOUT));
+  api.driveLayout = async () => JSON.parse(JSON.stringify(layout));
   if (before) before();
   const m = await mounted(drive);
   try {
-    for (let i = 0; i < 40 && m.root.querySelectorAll(".drive-tile").length < 4; i++) await wait(50);
+    for (let i = 0; i < 40 && m.root.querySelectorAll(".drive-tile").length < layout.tiles.length; i++) {
+      await wait(50);
+    }
     await fn(m.root);
   } finally { m.done(); api.driveLayout = was; }
 }
@@ -332,6 +366,78 @@ const onGauges = [
       eq(root.querySelector(".drive-hero-slot").dataset.state, "waiting");
       eq(root.querySelector(".drive-speed").textContent, "—");
     })],
+];
+
+// ---------------------------------------------------------------- a warning outlives the hand-off
+//
+// Dimming a paused value must not take its warning with it. A coolant
+// temperature in the red just before the adapter was lent out is still the
+// last thing known about the engine, and the driver still needs to see that it
+// was red: tinted, dimmed with the rest, and labelled paused.
+const WARNINGS = [
+  // [reading, what puts it in its band, the tone]
+  ["coolant", { COOLANT_TEMP: 103 }, "warn"],
+  ["coolant", { COOLANT_TEMP: 108 }, "bad"],
+  ["volts", { CONTROL_MODULE_VOLTAGE: 12.9 }, "warn"],   // RPM 2100: running
+  ["volts", { CONTROL_MODULE_VOLTAGE: 12.1 }, "bad"],
+  ["charge", { HYBRID_BATTERY_REMAINING: 30 }, "warn"],
+  ["charge", { HYBRID_BATTERY_REMAINING: 15 }, "bad"],
+  ["fuel", { FUEL_LEVEL: 15 }, "warn"],
+  ["fuel", { FUEL_LEVEL: 8 }, "bad"],
+  ["rpm", { RPM: 5800 }, "warn"],
+];
+const HOT = () => LIVE({ COOLANT_TEMP: 108, CONTROL_MODULE_VOLTAGE: 12.1, FUEL_LEVEL: 8 });
+
+const warnings = [
+  ["every reading in a warning band keeps its warning through a hand-off, paused and labelled", () => {
+    const got = WARNINGS.map(([id, over]) => {
+      const t = makeSignalTile(id);
+      t.paint({}, LIVE(over));
+      const before = t.node.dataset.tone;
+      t.paint({}, HANDOVER(LIVE(over)));
+      return [id, before, t.node.dataset.state, t.node.dataset.tone,
+              t.node.querySelector(".sig-note").textContent];
+    });
+    eq(got, WARNINGS.map(([id, , tone]) => [id, tone, "paused", tone, "Paused"]));
+  }],
+
+  ["Home: hot coolant, then a long hand-off -- still tinted red, dimmed, and 'Paused · 2 min'", () =>
+    withCss(() => withHome(() => feed(HOT()), async (root) => {
+      feed(HANDOVER(HOT()));
+      store.pausedSince = Date.now() - 142000;
+      feed(HANDOVER(HOT()));
+      const cool = root.querySelector('.sig[data-reading="coolant"]');
+      const v = cool.querySelector(".sig-v");
+      eq([cool.dataset.state, cool.dataset.tone, v.textContent,
+          cool.querySelector(".sig-note").textContent],
+         ["paused", "bad", "226", "Paused · 2 min"]);
+      dimmedAs(v, "color", "--bad");
+    }))],
+
+  ["Gauges: a warning keeps its tone, dimmed, on a number, a bar and an arc alike", () =>
+    withCss(() => withGauges(() => feed(HOT()), async (root) => {
+      feed(HANDOVER(HOT()));
+      const tile = (k) => [...root.querySelectorAll(".drive-tile")]
+        .find((t) => t.querySelector(".drive-tile-k").textContent === k);
+      const num = tile("Coolant").querySelector(".drive-tile-v");
+      const bar = tile("12V system").querySelector(".g-bar");
+      const arc = tile("Fuel").querySelector(".g-svg");
+      eq([tile("Coolant").dataset.state, tile("12V system").dataset.state, tile("Fuel").dataset.state],
+         ["paused", "paused", "paused"], "all three paused");
+      eq([num.classList.contains("bad"), bar.dataset.tone, arc.dataset.tone], [true, "bad", "bad"],
+         "and all three keep their warning");
+      dimmedAs(num, "color", "--bad");
+      dimmedAs(bar.querySelector(".g-bar-v"), "color", "--bad");
+      dimmedAs(arc.querySelector(".g-value"), "fill", "--bad");
+      eq(root.querySelector(".drive-state").textContent, "Paused · adapter in use", "and says why");
+    }, { hero: "speed", heroKind: "digital", columns: 3, footer: "none",
+         tiles: ["coolant", "volts", "fuel"], kinds: { volts: "bar", fuel: "arc" } }))],
+
+  ["and a warning drawn live is still full strength, not the dimmed tint", () =>
+    withCss(() => withHome(() => feed(HOT()), async (root) => {
+      const v = root.querySelector('.sig[data-reading="coolant"] .sig-v');
+      eq(ink(v), token(v, "--bad"), "live and red");
+    }))],
 ];
 
 // ---------------------------------------------------------------- the IMA state
@@ -450,5 +556,5 @@ const onBattery = [
     })],
 ];
 
-export default [...rules, ...tile, ...onHome, ...onGauges, ...direction, ...onCluster,
-                ...onMusic, ...onRail, ...onBattery];
+export default [...rules, ...tile, ...onHome, ...onGauges, ...warnings, ...direction,
+                ...onCluster, ...onMusic, ...onRail, ...onBattery];

@@ -18,7 +18,7 @@ import { h, clear, store, api, U, dist, mins,
          since, toast } from "../core.js";
 import { KINDS, makeGauge, kindsFor, normaliseKind } from "../gauges.js";
 import { READINGS as TILES, learnedFor, learnedKey,
-         readingState, pausedNote, drawnAs } from "../readings.js";
+         readingState, pausedNote } from "../readings.js";
 
 const ACK_KEY = "omacar.ackAlert";
 
@@ -253,9 +253,10 @@ export default function drive(root, { arg } = {}) {
   function paint() {
     // What decides (moving, running, the Customise lock) reads the sample, as
     // it always has. What is DRAWN comes from store.shown, and during a
-    // hand-off every live readout is marked paused -- dimmed by app.css, its
-    // tone dropped, and the line under the hero says why. This screen used to
-    // go on drawing the hand-off's last values as current for the whole of it.
+    // hand-off every live readout is marked paused -- dimmed by app.css, a
+    // warning tone kept but dimmed with it, and the line under the hero says
+    // why. This screen used to go on drawing the hand-off's last values as
+    // current for the whole of it.
     const v = store.values, car = store.car;
     const s = store.shown, sv = s.values || {};
     const moving = (v.SPEED || 0) > 3;
@@ -264,7 +265,7 @@ export default function drive(root, { arg } = {}) {
     const hero = catalogue[layout.hero] || catalogue.speed;
     const heroState = readingState(hero, s);
     heroSlot.dataset.state = heroState;
-    const hv = drawnAs(hero.get(sv, s, car), heroState);
+    const hv = hero.get(sv, s, car);
     if (heroGauge) {
       heroGauge.update(hv, hero.read ? hero.read(sv, s, car) : null);
     } else {
@@ -280,7 +281,7 @@ export default function drive(root, { arg } = {}) {
     for (const c of cells) {
       const st = readingState(c.def, s);
       c.tile.dataset.state = st;
-      const out = drawnAs(c.def.get(sv, s, car), st);
+      const out = c.def.get(sv, s, car);
       c.g.update(out, c.def.read ? c.def.read(sv, s, car) : null);
     }
 

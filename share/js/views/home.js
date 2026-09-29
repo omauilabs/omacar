@@ -8,7 +8,7 @@
 
 import { h, clear, icon, store, api } from "../core.js";
 import { ICONS } from "../icons.js";
-import { READINGS, readingState, pausedNote, drawnAs } from "../readings.js";
+import { READINGS, readingState, pausedNote } from "../readings.js";
 import { makeGauge } from "../gauges.js";
 import { makeSignalTile } from "../sigtile.js";
 import { footerLine, sourceKey } from "../provenance.js";
@@ -72,7 +72,7 @@ function dialCard() {
       // words below it say paused instead of an engine speed: this is the
       // dial that read 60 mph at a stop.
       const speedState = readingState(speed, s);
-      g.update(drawnAs(speed.get(v, s, car), speedState), speed.read(v, s, car));
+      g.update(speed.get(v, s, car), speed.read(v, s, car));
       g.el.dataset.state = speedState;
       if (speedState === "live") g.el.dataset.src = sourceKey(car, s);
       else delete g.el.dataset.src;

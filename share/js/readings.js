@@ -388,8 +388,10 @@ export { num, raw, asTemp, pct, learnedFor, learnedKey };
 //   live     the value is in the sample: draw get()'s output
 //   paused   a hand-off: the daemon has lent the adapter to a command and
 //            republishes the last values it read (records.live() marks the
-//            sample `handover`). Draw get()'s output DIMMED, with no source
-//            and no colour, and say so in pausedNote()'s words
+//            sample `handover`). Draw get()'s output DIMMED, with no source,
+//            and say so in pausedNote()'s words. Its tone stays: a reading
+//            last seen in its warning band is drawn in that warning colour,
+//            dimmed like the rest (app.css, "paused")
 //   absent   the car answered the supported-PIDs question and this was not in
 //            the answer: say "Not on this car"
 //   waiting  no car, or a supported reading that has not arrived yet: say
@@ -438,9 +440,3 @@ export function pausedNote(since, why = false, now = Date.now()) {
   return out.join(" · ");
 }
 
-// What a renderer is handed for a reading in `state`: get()'s output, less its
-// tone while paused. A red coolant figure is a claim about now, and a paused
-// value makes none -- it is drawn in the one dimmed ink (app.css, "paused").
-export function drawnAs(out, state) {
-  return state === "paused" ? Object.assign({}, out, { tone: "" }) : out;
-}

@@ -65,12 +65,18 @@ export function makeSignalTile(id, { label, def } = {}) {
       } else if (st === "paused" && (!d.pid || raw((s.values || {})[d.pid]) !== null)) {
         // THE LAST VALUE, NOT NOW. Drawn so the driver keeps a number, in the
         // dimmed ink app.css gives data-state="paused", and never with what
-        // makes a number current: a source, a colour, a scale or a trail.
+        // makes a number current: a source, a scale or a trail.
+        //
+        // BUT ITS WARNING STAYS. A coolant figure that was in the red when the
+        // adapter was lent out is the last thing known about the engine; a
+        // hand-off that greyed it out would hide a warning for as long as two
+        // minutes at a time. The tone is kept, and app.css dims it rather
+        // than dropping it.
         const out = d.get(s.values || {}, s, car);
         text(v, String(out.v));
         text(u, out.n || "");
         text(note, pausedNote(store.pausedSince));
-        node.dataset.tone = "";
+        node.dataset.tone = out.tone || "";
         delete node.dataset.src;
         text(lo, "");
         text(hi, "");
