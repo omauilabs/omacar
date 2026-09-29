@@ -62,7 +62,7 @@ export function createMeasures(cfg) {
   const yawns = [];
   let downSince = null, downLast = null;
   const nods = [];
-  let firstT = null, lastFace = null;
+  let firstT = null, lastFace = null, lastT = null;
   let snap = null;
 
   function feed(f) {
@@ -70,10 +70,28 @@ export function createMeasures(cfg) {
     if (firstT === null) firstT = t;
     if (f.face) lastFace = t;
 
-    // The baseline: gated time with a face in view, in unbroken runs.
+    // A frame whose time did not move forward, or that jumped more than 1 s
+    // past the last one -- a paused/resumed camera, or a stalled tab -- is a
+    // discontinuity. Nothing about the gap may read through: every running
+    // duration and hold starts over, and the PERCLOS window drops what came
+    // before rather than mixing two eras. Left unguarded, a gap can surface
+    // as an instantly huge "eyes closed" on the very first frame after it --
+    // exactly the spurious alert a driver must never get startled by.
+    const discontinuity = lastT !== null && (t <= lastT || t - lastT > 1);
+    lastT = t;
+    if (discontinuity) {
+      closedSince = null; openSince = null;
+      jawSince = null; yawnCounted = false;
+      downSince = null; downLast = null;
+      win.length = 0;
+    }
+
+    // The baseline: gated time with a face in view, in unbroken runs. A
+    // backward jump must never subtract from gatedSecs, so the delta is
+    // credited only when it is a real, small step forward.
     if (baseline === null) {
       if (f.gated && f.face) {
-        if (prevGatedT !== null && t - prevGatedT < 1) gatedSecs += t - prevGatedT;
+        if (prevGatedT !== null && t > prevGatedT && t - prevGatedT < 1) gatedSecs += t - prevGatedT;
         prevGatedT = t;
         blinks.push(f.blink);
         if (typeof f.pitch === "number") pitches.push(f.pitch);
@@ -117,6 +135,7 @@ export function createMeasures(cfg) {
       perclos, yawns: recent(yawns), nods: recent(nods),
       faceLost: t - (lastFace === null ? firstT : lastFace) > lostSecs,
       pitch: f.face && typeof f.pitch === "number" ? f.pitch : null, pitchBaseline: pitch0,
+      discontinuity,
     };
     return snap;
   }

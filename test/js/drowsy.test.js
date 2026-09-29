@@ -107,4 +107,33 @@ export default [
     const s = run(m, 61, 0.1);
     eq([s.calibrated, s.baseline, +s.threshold.toFixed(2)], [true, 0.1, 0.38]);
   }],
+  ["a 30 s forward jump right after eyes-closed frames does not inflate closedFor", async () => {
+    const m = await calibrated();
+    const pre = run(m, 61, 1.2, () => ({ blink: 0.9 }));
+    ok(pre.closedFor > 1, `pre-gap closedFor ${pre.closedFor}`);
+    const after = m.feed({ t: pre.t + 30, face: true, blink: 0.9, jaw: 0.1, pitch: 0, gated: true });
+    eq(after.discontinuity, true);
+    ok(after.closedFor <= pre.closedFor, `closedFor after the jump (${after.closedFor}) exceeds the pre-gap value (${pre.closedFor})`);
+    ok(after.closedFor <= 1, `closedFor after the jump (${after.closedFor}) exceeds 1 s`);
+  }],
+  ["a backward jump leaves gatedSecs and the baseline unchanged", async () => {
+    const m = createMeasures(await CFG());
+    const before = run(m, 0, 58.9);
+    eq(before.calibrated, false);
+    const jump = m.feed({ t: 30, face: true, blink: 0.1, jaw: 0.1, pitch: 0, gated: true });
+    eq([jump.discontinuity, jump.calibrated], [true, false],
+       "a backward jump must not itself complete calibration");
+    const s = run(m, 30.1, 1.3);
+    eq([s.calibrated, s.baseline], [true, 0.1],
+       "the real gated time from before the jump still counts, so just over 1 s more finishes it");
+  }],
+  ["after a gap, measures resume normally", async () => {
+    const m = await calibrated();
+    const jump = m.feed({ t: 60.9 + 45, face: true, blink: 0.9, jaw: 0.1, pitch: 0, gated: true });
+    eq([jump.discontinuity, jump.closedFor], [true, 0],
+       "the frame right after a gap starts its own closure fresh");
+    const s = run(m, jump.t + 0.1, 1.5, () => ({ blink: 0.9 }));
+    ok(near(s.closedFor, 1.5), `closedFor after resuming ${s.closedFor}`);
+    eq(s.perclos, null, "PERCLOS's window does not yet hold 30 s since the gap");
+  }],
 ];
