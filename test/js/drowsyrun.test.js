@@ -174,7 +174,9 @@ export default [
   ["stationary and connected is parked", () => eq(gateOf({ connected: true, values: { SPEED: 0 } }, cfg).parked, true)],
   // Amended before review (controller, 2026-09-29): a fifth chip text, for
   // no car data. The brief's partial gate ({ moving: false }) is now a real
-  // connected-at-0 gate, since "parked" needs a car that said 0 km/h.
+  // connected-at-0 gate, since "stopped" needs a car that said 0 km/h.
+  // Fix round 2: the paused-at-0 text is "Paused · stopped", not "… · parked"
+  // -- drowsy mode cannot know Park, and a car at a red light is not parked.
   ["the chip says one of five things", () =>
     eq([chipOf({ enabled: false }),
         chipOf({ enabled: true, gate: gateOf({ connected: true, values: { SPEED: 0 } }, cfg) }),
@@ -182,14 +184,14 @@ export default [
         chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: true } }),
         chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: false } }),
         chipOf({ enabled: true, gate: gateOf({ connected: false }, cfg) })],
-       ["Off", "Paused · parked", "Can't see you", "Can't see you", "Watching", "Paused · no car data"])],
-  ["no car data is not parked: a dropped link, an unreadable speed, or no sample at all", () => {
+       ["Off", "Paused · stopped", "Can't see you", "Can't see you", "Watching", "Paused · no car data"])],
+  ["no car data is not stopped: a dropped link, an unreadable speed, or no sample at all", () => {
     const chip = (s) => chipOf({ enabled: true, gate: s === undefined ? null : gateOf(s, cfg), cabinLive: true,
                                  measures: { faceLost: false } });
     eq([chip({ connected: false }), chip({ connected: true, values: {} }), chip({ connected: true, values: { SPEED: "x" } }),
         chip(null), chip(undefined), chip({ connected: true, values: { SPEED: 0 } })],
        ["Paused · no car data", "Paused · no car data", "Paused · no car data", "Paused · no car data",
-        "Paused · no car data", "Paused · parked"]);
+        "Paused · no car data", "Paused · stopped"]);
   }],
   ["the simulator's numbers never open the gate, and the chip says Off", () => {
     const g = gateOf({ connected: true, simulated: true, values: { SPEED: 100 } }, cfg);
@@ -630,13 +632,13 @@ export default [
     await r.drive(3);                             // creeping after a long stop
     const creep = r.eng.state.chip;
     await r.drive(4);                             // moving: the watch starts
-    eq([start, creep, r.eng.state.chip, r.watches], ["Paused · parked", "Paused · parked", "Watching", 1]);
+    eq([start, creep, r.eng.state.chip, r.watches], ["Paused · stopped", "Paused · stopped", "Watching", 1]);
   }],
   ["the creep's chip, pure: 3 km/h not rolling is paused; rolling, or over 3 km/h, it is watched", () => {
     const at = (kph) => gateOf({ connected: true, values: { SPEED: kph } }, cfg);
     const chip = (kph, rolling) => chipOf({ enabled: true, gate: at(kph), cabinLive: true, measures: { faceLost: true }, rolling });
     eq([chip(3, false), chip(3, true), chip(3.5, false), chip(0.5, false)],
-       ["Paused · parked", "Can't see you", "Can't see you", "Paused · parked"]);
+       ["Paused · stopped", "Can't see you", "Can't see you", "Paused · stopped"]);
   }],
   ["an alert raised above the gate carries on below 30 mph: it repeats there, and clears after 5 s of open eyes", async () => {
     const r = await rig();
@@ -823,7 +825,7 @@ export default [
     await r.frames(70, () => ({ blink: 0.9 }));
     eq([r.watches, r.eng.state.chip, r.eng.state.level, r.plays()], [0, "Off", 0, []]);
   }],
-  ["the chip: Watching with a face, Can't see you after 5 s without one or without frames, Paused when parked", async () => {
+  ["the chip: Watching with a face, Can't see you after 5 s without one or without frames, Paused when stopped", async () => {
     const r = await rig();
     await r.drive(40);
     await r.frames(1);
@@ -835,16 +837,16 @@ export default [
     await r.polls(6);
     const d = r.eng.state.chip;
     await r.drive(0);
-    eq([a, b, c, d, r.eng.state.chip], ["Watching", "Can't see you", "Watching", "Can't see you", "Paused · parked"]);
+    eq([a, b, c, d, r.eng.state.chip], ["Watching", "Can't see you", "Watching", "Can't see you", "Paused · stopped"]);
   }],
-  ["the link dropping while driving reads 'Paused · no car data', never 'Paused · parked'", async () => {
+  ["the link dropping while driving reads 'Paused · no car data', never 'Paused · stopped'", async () => {
     const r = await rig();
     await r.drive(90);
     const driving = r.eng.state.chip;
     await r.drive(null);
     const dropped = r.eng.state.chip;
     await r.drive(0);
-    eq([driving, dropped, r.eng.state.chip], ["Watching", "Paused · no car data", "Paused · parked"]);
+    eq([driving, dropped, r.eng.state.chip], ["Watching", "Paused · no car data", "Paused · stopped"]);
   }],
   ["each alert goes to the records book with its level, trigger, speed and measures", async () => {
     const r = await rig();

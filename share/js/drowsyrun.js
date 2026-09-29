@@ -84,23 +84,27 @@ export function gateOf(sample, cfg) {
            parked: live && kph === 0 };
 }
 
-// The status chip, in the spec's words. Simulated driving is "Off": drowsy
-// mode ignores it. "Paused · parked" is only a car that said 0 km/h; a
-// dropped link, an unreadable speed or no sample at all is "Paused · no car
-// data" (controller, 2026-09-29: the chip says only what is known).
-// "Stopped · face tracker error" (Task 9 fix round 1, I3): the tracker
-// failed on three frames in a row and has not yet come back. Drowsy mode is
-// not watching, and must not say "Can't see you" with a face in view.
-// "Paused · parked" also covers a creep of MOVING_KPH or less that has not
-// ended a stop (rolling false: after a long stop, or at app start), when the
-// watch is deliberately off (Task 9 fix round 1): ruling 1 counts such a
-// creep as still stopped, and "Can't see you" would blame the driver.
+// The status chip. Exactly one of six texts (the spec's four, amended by the
+// controller on 2026-09-29): "Watching", "Can't see you", "Paused · stopped",
+// "Paused · no car data", "Stopped · face tracker error", "Off".
+//   - "Off": drowsy mode is off, or the numbers are simulated, which it ignores.
+//   - "Stopped · face tracker error" (fix round 1, I3): the tracker failed on
+//     three frames in a row and has not come back. Drowsy mode is not
+//     watching, and must not say "Can't see you" with a face in view.
+//   - "Paused · no car data": a dropped link, an unreadable speed, or no
+//     sample at all. The chip says only what is known.
+//   - "Paused · stopped" (fix round 2, renamed from "… · parked"): a car that
+//     said 0 km/h, or a creep of MOVING_KPH or less that has not ended a stop
+//     (rolling false: after a long stop, or at app start), when the watch is
+//     deliberately off. Ruling 1 counts such a creep as still stopped, and
+//     "Can't see you" would blame the driver. Never "parked": drowsy mode
+//     cannot know Park, and a car at a red light is not parked.
 export function chipOf({ enabled, gate, measures, cabinLive, trackerFailed = false, rolling = true }) {
   if (!enabled || (gate && gate.simulated)) return "Off";
   if (trackerFailed) return "Stopped · face tracker error";
   if (!gate || !gate.connected || gate.kph === null || gate.kph === undefined) return "Paused · no car data";
-  if (!gate.moving) return "Paused · parked";
-  if (!rolling && gate.kph <= MOVING_KPH) return "Paused · parked";
+  if (!gate.moving) return "Paused · stopped";
+  if (!rolling && gate.kph <= MOVING_KPH) return "Paused · stopped";
   if (!cabinLive || !measures || measures.faceLost) return "Can't see you";
   return "Watching";
 }
