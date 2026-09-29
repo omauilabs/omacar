@@ -317,11 +317,51 @@ export const api = {
   home: () => req("/api/home"),
   saveHome: (body) => req("/api/home", { method: "POST", body: JSON.stringify(body) }),
   assets: () => req("/api/assets"),
+  // Road cameras. The list and the pins are JSON; a still is a picture whose
+  // age is in its headers, so it has its own reader below.
+  roadcams: () => req("/api/roadcams"),
+  saveRoadcamPins: (pins) => req("/api/roadcams/pins", { method: "POST", body: JSON.stringify({ pins }) }),
+  roadcamImage: (id, cached) => roadcamStill(id, cached),
   aiAvailable: () => req("/api/ai/available"),
   aiStart: (body) => req("/api/ai", { method: "POST", body: JSON.stringify(body) }),
   aiPoll: (id) => req("/api/ai?job=" + encodeURIComponent(id)),
   aiHistory: () => req("/api/ai/history"),
 };
+
+// A road camera's still: { blob, age, modified, source, at }.
+//
+// Not req(), because the answer is a picture and the one thing worth knowing
+// about it -- how old it is -- is in its headers. `age` is seconds old when the
+// server answered, on Caltrans' clock; `at` is when this screen heard it, so an
+// age can keep counting without trusting the two clocks to agree. A failure
+// throws an Error carrying `offline` (the internet, not Caltrans), `saved` (a
+// copy is on disk: ask again with cached) and `noServer` (our own server).
+async function roadcamStill(id, cached) {
+  let r;
+  try {
+    r = await fetch(withToken(`/api/roadcams/${encodeURIComponent(id)}/image`
+                              + (cached ? "?cached=1" : "")), { cache: "no-store" });
+  } catch (err) {
+    const e = new Error("cannot reach the OmaCar server");
+    e.noServer = true;
+    throw e;
+  }
+  if (!r.ok) {
+    let body = {};
+    try { body = await r.json(); } catch { /* not JSON */ }
+    const e = new Error(body.error || `${r.status}`);
+    e.status = r.status;
+    e.offline = !!body.offline;
+    e.saved = !!body.saved;
+    throw e;
+  }
+  const n = (k) => {
+    const v = r.headers.get(k);
+    return v === null || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
+  };
+  return { blob: await r.blob(), age: n("X-Roadcam-Age"), modified: n("X-Roadcam-Modified"),
+           source: r.headers.get("X-Roadcam-Source") || "", at: Date.now() / 1000 };
+}
 
 // ---------------------------------------------------------------- the store
 // One object, one event. Views subscribe and re-render; nothing reaches into
