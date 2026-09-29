@@ -48,7 +48,7 @@ LOOPBACK_ONLY = True
 
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
-COCKPIT_WRITES = {"/api/units"}
+COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -342,6 +342,9 @@ class Handler(SimpleHTTPRequestHandler):
                 session.unsubscribe(q)
             return
 
+        if path.startswith("/api/roadcams/") and path.endswith("/image"):
+            return self._roadcam_image(path[len("/api/roadcams/"):-len("/image")], query)
+
         if path.startswith("/plugin/"):
             # A plugin's own view module. Resolved through plugins.view_path,
             # which refuses anything outside that plugin's directory and
@@ -420,6 +423,47 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"error": "no such endpoint"}, 404)
             return self._json(out[1], out[0])
         return SimpleHTTPRequestHandler.do_GET(self)
+
+    def _roadcam_image(self, cid, query):
+        """A road camera's latest still, with the picture's own age on it.
+
+        Binary, so it is served here rather than through api.py. The id is
+        looked up in Caltrans' list by lib/roadcams.py and never becomes a URL.
+        `?cached=1` is the copy on disk, for a screen that has no picture at all
+        and no connection to get one: it never reaches the network.
+        """
+        import roadcams
+        cached = (parse_qs(query).get("cached") or [""])[0] == "1"
+        try:
+            got = roadcams.image(cid, cached_only=cached)
+        except roadcams.NotFound as e:
+            return self._json({"error": str(e)}, 404)
+        except roadcams.Unreachable as e:
+            keep = roadcams.saved(cid)
+            return self._json({"error": f"No connection: {e}", "offline": True,
+                               "saved": bool(keep),
+                               "saved_modified": keep.get("modified") if keep else None},
+                              504)
+        except roadcams.Refused as e:
+            return self._json({"error": str(e), "offline": False,
+                               "status": e.status}, 502)
+        body = got["body"]
+        self.send_response(200)
+        self.send_header("Content-Type", got.get("content_type") or "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        # The picture's own Last-Modified, as Caltrans sent it, and the same
+        # instant as an age the screen can count on from: the tablet's clock
+        # is not trusted to agree with Caltrans'.
+        if got.get("last_modified"):
+            self.send_header("Last-Modified", got["last_modified"])
+        for name, key in (("X-Roadcam-Age", "age"), ("X-Roadcam-Modified", "modified"),
+                          ("X-Roadcam-Fetched", "fetched_at")):
+            if got.get(key) is not None:
+                self.send_header(name, str(int(got[key])))
+        self.send_header("X-Roadcam-Source", got.get("source") or "")
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         if not self._local():

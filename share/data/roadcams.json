@@ -1,0 +1,35 @@
+{
+  "_comment": "Road cameras beyond Caltrans' own feed, and the commute pinned by default. Read by lib/roadcams.py, which checks every entry: an embed's url must be https on a host in embed_hosts, or it is dropped. Pins are camera ids; a Caltrans camera may also be named by its locationName exactly as the feed spells it, which is resolved to its id when the feed is read.",
+  "embed_hosts": ["app.truelook.cloud"],
+  "embeds": [
+    {
+      "id": "imjin-1",
+      "name": "Imjin Parkway — camera 1",
+      "url": "https://app.truelook.cloud/?code=9twahtltp2nku9y5bejrxlgxw",
+      "source": "Imjin Parkway Widening project (TrueLook)",
+      "note": "A construction camera the City of Marina and TAMC put up for the Imjin Parkway widening, shown by TrueLook. The project was due to finish in June 2026, so it may be taken down without notice."
+    },
+    {
+      "id": "imjin-2",
+      "name": "Imjin Parkway — camera 2",
+      "url": "https://app.truelook.cloud/?code=ctp0dv3upiipiz2qgng09dlb2",
+      "source": "Imjin Parkway Widening project (TrueLook)",
+      "note": "A construction camera the City of Marina and TAMC put up for the Imjin Parkway widening, shown by TrueLook. The project was due to finish in June 2026, so it may be taken down without notice."
+    },
+    {
+      "id": "imjin-3",
+      "name": "Imjin Parkway — camera 3",
+      "url": "https://app.truelook.cloud/?code=d1eqze4yfb32enjh1x8rk1sd3",
+      "source": "Imjin Parkway Widening project (TrueLook)",
+      "note": "A construction camera the City of Marina and TAMC put up for the Imjin Parkway widening, shown by TrueLook. The project was due to finish in June 2026, so it may be taken down without notice."
+    }
+  ],
+  "default_pins": [
+    "SR-1 : Imjin Parkway",
+    "SR-1 : Lightfighter Drive",
+    "SR-68 : Reservation Road / River Road",
+    "imjin-1",
+    "imjin-2",
+    "imjin-3"
+  ]
+}

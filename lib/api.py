@@ -33,6 +33,8 @@ what the car said.
     GET  /api/home              Home's card layout
     POST /api/home              change it, or {action: "reset"}
     GET  /api/assets            the private pictures, when they check out
+    GET  /api/roadcams          road cameras: the list, the pins, the list's age
+    POST /api/roadcams/pins     pin cameras, or {action: "reset"}
     POST /api/actuate           command an actuator, or stop one
     POST /api/units             switch between imperial and metric
     POST /api/odometer          set the reading (there is no odometer PID)
@@ -1231,6 +1233,12 @@ def handle_get(path, query):
         # against share/assets/manifest.json; see lib/assets.py.
         import assets
         return 200, assets.public_view()
+    if path == "/api/roadcams":
+        # Never a 500 for a network fault: with no signal the answer is the
+        # list from disk, saying how old it is, or an empty one saying why.
+        # The stills themselves are served by serve.py, which owns the socket.
+        import roadcams
+        return 200, roadcams.listing()
     if path == "/api/concerns":
         return 200, {"concerns": concerns.assess()}
     if path == "/api/snapshots":
@@ -1454,6 +1462,14 @@ def handle_post(path, body):
         import homelayout
         try:
             return 200, homelayout.save_home_layout(data)
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/roadcams/pins":
+        # Which road cameras come first. A preference, not a command: nothing
+        # here reaches the car. The screen only offers it while parked.
+        import roadcams
+        try:
+            return 200, roadcams.save_pins(data)
         except ValueError as e:
             return 400, {"error": str(e)}
     if path == "/api/themes":
