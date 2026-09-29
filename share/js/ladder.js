@@ -43,7 +43,9 @@
 // (below threshold - 0.03 for 10 s) frees it earlier. After any of these a
 // reading at or above threshold is new evidence and raises after the usual
 // 3 s hold; so a second Level 2 -- and with it Level 3 -- can come from a
-// fresh window, never from the one that already raised.
+// fresh window, never from the one that already raised. A crossing into
+// active with nothing sounding latches both gates the same way (Task 9 fix
+// round 1, I1): the window it had was read below the gate.
 //
 // A SOUNDING ALERT AND THE GATE. With alert_continues_below_gate (the
 // default), a raised level carries on below 30 mph, repeats and all. Set to
@@ -302,6 +304,8 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   let rot = 0, nextRepeat = null, nextVoice = null, alarmSilenced = false;
   let openStreakStart = null, perclosAtOpenStreak = null;
   let lastMT = null, lastTapT = null;
+  let wasActive = null;           // the gate on the step before (crossing latch);
+                                  // null on the first step, which crosses nothing
   const was = {}, armed = {};
   const perc = {};               // PERCLOS hysteresis state, per trigger key
   // NR2/NR7: a mirror of drowsy.js's own yawn and nod windows -- each event
@@ -369,6 +373,7 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
   function step(inp) {
     const t = inp.t, m = inp.m || {};
     const out = { t, level, trigger, raised: null, cleared: false, cues: [], banner };
+    const levelAtStart = level;     // the crossing latch asks what was sounding as the car crossed
 
     // I2 (fix round 2): release timing runs on the snapshot's OWN clock,
     // m.t, not step()'s t -- see the header. Falls back to t only if a
@@ -429,6 +434,29 @@ export function createLadder(cfg0, sounds0 = cfg0.sounds) {
     // below the gate with nothing up. Computed once, after release may have
     // just cleared the level, and reused for both arming and consumption.
     const evidenceOK = inp.active || level > 0;
+
+    // THE CROSSING LATCH (Task 9 fix round 1, I1). drowsyrun.js feeds the
+    // measures below the gate too, so when the car crosses into active the
+    // PERCLOS window may hold nothing but below-gate frames. PERCLOS has no
+    // rising edge, so without this its 3 s hold would start on the first
+    // active step and raise from that window: evidence gathered while not
+    // active, arming late instead of never. So on the step the gate turns
+    // from not-active to active with nothing sounding, both PERCLOS gates
+    // are latched at this step's m.t, with the same latch a raise uses. It
+    // leaves only by the latch's own rules (NR5): the window turning over
+    // past this m.t, a discontinuity or camera restart, or a recovery below
+    // threshold - PERCLOS_MARGIN for PERCLOS_REARM_SECS. With an alert
+    // already sounding nothing is latched: new evidence may still escalate
+    // it (M8) -- and below the gate its evidence was already eligible, so
+    // the window it built is not below-gate evidence. That is the level as
+    // the step began, before a tap on this same step cleared it. The
+    // boolean triggers need no latch: their rising edge is already the rule
+    // (see was[] below).
+    if (inp.active && wasActive === false && levelAtStart === 0) {
+      perclosLatch(perc, "perclos1", mt);
+      perclosLatch(perc, "perclos2", mt);
+    }
+    wasActive = !!inp.active;
 
     // N8: the tap's own step already falls inside its own quiet period.
     if (inp.tap) lastTapT = t;

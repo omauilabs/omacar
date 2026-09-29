@@ -104,30 +104,43 @@ export default [
     // hold time gathered below the gate. I4's round 2 ruling reverses that:
     // evidence gathered while not active never arms or counts at all, so
     // the hold cannot even start until the car is genuinely active.
+    // Task 9 fix round 1 (I1) goes further: the crossing at t=4 latches
+    // both PERCLOS gates, because the window it had was read below the
+    // gate. So the hold starts only once the window holds no frame from
+    // t=4 (m.t 65), and raises 3 s later -- 68, not 7.
     const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }, { active: false }],
       [1, { perclos: 0.16 }, { active: false }], [2, { perclos: 0.16 }, { active: false }],
       [3, { perclos: 0.16 }, { active: false }], // 3 s below the gate -- still nothing armed
-      [4, { perclos: 0.16 }], [5, { perclos: 0.16 }], [6, { perclos: 0.16 }], // active -- hold starts fresh at t=4
-      [7, { perclos: 0.16 }]]);                                                // 3 s genuinely active -- raises now
-    eq(out.map((o) => o.level), [0, 0, 0, 0, 0, 0, 0, 1]);
+      ...range(4, 68).map((t) => [t, { perclos: 0.16 }])]);                  // active from t=4: a crossing
+    eq(events(out), [[68, 1, "perclos"]]);
   }],
   ["toggling active on and off resets the hold each time; only a sustained run raises (I4)", async () => {
-    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.16 }], [1, { perclos: 0.16 }],
+    // Task 9 fix round 1 (I1): the step back into active at t=3 is a
+    // crossing with nothing sounding, so both PERCLOS gates latch there
+    // (m.t 3). The reading held since before the crossing is not new
+    // evidence: the hold can start only once the window holds no frame from
+    // t=3 (m.t 64), and it still needs its full 3 s -- 67. Before that
+    // ruling this raised at t=6.
+    const rows = [[0, { perclos: 0.16 }], [1, { perclos: 0.16 }],
       [2, { perclos: 0.16 }, { active: false }],                          // inactive -- resets the hold
-      [3, { perclos: 0.16 }], [4, { perclos: 0.16 }], [5, { perclos: 0.16 }], // active again -- hold restarts at t=3
-      [6, { perclos: 0.16 }]]);                                             // 3 s since the restart -- raises
-    eq(out.map((o) => !!o.raised), [false, false, false, false, false, false, true]);
+      ...range(3, 67).map((t) => [t, { perclos: 0.16 }])];                  // active again: a crossing
+    const out = drive(createLadder(await CFG()), rows);
+    eq(events(out), [[67, 1, "perclos"]]);
   }],
   ["crossing the gate repeatedly with sustained evidence still raises Level 2 only once, and never re-raises through a tap into Level 3 (NR1/NR3)", async () => {
     // Extended past its original tap (fix round 3): under round 2 alone this
     // ran on 3 s longer and reached Level 3 via repeat-l2 at t=10.
-    const out = drive(createLadder(await CFG()), [[0, { perclos: 0.26 }, { active: false }], // nothing armed
-      [1, { perclos: 0.26 }], [2, { perclos: 0.26 }], [3, { perclos: 0.26 }],
-      [4, { perclos: 0.26 }],                          // 3 s active from t=1 -- raises Level 2
-      [5, { perclos: 0.26 }, { tap: true }],            // "I'm awake" clears it -- and latches the gate (NR3)
-      [6, { perclos: 0.26 }, { active: false }], [7, { perclos: 0.26 }],
-      [8, { perclos: 0.26 }], [9, { perclos: 0.26 }], [10, { perclos: 0.26 }]]);
-    eq(out.map((o) => o.level), [0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0]);
+    // Task 9 fix round 1 (I1): the crossing at t=1 latches both PERCLOS
+    // gates, so the 0.26 read since before it raises only once the window
+    // holds no frame from t=1 (m.t 62), after its 3 s hold: Level 2 at 65,
+    // not 4. The tap then latches it (NR3), and the next crossing (t=68)
+    // latches again: never Level 3.
+    const rows = [[0, { perclos: 0.26 }, { active: false }],               // nothing armed
+      ...range(1, 65).map((t) => [t, { perclos: 0.26 }]),                   // a crossing, then sustained
+      [66, { perclos: 0.26 }, { tap: true }],                                // "I'm awake" clears it
+      [67, { perclos: 0.26 }, { active: false }], ...range(68, 75).map((t) => [t, { perclos: 0.26 }])];
+    const out = drive(createLadder(await CFG()), rows);
+    eq(events(out), [[65, 2, "perclos"], [66, 0, "clear"]]);
     eq(out.every((o) => o.level !== 3), true);
     eq(out.every((o) => !o.raised || o.raised.trigger !== "repeat-l2"), true);
   }],
@@ -354,7 +367,7 @@ export default [
       [8, { perclos: 0.27 }]]);
     eq(out3.map((o) => o.level), [0, 0, 0, 2]);
   }],
-  ["N1b: a single parked step does not discard an unused arm; sustained evidence still raises promptly", async () => {
+  ["N1b: a single parked step does not discard an unused arm; sustained evidence still raises, once the crossing's window has turned over", async () => {
     const lad = createLadder(await CFG());
     const out1 = drive(lad, [[0, { perclos: 0.26 }], [1, { perclos: 0.26 }], [2, { perclos: 0.26 }],
       [3, { closed: true, closedFor: 2.0, perclos: 0.26 }]]); // Level 3; perclos2 arms unused, as in N1a
@@ -363,9 +376,13 @@ export default [
     // but is not a discard (I4): it is not a 5 min stop, and not a tap.
     const out2 = drive(lad, [[4, {}, { active: false, parked: true }]]);
     eq(out2[0].level, 0);
-    const out3 = drive(lad, [[5, { perclos: 0.27 }], [6, { perclos: 0.27 }], [7, { perclos: 0.27 }],
-      [8, { perclos: 0.27 }]]);
-    eq(out3.map((o) => o.level), [0, 0, 0, 2]);
+    // Task 9 fix round 1 (I1): t=5 is a crossing back into active with
+    // nothing sounding, so the 0.27 read across it waits for the window to
+    // turn over past m.t 5 (66), then its 3 s hold: Level 2 at 69, not 8.
+    // The parked step is still not a discard; the crossing latch simply
+    // comes after it.
+    const out3 = drive(lad, range(5, 69).map((t) => [t, { perclos: 0.27 }]));
+    eq(events(out3), [[69, 2, "perclos"]]);
   }],
   ["PERCLOS crossing 25% below the gate with a Level 1 up escalates (M8); 396 s later a fresh 0.28 is new evidence, not the same episode (NR5)", async () => {
     const lad = createLadder(await CFG());
@@ -397,6 +414,10 @@ export default [
     // discontinuity, which empties the measures' PERCLOS window -- the
     // latch expires there and then (NR5). PERCLOS reads null for 30 s (its
     // minimum window), then 0.28: after the 3 s hold, Level 2 at t=94.
+    // Task 9 fix round 1 (I1): t=62 is a crossing into active with nothing
+    // sounding (the frames at t=61 were fed below the gate), so both gates
+    // latch at m.t 62 and the 0.28 waits for the window to turn over past it
+    // (123), then the hold: Level 2 at 126.
     const rows = [];
     for (const t of range(0, 4)) rows.push([t, { perclos: 0.16 }]);          // Level 1 at t=3
     for (const t of range(5, 20)) rows.push([t, { perclos: 0.24 }]);
@@ -406,10 +427,10 @@ export default [
     for (const t of range(62, 90)) rows.push([t, { perclos: null }]);
     for (const t of range(91, 300)) rows.push([t, { perclos: 0.28 }]);
     const ev = events(drive(createLadder(await CFG()), rows));
-    eq(ev.slice(0, 3), [[3, 1, "perclos"], [21, 0, "clear"], [94, 2, "perclos"]]);
-    // Nothing between the light and t=94, and no Level 3 from the light's
+    eq(ev.slice(0, 3), [[3, 1, "perclos"], [21, 0, "clear"], [126, 2, "perclos"]]);
+    // Nothing between the light and t=126, and no Level 3 from the light's
     // own (stale) reading.
-    eq(ev.filter(([t]) => t > 21 && t < 94).length, 0);
+    eq(ev.filter(([t]) => t > 21 && t < 126).length, 0);
   }],
   ["NR1a/NR5: a tap on a PERCLOS Level 2 never re-raises from the same 60 s window; once the window is all new frames, a continuing 0.26 raises", async () => {
     // PERCLOS is a 60 s window and stays high well after the tap. Round 2
@@ -520,11 +541,16 @@ export default [
     // expires them; PERCLOS is null for its 30 s minimum window, then after
     // the 3 s hold the second Level 2 within 5 min is Level 3 -- 33 s after
     // the restart. Round 3 raised nothing in the 450 s after the light.
+    // Task 9 fix round 1 (I1): the 10 s at 20 mph after the light fill the
+    // fresh window below the gate, so the crossing at tr=150 latches both
+    // gates; Level 3 comes once the window holds no frame from the crossing,
+    // after the hold -- about 63 s after the crossing, not 33 s after the
+    // restart.
     const a = (await cabin(6000, light(100))).ev;
     eq(a.map(([, l, k]) => [l, k]), [[2, "perclos"], [0, "clear"], [3, "repeat-l2"]]);
     eq(a[1][0], 100);
-    const sinceRestart = +(a[2][0] - 140).toFixed(3);
-    eq(sinceRestart >= 30 && sinceRestart <= 33.2, true);
+    const sinceCrossing = +(a[2][0] - 150).toFixed(3);
+    eq(sinceCrossing > 60 && sinceCrossing <= 63.2, true);
     // The light early (tr=10, calibration not yet done): Level 2 at last,
     // which clears itself on open eyes (0.4 s closures are blinks) and
     // latches; the window turns over 60 s later and the closures that
@@ -588,12 +614,15 @@ export default [
   ["NR5: fresh frames below the gate turn the window over too; the hold itself still needs 3 s above it", async () => {
     // The latch is about which frames the window holds, and drowsy.js keeps
     // (and drops) frames whatever the speed. 95 s at 20 mph after the tap:
-    // nothing is raised below the gate (I4), but the window is all new, so
-    // 3 s after passing 30 mph with 0.26 still read, it raises.
+    // nothing is raised below the gate (I4), and the tap's latch has
+    // expired, but the window is now all below-gate frames. Task 9 fix round
+    // 1 (I1): that is not new evidence at the crossing (t=101), which
+    // latches both gates again; the 0.26 raises only once the window holds
+    // no frame from the crossing (m.t 162), after its hold -- 165, not 104.
     const rows = [...range(0, 5).map((t) => [t, { perclos: 0.26 }, t === 5 ? { tap: true } : {}]),
       ...range(6, 100).map((t) => [t, { perclos: 0.26 }, { active: false }]),
-      ...range(101, 120).map((t) => [t, { perclos: 0.26 }])];
-    eq(events(drive(createLadder(await CFG()), rows)), [[3, 2, "perclos"], [5, 0, "clear"], [104, 3, "repeat-l2"]]);
+      ...range(101, 170).map((t) => [t, { perclos: 0.26 }])];
+    eq(events(drive(createLadder(await CFG()), rows)), [[3, 2, "perclos"], [5, 0, "clear"], [165, 3, "repeat-l2"]]);
   }],
   ["NR2 (Important): yawns below the gate never mask a rising edge made of active yawns alone", async () => {
     // Three yawns below the gate reach the raw count of 3; then, while
@@ -857,5 +886,27 @@ export default [
     lad.setConfig(scaled(c, "sensitive"));
     const out = drive(lad, [[100, { closed: true, closedFor: 0.2 }], [101, { closed: true, closedFor: 0.9 }]]);
     eq([out[1].level, out[1].trigger], [3, "repeat-l2"]);
+  }],
+  // Task 9 fix round 1, I1: crossing into active with nothing sounding
+  // latches both PERCLOS gates (drowsyrun.js feeds below-gate frames). With
+  // an alert already sounding it latches nothing: the owner-approved rule
+  // that new evidence may escalate a sounding alert stands.
+  ["crossing into active with an alert already sounding latches nothing: PERCLOS still escalates it", async () => {
+    const lad = createLadder(await CFG());
+    const first = drive(lad, [[0, {}, { hour: 3 }]]);
+    eq(events(first), [[0, 1, "night"]]);
+    // below the gate, PERCLOS rising but under Level 2's 25% (so Level 1 is not released)
+    const below = drive(lad, range(1, 10).map((t) => [t, { perclos: +(0.2 + t / 1000).toFixed(3) }, { active: false, hour: 3 }]));
+    const above = drive(lad, range(11, 16).map((t) => [t, { perclos: 0.26 }, { hour: 3 }]));
+    eq([events(below), events(above)], [[], [[14, 2, "perclos"]]]);
+  }],
+  ["crossing into active at level 0 latches both PERCLOS gates at that step's m.t: nothing raises from the window it had", async () => {
+    const lad = createLadder(await CFG());
+    const below = drive(lad, range(0, 20).map((t) => [t, { perclos: 0.3 }, { active: false }]));
+    const above = drive(lad, range(21, 81).map((t) => [t, { perclos: 0.3 }]));
+    const later = drive(lad, range(82, 86).map((t) => [t, { perclos: 0.3 }]));
+    // Latched at m.t 21: the window holds a frame from t=21 until m.t 81;
+    // the hold starts at 82 and raises 3 s later.
+    eq([events(below), events(above), events(later)], [[], [], [[85, 2, "perclos"]]]);
   }],
 ];

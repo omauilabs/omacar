@@ -20,9 +20,15 @@
 // FRAMES FEED THE MEASURES whenever the car is rolling: connected, not
 // simulated, and moving (over 3 km/h) since its last long stop, at any
 // speed, below the 30 mph gate included, and through a stop shorter than
-// 10 s. So PERCLOS stays available through stop-and-go traffic. Below-gate
-// frames fill the window but never arm a trigger (ladder.js, I4): nothing
-// raises until the car is above the gate. The measures restart, with a
+// 10 s. So PERCLOS stays available through stop-and-go traffic. Nothing
+// raises below the gate with nothing sounding (ladder.js, I4), and a
+// below-gate window is not new evidence at the crossing either: on the step
+// the gate opens with nothing sounding, the ladder latches both PERCLOS
+// gates (Task 9 fix round 1, I1), so PERCLOS raises only once the window
+// holds no frame from the crossing (about 60 s) or has recovered first. A
+// closure, a yawn or a nod needs its own rising edge above the gate, as
+// before. With an alert already sounding, below-gate evidence may escalate
+// it, the owner-approved rule (M8). The measures restart, with a
 // discontinuity, only after 10 s stopped (0 km/h, until it moves again),
 // after a dropped link, or on a camera gap: the first frame fed after one is
 // marked `restart` (drowsy.js), so a PERCLOS reading after moving off is

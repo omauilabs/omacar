@@ -109,6 +109,27 @@ async function rig(over = {}) {
   return r;
 }
 
+// The review's lead-in (Task 9 review, I1): calibrated at speed, then 60 s at
+// 40 km/h with a 0.7 s closure every 2 s -- PERCLOS about 0.35, no closure
+// long enough for Level 2, and nothing raised below the gate -- then above
+// it. Returns the crossing's time.
+async function perclosLead(r) {
+  await r.calibrate();
+  await r.drive(40);
+  await r.frames(60, (i) => ({ blink: i % 20 < 7 ? 0.9 : 0.1 }));
+  const m = r.eng.state.measures;
+  ok(m.perclos > 0.3 && r.eng.state.level === 0, `below the gate: PERCLOS ${m.perclos}, level ${r.eng.state.level}`);
+  await r.drive(100);
+  return r.t;
+}
+// Every change of level from now on, as [seconds after `from`, level, trigger].
+function watchRaises(r, from) {
+  const out = [];
+  let was = r.eng.state.level;
+  r.eng.on((st) => { if (st.level !== was) { was = st.level; out.push([r3(st.t - from), st.level, st.trigger]); } });
+  return out;
+}
+
 export default [
   // ---- the brief's
   ["30 mph is 48.28 km/h: below it the gate is shut", () =>
@@ -468,6 +489,35 @@ export default [
     await r.drive(100);
     await r.frames(0.2, () => ({ blink: 0.9 }));
     eq([r.eng.state.measures.discontinuity, r.eng.state.level, r.eng.state.trigger], [false, 2, "closed"]);
+  }],
+
+  // ---- fix round 1, I1: a PERCLOS window built below the gate is not new
+  // evidence when the car crosses 30 mph (controller: option b).
+  ["a PERCLOS window built below the gate raises nothing at the crossing while the eyes stay open", async () => {
+    const r = await rig();
+    const cross = await perclosLead(r);
+    const raises = watchRaises(r, cross);
+    await r.frames(65);
+    eq(raises, []);
+  }],
+  ["with the closures going on above the gate, PERCLOS raises once the window has turned over", async () => {
+    const r = await rig();
+    const cross = await perclosLead(r);
+    const raises = watchRaises(r, cross);
+    await r.frames(70, (i) => ({ blink: i % 20 < 7 ? 0.9 : 0.1 }));
+    const [at, level, trigger] = raises[0] || [];
+    ok(at >= 60 && at <= 60 + 3 + 0.6, `first raise at +${at} s after the crossing (window 60 s, hold 3 s)`);
+    eq([level, trigger], [2, "perclos"]);
+  }],
+  ["and one long closure after the crossing raises at once: the closure triggers are unchanged", async () => {
+    const r = await rig();
+    const cross = await perclosLead(r);
+    const raises = watchRaises(r, cross);
+    await r.frames(2.5);
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    const [at, level, trigger] = raises[0] || [];
+    ok(raises.length === 1 && at > 2.5 && at < 4, `raises ${JSON.stringify(raises)}`);
+    eq([level, trigger], [2, "closed"]);
   }],
 
   // ---- 6. one scaled config, to the measures and the ladder alike
