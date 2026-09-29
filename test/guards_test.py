@@ -3320,6 +3320,203 @@ check("and its status check",
 _ima_shutil.rmtree(_ima_bin, ignore_errors=True)
 _ima_shutil.rmtree(_ima_state, ignore_errors=True)
 
+# ------------------------------------------------------- the driveway check
+head("tools/driveway-check.sh may run only the commands it is allowed to")
+
+_DW_SH = os.path.join(ROOT, "tools", "driveway-check.sh")
+_DW_PY = os.path.join(ROOT, "tools", "driveway_verdict.py")
+_dw_sh_src = open(_DW_SH, encoding="utf-8").read()
+_dw_py_src = open(_DW_PY, encoding="utf-8").read()
+
+
+def _dw_code_of(src):
+    # Same reasoning as tools/ima-session.sh above: only the code, comment
+    # lines stripped, is what could actually run -- this file's own header
+    # comment names every one of the words the checks below forbid, on
+    # purpose, as the list of things it must never do.
+    return "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
+
+
+_dw_sh_code = _dw_code_of(_dw_sh_src)
+_dw_py_code = _dw_code_of(_dw_py_src)
+
+_DW_OMACAR_ASSIGN = 'OMACAR_BIN="${OMACAR_BIN:-$ROOT/bin/omacar}"'
+_DW_SYSTEMCTL_ASSIGN = 'SYSTEMCTL="${OMACAR_SYSTEMCTL:-systemctl}"'
+# What may follow each way of naming omacar / systemctl. drive off/on/status
+# and listen capture are the brief's four; "driveway-check" is this tool's
+# own name, in its usage text and error prefix.
+_DW_OMACAR_OK = _ima_re.compile(
+    r"\s+(drive\s+(off|on|status)|listen\s+capture|driveway-check)\b")
+_DW_OMACAR_BIN_OK = _ima_re.compile(r'\s+(drive\s+(off|on|status)|listen\s+capture)\b')
+_DW_SYSTEMCTL_OK = _ima_re.compile(r'\s+--user\s+(daemon-reload|restart\s+omacar-drivelog)\b')
+# Nothing in either file may name any of these: none of them belongs in a tool
+# that only reads files the daemon and the recorder already write, and the
+# ones that open the adapter are the whole difference between this and
+# tools/ima-session.sh.
+_DW_BANNED = ("serial", "Elm(", "request_port", "connect.connect", "listen(",
+              ".raw(", ".request(", "subprocess", "os.system", "Popen")
+
+
+def _dw_findings(sh_code, py_code):
+    """Everything in the two files' code that the allowlist does not permit.
+    An empty list is a pass. Takes the code as text so the mutation checks
+    below can feed it a line it must catch."""
+    found = []
+    both = sh_code + "\n" + py_code
+    low = both.lower()
+    for word in ("omacar write", "prospect", "mcp", "atcsm0"):
+        if word in low:
+            found.append(f"forbidden word: {word}")
+    if _ima_re.search(r"clear", both, _ima_re.I):
+        found.append("forbidden word: clear")
+    for b in _ima_re.findall(r"0x([0-9A-Fa-f]{2})\b", both):
+        if b.upper() in _FORBIDDEN_SERVICES:
+            found.append(f"forbidden UDS service byte: 0x{b}")
+    for tok in _DW_BANNED:
+        if (tok.lower() in low) if tok == "serial" else (tok in both):
+            found.append(f"banned (opens the adapter or spawns a process): {tok}")
+    if _ima_re.search(r"\bsudo\b", sh_code):
+        found.append("sudo")
+    for line in sh_code.splitlines():
+        s = line.strip()
+        if "bin/omacar" in s and s != _DW_OMACAR_ASSIGN:
+            found.append(f"bin/omacar outside the OMACAR_BIN default: {s}")
+        for m in _ima_re.finditer(r'\$\{?OMACAR_BIN\}?"?', s):
+            rest = s[m.end():]
+            if rest.startswith(":-"):
+                continue                     # the assignment's own default
+            if not _DW_OMACAR_BIN_OK.match(rest):
+                found.append(f"$OMACAR_BIN used for something else: {s}")
+        for m in _ima_re.finditer(r"(?<![\w./-])omacar(?![\w./-])", s):
+            if not _DW_OMACAR_OK.match(s[m.end():]):
+                found.append(f"omacar used for something else: {s}")
+        if "systemctl" in s and s != _DW_SYSTEMCTL_ASSIGN:
+            found.append(f"a literal systemctl outside SYSTEMCTL's own default: {s}")
+        for m in _ima_re.finditer(r'\$\{?SYSTEMCTL\}?"?', s):
+            if not _DW_SYSTEMCTL_OK.match(s[m.end():]):
+                found.append(f"$SYSTEMCTL used for something else: {s}")
+    return found
+
+
+check("the script exists and is executable", os.access(_DW_SH, os.X_OK), True)
+check("the two files' code passes the allowlist", _dw_findings(_dw_sh_code, _dw_py_code), [])
+
+# The checks are not vacuous: the things they look at are really there.
+check("$OMACAR_BIN is used", len(_ima_re.findall(r'\$\{?OMACAR_BIN', _dw_sh_code)) > 3, True)
+check("$SYSTEMCTL is used", len(_ima_re.findall(r'\$\{?SYSTEMCTL', _dw_sh_code)) >= 2, True)
+check("0x-prefixed bytes are found (0x01, the gear byte for P)",
+      len(_ima_re.findall(r"0x([0-9A-Fa-f]{2})\b", _dw_sh_code + _dw_py_code)) > 0, True)
+
+# A GUARD THAT CANNOT FAIL IS NOT A GUARD. The first version of this one let
+# all of these through. Each is a line inserted before the `drive off` step of
+# the real script's code; every one has to be caught. (Also confirmed by hand
+# on the box copy of the file itself -- see the fix-round section of
+# omacar-notes/driveway-check-report.md.)
+_dw_mutations = {
+    "omacar doctor (sends OBD requests)": "omacar doctor",
+    "$OMACAR_BIN live RPM": '"$OMACAR_BIN" live RPM',
+    "${OMACAR_BIN} live RPM": '${OMACAR_BIN} live RPM',
+    "sudo systemctl stop omacar-daemon": "sudo systemctl stop omacar-daemon",
+    "a systemctl that is not the override": "systemctl --user stop omacar-daemon",
+    "$SYSTEMCTL stop omacar-drivelog": '"$SYSTEMCTL" --user stop omacar-drivelog',
+    "bin/omacar dtc, without the word 'clear'": '"$ROOT/bin/omacar" dtc --once',
+    "omacar mode god": "omacar mode god",
+}
+for _label, _line in _dw_mutations.items():
+    _mutated = _dw_sh_code.replace(
+        'run_cmd "stand the recorder down', _line + '\nrun_cmd "stand the recorder down', 1)
+    check(f"mutation caught: {_label}",
+          _mutated != _dw_sh_code and len(_dw_findings(_mutated, _dw_py_code)) > 0, True)
+for _label, _line in {
+        "import serial": "import serial",
+        "an Elm( on the adapter": "el = Elm(port)",
+        "request_port": "connect.request_port(port)",
+        "listen(": "listenlib.listen(seconds=1)",
+        "a spawned process": "subprocess.run(['omacar', 'doctor'])"}.items():
+    check(f"mutation caught in the helper: {_label}",
+          len(_dw_findings(_dw_sh_code, _dw_py_code + "\n" + _line)) > 0, True)
+
+head("`--dry-run` prints the plan and sends nothing, for all three modes")
+
+_dw_bin = _ima_tempfile.mkdtemp()
+_dw_fake_omacar = os.path.join(_dw_bin, "omacar")
+_dw_fake_systemctl = os.path.join(_dw_bin, "systemctl")
+_dw_calls = os.path.join(_dw_bin, "calls.log")
+for _path in (_dw_fake_omacar, _dw_fake_systemctl):
+    with open(_path, "w", encoding="utf-8") as f:
+        f.write('#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' % _dw_calls)
+    os.chmod(_path, 0o755)
+
+
+def _run_driveway(*extra_args, dropin_files=None, systemctl=False):
+    state_dir = _ima_tempfile.mkdtemp()
+    dropin_dir = _ima_tempfile.mkdtemp()
+    for _name, _body in (dropin_files or {}).items():
+        with open(os.path.join(dropin_dir, _name), "w", encoding="utf-8") as f:
+            f.write(_body)
+    env = dict(os.environ)
+    env["OMACAR_BIN"] = _dw_fake_omacar
+    if systemctl:
+        env["OMACAR_SYSTEMCTL"] = _dw_fake_systemctl
+    env["XDG_STATE_HOME"] = state_dir
+    env["OMACAR_DROPIN_DIR"] = dropin_dir
+    proc = _ima_sp.run(["bash", _DW_SH, "--dry-run", *extra_args], env=env,
+                       capture_output=True, text=True, timeout=60, input="")
+    return proc, state_dir, dropin_dir
+
+
+_dw_proc, _dw_state, _ = _run_driveway(systemctl=True)
+check("--dry-run (test mode) exits 0", _dw_proc.returncode, 0)
+check("--dry-run never invokes omacar or systemctl", os.path.exists(_dw_calls), False)
+
+_dw_expected = [
+    f"{_dw_fake_omacar} drive off",
+    f"timeout 90 env OMACAR_FASTBAUD=1 {_dw_fake_omacar} listen capture --seconds 20"
+    " --save --note fastbaud-test",
+    f"timeout 90 env OMACAR_FASTBAUD=1 OMACAR_CAF0=1 {_dw_fake_omacar} listen capture"
+    " --seconds 20 --save --note caf0-test",
+    f"{_dw_fake_systemctl} --user daemon-reload",
+    f"{_dw_fake_systemctl} --user restart omacar-drivelog",
+    f"{_dw_fake_omacar} drive on",
+]
+_dw_missing = [s for s in _dw_expected if s not in _dw_proc.stdout]
+check("--dry-run's plan names every expected command", _dw_missing, [])
+check("the plan shows the recorder being stood down before anything else",
+      _dw_proc.stdout.index("drive off") < _dw_proc.stdout.index("listen capture"), True)
+_dw_summary_path = None
+for _root, _dirs, _files in os.walk(_dw_state):
+    if "summary.json" in _files:
+        _dw_summary_path = os.path.join(_root, "summary.json")
+check("a dry run still leaves a summary.json", _dw_summary_path is not None, True)
+
+_dw_proc_ap, _, _ = _run_driveway("--apply-preset", "fallback")
+check("--dry-run --apply-preset exits 0", _dw_proc_ap.returncode, 0)
+check("--dry-run --apply-preset never invokes the real omacar",
+      os.path.exists(_dw_calls), False)
+check("--dry-run --apply-preset shows the real Environment= line, not an empty one",
+      "Environment=OMACAR_DRIVELOG_END_ON_OVERFLOW=1 OMACAR_DRIVELOG_QUIET=10 "
+      "OMACAR_DRIVELOG_BETWEEN=240" in _dw_proc_ap.stdout, True)
+check("--dry-run --apply-preset stands the recorder down first and gives it back",
+      (f"{_dw_fake_omacar} drive off" in _dw_proc_ap.stdout,
+       f"{_dw_fake_omacar} drive on" in _dw_proc_ap.stdout), (True, True))
+
+_dw_proc_rm, _, _ = _run_driveway(
+    "--remove-preset", dropin_files={"driveway-preset.conf": "[Service]\nEnvironment=X=1\n"})
+check("--dry-run --remove-preset exits 0", _dw_proc_rm.returncode, 0)
+check("--dry-run --remove-preset never invokes the real omacar",
+      os.path.exists(_dw_calls), False)
+check("--dry-run --remove-preset plans the rename, the reload and the restart",
+      all(s in _dw_proc_rm.stdout for s in
+          ("driveway-preset.conf.off", "--user daemon-reload",
+           "--user restart omacar-drivelog")), True)
+
+_dw_proc_none, _, _ = _run_driveway("--remove-preset")
+check("--dry-run --remove-preset with nothing to remove says so and plans nothing",
+      ("nothing to remove" in _dw_proc_none.stdout, "drive off" in _dw_proc_none.stdout),
+      (True, False))
+
+_ima_shutil.rmtree(_dw_bin, ignore_errors=True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:

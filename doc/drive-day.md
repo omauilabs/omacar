@@ -206,7 +206,7 @@ to the day's trip log at start-up.
 |---|---|---|---|---|
 | Default (nothing set) | ~120s — a 75ms burst, then the 120s quiet timeout waits out the silence | 90s | ~210s | **~43%** |
 | Fast link alone, default gap — this is also the **balanced** preset below | ~31s — the 60,000-line default cap at the ~1,900 lines/s measured above | 90s | ~121s | **~74%** |
-| **Telemetry-first** preset below | ~5s — a 10,000-line cap at the same ~1,900 lines/s | 240s | ~245s | **~98%** |
+| **Telemetry-first** preset below | ~5s — a 10,000-line cap at the same ~1,900 lines/s, plus a few seconds of hand-over | 240s | ~250s | **roughly 95%** |
 
 **Balanced** — the fast link, the gap left at its default:
 
@@ -220,13 +220,17 @@ systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
 ```
 
 **Telemetry-first** — the fast link, a 10,000-line cap (~5s of bus) and a
-240s gap, for ~98% telemetry and a ~5s CAN snapshot roughly every 4 minutes:
+240s gap, for roughly 95% telemetry and a ~5s CAN snapshot every 4 minutes or
+so. It also ends a leg the moment the adapter overflows, with a 10s quiet
+timeout, so a link that cannot keep up costs seconds rather than two minutes a
+leg (without those two, one overflowing leg holds the port ~2 minutes, and
+telemetry falls to about two thirds):
 
 ```
 mkdir -p ~/.config/systemd/user/omacar-drivelog.service.d
 cat > ~/.config/systemd/user/omacar-drivelog.service.d/telemetry-first.conf <<'EOF'
 [Service]
-Environment=OMACAR_FASTBAUD=1 OMACAR_DRIVELOG_LEG_LINES=10000 OMACAR_DRIVELOG_BETWEEN=240
+Environment=OMACAR_FASTBAUD=1 OMACAR_DRIVELOG_LEG_LINES=10000 OMACAR_DRIVELOG_BETWEEN=240 OMACAR_DRIVELOG_END_ON_OVERFLOW=1 OMACAR_DRIVELOG_QUIET=10
 EOF
 systemctl --user daemon-reload && systemctl --user restart omacar-drivelog
 ```
@@ -238,6 +242,13 @@ a leg runs, so it composes with any of the drop-ins here. systemd reads
 every `.conf` file in `omacar-drivelog.service.d/`, so two of them left in
 place at once both apply — remove whichever is no longer wanted before
 adding another, then `daemon-reload` and `restart` as above.
+
+**Or let the driveway check choose.** `tools/driveway-check.sh`, parked with
+the engine running, runs both test captures above, waits for the gauges to
+really come back after each, picks one of three presets (`telemetry-first-caf0`,
+`telemetry-first`, or `fallback` when the fast link fails), and with `--apply`
+installs it as the single drop-in `driveway-preset.conf`, renaming the others
+here to `.off`. `--dry-run` shows what it would do; `--remove-preset` undoes it.
 
 ## On the road — the recorder
 
