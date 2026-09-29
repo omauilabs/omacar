@@ -42,8 +42,9 @@ python3 "$ROOT/test/listen_test.py" || fails=$((fails + 1))
 
 # The loopback server the kiosk's screen is served from: its output is kept,
 # and kept small, where the next death can be read, and the kiosk brings it back
-# on the same port when it goes. Real server, real shell; Chromium is a
-# stand-in and every port and directory is a scratch one.
+# on the same port when it goes. A signal that ends it says so. Real server,
+# real shell; Chromium is a stand-in and every port and directory is a scratch
+# one.
 python3 "$ROOT/test/srvwatch_test.py" || fails=$((fails + 1))
 
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,

@@ -28,10 +28,13 @@ Two modes, and the difference between them is the whole security model.
       read this, because it is plain HTTP on a LAN, and pretending otherwise
       would be worse than saying so.
 """
+import faulthandler
 import hmac
 import json
 import os
+import signal
 import sys
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
@@ -478,7 +481,29 @@ def parse_args(argv):
     return port, root, host, token, control
 
 
+def _said_so(signum, _frame):
+    """Say which signal is ending the process, and end it.
+
+    On 29 September this server died in the middle of a drive and left nothing
+    to say why. Nothing in its request handling can end the process -- a fault
+    in a request only ends that request's thread -- so what is left is being
+    ended from outside, and a signal it does not handle ends a Python process
+    without a word. Now SIGTERM and SIGHUP, which is what stopping a service or
+    a plain kill sends, leave a line saying which and when. A death with NO
+    line is an answer too: SIGKILL, which is what the kernel's out-of-memory
+    killer sends and no process can announce.
+    """
+    print(f"{time.strftime('%F %T')} serve.py: {signal.Signals(signum).name} "
+          f"received; exiting", file=sys.stderr, flush=True)
+    raise SystemExit(128 + signum)
+
+
 if __name__ == "__main__":
+    # A crash from inside the interpreter, which is not an exception and so is
+    # not caught by anything above, leaves its stack in the log.
+    faulthandler.enable()
+    for _sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(_sig, _said_so)
     port, root, host, TOKEN, ALLOW_CONTROL = parse_args(sys.argv[1:])
     LOOPBACK_ONLY = host in ("127.0.0.1", "localhost", "::1")
     if not LOOPBACK_ONLY and not TOKEN:

@@ -8,12 +8,14 @@ died. It is started once, detached, by app_base() in bin/omacar, nothing
 supervised it, and its output went to /dev/null -- so the screen stayed blank
 until somebody restarted it by hand, and the cause of the death is unknown.
 
-Two things are asserted here, and both need a real server and a real shell:
+Three things are asserted here, and all of them need a real server:
 
   the server's output is kept, in the state directory, and kept small, so the
     next death leaves something to read
   the kiosk restarts the server on the SAME port when it goes, which is what
     lets the page recover without a reload
+  a signal that ends the server leaves a line saying which, because a Python
+    process otherwise dies from one without a word
 
 Chromium is never launched. The kiosk is run against a stand-in that sleeps
 until told to stop, and every other tool it would touch (the idle switch, the
@@ -431,6 +433,55 @@ def test_kiosk():
         s.clean()
 
 
+# ---- a death that says so -----------------------------------------------------
+
+def test_says_so():
+    print("\n  A signal that ends the server leaves a line saying which\n")
+    port = free_port()
+    s = Scratch(port)
+    # As the real one runs: nothing has turned Python's fault handler on.
+    env = {k: v for k, v in s.env.items() if k != "PYTHONFAULTHANDLER"}
+    try:
+        for name, sig, status in (("SIGTERM", signal.SIGTERM, 143),
+                                  ("SIGHUP", signal.SIGHUP, 129),
+                                  ("SIGABRT", signal.SIGABRT, None)):
+            errpath = os.path.join(s.dir, f"{name}.err")
+            with open(errpath, "w") as err:
+                server = subprocess.Popen([PY, SERVE, str(port), SHARE], env=env,
+                                          stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.DEVNULL, stderr=err,
+                                          start_new_session=True)
+            if wait_for(lambda: answers(port), 5) is None:
+                bad(f"{name}: the scratch server never came up")
+                server.kill()
+                continue
+            # A browser's idle keep-alive connection, held open across the
+            # signal: the server must not wait for it to go away.
+            held = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+            held.request("GET", "/.mark")
+            held.getresponse().read()
+            server.send_signal(sig)
+            try:
+                code = server.wait(5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                code = None
+            held.close()
+            text = read(errpath)
+            if status is not None:
+                check(f"{name}: it exits with the conventional status {status}"
+                      f" (got {code})", code == status)
+                check(f"{name}: and says which signal, with the time",
+                      re.search(rf"^\d{{4}}-\d\d-\d\d \d\d:\d\d:\d\d "
+                                rf"serve\.py: {name} received", text, re.M)
+                      is not None)
+            else:
+                check("SIGABRT: a crash from inside leaves its stack trace",
+                      "Fatal Python error: Aborted" in text)
+    finally:
+        s.clean()
+
+
 def main():
     # A crash test that leaves a core file per run is not a kindness to the box.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -439,7 +490,7 @@ def main():
         return 0
 
     for test in (test_log, test_restart, test_foreign_port, test_parent_exit,
-                 test_kiosk):
+                 test_kiosk, test_says_so):
         try:
             test()
         except Exception as e:                       # noqa: BLE001
