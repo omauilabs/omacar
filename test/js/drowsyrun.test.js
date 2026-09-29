@@ -58,10 +58,13 @@ async function rig(over = {}) {
     await r.eng.idle();
   };
   // `secs` of cabin frames at 10 fps, each stamped on the frame clock as
-  // facewatch.js stamps it; fn(i) overrides a frame's fields.
-  r.frames = (secs, fn) => {
+  // facewatch.js stamps it, with the page's half-second /api/live poll
+  // between every fifth, and any timers that fall due; fn(i) overrides a
+  // frame's fields.
+  r.frames = async (secs, fn) => {
     for (let i = 0; i < Math.round(secs * 10); i++) {
-      r.t = r3(r.t + 0.1);
+      r.advance(0.1);
+      if (i % 5 === 4) { await r.eng.pollLive(); await r.eng.idle(); }
       if (r.onFrame) r.onFrame(Object.assign({ t: r.t, face: true, blink: 0.1, jaw: 0.1, pitch: 0 }, fn ? fn(i) : {}));
     }
   };
@@ -82,7 +85,7 @@ async function rig(over = {}) {
     r.t = end;
   };
   r.plays = () => r.log.filter((x) => x[0] === "play").map((x) => x[1]);
-  r.calibrate = async () => { await r.drive(100); r.frames(61); };
+  r.calibrate = async () => { await r.drive(100); await r.frames(61); };
   await r.eng.start();
   await r.eng.idle();
   return r;
@@ -137,8 +140,8 @@ export default [
     const r = await rig({ settings: { name: "" }, installed: (n) => n === "James" });
     eq([r.asked, r.eng.state.rotation], [[""], ["bark", "alarm"]]);
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
-    r.frames(12);
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(12);
     eq(r.plays().slice(0, 3), [["duck", "bark"], ["alarm"], ["bark"]]);
   }],
   ["and a settings reload passes the filtered rotation to setConfig: the voice goes when its clip does", async () => {
@@ -148,8 +151,8 @@ export default [
     await r.eng.reload();
     eq([r.asked, r.eng.state.rotation], [["James", ""], ["bark", "alarm"]]);
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
-    r.frames(12);
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(12);
     eq(r.plays().slice(0, 3), [["duck", "bark"], ["alarm"], ["bark"]]);
   }],
   ["and comes back with it: the voice is in the rotation once its clip is there", async () => {
@@ -157,8 +160,8 @@ export default [
     r.settings.name = "James";
     await r.eng.reload();
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
-    r.frames(12);
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(12);
     eq(r.plays().slice(0, 3), [["duck", "bark"], ["voice:l2"], ["alarm"]]);
   }],
 
@@ -207,13 +210,13 @@ export default [
   ["a camera gap is a discontinuity, and a sounding alert repeats through it on the clock", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(1.2, () => ({ blink: 0.9 }));
     eq(r.eng.state.level, 2);
     const n = r.plays().length;
     await r.polls(12);                            // no frames for 12 s
     ok(r.plays().length - n >= 2, `repeats during the gap: ${JSON.stringify(r.plays().slice(n))}`);
     eq(r.eng.state.level, 2);
-    r.frames(0.1, () => ({ blink: 0.9 }));
+    await r.frames(0.1, () => ({ blink: 0.9 }));
     eq([r.eng.state.measures.discontinuity, r.eng.state.measures.closedFor], [true, 0]);
   }],
 
@@ -226,7 +229,7 @@ export default [
   ["a dropped link, however long, neither clears an alert nor stops it; connected at 0 km/h does", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(1.2, () => ({ blink: 0.9 }));
     eq(r.eng.state.level, 2);
     await r.drive(null);
     const n = r.plays().length;
@@ -241,14 +244,14 @@ export default [
     const r = await rig();
     r.eng.preview = true;                         // so the camera is watched at all
     await r.drive(100, { simulated: true });
-    r.frames(61);
-    r.frames(3, () => ({ blink: 0.9 }));
+    await r.frames(61);
+    await r.frames(3, () => ({ blink: 0.9 }));
     eq([r.eng.state.measures, r.eng.state.level, r.eng.state.chip, r.plays()], [null, 0, "Off", []]);
   }],
   ["after Level 3 the banner stays until 2 minutes connected and stopped, by the stop clock: a dropped link starts that count over", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(2.2, () => ({ blink: 0.9 }));
+    await r.frames(2.2, () => ({ blink: 0.9 }));
     eq([r.eng.state.level, r.eng.state.banner], [3, true]);
     await r.drive(0);
     eq([r.eng.state.level, r.eng.state.banner], [0, true]);
@@ -274,50 +277,114 @@ export default [
     eq([early, r.eng.state.level, r.eng.state.trigger], [0, 1, "since-stop"]);
   }],
 
-  // ---- 5. no frames feed the measures while parked, or below the gate with nothing sounding
-  ["a minute parked with eyes closed feeds nothing, and PERCLOS after moving off is not built from it", async () => {
+  // ---- 5. which frames feed the measures (refined before review, controller 2026-09-29):
+  // every frame while the car rolls, below the gate included; a restart only
+  // after 10 s stopped, a dropped link, or a camera gap.
+  ["stop-and-go at 25-35 mph keeps PERCLOS available after its first 30 s, with no restart", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(40);                                 // PERCLOS's window is under way, eyes open
+    const from = r.t, seen = [];
+    r.eng.on((st) => { const m = st.measures; if (m && m.t > from && seen.at(-1) !== m) seen.push(m); });
+    for (let i = 0; i < 24; i++) {                // 2 minutes, 5 s at each speed
+      await r.drive(i % 2 ? 56 : 40);
+      await r.frames(5);
+    }
+    const late = seen.filter((m) => m.t > from + 31);
+    eq([seen.some((m) => m.discontinuity), late.length > 800, late.every((m) => m.perclos !== null)], [false, true, true]);
+  }],
+  ["a stop shorter than 10 s is not a restart: PERCLOS carries on", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(40);
+    await r.drive(0);
+    await r.frames(6);
+    await r.drive(40);
+    await r.frames(0.1);
+    const m = r.eng.state.measures;
+    eq([m.t, m.discontinuity, m.perclos !== null], [r.t, false, true], "the frame just fed, after the stop");
+  }],
+  ["a stop of 10 s restarts the measures: only its first 10 s were fed, and PERCLOS after moving off starts over", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(40);
     const fed = r.eng.state.measures;
     ok(fed.perclos !== null && fed.perclos < 0.05, `PERCLOS before the stop ${fed.perclos}`);
     r.eng.preview = true;                         // the settings sheet keeps the camera watched
     await r.drive(0);
-    r.frames(60, () => ({ blink: 0.9 }));
-    eq([r.eng.state.measures === fed, r.eng.state.frame.blink], [true, 0.9], "parked: the preview's frame, not the measures");
+    const stop = r.t;
+    await r.frames(60, () => ({ blink: 0.9 }));
+    const last = r.eng.state.measures;
+    ok(last.t <= stop + 10.05, `a frame ${r3(last.t - stop)} s into the stop was fed`);
+    eq(r.eng.state.frame.blink, 0.9, "parked: the preview still gets the frame");
     r.eng.preview = false;
     await r.drive(100);
-    r.frames(0.1);
+    await r.frames(0.1);
     eq([r.eng.state.measures.discontinuity, r.eng.state.measures.perclos], [true, null], "moving off restarts the window");
-    r.frames(35);
+    await r.frames(35);
     eq([r.eng.state.measures.perclos, r.eng.state.level], [0, 0]);
   }],
-  ["below the gate with nothing sounding, frames are not fed; with an alert sounding they are", async () => {
+  ["creeping at 3 km/h or less is still stopped: after a long stop it feeds nothing until the car moves", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.drive(0);
+    await r.polls(11);
+    r.eng.preview = true;
+    await r.drive(3);
+    const held = r.eng.state.measures;
+    await r.frames(2);
+    const creeping = r.eng.state.measures === held;
+    await r.drive(4);
+    await r.frames(0.1);
+    eq([creeping, r.eng.state.measures.t, r.eng.state.measures.discontinuity], [true, r.t, true]);
+  }],
+  ["a dropped link restarts the measures too, however short, with the camera still watched", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(40);
+    r.eng.preview = true;                         // the watcher keeps running through the drop
+    await r.drive(null);
+    await r.frames(0.5);
+    await r.drive(100);
+    await r.frames(0.1);
+    eq([r.watches, r.eng.state.measures.t, r.eng.state.measures.discontinuity, r.eng.state.measures.perclos],
+       [1, r.t, true, null]);
+  }],
+  ["the cabin picture going and coming back is a camera gap, however short", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(40);
+    r.cams = { running: true, roles: { cabin: { live: false } } };
+    await r.eng.pollCams();
+    r.cams = { running: true, roles: { cabin: { live: true } } };
+    await r.eng.pollCams();
+    await r.eng.idle();
+    await r.frames(0.1);
+    eq([r.watches, r.eng.state.measures.t, r.eng.state.measures.discontinuity], [2, r.t, true]);
+  }],
+  ["below the gate frames are fed, but nothing below the gate raises an alert", async () => {
     const r = await rig();
     await r.calibrate();
     await r.drive(40);                            // moving, under 30 mph
-    const fed = r.eng.state.measures;
-    r.frames(3, () => ({ blink: 0.9 }));
-    eq([r.eng.state.measures === fed, r.eng.state.level], [true, 0]);
-    await r.drive(100);
-    r.frames(1.2, () => ({ blink: 0.9 }));
-    eq(r.eng.state.level, 2);
-    await r.drive(40);
     const t0 = r.eng.state.measures.t;
-    r.frames(1);
-    eq([r.eng.state.measures.t > t0, r.eng.state.measures.closed], [true, false], "an alert sounding: fed below the gate");
+    await r.frames(3, () => ({ blink: 0.9 }));
+    const m = r.eng.state.measures;
+    eq([m.t > t0, m.closedFor >= 2.5, r.eng.state.level], [true, true, 0]);
+    await r.drive(100);                           // the same closure goes on above the gate: no new evidence
+    await r.frames(1, () => ({ blink: 0.9 }));
+    eq(r.eng.state.level, 0);
+    await r.frames(2);
+    await r.frames(1.2, () => ({ blink: 0.9 }));  // a new closure, above the gate
+    eq([r.eng.state.level, r.eng.state.trigger], [2, "closed"]);
   }],
-  ["a pause shorter than a second still restarts the measures: nothing unseen is credited", async () => {
+  ["a dip below the gate is not a pause: a closure that spans it is one closure", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(0.6, () => ({ blink: 0.9 }));
+    await r.frames(0.6, () => ({ blink: 0.9 }));
     await r.drive(45);                            // under the gate for 0.3 s
-    r.frames(0.3, () => ({ blink: 0.9 }));
+    await r.frames(0.3, () => ({ blink: 0.9 }));
     await r.drive(100);
-    r.frames(0.1, () => ({ blink: 0.9 }));
-    eq([r.eng.state.measures.discontinuity, r.eng.state.measures.closedFor], [true, 0]);
-    r.frames(0.5, () => ({ blink: 0.9 }));
-    eq(r.eng.state.level, 0, "0.6 s closed before the pause is not added to 0.6 s after it");
+    await r.frames(0.2, () => ({ blink: 0.9 }));
+    eq([r.eng.state.measures.discontinuity, r.eng.state.level, r.eng.state.trigger], [false, 2, "closed"]);
   }],
 
   // ---- 6. one scaled config, to the measures and the ladder alike
@@ -327,7 +394,7 @@ export default [
     // Ten frames: closedFor runs from the first closed frame, so 0.9 s.
     const r = await rig({ settings: { sensitivity: "sensitive" } });
     await r.calibrate();
-    r.frames(1.0, () => ({ blink: 0.42 }));
+    await r.frames(1.0, () => ({ blink: 0.42 }));
     eq([r.eng.state.level, r.eng.state.trigger], [2, "closed"]);
     const c = r.log.find((x) => x[0] === "setConfig")[1];
     eq([c._scaled, c.eyes.closed_over_baseline, c.level2.closed_secs], [true, 0.28, 0.8]);
@@ -335,7 +402,7 @@ export default [
   ["and Standard does not: the same closure is not even closed", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(1.0, () => ({ blink: 0.42 }));
+    await r.frames(1.0, () => ({ blink: 0.42 }));
     eq([r.eng.state.level, r.eng.state.measures.closed], [0, false]);
   }],
 
@@ -343,7 +410,7 @@ export default [
   ["a save while Level 2 sounds clears it through 'I'm awake' first, then the new settings apply", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(1.2, () => ({ blink: 0.9 }));
     eq(r.eng.state.level, 2);
     const from = r.log.length;
     r.settings.sensitivity = "sensitive";
@@ -353,15 +420,15 @@ export default [
     // The same ladder and baseline, with the new thresholds: a closure at
     // 0.42 is closed now, with no new minute of calibration, and 0.9 s of it
     // raises (the second Level 2 in 5 minutes, so Level 3).
-    r.frames(5);
-    r.frames(1.0, () => ({ blink: 0.42 }));
+    await r.frames(5);
+    await r.frames(1.0, () => ({ blink: 0.42 }));
     eq([r.eng.state.measures.baseline, r.eng.state.measures.threshold, r.eng.state.level, r.eng.state.trigger],
        [0.1, 0.38, 3, "repeat-l2"]);
   }],
   ["the save clears Level 3's held alarm too, and a running Test the alerts", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(2.2, () => ({ blink: 0.9 }));
+    await r.frames(2.2, () => ({ blink: 0.9 }));
     eq(r.eng.state.level, 3);
     await r.eng.reload();
     eq([r.eng.state.level, r.plays().at(-1)], [0, ["fade"]]);
@@ -478,22 +545,24 @@ export default [
     await r.eng.pollCams();
     await r.eng.idle();
     await r.drive(0);
-    eq([parked, moving, noPicture, w()], [[0, 0], [1, 0], [1, 1], [2, 2]]);
+    const shortStop = w();
+    await r.polls(11);
+    eq([parked, moving, noPicture, shortStop, w()], [[0, 0], [1, 0], [1, 1], [2, 1], [2, 2]]);
   }],
   ["drowsy mode off: nothing is watched and nothing alerts", async () => {
     const r = await rig({ settings: { enabled: false } });
     await r.drive(100);
-    r.frames(70, () => ({ blink: 0.9 }));
+    await r.frames(70, () => ({ blink: 0.9 }));
     eq([r.watches, r.eng.state.chip, r.eng.state.level, r.plays()], [0, "Off", 0, []]);
   }],
   ["the chip: Watching with a face, Can't see you after 5 s without one or without frames, Paused when parked", async () => {
     const r = await rig();
     await r.drive(40);
-    r.frames(1);
+    await r.frames(1);
     const a = r.eng.state.chip;
-    r.frames(5.2, () => ({ face: false }));
+    await r.frames(5.2, () => ({ face: false }));
     const b = r.eng.state.chip;
-    r.frames(1);
+    await r.frames(1);
     const c = r.eng.state.chip;
     await r.polls(6);
     const d = r.eng.state.chip;
@@ -512,7 +581,7 @@ export default [
   ["each alert goes to the records book with its level, trigger, speed and measures", async () => {
     const r = await rig();
     await r.calibrate();
-    r.frames(1.2, () => ({ blink: 0.9 }));
+    await r.frames(1.2, () => ({ blink: 0.9 }));
     await Promise.resolve();
     await Promise.resolve();
     const ev = r.posts.filter((p) => p[0] === "/api/drowsy/event").map((p) => p[1]);

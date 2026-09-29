@@ -15,13 +15,19 @@
 // clock (ladder.js createStopClock) is the one source of sinceStop and
 // stoppedFor.
 //
-// FRAMES FEED THE MEASURES only while the car is active, or while an alert
-// is already sounding and the car is not parked. Never while parked (the
-// settings preview still shows the raw frame, state.frame), and never below
-// the gate with nothing sounding. The first frame fed after any pause is
-// marked `restart`, a discontinuity to the measures (drowsy.js): frames
-// nobody measured are never credited, and a PERCLOS reading after moving off
-// is never built from the stop.
+// FRAMES FEED THE MEASURES whenever the car is rolling: connected, not
+// simulated, and moving (over 3 km/h) since its last long stop, at any
+// speed, below the 30 mph gate included, and through a stop shorter than
+// 10 s. So PERCLOS stays available through stop-and-go traffic. Below-gate
+// frames fill the window but never arm a trigger (ladder.js, I4): nothing
+// raises until the car is above the gate. The measures restart, with a
+// discontinuity, only after 10 s stopped (0 km/h, until it moves again),
+// after a dropped link, or on a camera gap: the first frame fed after one is
+// marked `restart` (drowsy.js), so a PERCLOS reading after moving off is
+// never built from a long stop. A poll that failed is unknown, not a dropped
+// link: it pauses feeding and restarts nothing by itself. The settings
+// preview still shows the raw frame while parked (state.frame).
+// (Refined before review, controller 2026-09-29.)
 //
 // THE CLOCK. Every step of the ladder, and the stop clock, run on one
 // clock in seconds: the frame clock facewatch.js stamps each frame with
@@ -113,6 +119,10 @@ async function liveWatch({ canvas, onFrame }) {
 // What a step reads when no frame has ever been fed.
 const NO_SNAPSHOT = Object.freeze({ face: false, faceLost: true });
 
+// Rolling and stopped, for the measures (see the header).
+export const MOVING_KPH = 3;
+export const STOP_RESTART_SECS = 10;
+
 // The engine. The page has one, `drowsy`, below; a test builds its own with
 // every outside thing handed in: the clock, the server, the player, the
 // watcher, the timers. Nothing in here reads a clock of its own.
@@ -139,7 +149,11 @@ export function createDrowsy(opts = {}) {
   const stopCfg = { stop: { still_secs: 300 } };
   let gate = null, lastSample = null, cabinLive = false, aux = "";
   let watcher = null, watchGen = 0, starting = null, retryAt = -Infinity, watchSince = null;
-  let lastT = -Infinity, lastSnap = null, paused = true, frame = null, lastFaceT = null;
+  let lastT = -Infinity, lastSnap = null, frame = null, lastFaceT = null;
+  // rolling: moving (over MOVING_KPH) since the last long stop or dropped
+  // link. stopSince: when the car last read 0 km/h, until it moves again.
+  // restartOwed: the next frame fed starts the measures over.
+  let rolling = false, stopSince = null, restartOwed = true;
   let logBuf = [], lastLogT = -Infinity;
   let testing = null;
   let started = false, cfgRetryAt = -Infinity, liveBusy = false, camsBusy = false;
@@ -217,7 +231,7 @@ export function createDrowsy(opts = {}) {
   function logRow(out, m) {
     const s = m || {};
     return { t: Math.round(d.wall() * 10) / 10, mt: s.t ?? null, kph: gate ? gate.kph : null,
-             active: !!(gate && gate.active), fed: !paused, face: !!s.face, blink: s.blink ?? null,
+             active: !!(gate && gate.active), fed: feeding(), face: !!s.face, blink: s.blink ?? null,
              closed: !!s.closed, closedFor: s.closedFor ?? 0, perclos: s.perclos ?? null, yawns: s.yawns ?? 0,
              nods: s.nods ?? 0, pitch: s.pitch ?? null, baseline: s.baseline ?? null, level: out.level };
   }
@@ -258,23 +272,41 @@ export function createDrowsy(opts = {}) {
   // A step with no new frame: the clock's now, the last snapshot.
   const tick = (tap = false) => step(d.clock(), lastSnap, tap);
 
+  // Rolling and stopped, from each answered poll (see the header). A known
+  // "no car" -- the link down, or the simulator -- ends rolling and owes a
+  // restart. A poll that failed changes nothing: it is not known to be either.
+  function track(answered) {
+    if (!gate || !gate.connected) {
+      if (answered) { rolling = false; stopSince = null; restartOwed = true; }
+      return;
+    }
+    if (gate.kph === null) return;
+    if (gate.kph > MOVING_KPH) { rolling = true; stopSince = null; return; }
+    if (gate.kph === 0 && stopSince === null) stopSince = d.clock();
+    if (rolling && stoppedLong()) { rolling = false; restartOwed = true; }
+  }
+  function stoppedLong() {
+    return stopSince !== null && d.clock() - stopSince >= STOP_RESTART_SECS;
+  }
+
   // Whether a frame may feed the measures now (see the header).
   function feeding() {
-    return !!(cfg && cfg.enabled && ladder && gate && !gate.parked && (gate.active || ladder.level > 0));
+    return !!(cfg && cfg.enabled && ladder && gate && gate.connected && gate.kph !== null
+              && rolling && !stoppedLong());
   }
 
   function onFrame(f) {
     if (!cfg || !ladder || !f) return;
     frame = f;
     if (f.face) lastFaceT = f.t;
-    if (!feeding()) { paused = true; publish(); return; }
+    if (!feeding()) { publish(); return; }
     const prev = measures.snapshot;
     const snap = measures.feed({ t: f.t, face: !!f.face, blink: f.blink, jaw: f.jaw, pitch: f.pitch,
-                                 gated: !!gate.active, restart: paused });
+                                 gated: !!gate.active, restart: restartOwed });
     // A duplicate: the measures ignored it, and so does the ladder. A
     // restart still owed stays owed.
     if (snap === prev) { publish(); return; }
-    paused = false;
+    restartOwed = false;
     lastSnap = snap;
     step(snap.t, snap);
   }
@@ -290,13 +322,13 @@ export function createDrowsy(opts = {}) {
   // alert sounding, or the preview open; drowsy mode on; a live cabin picture.
   function wanted() {
     return !!(cfg && cfg.enabled && cabinLive
-              && ((gate && gate.moving) || engine.preview || (ladder && ladder.level > 0)));
+              && ((rolling && !stoppedLong()) || engine.preview || (ladder && ladder.level > 0)));
   }
   function stopWatch() {
     watchGen++;
     if (watcher) watcher.stop();
     watcher = null;
-    paused = true;
+    restartOwed = true;               // a camera restart: a gap, whatever its length
     frame = null;
     lastFaceT = null;
   }
@@ -390,11 +422,11 @@ export function createDrowsy(opts = {}) {
       if (liveBusy) return;
       liveBusy = true;
       try {
-        let sample = null;
-        try { sample = await d.getJSON("/api/live"); } catch { /* no server: no gate */ }
+        let sample = null, answered = false;
+        try { sample = await d.getJSON("/api/live"); answered = true; } catch { /* no server: no gate */ }
         lastSample = sample;
         if (!cfg && d.clock() >= cfgRetryAt) { cfgRetryAt = d.clock() + 10; await loadConfig(); }
-        if (cfg) gate = gateOf(sample, cfg);
+        if (cfg) { gate = gateOf(sample, cfg); track(answered); }
         if (testing && !testGate.may(gate, sample)) stopTest();
         syncWatch();
         tick(false);
