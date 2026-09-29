@@ -56,11 +56,15 @@
 .cam-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); }
 
 /* Playback. */
-.cam-playbar { display: grid; gap: 10px; padding: 14px 16px; grid-template-columns: 1fr auto; align-items: center; }
+.cam-playbar { display: grid; gap: 10px; padding: 14px 16px; grid-template-columns: 1fr auto 1fr; align-items: center; }
 .cam-scrubrow { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; font-size: .85rem; }
 .cam-scrub { flex: 1; min-height: var(--tap); accent-color: var(--accent); }
 .cam-when { min-width: 8ch; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .cam-transport, .cam-actions { display: flex; align-items: center; gap: 10px; }
+/* As mockup 6 has them: the transport centred on the card, the actions at its
+   right, all three the same height although Mute carries a second line. */
+.cam-transport { grid-column: 2; justify-content: center; }
+.cam-actions { grid-column: 3; justify-self: end; align-items: stretch; }
 .cam-btn, .cam-live, .cam-act, .cam-pick {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   min-width: var(--tap-lg); min-height: var(--tap-lg); padding: 0 14px;
@@ -92,6 +96,8 @@
   .cam-feed { aspect-ratio: 16 / 9; }
   .cam-side { grid-template-rows: none; grid-template-columns: 1fr 1fr; }
   .cams-foot, .cam-playbar { grid-template-columns: 1fr; }
+  .cam-transport, .cam-actions { grid-column: 1; }
+  .cam-actions { justify-self: stretch; }
   .cam-actions .cam-act { flex: 1; }
 }
 
@@ -102,8 +108,8 @@
 .dc-why { position: absolute; inset: 0; display: grid; place-items: center; padding: 40px 16px 16px;
           text-align: center; color: var(--dim); font-size: .9rem; background: var(--panel); }
 .dc-top { position: absolute; inset: 0 0 auto 0; display: flex; align-items: center; gap: 8px;
-          padding: 12px 14px; color: #F6FCFF; background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent); }
-.dc-title { flex: 1; font-size: .9rem; }
+          padding: 16px; color: #F6FCFF; background: linear-gradient(180deg, rgba(0, 0, 0, .6), transparent); }
+.dc-title { flex: 1; font-size: .95rem; }
 .dc-rec { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
           background: rgba(0, 0, 0, .55); font-size: .75rem; font-weight: 600; letter-spacing: .06em; }
 .dc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rec); }
