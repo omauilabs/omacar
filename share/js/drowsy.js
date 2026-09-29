@@ -1,5 +1,5 @@
 // Drowsy mode's measures, from timestamped frames. Pure: no camera, no clock,
-// no DOM. A frame is { t (seconds), face, blink, jaw, pitch, gated }, and every
+// no DOM. A frame is { t (seconds), face, blink, jaw, pitch, gated, restart? }, and every
 // measure is a function of the frames fed so far, so each can be tested on a
 // synthetic series.
 //
@@ -86,7 +86,14 @@ export function createMeasures(cfg) {
     // before rather than mixing two eras. Left unguarded, a gap can surface
     // as an instantly huge "eyes closed" on the very first frame after it --
     // exactly the spurious alert a driver must never get startled by.
-    const discontinuity = lastT !== null && (t < lastT || t - lastT > 1);
+    //
+    // A frame marked `restart` is one too, however short the pause before
+    // it: drowsyrun.js stops feeding while parked, or below the gate with
+    // nothing sounding, and marks the first frame it feeds again. Frames it
+    // chose not to feed are frames nobody measured, so nothing is held over
+    // them -- and a PERCLOS reading after moving off is never built from the
+    // minute before the stop.
+    const discontinuity = lastT !== null && (!!f.restart || t < lastT || t - lastT > 1);
     lastT = t;
     if (discontinuity) {
       closedSince = null; openSince = null;

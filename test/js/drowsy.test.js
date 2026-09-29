@@ -151,4 +151,23 @@ export default [
     const jump = m.feed({ t: 40, face: true, blink: 0.1, jaw: 0.1, pitch: 0, gated: true });
     eq(jump.discontinuity, true, "a real backward jump still resets");
   }],
+  // Task 9: drowsyrun.js stops feeding while parked, or below the gate with
+  // nothing sounding, and marks the first frame it feeds again `restart`. The
+  // frames it did not feed are a gap however short: nothing held over it.
+  ["a frame marked restart is a discontinuity, however short the pause", async () => {
+    const m = await calibrated();
+    run(m, 61, 40, (t) => ({ blink: t >= 90 ? 0.9 : 0.1 }));  // 0.9 closed from t=90
+    const before = m.snapshot;
+    ok(before.closedFor > 10 && before.perclos > 0.2, `closed ${before.closedFor}, PERCLOS ${before.perclos}`);
+    const back = m.feed({ t: +(before.t + 0.3).toFixed(3), face: true, blink: 0.9, jaw: 0.1, pitch: 0, gated: true, restart: true });
+    eq([back.discontinuity, back.closedFor, back.perclos, back.calibrated], [true, 0, null, true],
+       "a 0.3 s pause: the closure and the PERCLOS window start over, the baseline stays");
+    const next = m.feed({ t: +(back.t + 0.1).toFixed(3), face: true, blink: 0.9, jaw: 0.1, pitch: 0, gated: true });
+    eq(next.discontinuity, false, "only the marked frame");
+  }],
+  ["a restart frame with the last frame's own time is still a duplicate, and ignored", async () => {
+    const m = await calibrated();
+    const s = m.snapshot;
+    eq(m.feed({ t: s.t, face: true, blink: 0.9, jaw: 0.1, pitch: 0, gated: true, restart: true }) === s, true);
+  }],
 ];
