@@ -7,10 +7,12 @@
 .cams { display: grid; gap: 12px; }
 
 /* Landscape: the main feed takes two thirds and the other two stack in the
-   last third, all within 40% of the screen's height, as mockup 6 has it.
+   last third. Mockup 6 gives them 40% of the screen's height; 36% is what
+   leaves the playback card whole above the chip row and tab bar at the
+   tablet's 1368x912, whose navigation (152 px) is twice the mockup's.
    Pictures fill their boxes (object-fit: cover), so the 4:3 cabin crops
    rather than letterboxes. */
-.cams-feeds { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; height: 40vh; min-height: 280px; }
+.cams-feeds { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; height: 36vh; min-height: 280px; }
 .cam-main, .cam-side { display: grid; gap: 12px; min-width: 0; min-height: 0; }
 .cam-side { grid-template-rows: 1fr 1fr; }
 .cam-feed {
@@ -76,7 +78,10 @@
 .cam-act-note { font-size: .66rem; color: var(--dim); }
 
 /* Selection and storage. */
-.cams-foot { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+/* The margin starts the footer below the fold at both tablet sizes, rather
+   than a sliver of it showing under the playback card: the first screen is
+   the feeds, the timeline and playback, and these are a scroll away. */
+.cams-foot { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 24px; }
 .cam-select, .cam-settings { display: grid; gap: 10px; align-content: start; padding: 14px 16px; }
 .cam-card-t { font-size: .9rem; color: var(--ink-2); }
 .cam-picks { display: flex; gap: 10px; }
@@ -93,7 +98,8 @@
 
 @media (orientation: portrait) {
   .cams-feeds { grid-template-columns: 1fr; height: auto; }
-  .cam-feed { aspect-ratio: 16 / 9; }
+  /* A little wider than 16:9, for the same reason as the 36% above, at 912x1368. */
+  .cam-feed { aspect-ratio: 1.85; }
   .cam-side { grid-template-rows: none; grid-template-columns: 1fr 1fr; }
   .cams-foot, .cam-playbar { grid-template-columns: 1fr; }
   .cam-transport, .cam-actions { grid-column: 1; }
