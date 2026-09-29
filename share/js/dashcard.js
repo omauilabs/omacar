@@ -50,8 +50,17 @@ export function dashcamCard(node, {
   // here, so Home, Begin and drowsy mode's own screens agree.
   const offAux = showAux(aux);
 
-  let streaming = false, dead = false, busy = false;
+  let streaming = false, dead = false, busy = false, inflight = null;
   img.addEventListener("error", () => { streaming = false; });
+
+  // With no picture to show, the picture goes, and its address with it: that
+  // is what closes the stream. A stream that failed has already lost
+  // `streaming`, so this never waits on it.
+  function dropPicture() {
+    img.removeAttribute("src");
+    img.hidden = true;
+    streaming = false;
+  }
 
   // ONE POLL AT A TIME, AND GIVEN UP. A server that stops answering must not
   // collect a request every 3 s: the browser lets a host have six, and the
@@ -59,14 +68,14 @@ export function dashcamCard(node, {
   // (audiostate.js, drowsyrun.js pollCams). A request that is given up reads
   // as no server, which is what the card then says.
   async function refresh() {
-    if (busy) return;
+    if (dead || busy) return;
     busy = true;
     let ov = null;
-    const ctl = new AbortController();
+    const ctl = inflight = new AbortController();
     const bail = later(() => ctl.abort(), LIVE_TIMEOUT_MS);
     try { ov = await poll("/api/cams", { signal: ctl.signal }); }
     catch { /* dashState says so */ }
-    finally { cancel(bail); busy = false; }
+    finally { cancel(bail); busy = false; inflight = null; }
     if (dead) return;
     const s = dashState(ov);
     rec.hidden = !s.rec;
@@ -76,11 +85,7 @@ export function dashcamCard(node, {
     if (s.live) {
       if (!streaming) { img.src = liveUrl("front"); img.hidden = false; streaming = true; }
     } else {
-      // Whatever the picture was doing, with no picture to show it goes, and
-      // its address with it: a stream that failed has already lost `streaming`.
-      img.removeAttribute("src");
-      img.hidden = true;
-      streaming = false;
+      dropPicture();
     }
   }
   refresh();
@@ -89,6 +94,8 @@ export function dashcamCard(node, {
   return {
     top,
     paint() {},
-    destroy() { dead = true; cancel(timer); img.removeAttribute("src"); offDz(); offAux(); },
+    // Everything it started, stopped: the timer, a request already out (its
+    // answer is dropped), the picture and its stream, and both listeners.
+    destroy() { dead = true; cancel(timer); if (inflight) inflight.abort(); dropPicture(); offDz(); offAux(); },
   };
 }

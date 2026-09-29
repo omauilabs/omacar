@@ -57,7 +57,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The card on a scripted poll. `m.next` is what the poll answers: an overview,
-// "down" (the request fails) or "hang" (it never answers, until it is aborted).
+// "down" (the request fails), "hang" (it never answers, until it is aborted) or
+// "hold" (it answers when the test calls m.answer(overview)).
 async function mount({ first = ov({}), engine = fake() } = {}) {
   const node = document.createElement("div");
   node.className = "card hc hc-cam";
@@ -67,6 +68,7 @@ async function mount({ first = ov({}), engine = fake() } = {}) {
   const poll = (path, opts) => {
     m.asked.push({ path, opts });
     if (m.next === "hang") return new Promise((_, no) => opts.signal.addEventListener("abort", () => no(new Error("aborted"))));
+    if (m.next === "hold") return new Promise((yes) => { m.answer = yes; });
     return m.next === "down" ? Promise.reject(new Error("503")) : Promise.resolve(m.next);
   };
   m.card = dashcamCard(node, { engine, poll, every: t.every, later: t.later, cancel: t.cancel });
@@ -278,22 +280,30 @@ export default [
   }],
 
   // ---- taking it down
-  ["destroy stops the poll, the engine and the audio listeners, takes the picture away, and ignores a late answer", async () => {
+  ["destroy takes a live picture away, stops the timer and the listeners, and asks for nothing more", async () => {
     audio.last = null;
     const e = fake({ chip: "Watching", gate: { active: true } });
-    const m = await mount({ engine: e, first: "hang" });
+    const m = await mount({ engine: e });                // live: there is a picture to take away
     try {
-      const during = e.listeners();
+      const img = q(m.node, ".dc-img"), a = q(m.node, ".dc-aux"), dz = q(m.node, ".dc-drowsy");
+      const before = [e.listeners(), img.getAttribute("src"), img.hidden, m.asked.length];
       m.card.destroy();
-      const a = q(m.node, ".dc-aux"), dz = q(m.node, ".dc-drowsy");
       await audioNow({ aux: false, volume: 1 });
       e.set({ chip: "Off" });
-      // the poll that was out when it was taken down answers late, live
-      m.t.laters[0].fn();
-      await settle();
-      eq([during, e.listeners(), m.t.cancelled.includes(1), a.hidden, dz.textContent, q(m.node, ".dc-img").getAttribute("src")],
-         [1, 0, true, true, "Watching", null]);
+      await m.tick();                                    // a tick that fires anyway asks for nothing
+      eq([before, [e.listeners(), img.getAttribute("src"), img.hidden, m.asked.length, m.t.cancelled.includes(1), a.hidden, dz.textContent]],
+         [[1, liveUrl("front"), false, 1], [0, null, true, 1, true, true, "Watching"]]);
     } finally { m.node.remove(); audio.last = null; }
+  }],
+  ["destroy aborts a request that is already out, and what it would have said is dropped", async () => {
+    const m = await mount({ first: "hang" });
+    try {
+      const signal = m.asked[0].opts.signal;
+      const shown = seen(m.node), before = signal.aborted;
+      m.card.destroy();
+      await settle();                                    // the aborted request rejects, and says nothing
+      eq([before, signal.aborted, seen(m.node)], [false, true, Object.assign({}, shown, { img: false })]);
+    } finally { m.node.remove(); }
   }],
   ["a poll that answers live after destroy puts nothing back", async () => {
     const node = document.createElement("div");
