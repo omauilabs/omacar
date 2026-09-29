@@ -15,6 +15,7 @@ const moving = gateOf({ connected: true, values: { SPEED: 50 } }, cfg);
 const CFG = async () => (await fetch("../data/drowsy.json")).json();
 const kind = (c) => (c.clip ? `${c.kind}:${c.clip}` : c.kind);
 const r3 = (x) => +x.toFixed(3);
+const yieldTask = () => new Promise((done) => setTimeout(done, 0));
 
 async function rig(over = {}) {
   const r = {
@@ -22,6 +23,7 @@ async function rig(over = {}) {
     settings: Object.assign(await CFG(), over.settings || {}),
     installed: over.installed || (() => false), asked: [], posts: [], log: [],
     timers: [], nextId: 1, onFrame: null, watches: 0, stops: 0, audio: null,
+    liveCalls: 0, hang: false, fail: false,
   };
   const fake = {
     play(cues, out) { r.log.push(["play", cues.map(kind), out.level]); return Promise.resolve(); },
@@ -31,8 +33,18 @@ async function rig(over = {}) {
   r.player = fake;
   r.eng = createDrowsy({
     clock: () => r.t, wall: () => 1.8e9 + r.t, hour: () => over.hour ?? 14,
-    getJSON: async (p) => {
-      if (p === "/api/live") return r.live;
+    getJSON: async (p, opts) => {
+      if (p === "/api/live") {
+        r.liveCalls++;
+        if (r.fail) throw new Error("500");
+        // A hung request: it ends only if the caller aborts it.
+        if (r.hang) {
+          return new Promise((_, no) => {
+            if (opts && opts.signal) opts.signal.addEventListener("abort", () => no(new Error("aborted")));
+          });
+        }
+        return r.live;
+      }
       if (p === "/api/cams") return r.cams;
       if (p === "/api/drowsy") return JSON.parse(JSON.stringify(r.settings));
       throw new Error("404 " + p);
@@ -57,6 +69,12 @@ async function rig(over = {}) {
     await r.eng.pollLive();
     await r.eng.idle();
   };
+  // One /api/live poll, as the page's timer fires it. While the server hangs
+  // it is not waited for: only a timer the rig fires later can end it.
+  r.poll = async () => {
+    const p = r.eng.pollLive();
+    if (!r.hang) { await p; await r.eng.idle(); }
+  };
   // `secs` of cabin frames at 10 fps, each stamped on the frame clock as
   // facewatch.js stamps it, with the page's half-second /api/live poll
   // between every fifth, and any timers that fall due; fn(i) overrides a
@@ -64,7 +82,7 @@ async function rig(over = {}) {
   r.frames = async (secs, fn) => {
     for (let i = 0; i < Math.round(secs * 10); i++) {
       r.advance(0.1);
-      if (i % 5 === 4) { await r.eng.pollLive(); await r.eng.idle(); }
+      if (i % 5 === 4) await r.poll();
       if (r.onFrame) r.onFrame(Object.assign({ t: r.t, face: true, blink: 0.1, jaw: 0.1, pitch: 0 }, fn ? fn(i) : {}));
     }
   };
@@ -178,7 +196,9 @@ export default [
   ["a frame's step is at the frame's own time, m.t, not the clock's now", async () => {
     const r = await rig();
     await r.calibrate();
-    r.t = 2000;                                   // the clock has moved on
+    r.t = 1999.9;
+    await r.poll();                               // the gate was answered a moment ago
+    r.t = 2000;                                   // and the clock has moved on since this frame
     r.onFrame({ t: 1999.95, face: true, blink: 0.1, jaw: 0.1, pitch: 0 });
     eq([r.eng.state.t, r.eng.state.measures.t], [1999.95, 1999.95]);
   }],
@@ -275,6 +295,69 @@ export default [
     const early = r.eng.state.level;
     await r.polls(2 * 60, 10);
     eq([early, r.eng.state.level, r.eng.state.trigger], [0, 1, "since-stop"]);
+  }],
+
+  // ---- the /api/live poll: a timeout, and never a stale "active" (controller, 2026-09-29)
+  ["a hung /api/live never leaves the gate at a stale 'active': no car data within 2 s, given up at 5 s", async () => {
+    const r = await rig();
+    await r.calibrate();
+    r.hang = true;
+    let finished = false;
+    r.eng.pollLive().then(() => { finished = true; });
+    await r.frames(2.5);
+    const g = r.eng.state.gate;
+    const stale = [g.connected, g.active, r.eng.state.chip];
+    await r.frames(1.2, () => ({ blink: 0.9 }));  // a closure with no speed known
+    const level = r.eng.state.level;
+    r.advance(2);                                 // 5.7 s since that poll went out
+    await yieldTask();
+    const gaveUp = finished;
+    r.hang = false;
+    await r.drive(100);                           // an answer again: the gate opens again
+    await r.frames(2);
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    eq([stale, level, gaveUp, r.eng.state.level], [[false, false, "Paused · no car data"], 0, true, 2]);
+  }],
+  ["an alert already sounding goes on through a hung poll, and 'I'm awake' still clears it", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(1.2, () => ({ blink: 0.9 }));
+    eq(r.eng.state.level, 2);
+    const n = r.plays().length;
+    r.hang = true;
+    r.eng.pollLive();
+    await r.frames(12);
+    const since = r.plays().slice(n);
+    ok(since.length >= 2 && !since.some((c) => c.includes("fade")), `through the hang: ${JSON.stringify(since)}`);
+    eq([r.eng.state.level, r.eng.state.gate.connected], [2, false]);
+    r.eng.tap();
+    eq([r.eng.state.level, r.plays().at(-1)], [0, ["fade"]]);
+    r.hang = false;
+    r.advance(5);
+    await yieldTask();
+  }],
+  ["with no frames at all, the half-second poll still steps while a request is out: the gate goes stale on the clock", async () => {
+    const r = await rig();
+    await r.drive(100);
+    r.hang = true;
+    const got = [];
+    for (let i = 0; i < 6; i++) { r.advance(0.5); r.eng.pollLive(); got.push(r.eng.state.gate.connected); }
+    eq(got, [true, true, true, true, false, false]);
+    r.hang = false;
+    r.advance(5);
+    await yieldTask();
+  }],
+  ["a failed poll is no car data at once, but not a dropped link: it restarts nothing", async () => {
+    const r = await rig();
+    await r.calibrate();
+    await r.frames(40);
+    r.fail = true;
+    await r.eng.pollLive();
+    const unknown = [r.eng.state.gate.active, r.eng.state.chip];
+    r.fail = false;
+    await r.drive(100);
+    await r.frames(0.1);
+    eq([unknown, r.eng.state.measures.t, r.eng.state.measures.discontinuity], [[false, "Paused · no car data"], r.t, false]);
   }],
 
   // ---- 5. which frames feed the measures (refined before review, controller 2026-09-29):

@@ -11,7 +11,9 @@
 // THE GATE (gateOf). `active` is connected, not simulated, and above
 // 48.28 km/h (30 mph). `parked` is connected, not simulated, and 0 km/h:
 // never a dropped link and never the stop clock. A dropped link is neither,
-// so an adapter hiccup can neither start an alert nor clear one. The stop
+// so an adapter hiccup can neither start an alert nor clear one. Nor is a
+// poll that failed, hung (given up at 5 s), or has had no answer for 2 s:
+// that is no car data, never a stale "active". The stop
 // clock (ladder.js createStopClock) is the one source of sinceStop and
 // stoppedFor.
 //
@@ -123,6 +125,14 @@ const NO_SNAPSHOT = Object.freeze({ face: false, faceLost: true });
 export const MOVING_KPH = 3;
 export const STOP_RESTART_SECS = 10;
 
+// The /api/live poll (controller, 2026-09-29). A request is given up after
+// LIVE_TIMEOUT_MS, and a gate with no answer for more than LIVE_STALE_SECS
+// is no car data: never a stale "active" that could start an alert, never a
+// stale "parked" that could clear one. An alert already sounding goes on
+// until "I'm awake", as for a dropped link.
+export const LIVE_TIMEOUT_MS = 5000;
+export const LIVE_STALE_SECS = 2;
+
 // The engine. The page has one, `drowsy`, below; a test builds its own with
 // every outside thing handed in: the clock, the server, the player, the
 // watcher, the timers. Nothing in here reads a clock of its own.
@@ -147,7 +157,7 @@ export function createDrowsy(opts = {}) {
   // The stop clock reads stop.still_secs through this object, so a hand
   // edit that reaches the page with a reload is used without a new clock.
   const stopCfg = { stop: { still_secs: 300 } };
-  let gate = null, lastSample = null, cabinLive = false, aux = "";
+  let gate = null, lastSample = null, gateAt = null, cabinLive = false, aux = "";
   let watcher = null, watchGen = 0, starting = null, retryAt = -Infinity, watchSince = null;
   let lastT = -Infinity, lastSnap = null, frame = null, lastFaceT = null;
   // rolling: moving (over MOVING_KPH) since the last long stop or dropped
@@ -248,8 +258,20 @@ export function createDrowsy(opts = {}) {
   }
 
   // One step of the ladder, at `t` on the frame clock, with snapshot `m`.
+  // A gate is only as good as its last answer: with none for more than
+  // LIVE_STALE_SECS (a poll hung, or failing), it is no car data. Rolling is
+  // left alone: not knowing is not a dropped link, and restarts nothing.
+  function freshen() {
+    if (!cfg || gateAt === null || d.clock() - gateAt <= LIVE_STALE_SECS) return;
+    if (gate && !gate.connected && !gate.simulated && lastSample === null) return;
+    lastSample = null;
+    gate = gateOf(null, cfg);
+    if (testing && !testGate.may(gate, null)) stopTest();
+  }
+
   function step(t, m, tap = false) {
     if (!cfg || !ladder) return null;
+    freshen();
     t = Math.max(lastT, t);
     lastT = t;
     const sc = stops.feed(t, gate ? gate.kph : null, !!(gate && gate.connected));
@@ -297,6 +319,7 @@ export function createDrowsy(opts = {}) {
 
   function onFrame(f) {
     if (!cfg || !ladder || !f) return;
+    freshen();
     frame = f;
     if (f.face) lastFaceT = f.t;
     if (!feeding()) { publish(); return; }
@@ -419,12 +442,19 @@ export function createDrowsy(opts = {}) {
     },
     stopTest() { stopTest(); },
     async pollLive() {
-      if (liveBusy) return;
+      // One poll out at a time. While one is out the clock still steps (the
+      // ladder's repeats) and the gate goes stale; the request itself is
+      // given up after LIVE_TIMEOUT_MS.
+      if (liveBusy) { tick(false); return; }
       liveBusy = true;
       try {
         let sample = null, answered = false;
-        try { sample = await d.getJSON("/api/live"); answered = true; } catch { /* no server: no gate */ }
+        const ctl = new AbortController();
+        const bail = d.later(() => ctl.abort(), LIVE_TIMEOUT_MS);
+        try { sample = await d.getJSON("/api/live", { signal: ctl.signal }); answered = true; }
+        catch { /* no answer, or given up: unknown */ } finally { d.cancel(bail); }
         lastSample = sample;
+        gateAt = d.clock();
         if (!cfg && d.clock() >= cfgRetryAt) { cfgRetryAt = d.clock() + 10; await loadConfig(); }
         if (cfg) { gate = gateOf(sample, cfg); track(answered); }
         if (testing && !testGate.may(gate, sample)) stopTest();

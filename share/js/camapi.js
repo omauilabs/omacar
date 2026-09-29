@@ -16,7 +16,9 @@ async function call(path, opts) {
   return body;
 }
 
-export const getJSON = (path) => call(path);
+// `opts` (a signal) is passed through, so a poll that must not hang --
+// drowsy mode's /api/live -- can be given up.
+export const getJSON = (path, opts) => call(path, opts);
 // `opts` (signal, etc.) is merged in on top of the JSON POST defaults, so a
 // caller that needs an abortable request -- audiostate.js's applyAudio(),
 // so a stuck /api/audio can never pile up behind Chromium's 6-connection
