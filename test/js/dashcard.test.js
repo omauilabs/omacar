@@ -384,13 +384,15 @@ export default [
   }],
 
   // ---- Home's wiring
+  // Navigation's card is not this branch's: it must stay a soonCard, whatever
+  // its title (the road-cameras branch retitles it "Road cameras").
   ["home.js makes the card in one hunk between the branch's markers; Navigation keeps soonCard", async () => {
     const src = await (await fetch("../js/views/home.js", { cache: "no-store" })).text();
     const start = "// ---- redesign/cameras: the live front view";
     const body = (src.split(start)[1] || "").split("// ---- end redesign/cameras")[0];
     eq([body.includes("dashcam: () => {"), body.includes('import("../dashcard.js")'),
         body.includes('tappable(h("div.card.hc.hc-cam"), "cameras")'),
-        /soonCard\(ICONS\.camera/.test(src), src.includes('nav: () => soonCard(ICONS.nav, "Navigation"'),
+        /soonCard\(ICONS\.camera/.test(src), /nav: \(\) => soonCard\(ICONS\.nav, /.test(src),
         (src.match(/redesign\/cameras/g) || []).length],
        [true, true, true, false, true, 2]);
   }],

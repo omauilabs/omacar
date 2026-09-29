@@ -85,9 +85,15 @@ def main():
         # sound on this machine's speakers. The sound tests render into
         # OfflineAudioContexts, which never reach an output at all; this is
         # the second lock on the same door.
+        # THE BUDGET IS VIRTUAL TIME, AND EVERY TEST'S TIMERS SPEND IT. 8 s held
+        # one branch's units; the demo build, which puts the cameras and road
+        # cameras suites in one page (503 tests), ran out before its last test
+        # and reported only "the runner page never finished". A larger budget
+        # costs nothing when the page finishes sooner: Chromium fast-forwards
+        # idle virtual time, and the real-time timeout below is unchanged.
         r = subprocess.run(
             [exe, "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
-             f"--user-data-dir={prof}", "--virtual-time-budget=8000",
+             f"--user-data-dir={prof}", "--virtual-time-budget=30000",
              "--dump-dom", f"http://127.0.0.1:{port}/_run.html"],
             capture_output=True, text=True, timeout=120)
         m = re.search(r"<title>RESULT (\{.*?\})</title>", r.stdout or "", re.S)
