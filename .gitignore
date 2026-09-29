@@ -25,3 +25,8 @@ doc/design/mockups/
 # `omacar assets push`, never committed (the repo is public). See
 # share/assets/manifest.json and lib/assets.py.
 share/assets/private/
+
+# MediaPipe's engine and face model: fetched once at install by `omacar
+# assets fetch` and held to the pins in share/assets/manifest.json. Never
+# committed: megabytes of binaries in a public repository.
+share/js/vendor/mediapipe/

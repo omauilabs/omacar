@@ -34,3 +34,30 @@ appear in all copies — a bundle included. So the notice is prepended to
 `d3.min.js` by hand after every rebuild, and the full text sits in `LICENSE-d3`
 beside it. `--legal-comments=none` strips esbuild's own banner handling, which
 is why this is a manual step rather than a flag.
+
+# MediaPipe, fetched rather than vendored
+
+`mediapipe/` holds drowsy mode's face tracker: MediaPipe tasks-vision 1.0.1
+(`vision_bundle.mjs` and the SIMD `wasm/` pair) and the Face Landmarker model
+(`face_landmarker.task`, float16 v1). It is not in git. `omacar assets fetch`
+downloads it once, at install, from the URLs in `share/assets/manifest.json`
+(`fetch`), and holds every file to the size and SHA-256 pinned there. The app
+never fetches it.
+
+The no-SIMD pair tasks-vision also ships is not fetched: Chromium on the
+tablet has WebAssembly SIMD, and `share/js/facewatch.js` names the SIMD files
+directly.
+
+tasks-vision is Apache License 2.0, as its package.json declares; the model is
+Google's, distributed with MediaPipe under Apache 2.0 per its model card.
+
+## Restoring offline
+
+With no signal, install from the backup copy kept on the Omarchy box at
+`~/Projects/.omacar-vendor-backup/mediapipe-1.0.1/` (four files, flat, with a
+`SHA256SUMS` alongside them) instead of downloading:
+
+    omacar assets fetch --from ~/Projects/.omacar-vendor-backup/mediapipe-1.0.1/
+
+Each file is still checked against the pin in `share/assets/manifest.json`; a
+copy that does not match is refused exactly as a bad download would be.
