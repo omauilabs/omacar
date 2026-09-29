@@ -705,6 +705,80 @@ def test_says_so():
         s.clean()
 
 
+def start_bare_server(s, port, stderr, ignoring=None):
+    """serve.py as the real one runs, with nothing turned on from outside.
+
+    `ignoring` names a signal (HUP, TERM) that is already being ignored when it
+    starts: a shell's `trap "" SIG` is inherited across exec, which is exactly
+    what `nohup` relies on.
+    """
+    env = {k: v for k, v in s.env.items() if k != "PYTHONFAULTHANDLER"}
+    cmd = [PY, SERVE, str(port), SHARE]
+    if ignoring:
+        cmd = ["sh", "-c", f'trap "" {ignoring}; exec "$@"', "sh"] + cmd
+    server = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL, stderr=stderr,
+                              start_new_session=True)
+    if wait_for(lambda: answers(port), 5) is None:
+        server.kill()
+        return None
+    return server
+
+
+def test_says_so_with_no_log():
+    print("\n  A log that cannot be written does not stop the signal ending it\n")
+    port = free_port()
+    s = Scratch(port)
+    # /dev/full is the real case: a full disk, where every write fails with
+    # ENOSPC. The broken pipe is a stderr whose reader has gone.
+    full = open("/dev/full", "w")
+    r, w = os.pipe()
+    os.close(r)
+    broken = os.fdopen(w, "w")
+    try:
+        for what, err in (("stderr on a full disk", full),
+                          ("stderr on a broken pipe", broken)):
+            server = start_bare_server(s, port, err)
+            if server is None:
+                bad(f"{what}: the scratch server never came up")
+                continue
+            server.send_signal(signal.SIGTERM)
+            try:
+                code = server.wait(5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                code = None
+            check(f"{what}: SIGTERM still ends it by the signal itself"
+                  f" (status {-signal.SIGTERM}, got {code})",
+                  code == -signal.SIGTERM)
+    finally:
+        full.close()
+        broken.close()
+        s.clean()
+
+
+def test_ignored_signals_stay_ignored():
+    print("\n  A signal that was being ignored when it started still is\n")
+    port = free_port()
+    s = Scratch(port)
+    try:
+        for name, sig in (("SIGHUP", signal.SIGHUP), ("SIGTERM", signal.SIGTERM)):
+            server = start_bare_server(s, port, subprocess.DEVNULL,
+                                       ignoring=name[3:])
+            if server is None:
+                bad(f"{name}: the scratch server never came up")
+                continue
+            server.send_signal(sig)
+            time.sleep(0.7)
+            check(f"{name}: sent to a server that started ignoring it, it carries on",
+                  server.poll() is None and answers(port))
+            server.kill()
+            server.wait()
+            wait_for(lambda: not answers(port), 2)
+    finally:
+        s.clean()
+
+
 def main():
     # A crash test that leaves a core file per run is not a kindness to the box.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -719,7 +793,8 @@ def main():
         for test in (test_log, test_restart, test_unwritable_watch_log,
                      test_unwritable_serve_log,
                      test_foreign_port, test_parent_exit,
-                     test_kiosk, test_kiosk_port_choice, test_says_so):
+                     test_kiosk, test_kiosk_port_choice, test_says_so,
+                     test_says_so_with_no_log, test_ignored_signals_stay_ignored):
             try:
                 test()
             except Exception as e:                       # noqa: BLE001

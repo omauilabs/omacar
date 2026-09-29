@@ -498,12 +498,21 @@ def _said_so(signum, _frame):
     by SIGTERM" rather than an exit code that a service manager would call a
     failure.
 
+    The line is best effort, and the signal does not wait on it. A stderr that
+    cannot be written (the disk that is full is the likeliest reason a server
+    is dying at all) would otherwise raise out of here, the signal would never
+    be re-sent, and the process would go on, or leave by some other route with
+    the wrong status.
+
     A death with NO line is an answer too: SIGKILL, which is what the kernel's
     out-of-memory killer sends, or another signal that is not handled here
     (SIGQUIT, SIGUSR1, SIGALRM), and no process can announce SIGKILL.
     """
-    print(f"{time.strftime('%F %T')} serve.py: {signal.Signals(signum).name} "
-          f"received; exiting", file=sys.stderr, flush=True)
+    try:
+        print(f"{time.strftime('%F %T')} serve.py: {signal.Signals(signum).name} "
+              f"received; exiting", file=sys.stderr, flush=True)
+    except Exception:                                # noqa: BLE001
+        pass
     signal.signal(signum, signal.SIG_DFL)
     os.kill(os.getpid(), signum)
 
@@ -513,7 +522,11 @@ if __name__ == "__main__":
     # not caught by anything above, leaves its stack in the log.
     faulthandler.enable()
     for _sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(_sig, _said_so)
+        # Not where the signal was already being ignored when this started,
+        # which is what `nohup` does to SIGHUP: that is a decision somebody
+        # made about this process, and installing a handler would undo it.
+        if signal.getsignal(_sig) is not signal.SIG_IGN:
+            signal.signal(_sig, _said_so)
     port, root, host, TOKEN, ALLOW_CONTROL = parse_args(sys.argv[1:])
     LOOPBACK_ONLY = host in ("127.0.0.1", "localhost", "::1")
     if not LOOPBACK_ONLY and not TOKEN:
