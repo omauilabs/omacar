@@ -1,23 +1,28 @@
 # OmaCar CI.
 #
-# GITHUB-HOSTED RUNNERS, AND ON A PUBLIC REPOSITORY THAT IS THE ONLY SAFE
-# ANSWER.
+# THE OWNER'S OWN RUNNERS, NEVER GITHUB'S (the owner's decision, 2026-09-29:
+# "I never want to use GitHub CI when I have the runners"). Every job runs on
+# the omauilabs self-hosted runners on the Beelink: [self-hosted, Linux].
+# Never ubuntu-latest, and never a bare `self-hosted`.
 #
-# This ran on the omauilabs self-hosted runners, and the jobs sat queued for
-# ever with four idle machines: the runner group carries
-# `allows_public_repositories: false`, which is GitHub's default and a
-# deliberate one. A self-hosted runner attached to a public repository will
-# execute code from any pull request a stranger opens, on your own hardware.
-# The setting is not an obstacle to route around; it is the warning.
+# THE RISK, STATED ONCE, AND WHAT HOLDS IT. This repository is public, and a
+# self-hosted runner executes whatever a workflow run tells it to, on the
+# owner's hardware, where the runner user has passwordless sudo. So:
+#   - no job runs for a pull request from a fork: every job's `if:` below
+#     requires the pull request's head to be this repository;
+#   - nothing here uses pull_request_target, which would run with secrets;
+#   - the token is read-only (`permissions: contents: read`);
+#   - the org's runner group must allow public repositories, and the repo
+#     should require approval for workflows from outside collaborators. Both
+#     are the owner's settings, set by hand.
 #
-# Public repositories get unlimited free minutes on hosted runners, and this
-# suite has no reason to want the metal: nothing here needs a car or an
-# adapter. That is a property of the test suite rather than a compromise in it
-# — the ELM327 emulator stands in for a vehicle and the guard suite stubs
-# pyserial, so a machine with no venv still checks every safety gate.
+# THE FOUR RUNNERS SHARE ONE $HOME. A job that builds the venv or writes a
+# cache there can pull it out from under a neighbour, so the jobs that run
+# OmaCar's own tools first point HOME at a folder of their own under
+# $RUNNER_TEMP.
 #
-# The private repositories in this org keep their self-hosted runners, where
-# the same risk does not exist.
+# Nothing here needs a car or an adapter: the ELM327 emulator stands in for a
+# vehicle and the guard suite stubs pyserial.
 
 name: CI
 
@@ -27,21 +32,37 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# Four runners serve every omauilabs repository; a newer push to the same
+# branch makes the older run pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     name: Tests — needs no car
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
+    # Never for a fork's pull request (see the header).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 20
-    # THE IMAGE'S REAL CHROME, NOT THE SNAP WRAPPER. On ubuntu-latest,
-    # /usr/bin/chromium is the snap shim, and headless Chromium under it hung
-    # every app test for 120 s from 2026-09-17 on, while the same test passed on
-    # the owner's Arch box. The runner image ships Google Chrome as a plain
-    # binary; the browser tests take OMACAR_CHROME first, and fail rather than
+    # A REAL CHROME, NEVER A SNAP WRAPPER. On GitHub's ubuntu-latest,
+    # /usr/bin/chromium was the snap shim, and headless Chromium under it hung
+    # every app test for 120 s from 2026-09-08 (76b3e93, the first test that
+    # ran the app) on. The Beelink has Google Chrome installed as a plain
+    # package. The browser tests take OMACAR_CHROME first, and fail rather than
     # skip if it names nothing runnable, so this can never go green by quietly
     # not running.
     env:
       OMACAR_CHROME: google-chrome
     steps:
+      - name: A HOME of this job's own
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
 
       - name: What we are running on
@@ -53,7 +74,7 @@ jobs:
 
       # WITHOUT A VENV, THE PROSPECTOR TESTS SKIP -- and a suite that skips
       # quietly is the exact thing this project exists to not be. Building it
-      # costs under a minute on a hosted runner and turns a skip into a check.
+      # costs about a minute and turns a skip into a check.
       # It is allowed to fail: the ELM327 emulator's own build is fragile
       # (its setup.py wants pkg_resources, removed in setuptools 81), and the
       # rest of the suite is worth running either way. The step says which
@@ -84,7 +105,9 @@ jobs:
 
   syntax:
     name: Everything parses
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
+    # Never for a fork's pull request (see the header).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -124,7 +147,9 @@ jobs:
 
   roadmap:
     name: Roadmap drift (reports, does not block)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux]
+    # Never for a fork's pull request (see the header).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 15
     # Every commit moves a line count, so the generated half of the roadmap is
     # stale the moment anything lands. Gating a merge on that would mean every
@@ -133,6 +158,11 @@ jobs:
     # remember to look.
     continue-on-error: true
     steps:
+      - name: A HOME of this job's own
+        run: |
+          mkdir -p "$RUNNER_TEMP/home"
+          echo "HOME=$RUNNER_TEMP/home" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
       # REPORTS, AND SAYS SO IN ITS EXIT CODE TOO. `roadmap --check` compares
       # generated counts against the file, and some of those counts are the
