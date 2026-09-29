@@ -1,7 +1,7 @@
 import { eq, ok } from "./assert.js";
 import {
   gateOf, chipOf, rotationFor, testMayRun, voiceInstalled, showAux, KPH_PER_MPH,
-  createDrowsy, setTestGate, drowsy,
+  createDrowsy, createTracker, setTestGate, drowsy, TRACKER_RETRY_SECS,
 } from "../js/drowsyrun.js";
 import * as player from "../js/alertplayer.js";
 import * as audiostate from "../js/audiostate.js";
@@ -23,7 +23,7 @@ async function rig(over = {}) {
     settings: Object.assign(await CFG(), over.settings || {}),
     installed: over.installed || (() => false), asked: [], posts: [], log: [],
     timers: [], nextId: 1, onFrame: null, watches: 0, stops: 0, audio: null,
-    liveCalls: 0, hang: false, fail: false,
+    liveCalls: 0, hang: false, fail: false, drops: 0,
   };
   const fake = {
     play(cues, out) { r.log.push(["play", cues.map(kind), out.level]); return Promise.resolve(); },
@@ -53,15 +53,18 @@ async function rig(over = {}) {
     player: () => fake,
     voiceInstalled: async (name) => { r.asked.push(name); return r.installed(name); },
     onAudio: (fn) => { r.audio = fn; fn(null); return () => {}; },
-    watch: async ({ onFrame }) => {
-      r.watches++;
-      r.onFrame = onFrame;
-      return { stop() { r.stops++; r.onFrame = null; } };
+    tracker: over.tracker || {
+      start: async ({ onFrame }) => {
+        r.watches++;
+        r.onFrame = onFrame;
+        return { stop() { r.stops++; r.onFrame = null; } };
+      },
+      drop() { r.drops++; },
     },
     later: (fn, ms) => { const id = r.nextId++; r.timers.push({ id, at: r3(r.t + ms / 1000), fn }); return id; },
     cancel: (id) => { r.timers = r.timers.filter((x) => x.id !== id); },
     every: () => 0,
-    canvas: null,
+    canvas: over.canvas || null,
   });
   // The car: a sample from /api/live, then one poll. null is a dropped link.
   r.drive = async (kph, extra) => {
@@ -129,6 +132,29 @@ function watchRaises(r, from) {
   r.eng.on((st) => { if (st.level !== was) { was = st.level; out.push([r3(st.t - from), st.level, st.trigger]); } });
   return out;
 }
+
+// A live MJPEG stream of `n` pictures (fix round 1, I3), for the real
+// watchCabin loop: one picture per read, then open until aborted.
+const enc = (x) => new TextEncoder().encode(x);
+const mjpegPart = (n) => {
+  const jpg = new Uint8Array([0xff, 0xd8, n & 0xff, 0xff, 0xd9]);
+  const head = enc(`--omacarframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpg.length}\r\n\r\n`);
+  const out = new Uint8Array(head.length + jpg.length + 2);
+  out.set(head);
+  out.set(jpg, head.length);
+  out.set(enc("\r\n"), head.length + jpg.length);
+  return out;
+};
+const liveStream = (n) => (signal) => {
+  let i = 0;
+  return Promise.resolve({ ok: true, body: { getReader: () => ({
+    read: () => (i < n ? Promise.resolve({ value: mjpegPart(i++), done: false })
+      : new Promise((done) => signal.addEventListener("abort", () => done({ value: undefined, done: true })))),
+  }) } });
+};
+const turns = async (done = () => false) => {
+  for (let i = 0; i < 300 && !done(); i++) await new Promise((res) => setTimeout(res, 0));
+};
 
 export default [
   // ---- the brief's
@@ -518,6 +544,48 @@ export default [
     const [at, level, trigger] = raises[0] || [];
     ok(raises.length === 1 && at > 2.5 && at < 4, `raises ${JSON.stringify(raises)}`);
     eq([level, trigger], [2, "closed"]);
+  }],
+
+  // ---- fix round 1, I3: a tracker failing on every frame is shown, stopped and reloaded
+  ["a tracker that throws on every frame: the error is shown, the chip says drowsy mode has stopped, and a fresh one is loaded on the CPU", async () => {
+    const loads = [];
+    const FACE = { faceBlendshapes: [{ categories: [{ categoryName: "eyeBlinkLeft", score: 0.1 },
+      { categoryName: "eyeBlinkRight", score: 0.1 }] }] };
+    const tracker = createTracker({
+      load: async (delegate) => {
+        loads.push(delegate);
+        return loads.length === 1
+          ? { detectForVideo() { throw new Error("GPU context lost"); }, close() { loads.push("closed"); } }
+          : { detectForVideo: () => FACE };
+      },
+      options: { fetchLive: liveStream(1000), decode: async () => ({ width: 4, height: 3, close() {} }),
+                 fps: Infinity, retryMs: 0 },
+    });
+    const r = await rig({ tracker, canvas: { width: 0, height: 0, getContext: () => ({ drawImage() {} }) } });
+    await r.drive(100);
+    await turns(() => r.eng.state.chip === "Stopped · face tracker error");
+    await turns(() => loads.includes("closed"));
+    const failed = [r.eng.state.chip, /stopped after 3 failed frames/.test(r.eng.state.error || ""), [...loads]];
+    r.advance(TRACKER_RETRY_SECS);
+    await r.poll();
+    await turns(() => r.eng.state.error === null);
+    eq([failed, loads, r.eng.state.error, r.eng.state.chip !== "Stopped · face tracker error"],
+       [["Stopped · face tracker error", true, ["GPU", "closed"]], ["GPU", "closed", "CPU"], null, true]);
+  }],
+
+  ["the chip's sixth text: a stopped tracker is 'Stopped · face tracker error', never 'Can't see you'", () =>
+    eq([chipOf({ enabled: true, gate: moving, cabinLive: true, measures: { faceLost: true }, trackerFailed: true }),
+        chipOf({ enabled: true, gate: gateOf({ connected: false }, cfg), trackerFailed: true }),
+        chipOf({ enabled: false, gate: moving, trackerFailed: true })],
+       ["Stopped · face tracker error", "Stopped · face tracker error", "Off"])],
+  ["a tracker that failed to load and then starts clears its error (minor)", async () => {
+    let n = 0;
+    const r = await rig({ tracker: { start: async () => { if (n++ === 0) throw new Error("no wasm"); return { stop() {} }; },
+                                     drop() {} } });
+    await r.drive(100);
+    const failed = r.eng.state.error;
+    await r.polls(61);
+    eq([/did not load: no wasm/.test(failed || ""), n, r.eng.state.error], [true, 2, null]);
   }],
 
   // ---- 6. one scaled config, to the measures and the ladder alike

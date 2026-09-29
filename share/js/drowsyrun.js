@@ -88,8 +88,12 @@ export function gateOf(sample, cfg) {
 // mode ignores it. "Paused · parked" is only a car that said 0 km/h; a
 // dropped link, an unreadable speed or no sample at all is "Paused · no car
 // data" (controller, 2026-09-29: the chip says only what is known).
-export function chipOf({ enabled, gate, measures, cabinLive }) {
+// "Stopped · face tracker error" (Task 9 fix round 1, I3): the tracker
+// failed on three frames in a row and has not yet come back. Drowsy mode is
+// not watching, and must not say "Can't see you" with a face in view.
+export function chipOf({ enabled, gate, measures, cabinLive, trackerFailed = false }) {
   if (!enabled || (gate && gate.simulated)) return "Off";
+  if (trackerFailed) return "Stopped · face tracker error";
   if (!gate || !gate.connected || gate.kph === null || gate.kph === undefined) return "Paused · no car data";
   if (!gate.moving) return "Paused · parked";
   if (!cabinLive || !measures || measures.faceLost) return "Can't see you";
@@ -113,16 +117,34 @@ export function setTestGate(g) {
   return testGate;
 }
 
-// The page's face tracker: loaded once, the first time a cabin picture is
-// worth watching, and kept. A failed load is forgotten so a later try can
-// start over.
-let landmarker = null;
-async function liveWatch({ canvas, onFrame }) {
-  if (!landmarker) landmarker = loadLandmarker("GPU");
-  let lm;
-  try { lm = await landmarker; } catch (e) { landmarker = null; throw e; }
-  return watchCabin({ landmarker: lm, canvas, onFrame });
+// The face tracker: loaded the first time a cabin picture is worth
+// watching, and kept. A failed load is forgotten, so a later try starts over.
+// drop() forgets a tracker that failed on frames (Task 9 fix round 1, I3):
+// the next start loads a fresh one, on the CPU, since a tracker that loads
+// on the GPU and then fails on every frame (a lost GPU context) would only
+// fail again there. `load`, `watch` and `options` are for the tests.
+export function createTracker({ load = loadLandmarker, watch = watchCabin, options = {} } = {}) {
+  let lm = null, delegate = "GPU";
+  return {
+    async start({ canvas, onFrame, onError }) {
+      if (!lm) lm = load(delegate);
+      let l;
+      try { l = await lm; } catch (e) { lm = null; throw e; }
+      return watch({ ...options, landmarker: l, canvas, onFrame, onError });
+    },
+    drop() {
+      const old = lm;
+      lm = null;
+      delegate = "CPU";
+      if (old) old.then((l) => { if (l && typeof l.close === "function") l.close(); }).catch(() => {});
+    },
+  };
 }
+const pageTracker = createTracker();
+
+// After the tracker has stopped on repeated failures, how long before a
+// fresh one is loaded.
+export const TRACKER_RETRY_SECS = 5;
 
 // What a step reads when no frame has ever been fed.
 const NO_SNAPSHOT = Object.freeze({ face: false, faceLost: true });
@@ -151,7 +173,7 @@ export function createDrowsy(opts = {}) {
     player: alertPlayer,                        // the page's one alert player
     voiceInstalled,
     onAudio,
-    watch: liveWatch,
+    tracker: pageTracker,
     later: (fn, ms) => setTimeout(fn, ms),
     cancel: (id) => clearTimeout(id),
     every: (fn, ms) => setInterval(fn, ms),
@@ -173,6 +195,9 @@ export function createDrowsy(opts = {}) {
   let logBuf = [], lastLogT = -Infinity;
   let testing = null;
   let started = false, cfgRetryAt = -Infinity, liveBusy = false, camsBusy = false;
+  // st.error is the tracker's trouble, else the settings'. A load failure
+  // clears once a tracker starts; a frame failure once a frame goes through.
+  let settingsError = null, trackerError = null, trackerLoadFailed = false, trackerFailed = false;
 
   const st = {
     chip: "Off", level: 0, trigger: null, banner: false, t: null,
@@ -194,7 +219,9 @@ export function createDrowsy(opts = {}) {
     st.testing = !!testing;
     st.testLevel = testing ? testing.level : 0;
     st.aux = aux;
-    st.chip = chipOf({ enabled: !!(cfg && cfg.enabled), gate, cabinLive, measures: { faceLost: faceLost() } });
+    st.error = trackerError || settingsError;
+    st.chip = chipOf({ enabled: !!(cfg && cfg.enabled), gate, cabinLive, measures: { faceLost: faceLost() },
+                       trackerFailed });
     for (const fn of listeners) { try { fn(st); } catch (e) { console.error(e); } }
   }
 
@@ -235,13 +262,13 @@ export function createDrowsy(opts = {}) {
     gate = gateOf(lastSample, cfg);
     st.cfg = next;
     st.rotation = rota;
-    st.error = null;
+    settingsError = null;
     syncWatch();
     publish();
   }
 
   async function loadConfig() {
-    try { apply(await fetchConfig()); } catch { st.error = "No settings from the server"; publish(); }
+    try { apply(await fetchConfig()); } catch { settingsError = "No settings from the server"; publish(); }
   }
 
   function logRow(out, m) {
@@ -326,6 +353,7 @@ export function createDrowsy(opts = {}) {
   function onFrame(f) {
     if (!cfg || !ladder || !f) return;
     freshen();
+    if (trackerError && !trackerLoadFailed) { trackerError = null; trackerFailed = false; }
     frame = f;
     if (f.face) lastFaceT = f.t;
     if (!feeding()) { publish(); return; }
@@ -361,22 +389,51 @@ export function createDrowsy(opts = {}) {
     frame = null;
     lastFaceT = null;
   }
+  // A frame the tracker (or the measures or ladder behind onFrame) threw on
+  // (Task 9 fix round 1, I3). Each one is shown; the third in a row has
+  // already stopped the watch (facewatch.js), so it is forgotten here, the
+  // tracker is dropped, and a fresh one is loaded TRACKER_RETRY_SECS later.
+  // Until a frame goes through again the chip says drowsy mode has stopped.
+  function trackerTrouble(e, info) {
+    const why = (e && e.message) || String(e);
+    if (info && info.fatal) {
+      trackerFailed = true;
+      trackerError = `The face tracker stopped after ${info.consecutive} failed frames (${why}); loading it again`;
+      watchGen++;
+      watcher = null;
+      restartOwed = true;
+      frame = null;
+      lastFaceT = null;
+      d.tracker.drop();
+      retryAt = d.clock() + TRACKER_RETRY_SECS;
+    } else {
+      trackerError = "The face tracker failed on a frame: " + why;
+    }
+    publish();
+  }
+
   function syncWatch() {
     const want = wanted();
     if (want && !watcher && !starting && d.clock() >= retryAt) {
       const gen = ++watchGen;
       starting = (async () => {
         try {
-          const w = await d.watch({ canvas: engine.canvas, onFrame: (f) => { if (gen === watchGen) onFrame(f); } });
+          const w = await d.tracker.start({
+            canvas: engine.canvas,
+            onFrame: (f) => { if (gen === watchGen) onFrame(f); },
+            onError: (e, info) => { if (gen === watchGen) trackerTrouble(e, info); },
+          });
           if (gen !== watchGen || !wanted()) { w.stop(); return; }
           watcher = w;
           watchSince = d.clock();
           lastFaceT = null;
+          if (trackerLoadFailed) { trackerLoadFailed = false; trackerError = null; }
         } catch (e) {
           // A minute before trying again: a failed load is megabytes, and
           // this is asked twice a second.
           retryAt = d.clock() + 60;
-          st.error = "The face tracker did not load: " + ((e && e.message) || e);
+          trackerLoadFailed = true;
+          trackerError = "The face tracker did not load: " + ((e && e.message) || e);
         } finally { starting = null; publish(); }
       })();
     }
@@ -415,7 +472,7 @@ export function createDrowsy(opts = {}) {
     // then do the measures and the ladder take the new ones.
     async reload() {
       let got = null;
-      try { got = await fetchConfig(); } catch { st.error = "No settings from the server"; }
+      try { got = await fetchConfig(); } catch { settingsError = "No settings from the server"; }
       stopTest();
       if (ladder && ladder.level > 0) tick(true);
       if (got) apply(got); else publish();

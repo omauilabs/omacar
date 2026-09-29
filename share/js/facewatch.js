@@ -41,14 +41,41 @@ export async function loadLandmarker(delegate = "GPU") {
   try { return await make(delegate); } catch (e) { if (delegate !== "CPU") return make("CPU"); throw e; }
 }
 
-export function watchCabin({ landmarker, canvas, onFrame, fps = 12 }) {
-  let stopped = false, ctrl = null, lastMs = 0, lastStamp = 0, busy = false;
+// TWO KINDS OF FAILURE (Task 9 fix round 1, I3). The stream ending, or not
+// starting, is ordinary -- the recorder restarts, the tab sleeps -- and is
+// retried quietly after retryMs. A frame the tracker (or whatever onFrame
+// runs: the measures, the ladder) throws on is not: it is warned on the
+// console and handed to onError(e, { consecutive, fatal }). After
+// maxErrors of them in a row the watch stops itself (fatal: true), so the
+// caller can drop the tracker and load a fresh one rather than reconnect to
+// the same failure every 3 s for the rest of a drive. A picture that will
+// not decode is warned on and skipped; it says nothing about the tracker.
+//
+// fetchLive, decode and retryMs are there for the tests; the page uses the
+// defaults.
+export const MAX_TRACKER_ERRORS = 3;
+
+export function watchCabin({
+  landmarker, canvas, onFrame, onError = () => {}, fps = 12, maxErrors = MAX_TRACKER_ERRORS,
+  fetchLive = (signal) => fetch(withToken("/api/cams/cabin/live"), { signal, cache: "no-store" }),
+  decode = (bytes) => createImageBitmap(new Blob([bytes], { type: "image/jpeg" })),
+  retryMs = 3000,
+}) {
+  let stopped = false, ctrl = null, lastMs = 0, lastStamp = 0, errors = 0;
   const g = canvas.getContext("2d");
+  const stop = () => { stopped = true; if (ctrl) ctrl.abort(); };
+  function failed(e) {
+    errors++;
+    const fatal = errors >= maxErrors;
+    console.warn(`drowsy mode: the face tracker failed on a frame (${errors} in a row${fatal ? ", stopping" : ""}):`, e);
+    if (fatal) stop();
+    try { onError(e, { consecutive: errors, fatal }); } catch (err) { console.warn(err); }
+  }
   (async () => {
     while (!stopped) {
       try {
         ctrl = new AbortController();
-        const r = await fetch(withToken("/api/cams/cabin/live"), { signal: ctrl.signal, cache: "no-store" });
+        const r = await fetchLive(ctrl.signal);
         if (!r.ok || !r.body) throw new Error(String(r.status));
         const reader = r.body.getReader();
         const parser = createMjpegParser();
@@ -57,12 +84,15 @@ export function watchCabin({ landmarker, canvas, onFrame, fps = 12 }) {
           if (done || stopped) break;
           const jpgs = parser.push(value);
           const now = performance.now();
-          if (!jpgs.length || busy || now - lastMs < 1000 / fps) continue;
+          if (!jpgs.length || now - lastMs < 1000 / fps) continue;
           lastMs = now;
-          busy = true;
+          let bmp;
+          try { bmp = await decode(jpgs[jpgs.length - 1]); } catch (e) {
+            console.warn("drowsy mode: a cabin picture would not decode; skipped:", e);
+            continue;
+          }
+          if (stopped) { bmp.close(); break; }
           try {
-            const bmp = await createImageBitmap(new Blob([jpgs[jpgs.length - 1]], { type: "image/jpeg" }));
-            if (stopped) { bmp.close(); break; }
             if (canvas.width !== bmp.width) { canvas.width = bmp.width; canvas.height = bmp.height; }
             g.drawImage(bmp, 0, 0);
             bmp.close();
@@ -70,11 +100,15 @@ export function watchCabin({ landmarker, canvas, onFrame, fps = 12 }) {
             const stamp = Math.max(performance.now(), lastStamp + 0.001);
             lastStamp = stamp;
             onFrame(frameFrom(landmarker.detectForVideo(canvas, stamp), stamp / 1000));
-          } finally { busy = false; }
+            errors = 0;
+          } catch (e) {
+            failed(e);
+            if (stopped) break;
+          }
         }
       } catch { /* the stream ended or never started: try again shortly */ }
-      if (!stopped) await new Promise((res) => setTimeout(res, 3000));
+      if (!stopped) await new Promise((res) => setTimeout(res, retryMs));
     }
   })();
-  return { stop() { stopped = true; if (ctrl) ctrl.abort(); } };
+  return { stop };
 }
