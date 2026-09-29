@@ -74,6 +74,98 @@ _a_boundary_doc = {"started": 1000.0,
 _passed, _why = dv.verdict_a(dv.summarize(_a_boundary_doc))
 check("exactly 20,000 frames (not 'well over') fails", _passed, False)
 
+# ------------------------------------------- capture A: which link it was on
+head("capture A says whether the fast link engaged, and if not, where the raise stopped")
+
+# 29 SEPTEMBER, capture A (20260929-131731, fastbaud-test): 142 frames in
+# 0.33s, then BUFFER FULL -- identical to 115200 -- and the verdict said only
+# "only 142 frames". Nothing told a link that never came up from a link that
+# came up and still could not keep up, and they want different fixes.
+
+
+def _a_doc(link_baud, fastbaud, said=("BUFFER FULL",)):
+    return {"started": 1000.0, "link_baud": link_baud, "fastbaud": fastbaud,
+            "adapter_said": list(said),
+            "raw": frames("161", "0102030405060708", 142, dt=0.33 / 142)}
+
+
+def _fb(failed_at, steps, outcome="failed", why=None, link=115200):
+    return {"outcome": outcome, "failed_at": failed_at, "why": why,
+            "from": 115200, "target": 500000,
+            "steps": [{"step": s, "answered": a, "ms": 1} for s, a in steps],
+            "settled": 115200, "link_baud": link}
+
+
+_not_engaged = _a_doc(115200, _fb("ATBRD OK", [("echo-off", "OK\r\r>"),
+                                                ("ATBRD OK", "ATBRD 08\r")]))
+_passed, _why = dv.verdict_a(dv.summarize(_not_engaged))
+check("a link that never came up fails", _passed, False)
+check("...and says so, with the rate it stayed on and what ATBRD answered",
+      _why.startswith("the fast link did not engage (still 115200 baud; "
+                      "the ATBRD step said 'ATBRD 08\\r')"), True)
+check("...and still says how few frames", "only 142 frames over 0.3s" in _why, True)
+check("...and does not blame an overflow on a link that was never fast",
+      "overflowed" in _why, False)
+
+_quiet_ident = _a_doc(115200, _fb("ident", [("echo-off", "OK\r\r>"),
+                                             ("ATBRD OK", "OK\r"),
+                                             ("ident", "")]))
+_passed, _why = dv.verdict_a(dv.summarize(_quiet_ident))
+check("an identification that never arrived is named as that step, saying nothing",
+      "the fast link did not engage (still 115200 baud; the ident step at "
+      "500000 baud said nothing)" in _why, True)
+
+_mid_reset = _a_doc(115200, _fb("ATBRD OK", [("echo-off", ""), ("ATBRD OK", "")]))
+_passed, _why = dv.verdict_a(dv.summarize(_mid_reset))
+check("an echo-off that got no OK is mentioned beside the step that gave up",
+      "the ATBRD step said nothing; the echo-off before it said nothing" in _why, True)
+
+_threw = _a_doc(115200, _fb("echo-off", [], why="SerialException: [Errno 5] Input/output error"))
+_passed, _why = dv.verdict_a(dv.summarize(_threw))
+check("an error during a step is quoted, not guessed at",
+      "the echo-off step failed: SerialException: [Errno 5] Input/output error" in _why,
+      True)
+
+_engaged = _a_doc(500000, _fb(None, [("echo-off", "OK\r"), ("ATBRD OK", "OK\r"),
+                                      ("ident", "ELM327 v1.4b\r"), ("final OK", "OK\r")],
+                              outcome="raised", link=500000))
+_passed, _why = dv.verdict_a(dv.summarize(_engaged))
+check("a fast link that still overflowed fails", _passed, False)
+check("...and says the link engaged and the adapter overflowed anyway",
+      _why.startswith("the fast link engaged (500000 baud) but the adapter still "
+                      "overflowed (BUFFER FULL)"), True)
+
+_asked_not = _a_doc(115200, None)
+_passed, _why = dv.verdict_a(dv.summarize(_asked_not))
+check("a capture taken without OMACAR_FASTBAUD=1 says the raise was never asked for",
+      _why.startswith("the fast link was not asked for"), True)
+
+# A capture saved before the link was recorded reads exactly as it always did.
+_passed, _why = dv.verdict_a(_a_fail)
+check("an older capture with no link fields keeps the old wording",
+      _why, "only 120 frames over 1.2s")
+
+# What driveway-check.sh actually prints is the CLI's why= line.
+_tmp_cli = tempfile.mkdtemp()
+try:
+    _cli_path = os.path.join(_tmp_cli, "a.json")
+    with open(_cli_path, "w", encoding="utf-8") as _f:
+        json.dump(_not_engaged, _f)
+    import contextlib as _ctx
+    import io as _io
+    _out = _io.StringIO()
+    with _ctx.redirect_stdout(_out):
+        dv.main(["verdict-a", _cli_path])
+    _why_line = [ln for ln in _out.getvalue().splitlines() if ln.startswith("why=")]
+    check("the line driveway-check.sh prints carries it",
+          bool(_why_line) and _why_line[0].startswith(
+              "why=the fast link did not engage (still 115200 baud;"), True)
+    _kv = dict(ln.split("=", 1) for ln in _out.getvalue().splitlines() if "=" in ln)
+    check("and the rate and the raise's outcome are their own lines",
+          (_kv.get("link_baud"), _kv.get("fastbaud")), ("115200", "failed at ATBRD OK"))
+finally:
+    shutil.rmtree(_tmp_cli, ignore_errors=True)
+
 # ------------------------------------------------------------- capture B
 head("capture B -- the fast link plus ATCAF0, and it must be a real capture (I4)")
 
