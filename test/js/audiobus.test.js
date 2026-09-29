@@ -4,6 +4,8 @@ import {
   audioContext, schedule,
 } from "../js/audiobus.js";
 import { auxLine } from "../js/audiostate.js";
+import { levelAt } from "../js/audiobus.js";
+import { rampPlan } from "../js/ramps.js";
 
 export default [
   ["music sits 12 dB below full scale", () => eq(MUSIC_DB, -12)],
@@ -48,5 +50,19 @@ export default [
     ok(!cancelled && !stepped && !ramped,
        `schedule() without cancelAndHoldAtTime must not touch the gain at all `
        + `(cancelScheduledValues=${cancelled} setValueAtTime=${stepped} linearRampToValueAtTime=${ramped})`);
+  }],
+  // Task 7: every plan starts where the bus will really be. The real music
+  // bus, a quarter of an hour ahead on its own clock, so nothing moves now.
+  ["the stage knows where its own plans have a bus, mid-ramp, so the next plan starts there", () => {
+    const t0 = audioContext().currentTime + 900;
+    ok(schedule("music", rampPlan(1, MUSIC_DB, MUSIC_DB + 6).points, t0), "a swell, scheduled");
+    ok(schedule("music", rampPlan(1, MUSIC_DB + 6, MUSIC_DB).points, t0 + 10, true), "and its settle after it");
+    const mid = levelAt("music", t0 + 5);
+    eq(+mid.toFixed(6), MUSIC_DB + 3, "halfway up the swell");
+    ok(schedule("music", rampPlan(2, mid, MUSIC_DB - 12).points, t0 + 5), "a duck from exactly there");
+    eq([t0 + 5, t0 + 6, t0 + 60].map((t) => +levelAt("music", t).toFixed(6)), [MUSIC_DB + 3, MUSIC_DB - 12, MUSIC_DB - 12],
+       "held where the swell was, ducked, and the settle cancelled");
+    ok(schedule("music", rampPlan(0, levelAt("music", t0 + 7), MUSIC_DB).points, t0 + 7), "and back");
+    eq(+levelAt("music", t0 + 20).toFixed(6), MUSIC_DB);
   }],
 ];
