@@ -125,6 +125,9 @@ export function feedLine(listing) {
   }
   const what = `${src} · ${n} camera${n === 1 ? "" : "s"} in Monterey County`;
   const age = f.age < 120 ? "list just checked" : `list from ${ageText(f.age)}`;
-  if (f.error) return `${what} · ${f.offline ? "No connection" : f.error} · ${age}`;
-  return `${what} · ${age}`;
+  // The disk would not take the list: it is held in memory, and gone at a
+  // restart. The full reason is the line's tooltip.
+  const disk = f.warning ? " · kept in memory only" : "";
+  if (f.error) return `${what} · ${f.offline ? "No connection" : f.error} · ${age}${disk}`;
+  return `${what} · ${age}${disk}`;
 }

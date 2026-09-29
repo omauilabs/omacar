@@ -43,6 +43,8 @@ export default function roadcamsView(root) {
   let layout = null;         // "all" | "one" | "none", as applied
   let net = "unknown";       // the internet as last heard: online | offline | unknown
   let sig = "";              // which cameras the groups were built for
+  let pinnedSig = null;      // which pins the pinned section was built for
+  let driveFor = null;       // which camera the driving tile was built for
 
   const stills = new Map();  // camera id -> one fetcher, however many tiles
   const embeds = new Set();  // construction camera tiles
@@ -208,12 +210,15 @@ export default function roadcamsView(root) {
     if (old) URL.revokeObjectURL(old);
   }
 
+  // After a refusal or a camera leaving the list, a picture still on screen
+  // -- or the one kept on disk, fetched in load() -- is the last good one, and
+  // says so. Its age stays its own, and stays amber once it is old.
   function paintStill(s) {
     const a = ageOf(s);
     const flag = s.noServer ? "No server" : s.offline ? "No connection"
-      : s.error ? "Not updating" : "";
+      : s.error ? (s.url ? "Last good image" : "Not updating") : "";
     const state = s.noServer ? "noserver" : s.offline ? "offline" : s.error ? "error"
-      : isStale(a, s.cam) ? "stale" : s.url ? "ok" : "loading";
+      : !s.url ? "loading" : a === null ? "unknown" : isStale(a, s.cam) ? "stale" : "ok";
     const when = s.url ? ageText(a) : (s.loaded ? "no picture" : "loading…");
     for (const t of s.tiles) {
       if (s.url && t.img.getAttribute("src") !== s.url) t.img.src = s.url;
@@ -254,20 +259,27 @@ export default function roadcamsView(root) {
     for (const t of embeds) paintEmbed(t);
   }
 
+  // TAP TO LOAD. A TrueLook page is a live video player, and three of them
+  // are pinned by default: on a phone's hotspot that is a data plan, so none
+  // starts until it is asked for. The poster is the button.
   function embedTile(cam) {
-    const fsay = h("div.rc-fsay");
-    const box = h("div.rc-pic.rc-frame", fsay);
-    const say = h("div.rc-estate");
-    const edit = h("div.rc-edit");
-    const node = h("figure.rc-tile.rc-embed", { data: { id: cam.id, kind: "embed" } },
-      box,
+    const t = { kind: "embed", cam, visible: false, frame: null, timer: null,
+                loaded: false, failed: false, asked: false };
+    t.poster = h("button.rc-poster", { type: "button",
+      onclick: () => { if (layout === "all" && online()) { t.asked = true; paintEmbed(t); } } },
+      h("span.rc-poster-t"), h("span.rc-poster-s"));
+    t.box = h("div.rc-pic.rc-frame", t.poster);
+    t.say = h("div.rc-estate");
+    t.edit = h("div.rc-edit");
+    t.node = h("figure.rc-tile.rc-embed", { data: { id: cam.id, kind: "embed" } },
+      t.box,
       h("figcaption.rc-cap",
         h("div.rc-name", h("span.rc-route", "Imjin Pkwy"), h("span.rc-nm", cam.name)),
+        h("div.rc-meta", h("span.rc-where", "Imjin Parkway, Marina"),
+          h("span.rc-age.rc-own", "live embed — its own clock")),
         h("p.rc-enote", cam.note || "A construction camera, not a Caltrans one."),
-        say),
-      edit);
-    const t = { kind: "embed", node, box, say, fsay, edit, cam, visible: false,
-                frame: null, timer: null, loaded: false, failed: false };
+        t.say),
+      t.edit);
     embeds.add(t);
     watch(t);
     paintEmbed(t);
@@ -309,24 +321,32 @@ export default function roadcamsView(root) {
   // live video player, so a frame scrolled out of sight is taken down rather
   // than left streaming to nobody -- and a pinned construction camera is drawn
   // twice, pinned and in its group, so keeping both would be two streams.
+  // A tap is forgotten when the car moves or the connection goes, so a
+  // player never restarts by itself; scrolling away and back keeps it.
   function paintEmbed(t) {
     const parkedNow = layout === "all";
     const up = online();
-    if (!parkedNow || !up || !t.visible) unmountFrame(t);
+    if (!parkedNow || !up) t.asked = false;
+    if (!t.asked || !t.visible) unmountFrame(t);
     else if (!t.frame) mountFrame(t);
     const [text, tone] = !parkedNow ? [WHY_PARKED, "parked"]
-      : !up ? ["No connection. This camera is shown when there is one.", "offline"]
+      : !up ? ["No connection. This camera can be loaded when there is one.", "offline"]
+      : !t.asked ? ["Not loaded: a live player uses mobile data.", "idle"]
       : t.failed ? ["It did not load. The project may have taken this camera down: "
                     + "the widening was due to finish in June 2026.", "failed"]
-      : !t.frame ? ["Loads when it is on screen.", "waiting"]
+      : !t.frame ? ["Loads again when it is on screen.", "waiting"]
       : !t.loaded ? ["Loading from TrueLook…", "loading"]
       : ["Shown by TrueLook. If it is blank or cannot find the camera, the project "
          + "has probably taken it down.", "shown"];
     if (t.say.textContent !== text) t.say.textContent = text;
-    // A word in the empty frame too, so it never reads as a broken picture.
-    const short = { parked: WHY_PARKED, offline: "No connection", failed: "Did not load",
-                    waiting: "", loading: "Loading…", shown: "" }[tone];
-    if (t.fsay.textContent !== short) t.fsay.textContent = short;
+    // The poster: the button while it can be pressed, the reason while not.
+    const [title, small] = !parkedNow ? [WHY_PARKED, ""]
+      : !up ? ["No connection", ""]
+      : ["Tap to load the live view", "It uses mobile data"];
+    const [pt, ps] = t.poster.children;
+    if (pt.textContent !== title) pt.textContent = title;
+    if (ps.textContent !== small) ps.textContent = small;
+    t.poster.disabled = !parkedNow || !up;
     t.node.dataset.estate = tone;
   }
 
@@ -349,6 +369,9 @@ export default function roadcamsView(root) {
   const tileFor = (cam) => (cam.kind === "embed" ? embedTile(cam) : stillTile(cam));
 
   function buildPinned() {
+    // What it was built from, so a reload of the same list leaves it alone;
+    // a draft is never the saved pins, so leaving the editor always redraws.
+    pinnedSig = draft ? null : pinSig(data || {});
     drop(pinnedTiles);
     clear(pinnedGrid);
     const pins = draft || (data && data.pins) || [];
@@ -405,12 +428,17 @@ export default function roadcamsView(root) {
     measureSoon();
   }
 
+  // Rebuilt only when the camera it shows changes, never because the list
+  // was read again or the car stopped and started.
   function buildDriving() {
+    const cam = firstPinnedStill(data);
+    const want = layout === "none" ? "none" : !data ? "loading" : cam ? camSig([cam]) : "no-cam";
+    if (want === driveFor) return;
+    driveFor = want;
     drop(driveTiles);
     driveTiles = [];
     clear(driveSlot);
     if (layout === "none") return;
-    const cam = firstPinnedStill(data);
     if (!data) {
       driveSlot.appendChild(h("div.card.rc-drive-none", "Reading the camera list…"));
     } else if (cam) {
@@ -536,7 +564,8 @@ export default function roadcamsView(root) {
     const fresh = netState(d);
     if (fresh !== "unknown" && net === "unknown") setNet(fresh);
     sub.textContent = feedLine(d);
-    sub.dataset.tone = d.feed && d.feed.error ? "warn" : "";
+    sub.dataset.tone = d.feed && (d.feed.error || d.feed.warning) ? "warn" : "";
+    sub.title = (d.feed && d.feed.warning) || "";
     const f = d.feed || {};
     listNote.hidden = !!f.fetched_at;
     if (!f.fetched_at) {
@@ -547,15 +576,29 @@ export default function roadcamsView(root) {
                     + "there is a connection."),
         f.error ? h("p.muted", f.error) : null);
     }
-    const nextSig = (d.cameras || []).map((c) => c.id).join(",");
+    // A RELOAD REBUILDS ONLY WHAT CHANGED. The list is read again every half
+    // hour, and every two minutes while it is in trouble; rebuilding every
+    // tile each time took a loaded construction camera's player down and put
+    // it up again, and replaced the one tile a moving car shows.
+    const nextSig = camSig(d.cameras);
     if (nextSig !== sig) {
       sig = nextSig;
       buildGroups();
     }
-    if (!draft) buildPinned();
+    if (!draft && pinSig(d) !== pinnedSig) buildPinned();
     paintPinButtons();
     editBtn.disabled = layout !== "all";
     buildDriving();
+  }
+
+  // What a tile is drawn from, so "changed" means something a tile shows.
+  function camSig(cams) {
+    return JSON.stringify((cams || []).map((c) =>
+      [c.id, c.kind, c.name, c.route, c.place, c.direction, c.updated_minutes, c.url || ""]));
+  }
+  function pinSig(d) {
+    return JSON.stringify([d.pins, d.pins_missing, camSig((d.cameras || [])
+      .filter((c) => (d.pins || []).includes(c.id)))]);
   }
 
   // Read again every half hour (the server keeps the list six hours), or
@@ -563,6 +606,7 @@ export default function roadcamsView(root) {
   // a connection that comes back is noticed without leaving the screen.
   let listTimer = null;
   async function loadList() {
+    clearTimeout(listTimer);
     try {
       const d = await api.roadcams();
       if (!alive) return;
@@ -582,7 +626,12 @@ export default function roadcamsView(root) {
   }
 
   const repaintAges = () => { for (const s of stills.values()) if (s.tiles.size) paintStill(s); };
-  const onNet = () => { for (const t of embeds) paintEmbed(t); };
+  // The browser coming back online is a reason to ask for the list again at
+  // once, rather than at the next two-minute retry.
+  const onNet = (e) => {
+    for (const t of embeds) paintEmbed(t);
+    if (e && e.type === "online") loadList();
+  };
 
   editBtn.disabled = true;
   applyLayout();

@@ -457,7 +457,9 @@ window.__st = store;
   out.groups = [...document.querySelectorAll(".rc-groups .rc-sec-t")].map((e) => e.textContent);
   out.pictures = [...document.querySelectorAll(".rc-sec[data-sec='pinned'] .rc-tile[data-kind='still']")]
     .map((t) => [t.dataset.has, t.querySelector(".rc-age").textContent]);
-  out.live = /\blive\b/i.test(document.querySelector(".rc").textContent);
+  // Stills only: a construction camera's player may say "live embed".
+  out.live = [...document.querySelectorAll(".rc-tile[data-kind='still']")]
+    .some((el) => /\blive\b/i.test(el.textContent));
   out.parkedTap = shortest();
   out.asked = [...new Set(window.__rcAsked)].length;
   // Moving: the poller silenced first, or it puts "no car" straight back.
@@ -548,7 +550,7 @@ def roadcams_check(exe):
         check(f"{orient}: each pinned still shows its picture and its age "
               f"(got {g.get('pictures')})",
               g.get("pictures") == [["1", "2 min ago"]] * 3)
-        check(f"{orient}: and nothing on the screen says live", g.get("live") is False)
+        check(f"{orient}: and no Caltrans still says live", g.get("live") is False)
         check(f"{orient}: every button parked is at least 56 px (shortest {g.get('parkedTap')})",
               (g.get("parkedTap") or 0) >= 56)
         check(f"{orient}: only cameras on screen were asked for "

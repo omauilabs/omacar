@@ -76,7 +76,11 @@
 .rc-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-missing .rc-where { white-space: normal; }
 .rc-age { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-2); }
+/* Amber whenever the age cannot be trusted as current: old, unknown, or the
+   last picture from before the connection or the server went. */
 .rc-tile[data-state="stale"] .rc-age,
+.rc-tile[data-state="unknown"] .rc-age,
+.rc-tile[data-state="error"] .rc-age,
 .rc-tile[data-state="offline"] .rc-age,
 .rc-tile[data-state="noserver"] .rc-age { color: var(--warn); }
 .rc-gone { background: var(--panel-2); }
@@ -95,8 +99,20 @@
 @media (max-width: 560px) { .rc-embed { grid-column: auto; display: flex; } }
 .rc-frame { aspect-ratio: 16 / 9; background: var(--panel-2); }
 .rc-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--panel-2); }
-.rc-fsay { color: var(--dim); font-size: .9rem; text-align: center; padding: 0 16px; }
-.rc-embed[data-estate="offline"] .rc-fsay, .rc-embed[data-estate="failed"] .rc-fsay { color: var(--warn); }
+/* The poster a player waits behind until it is tapped. The whole frame is
+   the button; a loaded player is drawn over it. */
+.rc-poster {
+  position: absolute; inset: 0; min-height: var(--rc-tap); display: grid; place-content: center;
+  gap: 6px; padding: 0 16px; text-align: center; cursor: pointer; touch-action: manipulation;
+  background: var(--panel-2); border: 0; color: var(--ink); font: inherit;
+}
+.rc-poster-t { font-size: 1rem; font-weight: 600; }
+.rc-poster-s { font-size: .8rem; color: var(--dim); }
+.rc-poster:disabled { cursor: default; }
+.rc-poster:disabled .rc-poster-t { color: var(--dim); }
+.rc-embed[data-estate="offline"] .rc-poster-t { color: var(--warn); }
+.rc-poster:focus-visible { outline: 2px solid var(--info); outline-offset: -4px; }
+.rc-own { color: var(--ink-2); }
 .rc-enote { font-size: .78rem; color: var(--dim); line-height: 1.4; }
 .rc-estate { font-size: .8rem; color: var(--ink-2); }
 .rc-embed[data-estate="failed"] .rc-estate,

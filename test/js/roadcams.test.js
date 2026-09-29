@@ -66,8 +66,8 @@ async function withScreen(opts, fn) {
   const was = { roadcams: api.roadcams, roadcamImage: api.roadcamImage,
                 saveRoadcamPins: api.saveRoadcamPins };
   const asked = [];
-  const net = { mode: opts.mode || "ok", age: 120 };
-  api.roadcams = async () => listing(opts.over);
+  const net = { mode: opts.mode || "ok", age: 120, lists: 0 };
+  api.roadcams = async () => { net.lists++; return listing(opts.over); };
   api.roadcamImage = async (id, cached) => {
     asked.push(cached ? `${id}?cached` : id);
     if (net.mode === "offline") {
@@ -76,6 +76,16 @@ async function withScreen(opts, fn) {
       e.saved = true;
       throw e;
     }
+    if (net.mode === "refused" && !cached) {
+      const e = new Error("Caltrans answered 503 Service Unavailable");
+      e.status = 502;
+      e.saved = true;
+      throw e;
+    }
+    if (net.mode === "refused") {
+      return { blob: svg(id), age: 7200, modified: now() - 7200, source: "saved", at: now() };
+    }
+    if (net.mode === "noage") return { blob: svg(id), age: null, modified: null, source: "caltrans", at: now() };
     return { blob: svg(id), age: net.age, modified: now() - net.age, source: "caltrans", at: now() };
   };
   api.saveRoadcamPins = opts.save || (async (pins) => listing({ pins, pins_default: false }));
@@ -198,7 +208,10 @@ export default [
       eq(t.querySelector(".rc-nm").textContent, "Imjin Parkway");
       eq(t.querySelector(".rc-where").textContent, "Marina · North");
       eq(t.querySelector(".rc-age").textContent, "2 min ago");
-      ok(!/live/i.test(root.textContent), "the word live appears nowhere on the screen");
+      // The stills are pictures with a time on them. Only a construction
+      // camera -- a player -- is ever called live, and it says whose clock.
+      ok(![...root.querySelectorAll(".rc-tile[data-kind='still']")].some((el) => /live/i.test(el.textContent)),
+         "no Caltrans still says live");
       const twice = tileIn(root, "SR-1", "sr1imjinparkway");
       ok(await until(() => twice.dataset.has === "1"), "the same camera in its group has the picture too");
       eq(asked.filter((a) => a === "sr1imjinparkway").length, 1, "and it cost one request, not two");
@@ -226,10 +239,16 @@ export default [
       eq(t.querySelector(".rc-age").textContent, "2 min ago", "with its own time");
     })],
 
-  ["the construction cameras are framed, sandboxed, only while online and parked", () =>
+  ["the construction cameras wait for a tap, then are framed, sandboxed", () =>
     withScreen({}, async (root) => {
       const t = tileIn(root, "pinned", "imjin-1");
-      ok(await until(() => !!t.querySelector("iframe")), "a frame while parked and online");
+      const poster = t.querySelector(".rc-poster");
+      await wait(300);
+      eq(t.querySelector("iframe"), null, "no player until asked: it uses mobile data");
+      eq([poster.disabled, poster.textContent.includes("Tap to load the live view")], [false, true]);
+      eq(t.querySelector(".rc-age").textContent, "live embed — its own clock");
+      poster.click();
+      ok(await until(() => !!t.querySelector("iframe")), "a frame once tapped, parked and online");
       const f = t.querySelector("iframe");
       eq(f.getAttribute("sandbox"), "allow-scripts allow-same-origin");
       eq(f.getAttribute("referrerpolicy"), "no-referrer");
@@ -245,13 +264,18 @@ export default [
       async (root) => {
         const t = tileIn(root, "pinned", "imjin-2");
         await wait(300);
-        eq(t.querySelector("iframe"), null);
+        t.querySelector(".rc-poster").click();
+        await wait(100);
+        eq(t.querySelector("iframe"), null, "not even when tapped");
+        eq(t.querySelector(".rc-poster").disabled, true);
         ok(/No connection/.test(t.querySelector(".rc-estate").textContent), "and it says why");
       })],
 
   ["moving: one small fixed tile, the first pinned Caltrans camera, and the rest greyed with the reason", () =>
     withScreen({}, async (root) => {
-      await until(() => !!root.querySelector(".rc-sec[data-sec='pinned'] iframe"));
+      await wait(200);
+      for (const p of root.querySelectorAll(".rc-sec[data-sec='pinned'] .rc-poster")) p.click();
+      ok(await until(() => !!root.querySelector(".rc-sec[data-sec='pinned'] iframe")), "players loaded by tap");
       store.live = { connected: true, values: { SPEED: 55, RPM: 2400 } };
       store.emit("live");
       eq(root.querySelector(".rc-parked").hidden, true, "the grid is gone");
@@ -312,6 +336,51 @@ export default [
       eq(root.querySelector(".rc-parked").hidden, true);
       eq(root.querySelectorAll(".rc-driving .rc-tile").length, 1);
     })],
+
+  ["a list reload leaves a loaded player, the tiles and the driving tile alone", () =>
+    withScreen({}, async (root, { net }) => {
+      await wait(200);
+      const t = tileIn(root, "pinned", "imjin-1");
+      t.querySelector(".rc-poster").click();
+      ok(await until(() => !!t.querySelector("iframe")), "loaded");
+      const frame = t.querySelector("iframe");
+      const still = tileIn(root, "pinned", "sr1imjinparkway");
+      const drive = root.querySelector(".rc-driving .rc-tile");
+      const lists = net.lists;
+      window.dispatchEvent(new Event("online"));
+      ok(await until(() => net.lists > lists), "the list was read again");
+      await wait(100);
+      ok(tileIn(root, "pinned", "imjin-1") === t && t.querySelector("iframe") === frame,
+         "the same player, not taken down and put up again");
+      ok(tileIn(root, "pinned", "sr1imjinparkway") === still, "the same still tile");
+      ok(root.querySelector(".rc-driving .rc-tile") === drive, "the same driving tile");
+    })],
+
+  ["a picture with no timestamp says 'age unknown', in amber", () =>
+    withScreen({ mode: "noage" }, async (root) => {
+      const t = tileIn(root, "pinned", "sr1imjinparkway");
+      ok(await until(() => t.dataset.has === "1"), "the picture arrived");
+      eq([t.querySelector(".rc-age").textContent, t.dataset.state], ["age unknown", "unknown"]);
+      // The runner page does not load the stylesheet, so the rule is read.
+      const css = await (await fetch("css/roadcams.css")).text();
+      ok(/\[data-state="unknown"\] \.rc-age[^{]*\{[^}]*--warn/.test(css), "and the stylesheet draws it amber");
+    })],
+
+  ["after a refusal the kept picture is shown, with its real age, as the last good one", () =>
+    withScreen({ mode: "refused" }, async (root, { asked }) => {
+      const t = tileIn(root, "pinned", "sr1lightfighterdrive");
+      ok(await until(() => t.dataset.has === "1"), "the kept picture is up");
+      ok(asked.includes("sr1lightfighterdrive?cached"), "asked for the copy on disk");
+      eq(t.querySelector(".rc-flag").textContent, "Last good image");
+      eq(t.querySelector(".rc-age").textContent, "2 h ago", "its own age, not the time it was shown");
+      eq(t.dataset.state, "error");
+    })],
+
+  ["a list the disk would not keep says it is in memory only", () => {
+    const d = listing();
+    d.feed.warning = "The camera list could not be kept on disk (No space left on device)";
+    ok(/kept in memory only/.test(feedLine(d)), feedLine(d));
+  }],
 
   ["a pin that left Caltrans' list is shown as no longer in it, and saved with the rest", () => {
     let sent = null;
