@@ -1261,6 +1261,79 @@ ok("one button moves both surfaces together",
 ok("the browser app badges a simulated car too",
    "SIMULATED" in (_share / "js" / "provenance.js").read_text(encoding="utf-8"))
 
+# THE BACKUP VIDEO: `omacar demo video` plays the tour as recorded, full-screen,
+# for when something fails on stage (spec §6). The tablet's own recording
+# (tools/demo_record.sh) comes first, since it is the real screen and sound;
+# the box's (tools/demo_record_headless.py) otherwise. Run for real below, with
+# a stand-in mpv that only writes down what it was asked to play, and files
+# that are not films: nothing here can make a sound.
+_video = _cli.split("demo_video() {", 1)[-1].split("\n}", 1)[0]
+ok("demo video is one of the demo's verbs", "video) demo_video" in _cli)
+ok("and it plays full-screen with mpv", 'exec mpv --fs "${mute[@]}" -- "$f"' in _video)
+ok("and asks whether the car is moving first, as demo on does",
+   "demo_parked_or_exit" in _video.split("for c in", 1)[0]
+   and 'demo_parked_or_exit "the demo is not starting"' in _cli)
+ok("the tablet's recording is looked for before the box's",
+   _cli.index("omacar-demo-backup-tablet.mp4") < _cli.index('omacar-demo-backup.mp4"'))
+if sys.platform.startswith("linux"):
+    _vh = os.path.join(tmp, "video-home")
+    _vbin = os.path.join(tmp, "video-bin")
+    _vlog = os.path.join(tmp, "mpv.log")
+    os.makedirs(os.path.join(_vh, "Videos"))
+    os.makedirs(_vbin)
+    with open(os.path.join(_vbin, "mpv"), "w", encoding="utf-8") as _f:
+        _f.write(f'#!/bin/sh\necho "$@" >> "{_vlog}"\n')
+    os.chmod(os.path.join(_vbin, "mpv"), 0o755)
+    _venv = {k: v for k, v in os.environ.items()
+             if not k.startswith(("XDG_", "OMACAR_", "WAYLAND_"))}
+    _venv.update(HOME=_vh, PATH=_vbin + ":/usr/bin:/bin", WAYLAND_DISPLAY="wayland-test",
+                 XDG_RUNTIME_DIR=os.path.join(tmp, "video-run"))
+
+    def _play():
+        open(_vlog, "w").close()
+        r = subprocess.run([str(_root / "bin" / "omacar"), "demo", "video"], env=_venv,
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        with open(_vlog, encoding="utf-8") as f:
+            return r.returncode, r.stdout + r.stderr, f.read().strip()
+
+    _box = os.path.join(_vh, "Videos", "omacar-demo-backup.mp4")
+    _tab = os.path.join(_vh, "Videos", "omacar-demo-backup-tablet.mp4")
+    _rc, _out, _played = _play()
+    ok("with no backup video it says so, and plays nothing",
+       _rc != 0 and "no backup video" in _out and _played == "")
+    with open(_box, "w", encoding="utf-8") as _f:
+        _f.write("not a film")
+    _rc, _out, _played = _play()
+    ok("the box's recording, when it is the only one", (_rc, _played) == (0, f"--fs -- {_box}"))
+    with open(_tab, "w", encoding="utf-8") as _f:
+        _f.write("not a film either")
+    _rc, _out, _played = _play()
+    ok("the tablet's own recording, when there is one", (_rc, _played) == (0, f"--fs -- {_tab}"))
+    open(_tab, "w").close()
+    _rc, _out, _played = _play()
+    ok("an empty tablet recording is passed over", (_rc, _played) == (0, f"--fs -- {_box}"))
+    # OMACAR_DEMO_MUTE=1, the nights' switch: no audio output, so no stream.
+    _venv["OMACAR_DEMO_MUTE"] = "1"
+    _rc, _out, _played = _play()
+    del _venv["OMACAR_DEMO_MUTE"]
+    ok("OMACAR_DEMO_MUTE=1 plays it with no audio output at all",
+       (_rc, _played) == (0, f"--fs --ao=null -- {_box}"))
+    # NOT WHILE THE CAR IS MOVING: the real live.json, fresh and over 3 km/h,
+    # as demo on refuses it.
+    _live = os.path.join(_vh, ".local", "state", "omacar", "live.json")
+    os.makedirs(os.path.dirname(_live), exist_ok=True)
+    with open(_live, "w", encoding="utf-8") as _f:
+        json.dump({"connected": True, "t": time.time(), "values": {"SPEED": 50, "RPM": 1800}}, _f)
+    _rc, _out, _played = _play()
+    ok("with the car moving it refuses, and plays nothing",
+       _rc != 0 and "moving" in _out and "backup video is not playing" in _out and _played == "")
+    with open(_live, "w", encoding="utf-8") as _f:
+        json.dump({"connected": True, "t": time.time(), "values": {"SPEED": 0, "RPM": 700}}, _f)
+    _rc, _out, _played = _play()
+    ok("and plays once it is parked", (_rc, _played) == (0, f"--fs -- {_box}"))
+else:
+    print("   --    demo video's run needs Linux (bin/omacar is Linux bash); skipped")
+
 head("The logger that waits")
 
 # Unplug the adapter at the end of a leg and this used to append

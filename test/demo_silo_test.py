@@ -817,8 +817,8 @@ try:
         check("check says it has not arrived yet, and is not a failure",
               (rc, "the check arrives with Task 8" in out), (0, True))
     rc, out = omacar("help")
-    check("help names on, off, check, tour and trash",
-          "omacar demo on|off|check|tour|trash" in out, True)
+    check("help names on, off, check, tour, video and trash",
+          "omacar demo on|off|check|tour|video|trash" in out, True)
     check("no systemctl, wpctl or pactl, in the whole run",
           [c for c in shim_calls() if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
 finally:

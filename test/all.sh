@@ -196,5 +196,18 @@ python3 "$ROOT/test/democheck_test.py" || fails=$((fails + 1))
 # "Check". A scratch HOME inside an omacar-demo folder.
 python3 "$ROOT/test/demotidy_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 8 --------------------------------------------------
+# ---- meetup demo: the backup video (Task 9) -----------------------------------
+# tools/demo_record.sh, the tablet's recorder, dry-run against a stand-in
+# gpu-screen-recorder and a stand-in demo: its flags, when it starts and stops,
+# and what it refuses. The real recorder is never called and nothing plays.
+# (`omacar demo video` is in workshop_test.py; tools/demo_e2e.py is a tool, run
+# by hand: a tour is six minutes of real time per size.)
+python3 "$ROOT/test/demo_record_test.py" || fails=$((fails + 1))
+# tools/demo_record_headless.py's safety logic (the box's one unmuted browser)
+# against a stand-in pactl: the guard on the browser's streams, the null sink
+# never taken from under a stream, and one recording at a time. No sound
+# server, browser or sink is touched.
+python3 "$ROOT/test/demo_record_headless_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: Task 9 --------------------------------------------------
 
 exit $((fails > 0))
