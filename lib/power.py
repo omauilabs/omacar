@@ -227,6 +227,32 @@ def deny():
     return 0
 
 
+# Two ways to ask for a dark screen, newest first. A Hyprland on a Lua config
+# (the tablet's 0.56) runs `hyprctl dispatch <x>` as the Lua
+# `return hl.dispatch(<x>)`, so `dpms off` is a syntax error there. A Hyprland
+# on a hyprlang config answers the Lua form with "Invalid dispatcher".
+SCREEN_OFF = (
+    ["hyprctl", "dispatch", 'hl.dsp.dpms({ action = "disable" })'],
+    ["hyprctl", "dispatch", "dpms", "off"],
+)
+
+
+def _refused(code, out, err):
+    """What hyprctl said instead of doing it, or None if it did it.
+
+    The exit code alone is not enough. hyprctl 0.56 exits 7 when the answer
+    starts "error:", but 0.55 exits 0 whatever the answer was, and "Invalid
+    dispatcher" exits 0 on both. The answer is printed on stdout.
+    """
+    lines = [l.strip() for l in f"{out}\n{err}".splitlines() if l.strip()]
+    for line in lines:
+        if line.startswith(("error:", "Invalid dispatcher")):
+            return line
+    if code != 0:
+        return lines[0] if lines else f"hyprctl exited {code}"
+    return None
+
+
 def screen_off():
     """The other thing a parked car wants: the screen dark, the machine up.
 
@@ -236,10 +262,13 @@ def screen_off():
     """
     if not shutil.which("hyprctl"):
         return False, "hyprctl is not here, so nothing can turn the screen off"
-    code, _out, err = _run(["hyprctl", "dispatch", "dpms", "off"])
-    if code == 0:
-        return True, "screen off — touch it or press a key to bring it back"
-    return False, err or "hyprctl refused"
+    said = []
+    for cmd in SCREEN_OFF:
+        why = _refused(*_run(cmd))
+        if why is None:
+            return True, "screen off — touch it or press a key to bring it back"
+        said.append(f"`{' '.join(cmd[1:])}`: {why}")
+    return False, "hyprctl refused both ways of asking. " + "; ".join(said)
 
 
 def status():
