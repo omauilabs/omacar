@@ -1,5 +1,5 @@
 {
-  "_comment": "The meetup demo's tour (doc/design/2026-09-30-meetup-demo.md §6), read by demo/js/tour.js. Each step opens `go`, shows `caption` for `secs`, and does each of `at` that many seconds in: a `cue` to the demo world (POST /api/demo/cue), a `go` to another screen, or a `do`, one of the modules' own functions (demo/js/boot.js ACTIONS) with its `arg`. `resumeAt` is where Resume takes the page back to once that action has run.",
+  "_comment": "The meetup demo's tour (doc/design/2026-09-30-meetup-demo.md §6), read by demo/js/tour.js. Each step opens `go`, shows `caption` for `secs`, and does each of `at` that many seconds in: a `cue` to the demo world (POST /api/demo/cue), a `go` to another screen, or a `do`, one of the modules' own functions (demo/js/boot.js ACTIONS) with its `arg`. `resumeAt` is where Resume takes the page back to once that action has run. The hard brake and the drowsy moment need a moving car (a parked one has neither), so their steps say `drive` first: from the top the car is already driving and it changes nothing, and after a jump from the Agent's stop it pulls away.",
   "version": 1,
   "steps": [
     { "id": "home", "title": "Home", "go": "#home", "secs": 40,
@@ -13,10 +13,10 @@
       "at": [] },
     { "id": "cameras", "title": "Cameras", "go": "#cameras", "secs": 35,
       "caption": "Three cameras, recorded in one-minute clips. A hard stop saves the clip.",
-      "at": [{ "t": 5, "cue": "hard_brake" }] },
+      "at": [{ "t": 0, "cue": "drive" }, { "t": 5, "cue": "hard_brake" }] },
     { "id": "drowsy", "title": "The drowsy moment", "go": "#home", "secs": 40,
       "caption": "Drowsy mode watches the driver's eyes, entirely on the tablet, and wakes you gently.",
-      "at": [{ "t": 3, "cue": "drowsy" }] },
+      "at": [{ "t": 0, "cue": "drive" }, { "t": 3, "cue": "drowsy" }] },
     { "id": "vehicle", "title": "Vehicle", "go": "#vehicle", "secs": 30,
       "caption": "Diagnostics for every module, in plain English.",
       "at": [{ "t": 15, "go": "#scan" }] },

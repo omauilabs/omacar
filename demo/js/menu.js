@@ -102,7 +102,7 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
                      s: `Step ${tour.index + 1}${step.title ? ", " + step.title : ""}`,
                      run: () => tour.resume() }));
     }
-    out.push(row({ id: "start", g: G.play, t: "Start tour", primary: st !== "paused", key: "1",
+    out.push(row({ id: "start", g: G.play, t: "Start tour", primary: st !== "paused",
                    s: "About six minutes, from the top", run: () => tour.start() }));
     out.push(row({ id: "drowsy", g: G.eye, t: "Drowsy moment", key: "D",
                    s: "Level 1, then Level 2", run: () => cue("drowsy") }));

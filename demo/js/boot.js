@@ -17,7 +17,7 @@
 //   1. the map, Home's nav card and the drowsy moment:        register(D)
 //   2. Now Playing, the phone card, CarPlay, Android Auto,
 //      Agent and Work:                                        register(D, deps)
-//   3. and its own: the scripted Scan vehicle, Home's car picture, the top
+//   3. and its own: the scripted Scan vehicle, Home's car and agent cards, the top
 //      bar (the logo, DEMO and the long press), the menu, the tour and its
 //      keys, and the `demo-tour` screen `omacar demo tour` asks for.
 
@@ -25,6 +25,7 @@ import { h, store } from "../../js/core.js";
 import { tyreState } from "../../js/systems.js";
 import { register as navigation, mountMap } from "./views/navigation.js";
 import { register as navCard } from "./cards/navcard.js";
+import { register as agentCard } from "./cards/agentcard.js";
 import { register as drowsy, chipAfterBar } from "./drowsy.js";
 import { getRadio } from "./radio.js";
 import { register as nowPlaying } from "./views/nowplaying.js";
@@ -43,6 +44,12 @@ const D = globalThis.OMACAR_DEMO = {
   views: {}, extraViews: [], tabRoots: {}, cards: {}, afterBar: null, onKey: null,
 };
 
+// NOT THE LIVE APP'S FIRST-RUN CARDS. A new demo window (a fresh profile after
+// `omacar demo trash`) would open on six cards about arming writes to the car,
+// in front of the room. The flag is onboard.js's own, in the demo window's
+// profile (DEMO_ROOT/browser), which the live kiosk never reads.
+try { localStorage.setItem("omacar.onboarded", "1"); } catch { /* no storage: onboard.done reads true */ }
+
 // ---- 1 and 2: the parts -----------------------------------------------------------
 navigation(D);
 navCard(D);
@@ -57,6 +64,7 @@ androidAuto(D, deps);
 agent(D, deps);
 work(D, deps);
 scan(D);
+agentCard(D);
 
 // So Home's radio row and every Now Playing have the station's names from the
 // first paint. Loading plays nothing.
@@ -113,7 +121,10 @@ async function resetDemo() {
 }
 
 const steps = [];
-const captions = createCaptions({ onResume: () => tour.resume() });
+// In #app, so the captions read its --nav, which is shorter on a screen with
+// no chip row.
+const captions = createCaptions({ host: document.getElementById("app") || document.body,
+                                  onResume: () => tour.resume() });
 const tour = createTour({
   steps,
   go: show,
@@ -129,7 +140,11 @@ const tour = createTour({
   parked: () => cues.parked(),
   menu: () => menu.toggle(),
 });
-tour.subscribe((t) => { if (t.state !== "paused") captions.hideNote(); });
+tour.subscribe((t) => {
+  if (t.state !== "paused") captions.hideNote();
+  // The caption band (demo.css) is there from Start to the end.
+  document.body.classList.toggle("dt-touring", t.state !== "idle");
+});
 const ready = loadSteps().then((s) => { steps.push(...s); })
   .catch((e) => console.warn("demo tour:", e));
 
