@@ -9,7 +9,9 @@
 //   Play backup video             says the command: the page cannot start mpv
 //   Exit demo                     says how: the page cannot close its own kiosk window
 //
-// Opening it pauses a running tour: whoever opened it is about to talk.
+// Opening it pauses a running tour: whoever opened it is about to talk. A tour
+// that is still resetting (there is no step to pause yet) is held: it starts
+// its first step once the menu has closed.
 //
 //   createCues({ post, sample, now }) -> { send(name), parked() }
 //   createMenu({ tour, cues, host, restart }) -> { open(), close(), toggle(), isOpen() }
@@ -136,6 +138,7 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
 
   function open() {
     if (sheet) return;
+    if (tour && tour.hold) tour.hold();
     if (tour && tour.state === "running") tour.pause();
     const card = h("div.dm-card", { role: "dialog", "aria-modal": "true", "aria-label": "Demo menu" },
       h("div.dm-h",
@@ -157,6 +160,7 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
     if (offTour) { offTour(); offTour = null; }
     sheet.remove();
     sheet = null;
+    if (tour && tour.release) tour.release();
   }
 
   return {

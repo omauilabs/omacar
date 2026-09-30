@@ -837,7 +837,7 @@ def main(argv=None):
                 raise SystemExit
             rc, said = sc.demo("check", timeout=60)
             report["check"] = said.strip().splitlines()
-            log("  demo check (the kiosk line is expected to say no in a scratch HOME):\n    "
+            log("  demo check (the kiosk and stay awake lines are expected to say no in a scratch HOME):\n    "
                 + "\n    ".join(report["check"]))
         for i, size in enumerate(sizes):
             tag = f"{size[0]}x{size[1]}" + (f"-{i // len(set(sizes)) + 1}" if a.repeat > 1 else "")

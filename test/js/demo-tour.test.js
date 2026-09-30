@@ -6,7 +6,8 @@
 // moves, the page's location is a string, a cue is a line in a log and so is
 // every module action. Nothing here reaches a server, the radio or a speaker.
 import { eq, ok } from "./assert.js";
-import { createTour, createReset, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS } from "../demo/js/tour.js";
+import { createTour, createReset, createCaptions, fitSize, CAP_MIN_PX, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS,
+         RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS, RESYNC_SETTLE_S, CLOSING_SECS } from "../demo/js/tour.js";
 import { createBar, LONG_PRESS_MS, LOGO } from "../demo/js/bar.js";
 import { createMenu, createCues, BACKUP_TEXT, EXIT_TEXT } from "../demo/js/menu.js";
 import { createScan, MODULES, SCAN_SECS, DONE_TEXT } from "../demo/js/views/scan.js";
@@ -36,7 +37,10 @@ function clock() {
 async function rig(over = {}) {
   const steps = over.steps || await loadSteps();
   const c = clock();
-  const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false };
+  // `world` is the page's store.sample.demo (store.live.demo while a screen polls fast, the snapshot's
+  // copy otherwise): { t, loop_secs }, or null when the page has none.
+  const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false,
+              world: null, screens: [] };
   const at = () => c.now / 1000;
   r.tour = createTour({
     steps,
@@ -50,6 +54,8 @@ async function rig(over = {}) {
     reset: () => { r.resets++; r.log.push([at(), "reset"]); return Promise.resolve(); },
     parked: () => r.parked,
     menu: () => { r.menus++; },
+    demo: () => r.world,
+    screen: (id) => { r.screens.push(id); return true; },
     ...over.deps,
   });
   r.key = (key, mods = {}) => {
@@ -63,6 +69,38 @@ async function rig(over = {}) {
 }
 
 const TOTAL = (steps) => steps.reduce((s, x) => s + x.secs, 0);
+
+const SENTENCE = "Oma Agent knows this car, and changes the dashboard for you. ";
+
+// A caption element in the page with demo.css applied, and what a test asks of it.
+// `later` is held: show() lets the fade's swap run at once.
+async function styled() {
+  const css = await (await fetch("../demo/css/demo.css")).text();
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const pending = [];
+  const caps = createCaptions({ host, later: (fn) => { pending.push(fn); return pending.length; }, cancel: () => {} });
+  const cap = host.querySelector(".dt-cap");
+  const words = cap.querySelector(".dt-cap-t");
+  const textW = () => {
+    const g = document.createRange();
+    g.selectNodeContents(words);
+    return g.getBoundingClientRect().width;
+  };
+  const size = () => parseFloat(getComputedStyle(cap).fontSize);
+  return {
+    cap, words, size,
+    show(text) { caps.caption(text); while (pending.length) pending.shift()(); },
+    fits: () => textW() <= words.getBoundingClientRect().width + 0.05,
+    // The row is the taller of the line (1.3 of the size) and the accent bar (24 px);
+    // the padding and border are 26 px more. A second line would add 1.3 of the size.
+    oneLine: () => cap.getBoundingClientRect().height <= Math.max(size() * 1.3, 24) + 27,
+    done() { caps.destroy(); host.remove(); style.remove(); },
+  };
+}
 
 export default [
   // ---- the steps -------------------------------------------------------------
@@ -161,6 +199,305 @@ export default [
     r.hash = "#home";
     r.tour.resume();
     eq(r.hash, "#carplay/maps", "moved: back to CarPlay's Maps");
+  }],
+
+  // ---- Resume, and the drive that kept going while the tour was paused ---------------------
+  //
+  // The tour and the drive share a story (Home's speed, Navigation's turn, the
+  // Cameras' brake), and the drive does not stop for a presenter: its loop ends
+  // in a parked car. Near that end, or after a long talk, Resume starts the
+  // drive over and the step from its top.
+  ["the drive's loop is 900 s, its closing stop the last 120, and Resume looks 180 s ahead of that", () => {
+    eq([CLOSING_SECS, RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS], [120, 180, 300, 3000], "the numbers");
+  }],
+
+  ["Resume within 180 s of the closing stop sends restart, waits for the drive, and re-enters the step from its top", async () => {
+    const r = await rig();
+    r.world = { t: 100, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(95 + 8);                    // Cameras, 8 s in: the brake at 5 s has gone
+    r.tour.touch();
+    r.c.advance(20);                        // the presenter talks for 20 s
+    r.world = { t: 600, loop_secs: 900 };   // 900 - 120 - 180: exactly the threshold
+    r.hash = "#vehicle";
+    const before = r.log.length;
+    eq(r.tour.resume(), true, "Resume is taken");
+    eq(r.log.slice(before), [[123, "cue", "restart"]], "restart is cued, and nothing else yet");
+    eq(r.tour.state, "paused", "still waiting for the drive to start over");
+    r.c.advance(1);
+    eq(r.log.length, before + 1, "and still waiting a second on");
+    r.world = { t: 1.2, loop_secs: 900 };   // the world has restarted
+    r.c.advance(0.25);
+    eq(r.tour.state, "running", "then running");
+    eq(r.tour.index, 3, "the same step");
+    eq(r.log.slice(before + 1).map((l) => l.slice(1)), [["go", "#cameras"], ["cue", "drive"]], "from its top: its screen and its first cue");
+    eq(r.captions[r.captions.length - 1][1], r.steps[3].caption, "its caption back");
+    eq(r.tour.elapsed() < 1, true, "and its clock from zero");
+    r.c.advance(5);
+    eq(r.log.filter((l) => l[2] === "hard_brake").length, 2, "its brake runs again, 5 s in");
+    eq(r.resets, 1, "the demo is not reset: Home, Work and the radio stay as they are");
+    r.c.advance(30);
+    eq(r.hash, "#home", "and the tour goes on to step 5 after its whole 35 s");
+    eq(r.tour.index, 4, "step 5");
+  }],
+
+  ["Resume at 599.9 s of the loop carries on as it always did, with no restart", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.world = { t: 599.9, loop_secs: 900 };
+    const before = r.log.length;
+    r.tour.resume();
+    eq(r.tour.state, "running", "running at once");
+    eq(r.log.length, before, "no cue, no screen");
+    eq(r.tour.elapsed(), 10, "from the same second");
+  }],
+
+  ["a pause of more than 5 minutes restarts the drive however early in the loop; 5 minutes exactly does not", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.world = { t: 40, loop_secs: 900 };
+    r.tour.touch();
+    r.c.advance(RESYNC_PAUSE_S);            // 300 s: not more than
+    r.tour.resume();
+    ok(!r.log.some((l) => l[2] === "restart"), "5 minutes is not more");
+    eq(r.tour.state, "running", "running");
+    r.tour.touch();
+    r.c.advance(RESYNC_PAUSE_S + 0.5);
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "300.5 s is");
+    r.world = { t: 0.6, loop_secs: 900 };
+    r.c.advance(0.25);
+    eq([r.tour.state, r.tour.index], ["running", 1], "the same step, running");
+    eq(r.last().slice(1), ["go", "#navigation"], "started over");
+  }],
+
+  ["a drive that does not answer is waited for 3 s, never more, and the step starts over anyway", async () => {
+    const r = await rig();
+    r.world = { t: 700, loop_secs: 900 };   // and it never comes back under 30
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.tour.resume();
+    r.c.advance(RESYNC_WAIT_MS / 1000 - 0.3);
+    eq(r.tour.state, "paused", "2.7 s in: waiting");
+    r.c.advance(0.4);
+    eq([r.tour.state, r.tour.index], ["running", 1], "3 s in: on");
+    eq(r.last().slice(1), ["go", "#navigation"], "the step from its top");
+    eq(r.c.timers.length, r.steps[1].at.length + 1, "only the step's own timers are left: its actions and its end");
+  }],
+
+  ["a page with no drive clock (a screen that polls slowly, the server down) waits out the 3 s after a long pause", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.c.advance(400);
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "restart is cued");
+    r.c.advance(2.9);
+    eq(r.tour.state, "paused", "no number to watch, so the whole wait");
+    r.c.advance(0.2);
+    eq(r.tour.state, "running", "then on");
+  }],
+
+  ["while it waits for the drive a second Resume does nothing, and a jump key wins", async () => {
+    const r = await rig();
+    r.world = { t: 800, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    eq(r.tour.resume(), true, "the first");
+    eq(r.tour.resume(), false, "the second is refused");
+    eq(r.key(" ").used, true, "Space is the tour's");
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "one restart, not three");
+    r.key("3");                             // a jump while waiting
+    eq([r.tour.state, r.tour.index, r.hash], ["running", 2, "#roadcams"], "the jump took it");
+    r.c.advance(10);
+    eq([r.tour.index, r.hash], [2, "#roadcams"], "and the late Resume does not drag it back to step 2");
+    r.c.advance(5);
+    eq(r.tour.index, 3, "it goes on from step 3");
+  }],
+
+  ["stop() while it waits for the drive ends the wait, and nothing starts afterwards", async () => {
+    const r = await rig();
+    r.world = { t: 800, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.tour.resume();
+    r.tour.stop();
+    const n = r.log.length;
+    r.c.advance(10);
+    eq([r.tour.state, r.log.length, r.c.timers.length], ["idle", n, 0], "idle and silent");
+  }],
+
+  // ---- Resume inside CarPlay or Android Auto ---------------------------------------------
+  //
+  // A projection's screens are its own: the page's address says `#carplay`
+  // whichever of them is up, so "the page is where the tour left it" was true
+  // even with the presenter three taps deep in Settings.
+  ["Resume in CarPlay puts the projection back on the step's own screen, by openScreen", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(300 + 5);                  // CarPlay, 5 s in: still on its home screen
+    r.tour.touch();
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#carplay", [""]], "its first screen (an empty id is the projection's own)");
+    r.c.advance(12 - 5 + 3);               // Maps opened at 12 s
+    r.tour.touch();
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#carplay", ["", "maps"]], "Maps, the screen the step last showed");
+    r.c.advance(24 - 15 + 2);              // Now Playing at 24 s
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.screens, ["", "maps", "nowplaying"], "Now Playing");
+    eq(r.tour.state, "running", "running again");
+    eq(r.gos().filter((h) => h === "#carplay").length, 1, "and the page itself never went anywhere");
+  }],
+
+  ["Resume in Android Auto puts it back on its first screen; one outside a projection touches none", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(335 + 12);                 // Android Auto, 12 s in
+    r.tour.touch();
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#androidauto", [""]], "Android Auto's own first screen");
+    r.key("2");                            // Navigation
+    r.c.advance(10);
+    r.tour.touch();
+    r.tour.resume();
+    r.key("8");                            // Work
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.screens, [""], "no other screen is a projection's");
+  }],
+
+  ["the page having left a projection is the address's to put right, not openScreen's as well", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(300 + 15);                 // CarPlay, after Maps
+    r.tour.touch();
+    r.hash = "#home";                      // the OmaCar tile
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#carplay/maps", []], "the address takes it straight to Maps");
+  }],
+
+  ["a projection that is not there, or that throws, does not stop Resume", async () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const r = await rig({ deps: { screen: () => { throw new Error("no projection"); } } });
+      await r.tour.start();
+      r.c.advance(300 + 5);
+      r.tour.touch();
+      eq(r.tour.resume(), true, "taken");
+      eq(r.tour.state, "running", "running");
+      r.c.advance(40);
+      eq(r.hash, "#androidauto", "and on to the next step");
+    } finally { console.warn = warn; }
+  }],
+
+  // Fix round 1: a Resume wait that ends under an open menu, and the menu's own Resume tour.
+  ["a Resume wait that ends under an open menu, then the menu's Resume tour: one restart, and Resume works after", async () => {
+    const r = await rig();
+    r.world = { t: 100, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.c.advance(400);                       // paused for more than 5 minutes
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    const restarts = () => r.log.filter((l) => l[2] === "restart").length;
+    eq(r.tour.resume(), true, "Resume starts a wait for the drive");
+    menu.open();                            // the presenter opens the menu during it
+    r.c.advance(RESYNC_WAIT_MS / 1000 + 0.3);
+    eq([r.tour.state, r.c.timers.length], ["paused", 0], "the wait ran out under the menu: the step has not started");
+    const gos = r.gos().length;
+    [...host.querySelectorAll(".dm-item")].find((b) => b.querySelector(".dm-t").textContent === "Resume tour").click();
+    eq(menu.isOpen(), false, "the menu closed");
+    eq(restarts(), 1, "the menu's Resume tour did not send a second restart");
+    eq([r.tour.state, r.tour.index], ["running", 1], "the held re-entry ran: the same step, running");
+    eq(r.gos().length, gos + 1, "from its top, once");
+    r.c.advance(5);
+    r.tour.touch();
+    eq(r.tour.state, "paused", "a touch pauses it");
+    eq(r.tour.resume(), true, "and Resume is still taken: nothing is stuck waiting");
+    eq(r.tour.state, "running", "running");
+  }],
+
+  ["Resume is refused while a held re-entry is waiting for the menu, and taken again once it has run", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.c.advance(400);
+    r.tour.resume();
+    r.tour.hold();
+    r.c.advance(RESYNC_WAIT_MS / 1000 + 0.3);
+    eq(r.tour.resume(), false, "refused: the re-entry is already pending");
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "one restart");
+    r.tour.release();
+    eq(r.tour.state, "running", "the release ran it");
+    r.tour.touch();
+    eq(r.tour.resume(), true, "and Resume is taken");
+  }],
+
+  // Fix round 1: the clock a slow screen reads can be 20 s old.
+  ["for 25 s after a restart the drive clock is not believed: a stale snapshot does not restart it twice", async () => {
+    eq(RESYNC_SETTLE_S, 25, "20 s of snapshot, and some");
+    const r = await rig();
+    r.world = { t: 100, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.world = { t: 700, loop_secs: 900 };
+    r.tour.resume();                        // near the closing stop: restart
+    const restarts = () => r.log.filter((l) => l[2] === "restart").length;
+    eq(restarts(), 1, "the first");
+    r.world = { t: 1, loop_secs: 900 };
+    r.c.advance(0.25);
+    eq([r.tour.state, r.tour.index], ["running", 1], "started over");
+    r.c.advance(5);
+    r.tour.touch();
+    r.world = { t: 700, loop_secs: 900 };   // the snapshot, from before the restart
+    r.tour.resume();
+    eq([restarts(), r.tour.state], [1, "running"], "5 s on: the stale clock is not believed");
+    r.c.advance(RESYNC_SETTLE_S - 5 - 0.5);
+    r.tour.touch();
+    r.tour.resume();
+    eq(restarts(), 1, "24.5 s on: still not");
+    r.c.advance(1);
+    r.tour.touch();
+    r.tour.resume();
+    eq(restarts(), 2, "after 25 s it is believed again");
+  }],
+
+  ["the drive clock is not believed for 25 s after a tour from the top, either (its reset cued restart)", async () => {
+    const r = await rig();
+    r.world = { t: 700, loop_secs: 900 };   // the snapshot from before the reset
+    await r.tour.start();
+    r.c.advance(10);
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 0, "no restart 10 s in");
+    eq(r.tour.state, "running", "running");
+    r.c.advance(RESYNC_SETTLE_S);
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "believed after that");
+  }],
+
+  ["a pause of more than 5 minutes still restarts, whatever was sent 25 s before", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(5);
+    r.tour.touch();
+    r.c.advance(RESYNC_PAUSE_S + 1);
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "the long pause is not the clock's to excuse");
   }],
 
   ["a key the tour does not own pauses it and is left to the page; modifiers alone do nothing", async () => {
@@ -296,6 +633,199 @@ export default [
       eq(homeBack, true, "and on after 3 s");
       eq(RESET_WAIT_MS, 3000, "3 s");
     } finally { console.warn = warn; }
+  }],
+
+  // ---- the menu, opened while the tour is still resetting ----------------------------------
+  //
+  // A tour from the top resets the demo first (up to 3 s). A presenter who
+  // opens the menu in that window has not been paused (there is no step to
+  // pause), and step 1 used to start under the open menu, with its caption.
+  ["opening the menu while the tour is resetting holds its start until the menu closes", async () => {
+    let done;
+    const r = await rig({ deps: { reset: () => new Promise((d) => { done = d; }) } });
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    r.tour.start();
+    menu.open();
+    done();
+    await tick();
+    eq(r.gos(), [], "the reset is over and step 1 has not started under the menu");
+    eq(r.captions, [], "no caption either");
+    eq([r.tour.state, r.tour.index], ["running", -1], "the tour is waiting");
+    r.c.advance(30);
+    eq(r.gos(), [], "however long the menu is open");
+    menu.close();
+    eq(r.gos(), ["#home"], "the menu closed: step 1");
+    eq([r.tour.state, r.tour.index, r.captions.length], ["running", 0, 1], "from its top, with its caption");
+    r.c.advance(25);
+    eq(r.last().slice(1), ["do", "radio.play"], "its actions on its own clock, from the close");
+  }],
+
+  ["a menu opened and closed inside the reset holds nothing, and one open past the 3 s cap holds step 1 too", async () => {
+    let done;
+    const r = await rig({ deps: { reset: () => new Promise((d) => { done = d; }) } });
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    const started = r.tour.start();
+    menu.open();
+    menu.close();
+    done();
+    await started;
+    eq(r.gos(), ["#home"], "closed in time: step 1 as ever");
+    r.tour.stop();
+    const again = r.tour.start();          // a reset that never answers
+    menu.open();
+    r.c.advance(RESET_WAIT_MS / 1000 + 1);
+    await again;
+    eq(r.gos(), ["#home"], "open past the cap: still only the first");
+    menu.close();
+    eq(r.gos(), ["#home", "#home"], "until it closes");
+  }],
+
+  ["Start tour from the menu during the wait, or stopping, lets the held start go", async () => {
+    const dones = [];
+    const r = await rig({ deps: { reset: () => new Promise((d) => { dones.push(d); }) } });
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    r.tour.start();
+    menu.open();
+    dones[0]();
+    await tick();
+    [...host.querySelectorAll(".dm-item")].find((b) => b.querySelector(".dm-t").textContent === "Start tour").click();
+    eq(menu.isOpen(), false, "the menu closed");
+    eq(r.gos(), [], "the held start was dropped, and the new one is resetting");
+    dones[1]();
+    await tick();
+    eq(r.gos(), ["#home"], "one step 1, not two");
+    // Stopping (Restart the drive does) drops a held start for good.
+    r.tour.stop();
+    r.tour.start();
+    menu.open();
+    dones[2]();
+    await tick();
+    r.tour.stop();
+    menu.close();
+    eq([r.tour.state, r.gos().length], ["idle", 1], "nothing starts after a stop");
+  }],
+
+  ["menu: opening it holds the tour's start and closing lets go, even with no tour to pause", () => {
+    const calls = [];
+    const fake = { state: "idle", index: -1, steps: [], hold: () => calls.push("hold"), release: () => calls.push("release"),
+                   subscribe() { return () => {}; } };
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: fake, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    menu.open();
+    menu.open();
+    eq(calls, ["hold"], "once, however often it is opened");
+    menu.close();
+    menu.close();
+    eq(calls, ["hold", "release"], "and let go once");
+  }],
+
+  // ---- the captions: one line, shrunk to fit ---------------------------------------------------
+  //
+  // In portrait the caption used to wrap onto two balanced lines (and the band
+  // was 108 px to hold them). It is one line at every width now: the text
+  // shrinks to fit, down to CAP_MIN_PX, and what still does not fit is cut with
+  // an ellipsis rather than wrapped. These run against demo.css itself.
+  ["fitSize: the largest size that fits, never under 16 px, and the top size when it all fits", () => {
+    eq(CAP_MIN_PX, 16, "the floor");
+    eq(fitSize((px) => px <= 18, 20), 18, "18 is the largest that fits");
+    eq(fitSize(() => true, 20), 20, "all of it fits: the size it had");
+    eq(fitSize(() => false, 20), 16, "none fits: the floor");
+    eq(fitSize((px) => px <= 10, 20), 16, "and never under it");
+    eq(fitSize(() => false, 14), 14, "a style that starts under the floor is not raised to it");
+    const asked = [];
+    fitSize((px) => { asked.push(px); return false; }, 22);
+    eq(asked, [22, 21, 20, 19, 18, 17], "from the top, a pixel at a time");
+  }],
+
+  ["a caption that fits keeps the stylesheet's size, and never wraps", async () => {
+    const t = await styled();
+    try {
+      t.show("Turn-by-turn on the tablet, working offline.");
+      ok([20, 22].includes(t.size()), `the stylesheet's size: ${t.size()}`);
+      eq(t.cap.style.fontSize, "", "no size of its own");
+      ok(t.fits(), "and it fits");
+      eq(getComputedStyle(t.cap).whiteSpace, "nowrap", "nowrap");
+    } finally { t.done(); }
+  }],
+
+  ["longer captions take the largest size that fits on one line, never under 16 px", async () => {
+    const t = await styled();
+    try {
+      t.show("x");
+      const base = t.size();
+      let before = base;
+      for (const n of [1, 2, 3, 4, 6]) {
+        t.show(SENTENCE.repeat(n).trim());
+        const px = t.size();
+        ok(t.oneLine(), `${n} sentences: one line, not ${Math.round(t.cap.getBoundingClientRect().height)} px tall`);
+        ok(px >= CAP_MIN_PX && px <= base, `${n} sentences: ${px} px is between 16 and ${base}`);
+        ok(px <= before, `${n} sentences: no bigger than fewer were (${px} after ${before})`);
+        before = px;
+        if (px > CAP_MIN_PX) {
+          ok(t.fits(), `${n} sentences fit at ${px} px`);
+        }
+        if (px < base && px > CAP_MIN_PX) {
+          t.cap.style.fontSize = `${px + 1}px`;
+          ok(!t.fits(), `${n} sentences: ${px + 1} px would not have fitted, so ${px} is the largest`);
+          t.cap.style.fontSize = `${px}px`;
+        }
+      }
+      ok(before < base, `the longest was shrunk (${before} of ${base})`);
+    } finally { t.done(); }
+  }],
+
+  ["too long even at 16 px: still one line at 16 px, cut with an ellipsis, never wrapped", async () => {
+    const t = await styled();
+    try {
+      t.show(SENTENCE.repeat(40).trim());
+      eq(t.size(), CAP_MIN_PX, "the floor");
+      ok(t.oneLine(), "one line");
+      ok(!t.fits(), "and it does not fit: it is cut");
+      eq(getComputedStyle(t.words).textOverflow, "ellipsis", "with an ellipsis");
+    } finally { t.done(); }
+  }],
+
+  ["the next caption starts from the stylesheet's size, not the last one's", async () => {
+    const t = await styled();
+    try {
+      t.show("x");
+      const base = t.size();
+      t.show(SENTENCE.repeat(6).trim());
+      ok(t.size() < base, "the long one shrank");
+      t.show("Short.");
+      eq(t.size(), base, "the short one did not inherit it");
+      eq(t.cap.style.fontSize, "", "no size of its own");
+    } finally { t.done(); }
+  }],
+
+  ["every one of the tour's captions is one line", async () => {
+    const t = await styled();
+    try {
+      for (const step of await loadSteps()) {
+        if (!step.caption) continue;
+        t.show(step.caption);
+        ok(t.oneLine(), `${step.id}: one line`);
+        ok(t.size() >= CAP_MIN_PX, `${step.id}: ${t.size()} px`);
+      }
+    } finally { t.done(); }
+  }],
+
+  ["a turned screen refits the caption on its window's resize", async () => {
+    const t = await styled();
+    try {
+      t.show(SENTENCE.trim());
+      const wide = t.size();
+      t.cap.style.maxWidth = "330px";            // a narrower window, as the viewport's would make it
+      window.dispatchEvent(new Event("resize"));
+      ok(t.size() < wide, `narrower: ${t.size()} px, from ${wide}`);
+      ok(t.oneLine(), "and still one line");
+      t.cap.style.maxWidth = "";
+      window.dispatchEvent(new Event("resize"));
+      eq(t.size(), wide, "wide again");
+    } finally { t.done(); }
   }],
 
   // ---- the top bar -----------------------------------------------------------------

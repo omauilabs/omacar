@@ -146,9 +146,11 @@ Private files are never committed. They live under `share/assets/private/`, whic
 - A 5-minute card in the owner's notes: power, brightness, and the sound output and level set by hand.
 - `omacar demo check` prints "ready" or what's missing. It checks that:
   - the songs, clips, map, voice lines and saved stills are there and match their pins;
+  - every clip is H.264, so the Cameras tab's player can play it;
   - the demo window opens;
   - the live volume pin is off;
-  - the live kiosk is running underneath, as usual.
+  - the live kiosk is running underneath, as usual;
+  - the screen will not sleep mid-demo: Omarchy's stay-awake is on, or the live kiosk that holds it is running.
 
 **The tour**, about 6 minutes:
 1. Home

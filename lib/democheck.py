@@ -15,6 +15,9 @@ stopped, and nothing is played.
     voice        a wav for every line in demo/data/voice.json
     clips        the cameras' footage: front, rear, cabin and cabin-drowsy, in
                  demo/clips or where OMACAR_DEMO_CLIPS says, as the camera feed reads
+    clips play   each clip present is H.264, by ffprobe (cams.py's own probe): the
+                 feed copies the clips as they are and the Cameras tab's <video>
+                 plays H.264 everywhere, HEVC only on some hardware
     road cameras saved stills (roadcams/img/*.jpg) in the demo's state or the real
                  one, for a venue with no internet (`omacar-demo on` copies them)
     logo         omacar-logo.png, the top bar's
@@ -23,6 +26,9 @@ stopped, and nothing is played.
     volume pin   the LIVE app's `omacar audio on` is off: while it is on, the
                  live page under the demo pushes the speakers to 100% every 30 s
     kiosk        the live kiosk is running underneath, as it should be
+    stay awake   the screen will not sleep mid-demo: Omarchy's stay-awake indicator
+                 (~/.local/state/omarchy/indicators/stay-awake) is there, or the live
+                 kiosk that holds it while it runs (`omacar kiosk launcher`) is
     demo server  when the demo is on, its server answers /demo.html
 
 The media are under share/assets/private/ (git-ignored), or DIR. The volume pin
@@ -34,6 +40,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -64,6 +71,12 @@ def _ere(text):
 def kiosk_pattern():
     return "--user-data-dir=" + _ere(kiosk_profile()) + "( |$)"
 DEMO_MARK = "omacar-demo"
+# Omarchy's stay-awake switch, as bin/omacar's kiosk_idle_hold reads it: under
+# $HOME, not the XDG folders (Omarchy's own scripts write it there).
+STAY_AWAKE = os.path.join("~", ".local", "state", "omarchy", "indicators", "stay-awake")
+# What the live kiosk's command line holds (bin/omacar kiosk), and the kiosk
+# holds the indicator while it runs.
+KIOSK_LAUNCHER = "omacar kiosk launcher"
 
 
 def _read_json(path):
@@ -137,16 +150,48 @@ def voice(private):
     return True, f"{len(ids)} lines"
 
 
-def clips(private):
-    # Where the camera feed reads them: bin/omacar passes OMACAR_DEMO_CLIPS to
-    # `cams.py demo --from` when it is set, and the private tree's otherwise.
+def clip_files(private):
+    """(the folder, {role: path} of the clips there). Where the camera feed
+    reads them: bin/omacar passes OMACAR_DEMO_CLIPS to `cams.py demo --from`
+    when it is set, and the private tree's otherwise. Only clips with
+    something in them count as there."""
     here = os.environ.get("OMACAR_DEMO_CLIPS") or os.path.join(private, "demo", "clips")
-    missing = [r for r in CLIP_ROLES
-               if not (os.path.isfile(os.path.join(here, r + ".mp4"))
-                       and os.path.getsize(os.path.join(here, r + ".mp4")) > 0)]
+    found = {}
+    for role in CLIP_ROLES:
+        path = os.path.join(here, role + ".mp4")
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            found[role] = path
+    return here, found
+
+
+def clips(private):
+    here, found = clip_files(private)
+    missing = [r for r in CLIP_ROLES if r not in found]
     if missing:
         return False, "stock/owner clips missing: " + ", ".join(missing) + f" (in {here})"
     return True, ", ".join(CLIP_ROLES) + f" (in {here})"
+
+
+def clips_play(private):
+    """Every clip that is there is H.264: the camera feed copies them as they
+    are (never re-encoded) and the Cameras tab's <video> plays H.264 on any
+    machine, HEVC on some. cams.py's demo_warnings asks ffprobe, exactly as
+    `cams.py demo` does when it starts, and names each clip that is not, or
+    that ffprobe cannot read. With no ffprobe at all that is said once, not
+    once per clip. None when there is nothing to read: `clips` says so."""
+    _, found = clip_files(private)
+    if not found:
+        return None, "no clip to read (see clips)"
+    if not shutil.which("ffprobe"):
+        return False, "ffprobe is not installed, so no clip can be checked (it comes with ffmpeg)"
+    try:
+        import cams
+    except ImportError as e:
+        return False, f"cannot load lib/cams.py's probe ({e})"
+    wrong = cams.demo_warnings(found)
+    if wrong:
+        return False, "; ".join(wrong)
+    return True, ", ".join(found) + ": H.264"
 
 
 def picture(private, rel, note=""):
@@ -234,6 +279,25 @@ def kiosk():
     return False, "not running: omacar kiosk"
 
 
+def stay_awake():
+    """The screen must not sleep in front of the room. Omarchy's stay-awake
+    indicator is a file, written while the switch is on, and the live kiosk
+    turns the switch on for as long as it runs (bin/omacar kiosk_idle_hold), so
+    either the file is there or the kiosk that holds it is."""
+    path = os.path.expanduser(STAY_AWAKE)
+    if os.path.exists(path):
+        return True, f"Omarchy's stay-awake is on ({STAY_AWAKE})"
+    fix = "start the live kiosk, or turn on Omarchy's stay-awake"
+    try:
+        r = subprocess.run(["pgrep", "-f", "--", KIOSK_LAUNCHER],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as e:
+        return False, f"the screen may sleep during the demo: could not ask pgrep ({e}); {fix}"
+    if r.returncode == 0 and r.stdout.strip():
+        return True, "the live kiosk holds it (pid " + ", ".join(r.stdout.split()) + ")"
+    return False, f"the screen may sleep during the demo: {fix}"
+
+
 def demo_root():
     base = os.path.abspath(os.path.expanduser(os.environ.get("XDG_STATE_HOME") or "~/.local/state"))
     parts = base.split(os.sep)
@@ -273,6 +337,7 @@ def run(private):
         ("map fits drive", *map_fits_drive(private)),
         ("voice", *voice(private)),
         ("clips", *clips(private)),
+        ("clips play", *clips_play(private)),
         ("logo", *picture(private, "omacar-logo.png")),
         ("car picture", *picture(private, os.path.join("demo", "crz-home.png"),
                                  " (tools/demo_carpic.py makes it)")),
@@ -280,6 +345,7 @@ def run(private):
         ("road cameras", *roadcams()),
         ("volume pin", *volume_pin()),
         ("kiosk", *kiosk()),
+        ("stay awake", *stay_awake()),
     ]
     server = demo_server()
     results.append(("demo server", *(server if server is not None

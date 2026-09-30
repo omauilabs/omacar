@@ -13,7 +13,24 @@
 // caption goes, "Tour paused · tap Resume" shows for 3 s, and nothing moves
 // until Resume (the menu, Space, or the notice itself). Resume carries on from
 // the same second of the same step; what had already been done is not done
-// again, and if the touch went to another screen the page goes back first.
+// again, and if the touch went to another screen the page goes back first. In
+// CarPlay or Android Auto, whose screens the page's address does not show, it
+// is the projection that goes back: to the screen the step last showed.
+//
+// THE DRIVE DOES NOT STOP FOR A PRESENTER. Its loop ends in a parked car, and a
+// step that shows speed, a turn or a brake is about a moving one. So a Resume
+// near the loop's closing stop (within RESYNC_NEAR_S of it), or after a pause
+// of more than RESYNC_PAUSE_S, starts the drive over (the `restart` cue) and the
+// step with it, from its top, its actions again. The demo is not reset: Home,
+// Work and the radio stay as they are. For RESYNC_SETTLE_S after a restart (its
+// own, or a fresh start's reset) the world's clock is not believed, since a
+// screen that does not poll fast reads a snapshot up to 20 s old.
+//
+// THE MENU HOLDS THE TOUR'S START. A tour from the top resets the demo first, for
+// up to RESET_WAIT_MS; a menu opened in that window has no step to pause, and
+// step 1 used to begin under it. The menu calls hold() as it opens and
+// release() as it closes, and a start that finishes its reset in between
+// waits for the release.
 //
 // Its keys (the Type Cover's): 1-9 jump to that step (and 0 to the tenth),
 // D drowsy, B hard braking, P park or drive, Space pause and resume, Esc the
@@ -24,6 +41,8 @@
 //   clock  { later(fn, ms) -> id, cancel(id), now() -> ms }
 //   go(hash), here() -> hash           where the page is, and moving it
 //   cue(name), act(name, arg)          the world, and the modules
+//   demo() -> { t, loop_secs } | null  the world's clock, the page's store.sample.demo
+//   screen(id) -> boolean              a projection's own screen ("" is its first), projection.js openScreen
 //   caption(text | null), notice(text, ms)
 //   reset() -> Promise                 the demo back to its start, before step 1
 //   parked() -> boolean, menu()        for P, and for Esc
@@ -32,6 +51,21 @@ export const PAUSED = "Tour paused · tap Resume";
 export const PAUSED_MS = 3000;
 // A reset that hangs (a server that does not answer) must not hold the tour.
 export const RESET_WAIT_MS = 3000;
+
+// The loop's last CLOSING_SECS are the car parked at the venue (drive.json's
+// closing scene). Resume starts the drive over when the loop is within
+// RESYNC_NEAR_S of that, or the tour was paused for more than RESYNC_PAUSE_S,
+// and then waits up to RESYNC_WAIT_MS for the world's clock to fall under
+// RESYNC_BELOW_S before it begins the step again.
+export const CLOSING_SECS = 120;
+export const RESYNC_NEAR_S = 180;
+export const RESYNC_PAUSE_S = 300;
+export const RESYNC_WAIT_MS = 3000;
+export const RESYNC_BELOW_S = 30;
+// After a restart, the world's clock is not believed for RESYNC_SETTLE_S: a screen that does
+// not poll fast reads the snapshot's copy, up to 20 s old, which still says the old drive.
+export const RESYNC_SETTLE_S = 25;
+const RESYNC_LOOK_MS = 200;       // the world ticks at 5 Hz
 
 export function loadSteps(url = new URL("../data/tour.json", import.meta.url)) {
   return fetch(url, { cache: "no-store" })
@@ -42,6 +76,9 @@ export function loadSteps(url = new URL("../data/tour.json", import.meta.url)) {
     });
 }
 
+// The two screens that hold screens of their own: #carplay, #carplay/maps.
+const PROJECTION = /^#(?:carplay|androidauto)(?:\/([^/?#]*))?$/;
+
 const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "OS", "Super", "Hyper", "CapsLock", "Fn"]);
 
 export function createTour(deps = {}) {
@@ -50,6 +87,8 @@ export function createTour(deps = {}) {
     go: (hash) => { location.hash = hash; },
     here: () => location.hash,
     cue: () => {}, act: () => {},
+    demo: () => null,
+    screen: () => false,
     caption: () => {}, notice: () => {},
     reset: () => Promise.resolve(),
     parked: () => false,
@@ -65,6 +104,11 @@ export function createTour(deps = {}) {
   let where = null;           // where Resume takes the page: the step's latest screen
   let wentTo = null;          // the address the tour itself last set
   let epoch = 0;              // bumped by every start and stop: a late reset starts nothing
+  let pausedAt = 0;           // clock ms at which the tour was last paused
+  let restartedAt = -Infinity; // clock ms at which the tour last had the drive restarted
+  let resyncing = false;      // Resume has sent restart and is waiting for the drive
+  let held = false;           // the menu is open: no step starts under it
+  let waiting = null;         // the start that is waiting for the menu to close
 
   const tour = {
     steps,
@@ -79,9 +123,12 @@ export function createTour(deps = {}) {
     start({ at = 0, fresh = at === 0 } = {}) {
       if (!steps.length) { console.warn("demo tour: no steps (tour.json has not loaded)"); return Promise.resolve(); }
       const mine = ++epoch;
+      resyncing = false;
+      waiting = null;
       cancelAll();
       if (!fresh) { enter(clampIndex(at)); return Promise.resolve(); }
       set("running", -1);
+      restartedAt = d.clock.now();      // the reset cues restart
       let guard = null;
       const waited = new Promise((done) => { guard = d.clock.later(done, RESET_WAIT_MS); });
       let reset;
@@ -89,7 +136,7 @@ export function createTour(deps = {}) {
       reset = reset.catch((e) => console.warn("demo tour: the reset failed:", e));
       return Promise.race([reset, waited]).then(() => {
         d.clock.cancel(guard);
-        if (mine === epoch) enter(clampIndex(at));
+        if (mine === epoch) whenFree(() => enter(clampIndex(at)));
       });
     },
     jump(i) { return tour.start({ at: i, fresh: false }); },
@@ -97,6 +144,7 @@ export function createTour(deps = {}) {
     pause() {
       if (tour.state !== "running" || tour.index < 0) return false;
       offset = Math.max(0, (d.clock.now() - startedAt) / 1000);
+      pausedAt = d.clock.now();
       cancelAll();
       set("paused");
       d.caption(null);
@@ -105,10 +153,12 @@ export function createTour(deps = {}) {
     },
 
     resume() {
-      if (tour.state !== "paused") return false;
+      if (tour.state !== "paused" || resyncing || waiting) return false;
+      if (driveMovedOn()) { resync(); return true; }
       startedAt = d.clock.now() - offset * 1000;
       set("running");
       if (d.here() !== wentTo) nav(where);
+      else backToProjection();
       d.caption(steps[tour.index].caption || null);
       schedule();
       return true;
@@ -120,8 +170,19 @@ export function createTour(deps = {}) {
       return tour.start();
     },
 
+    // The presenter's menu is open (hold) or has closed (release).
+    hold() { held = true; },
+    release() {
+      held = false;
+      const go = waiting;
+      waiting = null;
+      if (go) go();
+    },
+
     stop() {
       epoch++;
+      resyncing = false;
+      waiting = null;
       cancelAll();
       set("idle", -1);
       d.caption(null);
@@ -177,6 +238,63 @@ export function createTour(deps = {}) {
     timers = [];
   }
 
+  // The world's clock, or null when the page has none to read.
+  function worldClock() {
+    let w = null;
+    try { w = d.demo(); } catch (e) { console.warn("demo tour: the drive's clock:", e); }
+    return w && Number.isFinite(w.t) && Number.isFinite(w.loop_secs) ? w : null;
+  }
+
+  // Has the drive left the tour behind? Near its closing stop, or paused so
+  // long that the story is cold.
+  function driveMovedOn() {
+    if ((d.clock.now() - pausedAt) / 1000 > RESYNC_PAUSE_S) return true;
+    if ((d.clock.now() - restartedAt) / 1000 < RESYNC_SETTLE_S) return false;   // the clock still says the old drive
+    const w = worldClock();
+    return !!w && w.t >= w.loop_secs - CLOSING_SECS - RESYNC_NEAR_S;
+  }
+
+  // The drive over, then the step over. The tour stays "paused" until the
+  // world's clock has fallen back (so the step's own cues land on the new
+  // drive, not the old one), but for RESYNC_WAIT_MS at most. A jump, a stop or
+  // a new start in the meantime (epoch) ends the wait: it was overtaken.
+  function resync() {
+    resyncing = true;
+    const mine = epoch;
+    const began = d.clock.now();
+    restartedAt = began;
+    try { d.cue("restart"); } catch (e) { console.warn("demo tour: the restart cue:", e); }
+    const look = () => {
+      if (mine !== epoch) return;
+      const w = worldClock();
+      if ((w && w.t < RESYNC_BELOW_S) || d.clock.now() - began >= RESYNC_WAIT_MS) {
+        resyncing = false;
+        whenFree(() => enter(tour.index));
+        return;
+      }
+      timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+    };
+    timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+  }
+
+  // A projection's screens are its own and the address says only `#carplay`,
+  // so a presenter who tapped around inside it left the page "where the tour
+  // put it". Put it on the screen the step last showed (`where` is that, with
+  // the screen after the slash once a step has opened one); "" is its first.
+  // When the page itself has gone elsewhere, nav(where) remounts it on that
+  // address and this is not needed.
+  function backToProjection() {
+    const m = PROJECTION.exec(where || "");
+    if (!m) return;
+    try { d.screen(m[1] || ""); } catch (e) { console.warn("demo tour: back to the projection's screen:", e); }
+  }
+
+  // What has to wait for the menu, waits.
+  function whenFree(go) {
+    if (held) waiting = go;
+    else go();
+  }
+
   function nav(hash) {
     if (!hash) return;
     wentTo = hash;
@@ -185,6 +303,7 @@ export function createTour(deps = {}) {
 
   function enter(i) {
     cancelAll();
+    resyncing = false;          // a wait whose timer was just cancelled is over, however it came to be
     const s = steps[i];
     fired = new Set();
     offset = 0;
@@ -268,9 +387,23 @@ export function createReset({ radio, cue, resetWork, restoreHome,
 // agent's preview, a Level 2 alert), fading out and in between steps. The pause
 // notice takes the same place, and is itself a Resume button.
 //
+// ONE LINE AT EVERY WIDTH, AND NEVER WRAPPED. The stylesheet sets the size (22 px,
+// 20 in portrait) and the text shrinks from there, a pixel at a time, to the
+// largest that fits, down to CAP_MIN_PX. What does not fit even then is cut with
+// an ellipsis (demo.css), not wrapped onto a second line.
+//
 //   createCaptions({ host, onResume }) -> { caption(text | null), notice(text, ms), destroy() }
 
 export const FADE_MS = 280;
+export const CAP_MIN_PX = 16;
+
+// The largest whole size from `max` down to `min` at which `fits(px)` is true;
+// `min` when none is, and `max` itself when it is already under `min`.
+export function fitSize(fits, max, min = CAP_MIN_PX) {
+  const top = Math.round(max);
+  for (let px = top; px > min; px--) if (fits(px)) return px;
+  return Math.min(top, min);
+}
 
 export function createCaptions({ host = document.body, onResume = () => {},
                                  later = (fn, ms) => setTimeout(fn, ms), cancel = (id) => clearTimeout(id) } = {}) {
@@ -291,6 +424,26 @@ export function createCaptions({ host = document.body, onResume = () => {},
 
   let shown = null, swap = null, noteTimer = null;
 
+  // Does the text, at the size it has, fit the line? Sub-pixel: a box that is
+  // at its maximum width clips a text that is 0.3 px wider, with an ellipsis
+  // that scrollWidth (which rounds) would never report.
+  function fits() {
+    const r = document.createRange();
+    r.selectNodeContents(words);
+    return r.getBoundingClientRect().width <= words.getBoundingClientRect().width + 0.05;
+  }
+
+  function fit() {
+    cap.style.fontSize = "";                     // the stylesheet's: 22 px, 20 in portrait
+    const max = parseFloat(getComputedStyle(cap).fontSize) || 20;
+    const px = fitSize((p) => { cap.style.fontSize = `${p}px`; return fits(); }, max);
+    cap.style.fontSize = px === Math.round(max) ? "" : `${px}px`;
+  }
+
+  // A turned screen changes the width, and the stylesheet's size with it.
+  const onResize = () => { if (shown && words.textContent) fit(); };
+  window.addEventListener("resize", onResize);
+
   function hideNote() {
     if (noteTimer !== null) { cancel(noteTimer); noteTimer = null; }
     note.classList.remove("on");
@@ -307,6 +460,7 @@ export function createCaptions({ host = document.body, onResume = () => {},
         swap = null;
         if (!shown) return;
         words.textContent = shown;
+        fit();
         cap.classList.add("on");
       };
       if (cap.classList.contains("on")) {
@@ -332,6 +486,12 @@ export function createCaptions({ host = document.body, onResume = () => {},
       noteTimer = later(hideNote, ms);
     },
     hideNote,
-    destroy() { hideNote(); if (swap !== null) cancel(swap); cap.remove(); note.remove(); },
+    destroy() {
+      hideNote();
+      if (swap !== null) cancel(swap);
+      window.removeEventListener("resize", onResize);
+      cap.remove();
+      note.remove();
+    },
   };
 }
