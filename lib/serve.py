@@ -8,6 +8,8 @@ Deliberately does no OBD work of its own. One process owns the serial
 connection, and it is the daemon.
 
     python3 serve.py <port> <share-dir> [--host H] [--token T] [--control]
+    python3 serve.py <port> <share-dir> --demo <demo-dir>    the meetup demo's
+                                         server, which only `omacar demo on` starts
 
 Two modes, and the difference between them is the whole security model.
 
@@ -53,6 +55,265 @@ LOOPBACK_ONLY = True
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
 COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
+
+
+# ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
+#
+# `serve.py 7580 share --demo demo` is the demo's server, and only `omacar demo
+# on` starts it. The owner's constraint, verbatim: "the demo mode should not in
+# any way shape or form affect the live running app when in the car, or affect
+# the real data. The demo must be siloed data". Three things here hold the
+# server to it:
+#
+#   it refuses to start over anything but the demo's own folders (below);
+#   it answers only the /api/ routes in DEMO_ROUTES, and refuses the rest
+#     before any handler runs;
+#   demo code and media are served by it alone, from inside their own folders.
+#
+# The live server never passes --demo, and answers 404 for all of it.
+
+DEMO = None          # the demo's code folder (repo/demo) with --demo, else None
+DEMO_MEDIA = None    # share/assets/private, beside the share root served
+
+ALLOW = "allow"      # GET and POST: reads or writes the demo's own state, nothing else
+READ = "read"        # GET only: reads the demo's own state; a POST is refused
+REFUSE = "refuse"    # 403 {"error": "not in the demo"} on GET, POST and HEAD
+# A dict is a STUB: that JSON on GET and POST, and the handler never runs. For
+# the calls the live page makes in the background, so it stays quiet.
+
+NOT_IN_DEMO = {"error": "not in the demo"}
+
+# Every /api/ path the live page or the demo page can call (share/js/core.js's
+# `api` object, `grep -rn '"/api/' share/js demo`) and every one the server
+# answers, each with its verdict and why. A path ending in /* covers everything
+# under it; an exact entry wins over one. Anything not here is refused, so a
+# route added to the app later is out of the demo until somebody decides it is
+# safe. test/demoserve_test.py holds the table to that, and names the routes
+# that must never be let through whatever this says.
+DEMO_ROUTES = {
+    # --- ALLOW: the demo's own state and config, written by the demo's screens
+    # The cue the menu, the keys and the tour send: demo-cue.json in the demo's
+    # state, which only lib/demoworld.py reads. Served here, not by api.py.
+    "/api/demo/cue": ALLOW,
+    # Home's layout, in the demo's config. The Agent's Apply writes it.
+    "/api/home": ALLOW,
+    # Which screen to show, in the demo's state. `omacar demo tour` asks here,
+    # and the page publishes its list of screens here.
+    "/api/screen": ALLOW,
+    # The top bar's day/night button. The demo's own theme store; the desktop
+    # theme itself is only ever read.
+    "/api/themes": ALLOW,
+    # The Cameras view and Home's dashcam card: the demo's clips (OMACAR_VIDEOS)
+    # and the demo feed's pictures (its own XDG_RUNTIME_DIR). The overview lists
+    # /dev/v4l/by-id and never opens a device; mark and lock copy the demo's own
+    # clips into the demo's own locked/.
+    "/api/cams": ALLOW,
+    "/api/cams/*": ALLOW,
+    # Drowsy mode: its settings in the demo's config, its events and measures in
+    # the demo's state.
+    "/api/drowsy": ALLOW,
+    "/api/drowsy/event": ALLOW,
+    "/api/drowsy/log": ALLOW,
+    # Road cameras: Caltrans' public list and stills, cached in the demo's
+    # state (seeded from the real cache by `demo on`), and the pins in the
+    # demo's config.
+    "/api/roadcams": ALLOW,
+    "/api/roadcams/*": ALLOW,
+
+    # --- READ: the demo's own state, read; a write to the same path is refused
+    # live.json, which the demo world writes at 5 Hz.
+    "/api/live": READ,
+    # The seeded garage: the summary, the history, trips and the records. A
+    # POST to /api/snapshot freezes a capture, which the demo has no use for.
+    "/api/snapshot": READ,
+    "/api/history": READ,
+    "/api/trips": READ,
+    "/api/records": READ,
+    "/api/concerns": READ,
+    "/api/snapshots": READ,
+    "/api/vehicles": READ,
+    "/api/service-history": READ,
+    "/api/ima": READ,
+    # Pictures, documents, procedures and what was learned, from the demo's
+    # state (empty or seeded), and which private pictures exist (share/assets).
+    "/api/photos": READ,
+    "/api/documents": READ,
+    "/api/procedures": READ,
+    "/api/resets": READ,
+    "/api/learned": READ,
+    "/api/assets": READ,
+    # The demo's own nursery.json, which never exists: the real one is in the
+    # real state, which this server cannot see.
+    "/api/nursery": READ,
+    # The drive-mode label, the drive layout and the tier, read at boot.
+    # Marking a mode, saving a layout or changing the tier is refused.
+    "/api/drivemode": READ,
+    "/api/drive": READ,
+    "/api/mode": READ,
+    # The palette: the desktop theme, read-only, so the demo looks like this
+    # desktop. Fonts restamp the panel cache, which is in the demo's state.
+    "/api/theme": READ,
+    "/api/fonts": READ,
+    # Plugins installed in the demo's config: none.
+    "/api/plugins": READ,
+
+    # --- STUB: background calls, answered without running anything
+    # The live page's volume pin (§2.6): it would hold the tablet's speakers at
+    # 100% every 30 s. The demo never touches the volume.
+    "/api/audio": {"managed": False, "demo": True},
+    # The advisor runs the real claude CLI. Boot asks whether it is there, and
+    # Home and Vehicle ask for its last answer.
+    "/api/ai/available": {"available": False},
+    "/api/ai/history": {"records": []},
+    # The top bar asks on every load whether the voice assistant exists. "No"
+    # keeps its button hidden, so nothing can start it.
+    "/api/assistant": {"ok": False, "present": False},
+
+    # --- REFUSE: the car, the adapter, devices, services, the real claude CLI
+    # Stops the real omacar-drivelog.service, then drives the adapter.
+    "/api/begin": REFUSE,
+    # Starts and stops the polling daemon, and looks for its adapter.
+    "/api/daemon": REFUSE,
+    "/api/adapter": REFUSE,
+    # Talk to the car, or arm writes to it.
+    "/api/scan": REFUSE,
+    "/api/learn": REFUSE,
+    "/api/clear": REFUSE,
+    "/api/reset": REFUSE,
+    "/api/write-mode": REFUSE,
+    "/api/write-did": REFUSE,
+    "/api/actuate": REFUSE,
+    # Saves a stretch of the bus log.
+    "/api/record": REFUSE,
+    # OCR in a subprocess, then the advisor.
+    "/api/document": REFUSE,
+    # Photographs, the car's record, the odometer, the service book and the
+    # units: settings and records the demo has no reason to change.
+    "/api/photo": REFUSE,
+    "/api/vehicle": REFUSE,
+    "/api/odometer": REFUSE,
+    "/api/service": REFUSE,
+    "/api/units": REFUSE,
+    # The advisor: a job runs the real claude CLI.
+    "/api/ai": REFUSE,
+    "/api/ai/*": REFUSE,
+    # The CarPlay adapter, over USB, and its video. The demo's CarPlay and
+    # Android Auto are drawn by the demo.
+    "/api/phone": REFUSE,
+    "/api/phone/*": REFUSE,
+}
+
+# The cues the demo world acts on (lib/demoworld.py).
+DEMO_CUES = ("park", "drive", "drowsy", "hard_brake", "restart")
+
+# What /demo-media/ serves, by extension.
+DEMO_MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4",
+                    ".json": "application/json", ".png": "image/png",
+                    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def demo_entry(path):
+    """The DEMO_ROUTES key that decides `path`, or None when none does."""
+    if path in DEMO_ROUTES:
+        return path
+    best = None
+    for key in DEMO_ROUTES:
+        if key.endswith("/*") and path.startswith(key[:-1]) and len(path) > len(key) - 1:
+            if best is None or len(key) > len(best):
+                best = key
+    return best
+
+
+def demo_route(path):
+    """ALLOW, READ, REFUSE or "stub" for an /api/ path; REFUSE when unlisted."""
+    key = demo_entry(path)
+    if key is None:
+        return REFUSE
+    verdict = DEMO_ROUTES[key]
+    return "stub" if isinstance(verdict, dict) else verdict
+
+
+def is_demo_path(path):
+    """A URL only the demo server serves."""
+    from urllib.parse import unquote
+    p = unquote(path)
+    return p == "/demo.html" or p.startswith(("/demo/", "/demo-media/")) \
+        or p in ("/demo", "/demo-media")
+
+
+def demo_file(path):
+    """(real path, content type) for a demo URL, or None for a 404.
+
+    The URL is decoded first, so %2e%2e is the .. it spells, and the file must
+    resolve (os.path.realpath, which follows every link) to somewhere inside
+    the one folder its prefix maps to. A link inside the private tree that
+    points out of it is refused like any other way out."""
+    from urllib.parse import unquote
+    p = unquote(path)
+    media = DEMO_MEDIA or ""
+    if p == "/demo.html":
+        base, name = DEMO, "demo.html"
+    elif p.startswith("/demo/"):
+        base, name = DEMO, p[len("/demo/"):]
+    elif p.startswith("/demo-media/radio/"):
+        base, name = os.path.join(media, "omarchy-radio"), p[len("/demo-media/radio/"):]
+    elif p == "/demo-media/logo.png":
+        base, name = media, "omacar-logo.png"
+    elif p.startswith("/demo-media/"):
+        base, name = os.path.join(media, "demo"), p[len("/demo-media/"):]
+    else:
+        return None
+    if not base or not name or "\x00" in name:
+        return None
+    try:
+        root = os.path.realpath(base)
+        real = os.path.realpath(os.path.join(root, name))
+    except (OSError, ValueError):
+        return None
+    if not real.startswith(root + os.sep) or not os.path.isfile(real):
+        return None
+    ext = os.path.splitext(real)[1].lower()
+    if p.startswith("/demo-media/"):
+        ctype = DEMO_MEDIA_TYPES.get(ext, "application/octet-stream")
+    else:
+        import mimetypes
+        ctype = {".js": "text/javascript", ".mjs": "text/javascript",
+                 ".html": "text/html; charset=utf-8", ".css": "text/css",
+                 ".json": "application/json"}.get(ext) \
+            or mimetypes.guess_type(real)[0] or "application/octet-stream"
+    return real, ctype
+
+
+# The folders the demo server's handlers read and write through. Each has to
+# be the demo's: a path under a folder called omacar-demo (bin/omacar's
+# DEMO_ROOT). Unset would mean the real one, because every module falls back to
+# the user's own ~/.local/state, ~/.config, ~/Videos/OmaCar or /run/user/UID.
+DEMO_ENV_DIRS = ("XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR",
+                 "OMACAR_STATE", "OMACAR_VIDEOS")
+
+
+def demo_env_problems(env=None):
+    """Why this environment is not the demo's, as a list; empty when it is.
+
+    Checked before the demo server binds, so a `serve.py --demo` run by hand
+    from an ordinary shell does not serve the demo page over the real garage,
+    the real clips and the real settings, where its allowed writes would land.
+    It also needs OMACAR_PORT set to a path that does not exist, which is what
+    stops connect.resolve() globbing /dev/ttyUSB* for the real adapter."""
+    env = os.environ if env is None else env
+    out = []
+    for name in DEMO_ENV_DIRS:
+        val = env.get(name) or ""
+        if not val:
+            out.append(f"{name} is not set")
+        elif "omacar-demo" not in os.path.abspath(val).split(os.sep):
+            out.append(f"{name}={val} is not inside the demo's folder")
+    port = env.get("OMACAR_PORT") or ""
+    if not port:
+        out.append("OMACAR_PORT is not set, so the adapter would be looked for")
+    elif os.path.exists(port):
+        out.append(f"OMACAR_PORT={port} exists")
+    return out
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -118,11 +379,25 @@ class Handler(SimpleHTTPRequestHandler):
         how a security audit of this file briefly reached the wrong conclusion.
         """
         path = self.path.partition("?")[0]
+        if is_demo_path(path):
+            # As its GET would answer, without the body: 404 on the live server.
+            found = demo_file(path) if DEMO is not None else None
+            if found is None:
+                return self._bare(404)
+            self.send_response(200)
+            self.send_header("Content-Type", found[1])
+            self.send_header("Content-Length", str(os.path.getsize(found[0])))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
         if path.startswith("/api/"):
             if not self._local():
                 return self._json({"error": "loopback only"}, 403)
             if not self._authorised():
                 return self._json({"error": "a token is required"}, 401)
+            if DEMO is not None and demo_route(path) == REFUSE:
+                return self._bare(403)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
@@ -143,6 +418,62 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _json(self, payload, status=200):
         self._send(json.dumps(payload, default=str).encode(), status=status)
+
+    def _bare(self, status):
+        """A status and no body, for HEAD."""
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _demo_get(self, path):
+        """True once the demo server has answered a GET itself; False to carry on.
+
+        Before every other route in do_GET, including the ones served here
+        rather than by api.py (the phone's video, the cameras' pictures), so a
+        refused route never reaches any handler at all."""
+        if is_demo_path(path):
+            import camstore
+            found = demo_file(path)
+            f = camstore.open_clip(found[0]) if found else None
+            if f is None:
+                self._json({"error": "not found"}, 404)
+            else:
+                self._ranged(f, found[1])
+            return True
+        if path.startswith("/api/"):
+            verdict = demo_route(path)
+            if verdict == "stub":
+                self._json(DEMO_ROUTES[demo_entry(path)])
+                return True
+            if verdict == REFUSE:
+                self._json(NOT_IN_DEMO, 403)
+                return True
+        return False
+
+    def _demo_cue(self, body):
+        """POST /api/demo/cue: {"cue": ...} becomes $OMACAR_STATE/demo-cue.json,
+        {"cue": ..., "at": <epoch>}, for the demo world to act on once.
+
+        OMACAR_STATE is the demo's: the server would not have started
+        otherwise (demo_env_problems). Written whole and renamed into place, so
+        the world never reads half a cue."""
+        import tempfile
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            data = None
+        cue = data.get("cue") if isinstance(data, dict) else None
+        if not isinstance(cue, str) or cue not in DEMO_CUES:
+            return self._json({"error": "cue must be one of " + ", ".join(DEMO_CUES)}, 400)
+        state = os.environ["OMACAR_STATE"]
+        os.makedirs(state, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=state, prefix=".demo-cue.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"cue": cue, "at": time.time()}, f)
+        os.replace(tmp, os.path.join(state, "demo-cue.json"))
+        return self._json({"ok": True})
 
     def _ranged(self, f, ctype):
         """A file with HTTP Range, which a <video> needs before it can seek.
@@ -276,6 +607,12 @@ class Handler(SimpleHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         if path == "/.mark":
             return self._send(MARK.encode(), "text/plain")
+        if DEMO is not None:
+            if self._demo_get(path):
+                return
+        elif is_demo_path(path):
+            # The live server has no demo: not its code, not its media.
+            return self._json({"error": "not found"}, 404)
         if path == "/report.html":
             # The same document `omacar share` writes, handed to the browser as
             # a download. Self-contained, so what lands in somebody's inbox
@@ -595,6 +932,16 @@ class Handler(SimpleHTTPRequestHandler):
             self.close_connection = True
             return self._json({"error": f"body larger than {MAX_BODY} bytes"}, 413)
         body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        if DEMO is not None:
+            # After the body is read, so a refusal leaves nothing in the socket
+            # for the next request on a keep-alive connection to trip over.
+            verdict = demo_route(path)
+            if verdict == "stub":
+                return self._json(DEMO_ROUTES[demo_entry(path)])
+            if verdict != ALLOW:
+                return self._json(NOT_IN_DEMO, 403)
+            if path == "/api/demo/cue":
+                return self._demo_cue(body)
         try:
             out = api.handle_post(path, body)
         except Exception as e:                       # noqa: BLE001
@@ -620,6 +967,16 @@ def parse_args(argv):
         # from the network has to be told to be dangerous.
         control = host in ("127.0.0.1", "localhost", "::1")
     return port, root, host, token, control
+
+
+def demo_arg(argv):
+    """The folder after --demo: None without the flag, "" with no folder after
+    it. Separate from parse_args so its five-tuple stays as it is."""
+    rest = argv[2:]
+    for i, a in enumerate(rest):
+        if a == "--demo":
+            return rest[i + 1] if i + 1 < len(rest) else ""
+    return None
 
 
 def _said_so(signum, _frame):
@@ -672,5 +1029,17 @@ if __name__ == "__main__":
     LOOPBACK_ONLY = host in ("127.0.0.1", "localhost", "::1")
     if not LOOPBACK_ONLY and not TOKEN:
         sys.exit("serve.py: refusing to bind to the network without --token")
+    _demo = demo_arg(sys.argv[1:])
+    if _demo is not None:
+        if not LOOPBACK_ONLY:
+            sys.exit("serve.py: the demo is served on loopback only")
+        if not _demo or not os.path.isdir(_demo):
+            sys.exit("serve.py: --demo needs the demo's folder (the repo's demo/)")
+        _why = demo_env_problems()
+        if _why:
+            sys.exit("serve.py: refusing to serve the demo outside its own folders: "
+                     + "; ".join(_why) + ". `omacar demo on` sets them.")
+        DEMO = os.path.abspath(_demo)
+        DEMO_MEDIA = os.path.join(os.path.abspath(root), "assets", "private")
     os.chdir(root)
     ThreadingHTTPServer((host, port), Handler).serve_forever()

@@ -157,4 +157,12 @@ python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 
+# ---- demo/meetup: the silo ----------------------------------------------------
+# The demo server's allowlist and its folders, then `omacar demo` itself in a
+# scratch HOME with a fake real state, where systemctl, wpctl, pactl, hyprctl
+# and chromium are shims that write down every call. Scratch ports only: never
+# 7580, so a real demo on this machine is never met.
+python3 "$ROOT/test/demoserve_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup: the silo ------------------------------------------------
+
 exit $((fails > 0))
