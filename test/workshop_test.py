@@ -1269,7 +1269,10 @@ ok("the browser app badges a simulated car too",
 # that are not films: nothing here can make a sound.
 _video = _cli.split("demo_video() {", 1)[-1].split("\n}", 1)[0]
 ok("demo video is one of the demo's verbs", "video) demo_video" in _cli)
-ok("and it plays full-screen with mpv", 'exec mpv --fs -- "$f"' in _video)
+ok("and it plays full-screen with mpv", 'exec mpv --fs "${mute[@]}" -- "$f"' in _video)
+ok("and asks whether the car is moving first, as demo on does",
+   "demo_parked_or_exit" in _video.split("for c in", 1)[0]
+   and 'demo_parked_or_exit "the demo is not starting"' in _cli)
 ok("the tablet's recording is looked for before the box's",
    _cli.index("omacar-demo-backup-tablet.mp4") < _cli.index('omacar-demo-backup.mp4"'))
 if sys.platform.startswith("linux"):
@@ -1309,6 +1312,24 @@ if sys.platform.startswith("linux"):
     open(_tab, "w").close()
     _rc, _out, _played = _play()
     ok("an empty tablet recording is passed over", (_rc, _played) == (0, f"--fs -- {_box}"))
+    # OMACAR_DEMO_MUTE=1, the nights' switch, plays it muted.
+    _venv["OMACAR_DEMO_MUTE"] = "1"
+    _rc, _out, _played = _play()
+    del _venv["OMACAR_DEMO_MUTE"]
+    ok("OMACAR_DEMO_MUTE=1 plays it muted", (_rc, _played) == (0, f"--fs --mute=yes -- {_box}"))
+    # NOT WHILE THE CAR IS MOVING: the real live.json, fresh and over 3 km/h,
+    # as demo on refuses it.
+    _live = os.path.join(_vh, ".local", "state", "omacar", "live.json")
+    os.makedirs(os.path.dirname(_live), exist_ok=True)
+    with open(_live, "w", encoding="utf-8") as _f:
+        json.dump({"connected": True, "t": time.time(), "values": {"SPEED": 50, "RPM": 1800}}, _f)
+    _rc, _out, _played = _play()
+    ok("with the car moving it refuses, and plays nothing",
+       _rc != 0 and "moving" in _out and "backup video is not playing" in _out and _played == "")
+    with open(_live, "w", encoding="utf-8") as _f:
+        json.dump({"connected": True, "t": time.time(), "values": {"SPEED": 0, "RPM": 700}}, _f)
+    _rc, _out, _played = _play()
+    ok("and plays once it is parked", (_rc, _played) == (0, f"--fs -- {_box}"))
 else:
     print("   --    demo video's run needs Linux (bin/omacar is Linux bash); skipped")
 

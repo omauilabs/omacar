@@ -475,24 +475,29 @@ demo_up() {
 
 # ---- the verbs -------------------------------------------------------------
 
-demo_on() {
-  local py; py="$(serve_py)"
-
-  # NOT WHILE THE CAR IS MOVING. Asked of the REAL live.json, which REAL_STATE
-  # names from before demo_env, and before anything is started or even made.
-  # lib/demoguard.py holds the rule, for this and for the guard: a sample from
-  # the last 5 s at over 3 km/h. No fresh sample, as at the venue with no
-  # adapter, is parked. An answer that is neither is not a yes.
+# NOT WHILE THE CAR IS MOVING. Asked of the REAL live.json, which REAL_STATE
+# names from before demo_env, and before anything is started or even made.
+# lib/demoguard.py holds the rule, for this and for the guard: a sample from
+# the last 5 s at over 3 km/h. No fresh sample, as at the venue with no
+# adapter, is parked. An answer that is neither is not a yes. $1 is what is not
+# happening ("the demo is not starting").
+demo_parked_or_exit() {
   local now
-  now=$("$py" "$ROOT/lib/demoguard.py" --state "$REAL_STATE/live.json" 2>/dev/null || true)
+  now=$("$(serve_py)" "$ROOT/lib/demoguard.py" --state "$REAL_STATE/live.json" 2>/dev/null || true)
   if [[ "$now" != parked ]]; then
     if [[ "$now" == moving ]]; then
-      echo "omacar: the car is moving (the live app reads over 3 km/h), so the demo is not starting" >&2
+      echo "omacar: the car is moving (the live app reads over 3 km/h), so $1" >&2
     else
-      echo "omacar: could not tell whether the car is moving, so the demo is not starting" >&2
+      echo "omacar: could not tell whether the car is moving, so $1" >&2
     fi
     exit 1
   fi
+}
+
+demo_on() {
+  local py; py="$(serve_py)"
+
+  demo_parked_or_exit "the demo is not starting"
   # ONE DEMO, FROM ONE CHECKOUT. A second world, server and guard from here
   # would fight the first for the port, the state and the screen.
   local elsewhere; elsewhere=$(demo_elsewhere)
@@ -816,10 +821,13 @@ demo_tour() {
 # recorded, full-screen. The tablet's own recording first (tools/demo_record.sh:
 # its real screen and sound), else the box's (tools/demo_record_headless.py).
 # It plays out loud through the default output at whatever level is set; it
-# changes neither. q ends it, and the demo is still underneath.
+# changes neither. OMACAR_DEMO_MUTE=1 (the nights, the tests) plays it muted.
+# Not while the car is moving, as for `demo on`. q ends it, and the demo is
+# still underneath.
 DEMO_VIDEOS=("$HOME/Videos/omacar-demo-backup-tablet.mp4" "$HOME/Videos/omacar-demo-backup.mp4")
 demo_video() {
   local f="" c w
+  demo_parked_or_exit "the backup video is not playing"
   for c in "${DEMO_VIDEOS[@]}"; do
     [[ -s "$c" ]] && { f="$c"; break; }
   done
@@ -841,8 +849,10 @@ demo_video() {
       break
     done
   fi
+  local mute=()
+  [[ "${OMACAR_DEMO_MUTE:-}" == 1 ]] && mute=(--mute=yes)
   echo "  playing $f  (q to stop)"
-  exec mpv --fs -- "$f"
+  exec mpv --fs "${mute[@]}" -- "$f"
 }
 
 # Everything the venue needs, checked read-only (lib/democheck.py).
