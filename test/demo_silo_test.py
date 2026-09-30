@@ -11,6 +11,11 @@ real state:
     starts nothing;
   the guard closes the demo when the real car starts moving, and goes when
     the demo does;
+  the guard is the demo's watchdog: a server, world or camera feed that dies
+    is started again, as `demo on` started it, through `demo mend`, with a
+    backoff, and never while the real car moves or once the demo is off;
+  `demo off` asks the demo's own server for quiet and gives the music its
+    fade before it closes the window;
   `demo off` stops only the demo's own processes, found by what they are and
     never by a pid alone or a port;
   another checkout's running demo is neither stopped nor forgotten from here,
@@ -130,6 +135,25 @@ def write_live(speed, age=0.0):
                    "values": {"SPEED": speed, "RPM": 900}}, f)
 
 
+def window_told_to_go():
+    """When the shim window last had its SIGTERM, or None."""
+    try:
+        with open(CHROMIUM_TERMS, encoding="utf-8") as f:
+            return [float(ln) for ln in f if ln.strip()][-1]
+    except (OSError, ValueError, IndexError):
+        return None
+
+def cue_now():
+    """The demo's last cue, as the server wrote it: (cue, at), or None."""
+    try:
+        with open(os.path.join(DEMO_ROOT, "state", "omacar", "demo-cue.json"),
+                  encoding="utf-8") as f:
+            d = json.load(f)
+        return d.get("cue"), d.get("at")
+    except (OSError, ValueError):
+        return None
+
+
 def outside_demo():
     """sha256 of every file under HOME that is not in the demo's folder, and of
     every file in the real runtime folder (sockets aside: they have no bytes)."""
@@ -162,11 +186,17 @@ for name in ("systemctl", "wpctl", "pactl", "hyprctl"):
 # Chromium stays up until it is told to go, as the real one does, and keeps its
 # arguments on its command line, which is what `demo off` finds it by.
 # It also writes down the cache folder it was given (the demo's own, on its
-# command line only).
+# command line only), and when it was told to go.
 CHROMIUM_ENV = os.path.join(SCRATCH, "chromium.env")
+CHROMIUM_TERMS = os.path.join(SCRATCH, "chromium.terms")
 with open(os.path.join(SHIMS, "chromium"), "w", encoding="utf-8") as f:
     f.write(f"""#!{PY}
-import os, sys, time
+import os, signal, sys, time
+def term(*_):
+    with open({CHROMIUM_TERMS!r}, "a") as f:
+        f.write(str(time.time()) + "\\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, term)
 with open({CHROMIUM_ENV!r}, "w") as f:
     f.write(os.environ.get("XDG_CACHE_HOME", ""))
 with open({SHIM_LOG!r}, "a") as f:
@@ -426,8 +456,18 @@ try:
         cue = None
     check("and waits for the world in the demo's state", cue, "park")
 
+    asked = time.time()
     rc, out = omacar("demo", "off", timeout=120)
     check("demo off", rc, 0)
+    # A PRESENTER'S demo off fades: the real server takes the quiet cue and
+    # writes it for the world, and the window goes 2.5 s after the answer.
+    cue, went = cue_now(), window_told_to_go()
+    gap = round(went - cue[1], 2) if cue and cue[1] and went else None
+    check("it asked for quiet through the real cue path: the server wrote the quiet cue",
+          (bool(cue) and cue[0] == "quiet" and (cue[1] or 0) >= asked,
+           "asked the demo page for quiet" in out), (True, True))
+    check(f"and the window was told to go 2.5 s after it, not much later (took {gap} s)",
+          gap is not None and 2.5 <= gap < 3.3, True)
     check("and says what it stopped",
           [w for w in ("the demo window", "the demo server", "the demo world", "the guard",
                        "the camera feed") if f"stopped {w}" not in out], [])
@@ -482,6 +522,40 @@ try:
             time.sleep(0.2)
         return still_up(), round(time.time() - t0, 1)
 
+    PIDS = os.path.join(DEMO_ROOT, "pids")
+    GUARD_LOG = os.path.join(DEMO_ROOT, "state", "omacar", "demo-guard.log")
+
+    def pid_in(name):
+        try:
+            with open(os.path.join(PIDS, name + ".pid"), encoding="utf-8") as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def started_as(pid):
+        """What a process was started with: its command line, and its
+        environment less what every shell changes on its own (_, SHLVL)."""
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = dict(e.decode(errors="replace").split("=", 1)
+                           for e in f.read().split(b"\0") if b"=" in e)
+        except OSError:
+            return None
+        for k in ("_", "SHLVL", "OLDPWD"):
+            env.pop(k, None)
+        return cmdline(pid), env
+
+    def answers():
+        st, body = hreq("GET", "/.mark")
+        return st == 200 and b"omacar-server" in body
+
+    def guard_says():
+        try:
+            with open(GUARD_LOG, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return ""
+
     head("the real car moves: the guard takes the whole demo down")
     write_live(0)
     rc, out = omacar("demo", "on", timeout=180)
@@ -497,11 +571,24 @@ try:
     check("with the window, world, server and camera feed up",
           all(any(w in p[1] for p in ours_running())
               for w in ("demoworld.py", "serve.py", "cams.py", "--user-data-dir=")), True)
+    said_before = guard_says()
+    moved = time.time()
     write_live(42)                      # the real car, fresh, at 42 km/h
     left, took = gone_within(10)
     check(f"within 10 s the window, world, server, camera feed, guard and ACTIVE are all gone "
           f"(took {took} s)", left, [])
     check("and nothing holds the demo's port", listening(PORT), False)
+    # THE WINDOW AT ONCE: the owner's dashboard is under it. The guard looks
+    # every 2 s, and its `demo off --now` sends no quiet cue and waits for no
+    # fade, so the window has gone within 2.5 s of the moving sample.
+    went = window_told_to_go()
+    gap = round(went - moved, 2) if went else None
+    check(f"the window was told to go within 2.5 s of the moving sample (took {gap} s)",
+          gap is not None and 0 <= gap <= 2.5, True)
+    cue = cue_now()
+    check("and no quiet cue was sent: no fade on a moving car",
+          (bool(cue) and cue[0] == "quiet" and (cue[1] or 0) >= moved,
+           "asked the demo page for quiet" in guard_says()[len(said_before):]), (False, False))
     write_live(0)
 
     head("the marker removed by something else: the guard takes the rest down")
@@ -510,13 +597,313 @@ try:
     # `demo off` once before it leaves.
     rc, out = omacar("demo", "on", timeout=180)
     check("demo on", rc, 0)
+    said_before = guard_says()
     os.remove(os.path.join(DEMO_ROOT, "ACTIVE"))
     left, took = gone_within(10)
     check(f"within 10 s the window, world, server, camera feed and guard are all gone "
           f"(took {took} s)", left, [])
     check("and nothing holds the demo's port", listening(PORT), False)
+    check("without a quiet cue: something else is already stopping it",
+          "asked the demo page for quiet" in guard_says()[len(said_before):], False)
     check("no systemctl, wpctl or pactl", [c for c in shim_calls()
                                            if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
+    open(SHIM_LOG, "w").close()
+
+    head("the watchdog: a part that dies is back within 10 s, started as demo on started it")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    said_before = guard_says()
+    for name, what in (("server", "the demo server"), ("world", "the demo world"),
+                       ("cams", "the camera feed")):
+        old = pid_in(name)
+        before = started_as(old) if old else None
+        if not before:
+            bad(f"{what} was not running to be killed (pid file: {old})")
+            continue
+        try:
+            os.kill(old, signal.SIGKILL)
+        except OSError:
+            pass
+        t0, new = time.time(), None
+        while time.time() - t0 < 12:
+            p = pid_in(name)
+            argv = cmdline(p) if p else None
+            # Up means exec'd into its script (not the shell before it), and
+            # for the server, answering.
+            if p and p != old and argv and argv[1:2] == before[0][1:2] \
+                    and (name != "server" or answers()):
+                new = p
+                break
+            time.sleep(0.2)
+        took = round(time.time() - t0, 1)
+        check(f"{what}, killed, is back within 10 s (took {took} s)",
+              bool(new) and took <= 10, True)
+        check("with the command line and environment demo on gave it",
+              started_as(new) if new else None, before)
+    # A server that is there and says nothing (stopped, as a hung one is): the
+    # guard counts it down after two unanswered looks, and `demo mend` stops
+    # it, by what it is, before it starts another.
+    old = pid_in("server")
+    try:
+        if old:
+            os.kill(old, signal.SIGSTOP)
+    except OSError:
+        old = None
+    t0, new = time.time(), None
+    while old and time.time() - t0 < 25:
+        p = pid_in("server")
+        if p and p != old and answers():
+            new = p
+            break
+        time.sleep(0.5)
+    took = round(time.time() - t0, 1)
+    check(f"a server that stops answering is stopped and started again within 20 s "
+          f"(took {took} s)", (bool(new) and took <= 20, cmdline(old) if old else None),
+          (True, None))
+    said = guard_says()[len(said_before):]
+    check("each restart is written in demo-guard.log",
+          [w for w in ("the demo server", "the demo world", "the camera feed")
+           if f"{w} " not in said or "starting it again" not in said], [])
+    check("the demo is whole again: the window, the guard and ACTIVE are as they were",
+          (bool(pid_in("guard")) and cmdline(pid_in("guard")) is not None,
+           any("--user-data-dir=" in p[1] for p in ours_running()),
+           os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE"))), (True, True, True))
+
+    head("the guard's heartbeat: a guard that is there but not watching is replaced")
+    BEAT = os.path.join(DEMO_ROOT, "run", "guard.beat")
+    time.sleep(2.5)
+    try:
+        beat_age = round(time.time() - os.path.getmtime(BEAT), 1)
+        beat_after = os.path.getmtime(BEAT) > os.path.getmtime(os.path.join(PIDS, "guard.pid"))
+    except OSError:
+        beat_age, beat_after = None, False
+    check(f"the guard touches run/guard.beat on every look ({beat_age} s ago), since it started",
+          (beat_age is not None and beat_age <= 3.0, beat_after), (True, True))
+    stuck = pid_in("guard")
+    try:
+        if stuck:
+            os.kill(stuck, signal.SIGSTOP)      # there, by every identity check, and not watching
+    except OSError:
+        pass
+    time.sleep(3.5)
+    rc, out = omacar("demo", "on", timeout=180)
+    fresh = pid_in("guard")
+    check("demo on again: the guard that stopped beating is stopped, and a new one started",
+          (rc, "a new guard" in out, bool(fresh) and fresh != stuck,
+           stuck is not None and cmdline(stuck) is None, len([p for p in ours_running()
+                                                             if "/lib/demoguard.py" in p[1]])),
+          (0, True, True, True, 1))
+    time.sleep(2.5)
+    try:
+        beat_age = round(time.time() - os.path.getmtime(BEAT), 1)
+    except OSError:
+        beat_age = None
+    check(f"and it beats ({beat_age} s ago)", beat_age is not None and beat_age <= 3.0, True)
+
+    head("demo mend: one part of a demo that is on, only when it is down")
+    rc, out = omacar("demo", "mend", "world")
+    check("it will not start a part that is running, and says so",
+          (rc != 0, "running" in out), (True, True))
+    rc, out = omacar("demo", "mend", "window")
+    check("nor one it does not know", (rc, "server|world|cams" in out), (2, True))
+    rc, out = omacar("demo", "mend", "server")
+    check("a running server: refused, with its reason and its pid",
+          (rc != 0, "may still be starting" in out or "running and answers" in out,
+           "(pid " in out, "none" in out), (True, True, True, False))
+
+    head("a part down while the real car moves: nothing is started again, and the demo goes")
+    said_before = guard_says()
+    write_live(42)                      # the real car, fresh, at 42 km/h
+    world_pid = pid_in("world")
+    try:
+        if world_pid:
+            os.kill(world_pid, signal.SIGKILL)
+    except OSError:
+        pass
+    left, took = gone_within(10)
+    check(f"within 10 s the whole demo is gone (took {took} s)", left, [])
+    check("and the guard started nothing again",
+          "starting it again" in guard_says()[len(said_before):], False)
+    check("nothing holds the demo's port", listening(PORT), False)
+
+    write_live(42)                      # fresh again: a sample 5 s old is a car nothing reads
+    rc, out = omacar("demo", "mend", "world")
+    check("demo mend with the car moving: refused, and nothing is started",
+          (rc != 0, "moving" in out, ours_running()), (True, True, []))
+    write_live(0)
+    rc, out = omacar("demo", "mend", "world")
+    check("with the demo off: refused, and nothing is started",
+          (rc != 0, "not on" in out, ours_running()), (True, True, []))
+    with open(os.path.join(DEMO_ROOT, "ACTIVE"), "w", encoding="utf-8"):
+        pass
+    rc, out = omacar("demo", "mend", "world", timeout=60)
+    running_now = [p[1] for p in ours_running()]
+    check("with ACTIVE there and the car parked it starts the world, and only the world",
+          (rc, [r for r in running_now if "demoworld.py" not in r], len(running_now)),
+          (0, [], 1))
+    rc, out = omacar("demo", "off", timeout=120)
+    check("and demo off takes it down", (rc, ours_running()), (0, []))
+    open(SHIM_LOG, "w").close()
+
+    head("the start lock: one start at a time, a server still starting is left alone, "
+         "and the car is asked again under it")
+    import fcntl
+    START_LOCK = os.path.join(DEMO_ROOT, "run", "demo-start.lock")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+
+    def ours_named(script):
+        return [p for p in ours_running() if f"/lib/{script}" in p[1]]
+
+    def kill_part(name):
+        pid = pid_in(name)
+        try:
+            if pid:
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        for _ in range(50):
+            if not pid or cmdline(pid) is None:
+                break
+            time.sleep(0.1)
+
+    def hold_lock():
+        f = open(START_LOCK, "a")
+        fcntl.flock(f, fcntl.LOCK_EX)
+        return f
+
+    def let_go(f):
+        fcntl.flock(f, fcntl.LOCK_UN)
+        f.close()
+
+    kill_part("guard")                  # nothing mends behind the test's back from here
+
+    # A SERVER THAT IS STILL STARTING: this demo's server, run as demo on runs
+    # it, but not listening for its first 3 s (a sitecustomize that sleeps), as
+    # one another start has just launched. mend must not take it for a hung one.
+    srv_argv, srv_env = started_as(pid_in("server")) or ([], {})
+    kill_part("server")
+    SLOW_SITE = os.path.join(SCRATCH, "slow-site")
+    os.makedirs(SLOW_SITE, exist_ok=True)
+    with open(os.path.join(SLOW_SITE, "sitecustomize.py"), "w", encoding="utf-8") as f:
+        f.write("import os, time\nif os.environ.get('SILO_LISTEN_AFTER'):\n"
+                "    time.sleep(float(os.environ['SILO_LISTEN_AFTER']))\n")
+    slow_srv = subprocess.Popen(srv_argv, env=dict(srv_env, PYTHONPATH=SLOW_SITE,
+                                                   SILO_LISTEN_AFTER="3"),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+    DECOYS.append(slow_srv)
+    with open(os.path.join(PIDS, "server.pid"), "w") as f:
+        f.write(str(slow_srv.pid))
+    time.sleep(0.2)
+    rc, out = omacar("demo", "mend", "server", timeout=60)
+    check("a server not listening yet is not taken for a hung one: mend leaves it alone",
+          (rc != 0, "less than 10 s" in out, slow_srv.poll()), (True, True, None))
+    up = False
+    for _ in range(80):
+        if answers():
+            up = True
+            break
+        time.sleep(0.1)
+    check("and it answers once it has started, still the server in the pid file",
+          (up, pid_in("server") == slow_srv.pid, slow_srv.poll()), (True, True, None))
+
+    # THE CAR, ASKED AGAIN UNDER THE LOCK: mend asks it first (parked), waits
+    # for a start that holds the lock, and by then the car is moving.
+    kill_part("world")
+    held = hold_lock()
+    mender = subprocess.Popen([OMACAR, "demo", "mend", "world"], env=ENV, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              stdin=subprocess.DEVNULL)
+    time.sleep(1.5)
+    check("mend waits for a start that holds the lock", mender.poll(), None)
+    write_live(42)
+    let_go(held)
+    out, _ = mender.communicate(timeout=60)
+    check("the car moved while it waited: asked again under the lock, it starts nothing",
+          (mender.returncode != 0, "moving" in out, ours_named("demoworld.py")), (True, True, []))
+    write_live(0)
+
+    # RACES. Three mends of a dead world at once, three times over; then demo on,
+    # a second demo on and two mends at once, with the world and the guard dead.
+    rounds = []
+    for _ in range(3):
+        kill_part("world")
+        racers = [subprocess.Popen([OMACAR, "demo", "mend", "world"], env=ENV,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   stdin=subprocess.DEVNULL) for _ in range(3)]
+        rcs = sorted(p.wait(timeout=90) for p in racers)
+        rounds.append((rcs, len(ours_named("demoworld.py"))))
+    check("three mends at once, three times: one starts the world, and one world runs",
+          rounds, [([0, 1, 1], 1)] * 3)
+    kill_part("world")
+    racers = [subprocess.Popen([OMACAR, "demo", *verb], env=ENV, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+              for verb in (("on",), ("on",), ("mend", "world"), ("mend", "world"))]
+    for p in racers:
+        p.wait(timeout=180)
+    check("demo on twice and two mends at once: one world, and one guard",
+          (len(ours_named("demoworld.py")), len(ours_named("demoguard.py"))), (1, 1))
+
+    # A START THAT HANGS HOLDING THE LOCK against `demo off --now`: the window
+    # goes at once; only the parts wait for the lock.
+    held = hold_lock()
+    t0 = time.time()
+    stopper = subprocess.Popen([OMACAR, "demo", "off", "--now"], env=ENV,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               stdin=subprocess.DEVNULL)
+    went = None
+    for _ in range(50):
+        went = window_told_to_go()
+        if went and went >= t0:
+            break
+        time.sleep(0.1)
+    gap = round(went - t0, 2) if went and went >= t0 else None
+    check(f"a hung start holding the lock: demo off --now closes the window at once "
+          f"({gap} s), while it waits to stop the rest",
+          (gap is not None and gap <= 1.0, stopper.poll()), (True, None))
+    let_go(held)
+    stopper.wait(timeout=90)
+    check("and once the lock is let go, demo off stops the rest",
+          (stopper.returncode, ours_running(), listening(PORT)), (0, [], False))
+    if slow_srv.poll() is None:
+        slow_srv.kill()
+    slow_srv.wait()
+    DECOYS.remove(slow_srv)
+    open(SHIM_LOG, "w").close()
+
+    head("a server that hangs does not hold up the car")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    hung = pid_in("server")
+    try:
+        if hung:
+            os.kill(hung, signal.SIGSTOP)
+    except OSError:
+        pass
+    time.sleep(2.5)                     # the guard is in a look that waits 2 s on it
+    said_before = guard_says()
+    moved = time.time()
+    write_live(42)
+    went = None
+    for _ in range(60):
+        went = window_told_to_go()
+        if went and went >= moved:
+            break
+        time.sleep(0.1)
+    gap = round(went - moved, 2) if went and went >= moved else None
+    check(f"the car moving while the guard waits on a hung server: the window goes within "
+          f"2.5 s ({gap} s)", gap is not None and gap <= 2.5, True)
+    cue = cue_now()
+    check("with no quiet cue",
+          (bool(cue) and cue[0] == "quiet" and (cue[1] or 0) >= moved,
+           "asked the demo page for quiet" in guard_says()[len(said_before):]), (False, False))
+    left, took = gone_within(15)
+    check(f"and the whole demo goes, the stopped server too (took {took} s)", left, [])
+    write_live(0)
     open(SHIM_LOG, "w").close()
 
     head("the guard closes the demo when the real car moves, and goes with it")
@@ -630,6 +1017,240 @@ try:
     check("ACTIVE gone some other way: it runs demo off once, then goes",
           (got, calls), ("gone", [groot]))
 
+    head("the watchdog in the guard: what it starts again, when, and when never")
+    wroot = os.path.join(SCRATCH, "watchdog-unit", "omacar-demo")
+    os.makedirs(wroot)
+    wlive = os.path.join(SCRATCH, "watchdog-unit", "live.json")
+    wactive = os.path.join(wroot, "ACTIVE")
+    ALL_UP = {"server": True, "world": True, "cams": True}
+    DOG_T = [0]                           # the fake clock's t, for fakes that need it
+
+    def dog_run(secs, up, moving=lambda t: False, mend_rc=lambda t, name: 0):
+        """The guard on a fake clock, a tick every 2 s from t=0 until t=secs,
+        when ACTIVE goes. up(t) is what the watchdog finds at t; a part's mend
+        answers mend_rc(t, name): an exit status, or something still running
+        (with a poll(), as a Popen has). Returns what watch returned, each mend
+        as (t, part), each demo off's t, and what the guard wrote."""
+        clock = [1000.0]
+        mends, offs = [], []
+        open(wactive, "w").close()
+
+        def at():
+            return round(clock[0] - 1000)
+
+        def write():
+            DOG_T[0] = at()
+            with open(wlive, "w", encoding="utf-8") as f:
+                json.dump({"t": clock[0], "values": {"SPEED": 60 if moving(at()) else 0}}, f)
+
+        def tick(s):
+            clock[0] += s
+            write()
+            if at() >= secs and os.path.exists(wactive):
+                os.remove(wactive)
+
+        def mend(name):
+            mends.append((at(), name))
+            return mend_rc(at(), name)
+
+        write()
+        dog = demoguard.Watchdog(wroot, probe=lambda: dict(up(at())), mend=mend)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            got = demoguard.watch(wlive, wroot, every=2, off=lambda r: offs.append(at()) or 0,
+                                  clock=lambda: clock[0], sleep=tick, parts=dog)
+        return got, mends, offs, err.getvalue()
+
+    got, mends, offs, said = dog_run(60, lambda t: ALL_UP)
+    check("everything up: it starts nothing, and goes when ACTIVE does",
+          (got, mends, offs), ("gone", [], [60]))
+
+    got, mends, offs, said = dog_run(240, lambda t: dict(ALL_UP, world=t < 10))
+    check("a world that stays down: started again at once, then 2, 4, 8 and 16 s apart, "
+          "then once a minute", [t for t, _ in mends], [10, 12, 16, 24, 40, 100, 160, 220])
+    check("only the world", {n for _, n in mends}, {"world"})
+    check("each one written down",
+          (said.count("the demo world is not running; starting it again"), "is back" in said),
+          (8, True))
+
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, server=t != 10))
+    check("a server that misses one /.mark is not started again", mends, [])
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, server=t not in (20, 22)))
+    check("one that misses two in a row is", mends, [(22, "server")])
+
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, world=t < 10),
+                                     moving=lambda t: t >= 10)
+    check("the world down while the real car moves: nothing started, and demo off",
+          (got, mends, offs), ("moving", [], [10]))
+
+    got, mends, offs, said = dog_run(10, lambda t: dict(ALL_UP, world=t < 10))
+    check("the world down as ACTIVE goes: nothing started", (got, mends), ("gone", []))
+
+    def gone_mid_tick(t):
+        if t == 10 and os.path.exists(wactive):
+            os.remove(wactive)            # `demo off`, between the look and the start
+        return dict(ALL_UP, world=t < 10)
+    got, mends, offs, said = dog_run(60, gone_mid_tick)
+    check("ACTIVE gone between finding a part down and starting it: nothing started",
+          (got, mends), ("gone", []))
+
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, cams=False))
+    check("a camera feed never seen running (a build without one) is left alone", mends, [])
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, cams=t < 10 or t >= 12))
+    check("one that was running and died is started again", mends, [(10, "cams")])
+
+    got, mends, offs, said = dog_run(
+        140, lambda t: dict(ALL_UP, world=not (10 <= t <= 40 or t >= 120)))
+    check("a minute up and its backoff starts again from 2 s",
+          [t for t, _ in mends], [10, 12, 16, 24, 40, 120, 122, 126, 134])
+
+    class Starting:
+        """A `demo mend` still under way until the fake clock reaches `until`."""
+        def __init__(self, until):
+            self.until = until
+
+        def poll(self):
+            return 0 if DOG_T[0] >= self.until else None
+
+    got, mends, offs, said = dog_run(30, lambda t: dict(ALL_UP, world=t < 10),
+                                     mend_rc=lambda t, name: Starting(20) if t == 10 else 0)
+    check("while one start is under way nothing else is started",
+          [t for t, _ in mends][:2], [10, 20])
+
+    def broken_at_4(t):
+        if t == 4:
+            raise RuntimeError("the look itself broke")
+        return dict(ALL_UP, world=t < 10)
+    got, mends, offs, said = dog_run(30, broken_at_4)
+    check("a look at the parts that raises is written down, and the guard watches on",
+          (got, "the watchdog's look failed (RuntimeError: the look itself broke)" in said,
+           mends[:1]), ("gone", True, [(10, "world")]))
+
+    # A LOOK THAT TAKES 1.5 s (a server that hangs holds it for 2): the car is
+    # asked again straight after it, and the guard sleeps only what is left of
+    # its 2 s. The car starts moving during the look that ends at t=7.5.
+    slow = [1000.0]
+    slow_sleeps, slow_offs = [], []
+
+    def slow_live():
+        with open(wlive, "w", encoding="utf-8") as f:
+            json.dump({"t": slow[0], "values": {"SPEED": 60 if slow[0] - 1000 >= 7 else 0}}, f)
+
+    def slow_probe():
+        slow[0] += 1.5
+        slow_live()
+        return dict(ALL_UP)
+
+    def slow_sleep(secs):
+        slow_sleeps.append(round(secs, 2))
+        slow[0] += secs
+        slow_live()
+
+    open(wactive, "w").close()
+    slow_live()
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        got = demoguard.watch(wlive, wroot, every=2, clock=lambda: slow[0], sleep=slow_sleep,
+                              off=lambda r: slow_offs.append(round(slow[0] - 1000, 2)) or 0,
+                              parts=demoguard.Watchdog(wroot, probe=slow_probe,
+                                                       mend=lambda n: 0))
+    check("a slow look does not hold up the car: demo off the moment it ends, and each "
+          "sleep is only what is left of 2 s",
+          (got, slow_offs, slow_sleeps), ("moving", [7.5], [0.5, 0.5, 0.5]))
+    if os.path.exists(wactive):
+        os.remove(wactive)
+
+    # THE CLOCK STEPS (timesyncd): set back or forward 100 s during the second
+    # look. Back, the guard still sleeps at most 2 s; forward, it looks again at
+    # once; never a sleep of 102 s, never a negative one.
+    def stepped(step):
+        clk, sleeps, looks = [1000.0], [], [0]
+        with open(wlive, "w", encoding="utf-8") as f:
+            json.dump({"t": 0, "values": {"SPEED": 0}}, f)
+
+        def probe():
+            looks[0] += 1
+            if looks[0] == 2:
+                clk[0] += step
+            return dict(ALL_UP)
+
+        def nap(secs):
+            sleeps.append(round(secs, 2))
+            clk[0] += secs
+            if len(sleeps) >= 4 and os.path.exists(wactive):
+                os.remove(wactive)
+        open(wactive, "w").close()
+        with contextlib.redirect_stderr(io.StringIO()):
+            demoguard.watch(wlive, wroot, every=2, clock=lambda: clk[0], sleep=nap,
+                            off=lambda r: 0,
+                            parts=demoguard.Watchdog(wroot, probe=probe, mend=lambda n: 0))
+        return sleeps
+    check("the clock set back 100 s during a look: the guard still sleeps 2 s, not 102",
+          stepped(-100), [2, 2, 2, 2])
+    check("and set forward 100 s: it looks again at once, and never sleeps less than 0",
+          stepped(100), [2, 0, 2, 2])
+
+    # THE HEARTBEAT, and a demo started again straight after the guard's demo off.
+    os.makedirs(os.path.join(wroot, "run"), exist_ok=True)
+    wbeat = os.path.join(wroot, "run", "guard.beat")
+    got, mends, offs, said = dog_run(4, lambda t: ALL_UP)
+    check("the guard touches its heartbeat on every look", os.path.exists(wbeat), True)
+    open(wactive, "w").close()
+    with open(wlive, "w", encoding="utf-8") as f:
+        json.dump({"t": time.time(), "values": {"SPEED": 60}}, f)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        got = demoguard.watch(wlive, wroot, every=2, sleep=lambda s: None,
+                              off=lambda r: open(wactive, "w").close() or 0)
+    check("ACTIVE back after its demo off: it leaves, and says so",
+          (got, "ACTIVE is back" in err.getvalue()), ("moving", True))
+    os.remove(wactive)
+
+    head("the fade's wait: ten looks at the car, whatever the clock does")
+    # bin/omacar's own demo_fade_wait and demo_sleep_until, in a bash of their
+    # own, on a fake clock: every look at the car costs 50 ms, and the clock is
+    # stepped after the third look. `sleep` and `demo_parked` are stand-ins that
+    # write down what they were asked.
+    FADE = os.path.join(SCRATCH, "fade")
+    os.makedirs(FADE, exist_ok=True)
+
+    def fade(step_us):
+        clk, polls, slept = (os.path.join(FADE, n) for n in ("clock", "polls", "slept"))
+        script = f"""
+set -euo pipefail
+source <(sed -n '/^demo_sleep_until() {{/,/^}}/p;/^demo_fade_wait() {{/,/^}}/p' "$1")
+echo 1000000000000000 >"{clk}"; : >"{polls}"; : >"{slept}"
+demo_usec() {{ cat "{clk}"; }}
+sleep() {{
+  echo "$1" >>"{slept}"
+  echo $(( $(cat "{clk}") + 10#${{1%.*}} * 1000000 + 10#${{1#*.}} )) >"{clk}"
+}}
+demo_parked() {{
+  echo . >>"{polls}"
+  local n; n=$(wc -l <"{polls}")
+  echo $(( $(cat "{clk}") + 50000 + (n == 3 ? {step_us} : 0) )) >"{clk}"
+}}
+demo_fade_wait
+"""
+        r = subprocess.run(["bash", "-c", script, "fade", OMACAR], capture_output=True,
+                           text=True, timeout=30)
+        with open(polls) as f:
+            n = len(f.read().split())
+        with open(slept) as f:
+            naps = [float(x) for x in f.read().split()]
+        return r.returncode, n, naps
+
+    for step, what in ((0, "a steady clock"), (-100_000_000, "the clock set back 100 s"),
+                       (100_000_000, "the clock set forward 100 s")):
+        rc, n, naps = fade(step)
+        check(f"{what}: ten looks, and no sleep over 0.25 s, so 2.5 s of sleep at most "
+              f"({n} looks, {round(sum(naps), 2)} s asleep)",
+              (rc, n, max(naps or [0]) <= 0.25, sum(naps) <= 2.5 + 1e-6),
+              (0, 10, True, True))
+    rc, n, naps = fade(0)
+    check("on a steady clock the ten looks fill the 2.5 s exactly",
+          round(sum(naps) + n * 0.05, 3), 2.5)
+
     head("demo off stops only what is the demo's")
     # Look-alikes in the demo's pid files, each started with the demo's own
     # state folder in its environment, so what else they are is all that tells
@@ -658,6 +1279,8 @@ try:
                               f"--user-data-dir={DEMO_ROOT}/browser-not"))
     time.sleep(0.5)
     open(SHIM_LOG, "w").close()
+    check("the watchdog counts none of them as a running world or camera feed",
+          [n for n in ("world", "cams") if demoguard.part_alive(DEMO_ROOT, n)], [])
     with open(ACTIVE, "w", encoding="utf-8"):
         pass
     rc, out = omacar("demo", "off")
@@ -698,6 +1321,7 @@ try:
     rc, out = omacar("demo", "status")
     check("status counts neither as the demo's",
           ("demo world     not running" in out, "demo server    not running" in out), (True, True))
+    check("nor does the watchdog count that world", demoguard.part_alive(DEMO_ROOT, "world"), False)
     rc, out = omacar("demo", "off")
     check("demo off leaves the live server running, and answering",
           (rc, live_srv.poll(), listening(live_port)), (0, None, True))
@@ -743,6 +1367,8 @@ try:
     time.sleep(0.5)
     open(SHIM_LOG, "w").close()
 
+    check("the watchdog counts that checkout's world as the demo's, as demo off does",
+          demoguard.part_alive(DEMO_ROOT, "world"), True)
     rc, out = omacar("demo", "status")
     check("status says where it runs",
           (f"running from {other} (pid {OTHER['world'].pid})" in out,
@@ -787,6 +1413,155 @@ try:
             d.wait()
     DECOYS.clear()
 
+    head("demo off asks the page for quiet before it closes the window, and gives it 2.5 s")
+    # A demo server that writes down every POST and its time (and answers 400,
+    # as the real one does to a cue it does not take), from a checkout of its
+    # own, run as the demo runs its server; and a window that writes down when
+    # it was told to go.
+    QUIET = os.path.join(SCRATCH, "quiet checkout")
+    os.makedirs(os.path.join(QUIET, "lib"))
+    POSTS = os.path.join(SCRATCH, "quiet-posts.log")
+    TERMS = os.path.join(SCRATCH, "quiet-window.log")
+    with open(os.path.join(QUIET, "lib", "serve.py"), "w", encoding="utf-8") as f:
+        f.write("""import http.server, json, os, sys, time
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Length", "13"); self.end_headers()
+        self.wfile.write(b"omacar-server")
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        with open(os.environ["POSTS"], "a") as f:
+            f.write(json.dumps({"t": time.time(), "path": self.path, "body": body}) + "\\n")
+        if os.environ.get("HANG"):
+            time.sleep(5)
+        out = b'{"error": "not that cue"}'
+        self.send_response(400); self.send_header("Content-Length", str(len(out)))
+        self.end_headers(); self.wfile.write(out)
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+""")
+    WINDOW_REC = os.path.join(SCRATCH, "window-rec.py")
+    with open(WINDOW_REC, "w", encoding="utf-8") as f:
+        f.write(f"""import signal, sys, time
+def term(*_):
+    with open({TERMS!r}, "a") as f:
+        f.write(str(time.time()) + "\\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, term)
+time.sleep(600)
+""")
+
+    QUIET_MOVED = [None]
+
+    def quiet_run(server_env=None, in_pid_file=True, during=None):
+        """demo off over the recording server and window; what each wrote down.
+        during(), if given, is called the moment the server has the quiet cue,
+        while demo off waits for the fade; its time goes in QUIET_MOVED."""
+        for p in (POSTS, TERMS):
+            if os.path.exists(p):
+                os.remove(p)
+        srv = spawn_decoy(PY, os.path.join(QUIET, "lib", "serve.py"), str(PORT),
+                          os.path.join(QUIET, "share"), "--demo", os.path.join(QUIET, "demo"),
+                          env=server_env)
+        win = spawn_decoy(PY, WINDOW_REC, f"--user-data-dir={DEMO_ROOT}/browser")
+        DECOYS.extend([srv, win])
+        if in_pid_file:
+            with open(os.path.join(DEMO_ROOT, "pids", "server.pid"), "w") as f:
+                f.write(str(srv.pid))
+        with open(ACTIVE, "w", encoding="utf-8"):
+            pass
+        for _ in range(100):
+            if listening(PORT):
+                break
+            time.sleep(0.1)
+        time.sleep(0.3)
+        QUIET_MOVED[0] = None
+        if during is None:
+            rc, out = omacar("demo", "off")
+        else:
+            proc = subprocess.Popen([OMACAR, "demo", "off"], env=ENV, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL)
+            for _ in range(100):
+                if os.path.exists(POSTS) and os.path.getsize(POSTS):
+                    break
+                time.sleep(0.05)
+            QUIET_MOVED[0] = time.time()
+            during()
+            out, _ = proc.communicate(timeout=60)
+            rc = proc.returncode
+        try:
+            with open(POSTS, encoding="utf-8") as f:
+                posts = [json.loads(ln) for ln in f if ln.strip()]
+        except OSError:
+            posts = []
+        try:
+            with open(TERMS, encoding="utf-8") as f:
+                terms = [float(ln) for ln in f if ln.strip()]
+        except OSError:
+            terms = []
+        return rc, out, srv, win, posts, terms
+
+    def ended(proc):
+        try:
+            return proc.wait(timeout=10) is not None
+        except subprocess.TimeoutExpired:
+            return False
+
+    rc, out, srv, win, posts, terms = quiet_run(dict(DEMO_STATE_ENV, POSTS=POSTS))
+    check("demo off sends the demo's server one quiet cue",
+          [(p["path"], json.loads(p["body"] or "null")) for p in posts],
+          [("/api/demo/cue", {"cue": "quiet"})])
+    gap = round(terms[0] - posts[0]["t"], 2) if posts and terms else None
+    # 2.5 s, pinned from both sides: the page starts its fade 0.30-0.45 s after
+    # the ask and pauses the radio 1.4-1.7 s after it (measured), so less cuts
+    # the music, and more only keeps a closing demo on the screen.
+    check(f"and closes the window 2.5 s after it was answered, not sooner and not much "
+          f"later (took {gap} s)", gap is not None and 2.5 <= gap < 3.3, True)
+    check("then stops the rest as ever",
+          (rc, ended(win), ended(srv)), (0, True, True))
+
+    rc, out, srv, win, posts, terms = quiet_run(dict(DEMO_STATE_ENV, POSTS=POSTS, HANG="1"))
+    gap = round(terms[0] - posts[0]["t"], 2) if posts and terms else None
+    check(f"a server that does not answer within 1 s: it asks, and goes on at once "
+          f"(window closed {gap} s after asking)", gap is not None and gap < 2.0, True)
+    check("and still stops everything", (rc, ended(win), ended(srv)), (0, True, True))
+
+    rc, out, srv, win, posts, terms = quiet_run(dict(ENV, POSTS=POSTS), in_pid_file=False)
+    check("a server on the port that is not the demo's is asked nothing, and left running",
+          (rc, posts, ended(win), srv.poll()), (0, [], True, None))
+    srv.kill()
+    srv.wait()
+
+    # NEVER A FADE ON A MOVING CAR. A presenter's demo off stops the guard
+    # before it asks for quiet, so it asks the real car itself: before the ask,
+    # and every 0.25 s of the wait.
+    write_live(42)
+    rc, out, srv, win, posts, terms = quiet_run(dict(DEMO_STATE_ENV, POSTS=POSTS))
+    check("the car moving before demo off asks: no quiet cue, and the window goes at once",
+          (rc, posts, bool(terms), "with no fade" in out, ended(srv)), (0, [], True, True, True))
+    write_live(0)
+    rc, out, srv, win, posts, terms = quiet_run(dict(DEMO_STATE_ENV, POSTS=POSTS),
+                                                during=lambda: write_live(42))
+    moved = QUIET_MOVED[0]
+    after_move = round(terms[0] - moved, 2) if terms and moved else None
+    after_ask = round(terms[0] - posts[0]["t"], 2) if terms and posts else None
+    check(f"the car moving during the fade: the window goes within 0.8 s of it "
+          f"({after_move} s), not 2.5 s after the ask ({after_ask} s)",
+          (after_move is not None and after_move <= 0.8,
+           after_ask is not None and after_ask < 2.0), (True, True))
+    check("and demo off says why, and still stops everything",
+          (rc, "before the fade was done" in out, ended(win), ended(srv)), (0, True, True, True))
+    write_live(0)
+    for d in DECOYS:
+        if d.poll() is None:
+            d.kill()
+            d.wait()
+    DECOYS.clear()
+    for n in os.listdir(os.path.join(DEMO_ROOT, "pids")):
+        os.remove(os.path.join(DEMO_ROOT, "pids", n))
+
     head("demo cache writes the demo's own panel rollup, never the real one")
     BEFORE = outside_demo()
     rc, out = omacar("demo", "cache", timeout=120)
@@ -816,9 +1591,11 @@ try:
         rc, out = omacar("demo", "check")
         check("check says it has not arrived yet, and is not a failure",
               (rc, "the check arrives with Task 8" in out), (0, True))
+    rc, out = omacar("demo", "off", "--soon")
+    check("demo off takes --now and nothing else", (rc, "demo off [--now]" in out), (2, True))
     rc, out = omacar("help")
-    check("help names on, off, check, tour, video and trash",
-          "omacar demo on|off|check|tour|video|trash" in out, True)
+    check("help names on, off, check, tour, video, mend and trash",
+          "omacar demo on|off|check|tour|video|mend|trash" in out, True)
     check("no systemctl, wpctl or pactl, in the whole run",
           [c for c in shim_calls() if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
 finally:
