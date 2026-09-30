@@ -13,9 +13,12 @@ real state:
     the demo does;
   `demo off` stops only the demo's own processes, found by what they are and
     never by a pid alone or a port;
+  another checkout's running demo is neither stopped nor forgotten from here,
+    and `demo on` will not start a second one beside it;
   `demo cache` writes the demo's own panel rollup, never the real one;
-  and none of it writes a byte outside the demo's folder, or runs systemctl,
-    wpctl or pactl, which are shims here that write down every call.
+  and none of it writes a byte outside the demo's folder or into the real
+    runtime folder, or runs systemctl, wpctl or pactl, which are shims here
+    that write down every call.
 
 Linux only: bin/omacar is bash on Linux (setsid, /proc, ss).
 """
@@ -26,6 +29,7 @@ import os
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -108,6 +112,18 @@ for rel, body in REAL_FILES.items():
         f.write(body or "{}")
 
 
+# The REAL runtime folder, as this suite hands it to bin/omacar: what the live
+# recorder keeps there (its status and each camera's latest picture). The demo's
+# server and camera feed must get the demo's own on their command lines; one
+# that inherited this one would read, or write, these.
+for rel, body in (("omacar-cams/status.json", json.dumps({"t": 1, "pid": 1, "roles": {}})),
+                  ("omacar-cams/front.jpg", "\xff\xd8 the real front camera")):
+    p = os.path.join(RUNTIME, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body)
+
+
 def write_live(speed, age=0.0):
     with open(REAL_LIVE, "w", encoding="utf-8") as f:
         json.dump({"connected": True, "t": time.time() - age,
@@ -115,19 +131,24 @@ def write_live(speed, age=0.0):
 
 
 def outside_demo():
-    """sha256 of every file under HOME that is not in the demo's folder."""
+    """sha256 of every file under HOME that is not in the demo's folder, and of
+    every file in the real runtime folder (sockets aside: they have no bytes)."""
     out = {}
-    for d, dirs, files in os.walk(HOME):
-        if os.path.realpath(d).startswith(os.path.realpath(DEMO_ROOT)):
-            dirs[:] = []
-            continue
-        for n in files:
-            p = os.path.join(d, n)
-            if os.path.islink(p):
-                out[os.path.relpath(p, HOME)] = "link:" + os.readlink(p)
+    for top, tag in ((HOME, "home"), (RUNTIME, "run")):
+        for d, dirs, files in os.walk(top):
+            if os.path.realpath(d).startswith(os.path.realpath(DEMO_ROOT)):
+                dirs[:] = []
                 continue
-            with open(p, "rb") as f:
-                out[os.path.relpath(p, HOME)] = hashlib.sha256(f.read()).hexdigest()
+            for n in files:
+                p = os.path.join(d, n)
+                key = tag + ":" + os.path.relpath(p, top)
+                if os.path.islink(p):
+                    out[key] = "link:" + os.readlink(p)
+                    continue
+                if stat.S_ISSOCK(os.lstat(p).st_mode):
+                    continue
+                with open(p, "rb") as f:
+                    out[key] = hashlib.sha256(f.read()).hexdigest()
     return out
 
 
@@ -140,9 +161,14 @@ for name in ("systemctl", "wpctl", "pactl", "hyprctl"):
     os.chmod(p, 0o755)
 # Chromium stays up until it is told to go, as the real one does, and keeps its
 # arguments on its command line, which is what `demo off` finds it by.
+# It also writes down the cache folder it was given (the demo's own, on its
+# command line only).
+CHROMIUM_ENV = os.path.join(SCRATCH, "chromium.env")
 with open(os.path.join(SHIMS, "chromium"), "w", encoding="utf-8") as f:
     f.write(f"""#!{PY}
-import sys, time
+import os, sys, time
+with open({CHROMIUM_ENV!r}, "w") as f:
+    f.write(os.environ.get("XDG_CACHE_HOME", ""))
 with open({SHIM_LOG!r}, "a") as f:
     f.write("chromium " + " ".join(sys.argv[1:]) + "\\n")
 time.sleep(600)
@@ -306,33 +332,111 @@ try:
     write_live(0)
 
     head("demo off stops only what is the demo's")
-    # Three things that look like demo processes and are not this demo's: a
-    # server from another checkout, another HOME's demo browser, and a process
-    # whose pid sits in this demo's pid file although it is not a server.
-    other = os.path.join(SCRATCH, "other")
-    os.makedirs(os.path.join(other, "lib"))
-    with open(os.path.join(other, "lib", "serve.py"), "w", encoding="utf-8") as f:
-        f.write("import time\ntime.sleep(600)\n")
-    DECOYS.append(spawn_decoy(PY, os.path.join(other, "lib", "serve.py"), str(PORT),
-                              "share", "--demo", "demo"))
+    # Processes that look like this demo's and are not, each sitting in the pid
+    # file it would be found by. The same-checkout ones carry this checkout's
+    # own script path and the demo's own words among their arguments, and only
+    # sleep: the script is not what their interpreter is running. A weaker
+    # check (the path anywhere on the command line, the words not at all)
+    # stops them, and this fails. None is ever the real cams.py or serve.py.
+    sleeper = "import time; time.sleep(600)"
+    lib = os.path.join(ROOT, "lib")
+    same_checkout = {
+        "server": [PY, "-c", sleeper, os.path.join(lib, "serve.py"), "7560", "share"],
+        "cams": [PY, "-c", sleeper, os.path.join(lib, "cams.py"), "run"],
+        "world": [PY, "-c", sleeper, os.path.join(lib, "demoworld.py"), "run"],
+        "guard": [PY, "-c", sleeper, os.path.join(lib, "demoguard.py"), REAL_LIVE, DEMO_ROOT],
+    }
+    os.makedirs(os.path.join(DEMO_ROOT, "pids"), exist_ok=True)
+    SAME = {}
+    for name, argv in same_checkout.items():
+        SAME[name] = spawn_decoy(*argv)
+        DECOYS.append(SAME[name])
+        with open(os.path.join(DEMO_ROOT, "pids", f"{name}.pid"), "w") as f:
+            f.write(str(SAME[name].pid))
+    # And two windows that are not this demo's: another HOME's, and a profile
+    # whose name only starts like this one's.
     DECOYS.append(spawn_decoy(os.path.join(SHIMS, "chromium"),
-                              f"--user-data-dir={other}/omacar-demo/browser"))
+                              f"--user-data-dir={SCRATCH}/else/omacar-demo/browser"))
     DECOYS.append(spawn_decoy(os.path.join(SHIMS, "chromium"),
                               f"--user-data-dir={DEMO_ROOT}/browser-not"))
-    DECOYS.append(spawn_decoy("sleep", "600"))
-    os.makedirs(os.path.join(DEMO_ROOT, "pids"), exist_ok=True)
-    for name in ("server", "world", "guard", "cams"):
-        with open(os.path.join(DEMO_ROOT, "pids", f"{name}.pid"), "w") as f:
-            f.write(str(DECOYS[-1].pid))
     time.sleep(0.5)
     open(SHIM_LOG, "w").close()
+    with open(ACTIVE, "w", encoding="utf-8"):
+        pass
     rc, out = omacar("demo", "off")
     check("it runs cleanly with nothing of its own to stop", rc, 0)
     check("and says nothing was running", "nothing" in out, True)
     check("every decoy is still alive", [d.poll() for d in DECOYS], [None] * len(DECOYS))
     check("ACTIVE is gone", os.path.exists(ACTIVE), False)
-    check("the stale pid files are gone",
+    check("the pid files that named nothing of the demo's are gone",
           sorted(os.listdir(os.path.join(DEMO_ROOT, "pids"))), [])
+    for d in DECOYS:
+        d.kill()
+        d.wait()
+    DECOYS.clear()
+
+    head("another checkout's demo: not stopped, not forgotten, not doubled")
+    # The tablet's case: the demo runs from a worktree while the `omacar` on
+    # PATH is the live checkout. Here "the other checkout" is a folder with its
+    # own lib/demoworld.py and lib/serve.py, which only sleep, run as the demo
+    # runs them, with their pids in this demo's pid files.
+    other = os.path.join(SCRATCH, "other checkout")
+    os.makedirs(os.path.join(other, "lib"))
+    for n in ("demoworld.py", "serve.py"):
+        with open(os.path.join(other, "lib", n), "w", encoding="utf-8") as f:
+            f.write("import time\ntime.sleep(600)\n")
+    OTHER = {
+        "world": spawn_decoy(PY, os.path.join(other, "lib", "demoworld.py"), "run"),
+        "server": spawn_decoy(PY, os.path.join(other, "lib", "serve.py"), str(PORT),
+                              os.path.join(other, "share"), "--demo",
+                              os.path.join(other, "demo")),
+    }
+    DECOYS.extend(OTHER.values())
+    for name, proc in OTHER.items():
+        with open(os.path.join(DEMO_ROOT, "pids", f"{name}.pid"), "w") as f:
+            f.write(str(proc.pid))
+    with open(ACTIVE, "w", encoding="utf-8"):
+        pass
+    time.sleep(0.5)
+    open(SHIM_LOG, "w").close()
+    PIDS_BEFORE = {n: open(os.path.join(DEMO_ROOT, "pids", n)).read()
+                   for n in sorted(os.listdir(os.path.join(DEMO_ROOT, "pids")))}
+
+    rc, out = omacar("demo", "off")
+    check("demo off refuses, and says so", (rc != 0, "another checkout" in out), (True, True))
+    check("naming the checkout, and how to stop it there",
+          (f"from {other}" in out, f"{other}/bin/omacar demo off" in out), (True, True))
+    check("its processes are still running", [p.poll() for p in OTHER.values()], [None, None])
+    check("its pid files are still there, unchanged",
+          {n: open(os.path.join(DEMO_ROOT, "pids", n)).read()
+           for n in sorted(os.listdir(os.path.join(DEMO_ROOT, "pids")))}, PIDS_BEFORE)
+    check("and ACTIVE with them: nothing of it was half stopped", os.path.exists(ACTIVE), True)
+    rc, out = omacar("demo", "status")
+    check("status says where it runs",
+          (f"running from {other} (pid {OTHER['world'].pid})" in out,
+           f"running from {other} (pid {OTHER['server'].pid})" in out), (True, True))
+
+    write_live(0)
+    rc, out = omacar("demo", "on")
+    check("demo on refuses to start a second demo beside it",
+          (rc != 0, "another checkout" in out, f"{other}/bin/omacar demo off" in out),
+          (True, True, True))
+    check("and starts nothing: no window, no systemctl, wpctl or pactl", shim_calls(), [])
+    check("no demo process of this checkout's is running", ours_running(), [])
+    check("nothing is listening on the demo's port", listening(PORT), False)
+    rc, out = omacar("demo", "trash")
+    check("demo trash will not delete the folder from under it",
+          (rc != 0, os.path.isdir(DEMO_ROOT)), (True, True))
+
+    for proc in OTHER.values():
+        proc.kill()
+        proc.wait()
+    DECOYS.clear()
+    rc, out = omacar("demo", "off")
+    check("once it has gone, demo off clears its dead pid files and ACTIVE",
+          (rc, sorted(os.listdir(os.path.join(DEMO_ROOT, "pids"))), os.path.exists(ACTIVE)),
+          (0, [], False))
+    check("no systemctl, wpctl or pactl throughout", shim_calls(), [])
 
     head("demo cache writes the demo's own panel rollup, never the real one")
     BEFORE = outside_demo()

@@ -1201,6 +1201,11 @@ ok("demo can never find the adapter: OMACAR_PORT names a path that is never made
 ok("demo never exports a runtime folder of its own",
    "XDG_RUNTIME_DIR" not in _demo_env
    and 'env XDG_RUNTIME_DIR="$DEMO_RUN"' in _cli)
+# Chromium's disk cache follows XDG_CACHE_HOME, so the demo window gets the
+# demo's, the same way: on its own command line, never exported.
+ok("the demo window's cache is the demo's, on its command line only",
+   "XDG_CACHE_HOME" not in _demo_env
+   and 'env XDG_CACHE_HOME="$DEMO_ROOT/cache" chromium' in _cli)
 # The bar widget's button says `demo start` and `demo stop` (plugin/Panel.qml),
 # so the old names stay as the new verbs.
 ok("start and stop still work, as on and off",
