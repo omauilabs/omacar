@@ -93,8 +93,9 @@ const GLYPHS = {
   bubble: [F("M12 3.6c-5 0-9 3.3-9 7.4 0 2.4 1.4 4.5 3.5 5.8-.1 1.3-.7 2.6-1.8 3.6 2 0 3.8-.7 5.1-1.9.7.1 1.4.2 2.2.2 5 0 9-3.3 9-7.4S17 3.6 12 3.6z")],
   pin: [F(PIN, { "fill-rule": "evenodd" })],
   arrow: [F("M12 2.8l7.3 17.6c.2.5-.3 1-.8.7L12 17.4l-6.5 3.7c-.5.3-1-.2-.8-.7z")],
-  podcast: [S("M8.4 15.3a5.1 5.1 0 1 1 7.2 0", 2.1), S("M5.7 18.1a8.9 8.9 0 1 1 12.6 0", 2.1),
-            C(12, 11.1, 2.3), S("M12 14.4v6.6", 2.6)],
+  // A studio microphone on a stand: podcasts, without borrowing anybody's mark.
+  podmic: [F("M12 2.4a3.9 3.9 0 0 1 3.9 3.9v4.9a3.9 3.9 0 0 1-7.8 0V6.3A3.9 3.9 0 0 1 12 2.4z"),
+           S("M5.6 11a6.4 6.4 0 0 0 12.8 0", 2.1), S("M12 17.4v3.3", 2.1), S("M8.4 21h7.2", 2.1)],
   calendar: [S("M5.5 5h13a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"),
              S("M3.5 10h17"), S("M8 3v4"), S("M16 3v4"), R(7, 13, 3, 3, .6)],
   gear: [F(gear(12, 12, 10, 7.4, 8, 3.1), { "fill-rule": "evenodd" })],
@@ -167,19 +168,6 @@ function build(parts, box, cls) {
 }
 export const glyph = (name) => build(GLYPHS[name] || [], "0 0 24 24", `g g-${name}`);
 export const turnGlyph = (id) => build(TURNS[id] || TURNS.straight, "0 0 48 48", `g g-turn g-${id}`);
-
-// A made-up map for a Maps tile: a park, some water, two roads and a location
-// arrow. Coloured by projection.css through its classes.
-export function mapArt() {
-  return build([
-    ["path", { d: "M0 16c4-1.5 7.5.5 10.5 4.5V24H0z", class: "mp-park" }],
-    ["path", { d: "M16 0h8v10c-3.5-.5-6.5-4-8-10z", class: "mp-water" }],
-    ["path", { d: "M-1 8C7 8.5 14 12 25 20.5", class: "mp-road" }],
-    ["path", { d: "M8.5-1C9.5 8 12.5 15 11 25", class: "mp-hwy" }],
-    ["circle", { cx: 16, cy: 15.5, r: 4.4, class: "mp-dot" }],
-    ["path", { d: "M16 12.6l2.2 5.4-2.2-1.2-2.2 1.2z", class: "mp-arrow" }],
-  ], "0 0 24 24", "g g-mapart");
-}
 
 // ------------------------------------------------------------------ text
 const pad2 = (n) => String(n).padStart(2, "0");
@@ -355,15 +343,18 @@ export function createRouter(stage, screens, { fallback, onChange } = {}) {
   };
   return {
     get current() { return cur; },
+    // `cur` is set only once the screen has built: a screen that throws is
+    // not current, so asking for it again tries again rather than no-op'ing.
     go(id) {
       if (!Object.prototype.hasOwnProperty.call(screens, id)) id = fallback;
       if (id === cur) return;
       leave();
-      cur = id;
-      if (onChange) onChange(id);
+      cur = null;
       const host = h("div.proj-scr", { data: { screen: id } });
       stage.appendChild(host);
       off = screens[id](host) || null;
+      cur = id;
+      if (onChange) onChange(id);
     },
     stop() { leave(); cur = null; },
   };

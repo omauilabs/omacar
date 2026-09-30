@@ -243,12 +243,12 @@ export default [
     radio.index = 2;
     radio.playing = true;
     const cp = mount(carplayView, { arg: "nowplaying", radio });
-    eq(text(cp.$(".pj-title")), "Third Song");
-    cp.done();
+    try { eq(text(cp.$(".pj-title")), "Third Song"); } finally { cp.done(); }
     const aa = mount(androidAutoView, { radio });
-    eq(text(aa.$(".aa-media .pj-title")), "Third Song");
-    eq(aa.$(".aa-media .pj-play").getAttribute("aria-label"), "Pause");
-    aa.done();
+    try {
+      eq(text(aa.$(".aa-media .pj-title")), "Third Song");
+      eq(aa.$(".aa-media .pj-play").getAttribute("aria-label"), "Pause");
+    } finally { aa.done(); }
     eq(radio.calls, [], "neither view touched the player on its own");
   }],
 
@@ -289,10 +289,89 @@ export default [
   }]),
   ["openScreen moves the mounted view, and does nothing once it is gone", () => {
     const t = mount(carplayView);
-    eq(openScreen("nowplaying"), true);
-    eq(t.screen(), "nowplaying");
-    t.done();
+    try {
+      eq(openScreen("nowplaying"), true);
+      eq(t.screen(), "nowplaying");
+    } finally { t.done(); }
     eq(openScreen("maps"), false);
+  }],
+  ["a view that fails to draw leaves no clock running and gives the bars back", () => {
+    // A radio that refuses a subscriber makes Now Playing throw as it mounts.
+    const radio = fakeRadio();
+    radio.subscribe = () => { throw new Error("no radio"); };
+    const real = { set: window.setInterval, clear: window.clearInterval };
+    const running = new Set();
+    window.setInterval = (fn, ms) => { const id = real.set.call(window, fn, ms); running.add(id); return id; };
+    window.clearInterval = (id) => { running.delete(id); real.clear.call(window, id); };
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      for (const [name, view] of VIEWS) {
+        let threw = false;
+        try { view({ radio, mountMap: fakeMap().mountMap, back() {}, now: () => NOW })(root, { arg: "nowplaying" }); }
+        catch { threw = true; }
+        ok(threw, `${name}: the mount throws`);
+        ok(!document.body.classList.contains(TAKEOVER), `${name}: no takeover is left on the body`);
+        eq(root.childElementCount, 0, `${name}: nothing is left on the page`);
+      }
+      eq(running.size, 0, "clocks left running");
+    } finally {
+      window.setInterval = real.set;
+      window.clearInterval = real.clear;
+      for (const id of running) real.clear.call(window, id);
+      root.remove();
+    }
+  }],
+  ["a screen that failed to draw can be opened again", () => {
+    const radio = fakeRadio();
+    const subscribe = radio.subscribe;
+    radio.subscribe = () => { throw new Error("not yet"); };
+    const t = mount(carplayView, { radio });
+    try {
+      let threw = false;
+      try { openScreen("nowplaying"); } catch { threw = true; }
+      ok(threw, "the first try throws");
+      radio.subscribe = subscribe;
+      openScreen("nowplaying");
+      eq(t.screen(), "nowplaying");
+      eq(text(t.$(".pj-title")), "First Song", "and the second draws it");
+      radio.push({ index: 1, title: "Second Song", artist: "Ryan R. Hughes", playing: true,
+                   position: 1, duration: 100 });
+      eq(text(t.$(".pj-title")), "Second Song", "bound to the radio this time");
+    } finally { t.done(); }
+  }],
+
+  // ---------------------------------------------------------------- the credit
+  ...[[carplayView, "maps"], [androidAutoView, "maps"], [androidAutoView, "dashboard"]].map(([view, scr]) =>
+    [`${view === carplayView ? "CarPlay" : "Android Auto"}'s ${scr} credits OpenStreetMap`, () => {
+      const t = mount(view, { arg: scr });
+      try {
+        const credit = t.$(".proj-mappane .proj-credit");
+        ok(credit, "a credit in the map pane");
+        eq(text(credit), "© OpenStreetMap contributors");
+        ok(!credit.hidden, "and it shows");
+      } finally { t.done(); }
+    }]),
+  ["and steps aside when the map draws its own", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const mountMap = (el) => { el.appendChild(document.createTextNode("© OpenStreetMap contributors")); return { destroy() {} }; };
+    const un = carplayView({ radio: fakeRadio(), mountMap, back() {}, now: () => NOW })(root, { arg: "maps" });
+    try {
+      ok(root.querySelector(".proj-mappane > .proj-credit").hidden, "ours is hidden: one credit, not two");
+    } finally { un(); root.remove(); }
+  }],
+
+  // ---------------------------------------------------------------- the tiles
+  ["CarPlay's Maps and Podcasts tiles are a plain glyph each, not a maker's icon", () => {
+    const t = mount(carplayView);
+    try {
+      for (const [app, g] of [["maps", "g-pin"], ["podcasts", "g-podmic"]]) {
+        const svgs = t.$$(`.proj-grid [data-app="${app}"] .proj-icon svg`);
+        eq(svgs.length, 1, `${app}: one glyph`);
+        ok(svgs[0].classList.contains(g), `${app}: ${svgs[0].getAttribute("class")}`);
+      }
+    } finally { t.done(); }
   }],
 
   // ---------------------------------------------------------------- the pieces
@@ -332,5 +411,12 @@ export default [
       // into its screen.
       ok(!/(^|[^\w-])\.?np-[a-z]/m.test(src), `${f}: a .np- class, which is the radio screen's`);
     }
+  }],
+  ["OmaCar's own colours come from the app's tokens, not copies of them", async () => {
+    const css = await (await fetch("../demo/css/projection.css")).text();
+    for (const hex of ["#22CDEC", "#0A1314", "#F6FCFF"]) {
+      ok(!css.toUpperCase().includes(hex), `projection.css copies ${hex}; use its token`);
+    }
+    ok(css.includes("var(--accent)") && css.includes("var(--ground)"), "the accent and ground tokens are used");
   }],
 ];

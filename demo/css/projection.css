@@ -7,6 +7,11 @@
    picture in here, and no web font: the type is the app's own stack (Inter),
    which is close enough to both platforms' system faces to read as either.
 
+   The platforms' system colours are literals here, because the app has no
+   token for them. OmaCar's own (its tile, the station's art) are the app's
+   tokens, --accent, --ground and --ink, so a theme that moves them moves
+   these too.
+
    Sizes are in --u, one per cent of the short side at the tablet's 3:2 (and
    capped by the width on a 16:9 projector), so 1368x912, 1920x1080 and the
    portrait tablet all get the same composition at their own scale. */
@@ -63,13 +68,13 @@ body.proj-on .stage { overflow: hidden; }
   aspect-ratio: 1; flex: none; display: flex; flex-direction: column; justify-content: flex-end;
   padding: calc(var(--u) * 3.4); border-radius: calc(var(--u) * 1.4); overflow: hidden;
   background:
-    radial-gradient(120% 90% at 100% 0%, rgba(34, 205, 236, .28), transparent 55%),
-    linear-gradient(160deg, #13262c, #0A1314 70%);
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 55%),
+    linear-gradient(160deg, color-mix(in srgb, var(--accent) 10%, var(--ground)), var(--ground) 70%);
   box-shadow: 0 calc(var(--u) * 1) calc(var(--u) * 4) rgba(0, 0, 0, .55), inset 0 0 0 1px rgba(255, 255, 255, .06);
 }
 .proj-art span { display: block; font-weight: 800; letter-spacing: .04em; line-height: .98;
-                 font-size: calc(var(--u) * 5.4); color: #F6FCFF; }
-.proj-art span + span { color: #22CDEC; }
+                 font-size: calc(var(--u) * 5.4); color: var(--ink); }
+.proj-art span + span { color: var(--accent); }
 
 .pj-bar { position: relative; border-radius: 99px; cursor: pointer; }
 .pj-bar::after { content: ""; position: absolute; inset: calc(var(--u) * -1.4) 0; } /* a thumb-sized target */
@@ -114,7 +119,6 @@ body.proj-on .stage { overflow: hidden; }
               gap: calc(var(--u) * 2.2); }
 .cp-recent .proj-icon { width: calc(var(--u) * 7.6); height: calc(var(--u) * 7.6); border-radius: 23%; }
 .cp-recent .proj-icon > svg { width: 58%; height: 58%; }
-.cp-recent .proj-icon > svg.g-mapart { width: 100%; height: 100%; }
 .cp-home {
   width: calc(var(--u) * 7.6); height: calc(var(--u) * 7.6); border-radius: 23%;
   display: grid; place-items: center; background: rgba(255, 255, 255, .12); color: #fff;
@@ -138,7 +142,6 @@ body.proj-on .stage { overflow: hidden; }
   box-shadow: 0 calc(var(--u) * .5) calc(var(--u) * 2) rgba(0, 0, 0, .45);
 }
 .proj-cp .proj-app:active .proj-icon { filter: brightness(.75); }
-.proj-cp .proj-app .proj-icon > svg.g-mapart { width: 100%; height: 100%; }
 .proj-cp .proj-label { font-size: calc(var(--u) * 2.2); font-weight: 500; letter-spacing: -.005em;
                        text-shadow: 0 1px 3px rgba(0, 0, 0, .5); }
 .cp-dots { display: flex; justify-content: center; gap: calc(var(--u) * 1.1); }
@@ -148,17 +151,20 @@ body.proj-on .stage { overflow: hidden; }
 
 /* The tiles: colours and our own glyphs. */
 .proj-cp .proj-icon { color: #fff; }
-.proj-cp [data-app="maps"] .proj-icon { background: #EEF0E6; }
+/* Maps and Podcasts are a flat colour and a plain glyph, in colours of our own. */
+.proj-cp [data-app="maps"] .proj-icon { background: #2F6FEB; }
 .proj-cp [data-app="nowplaying"] .proj-icon { background: linear-gradient(180deg, #FF7A59, #FF2D55); }
 .proj-cp [data-app="phone"] .proj-icon,
 .proj-cp [data-app="messages"] .proj-icon { background: linear-gradient(180deg, #5EF07A, #1CC240); }
-.proj-cp [data-app="podcasts"] .proj-icon { background: linear-gradient(180deg, #D884FA, #8A2FD6); }
+.proj-cp [data-app="podcasts"] .proj-icon { background: #0F8F86; }
 .proj-cp [data-app="calendar"] .proj-icon { background: #fff; }
 .proj-cp [data-app="settings"] .proj-icon { background: linear-gradient(180deg, #A6ABB2, #676C73); }
 .proj-cp [data-app="settings"] .proj-icon > svg { width: 70%; height: 70%; color: #ECEEF1; }
 .proj-cp [data-app="omacar"] .proj-icon {
-  background: radial-gradient(90% 90% at 50% 30%, #173640, #0A1314 72%); color: #22CDEC;
-  box-shadow: inset 0 0 0 1px rgba(34, 205, 236, .22), 0 calc(var(--u) * .5) calc(var(--u) * 2) rgba(0, 0, 0, .45);
+  background: radial-gradient(90% 90% at 50% 30%, color-mix(in srgb, var(--accent) 18%, var(--ground)), var(--ground) 72%);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+              0 calc(var(--u) * .5) calc(var(--u) * 2) rgba(0, 0, 0, .45);
 }
 .proj-cp [data-app="omacar"] .proj-icon > svg { width: 62%; height: 62%; }
 .cp-cal { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
@@ -166,14 +172,6 @@ body.proj-on .stage { overflow: hidden; }
 .cp-cal-num { color: #1C1C1E; font-weight: 400; font-size: 3.6em; letter-spacing: -.03em; margin-top: .04em; }
 .proj-cp .proj-app .cp-cal { font-size: calc(var(--u) * 2.45); }
 .proj-cp .cp-recent .cp-cal { font-size: calc(var(--u) * 1.05); }
-
-/* The Maps tile's little map. */
-.proj .mp-park { fill: #A9DB9C; }
-.proj .mp-water { fill: #8DC6F4; }
-.proj .mp-road { fill: none; stroke: #fff; stroke-width: 2.6; }
-.proj .mp-hwy { fill: none; stroke: #F6C94A; stroke-width: 2.4; }
-.proj .mp-dot { fill: #0A84FF; stroke: #fff; stroke-width: 1.3; }
-.proj .mp-arrow { fill: #fff; }
 
 /* ---- title bars and lists */
 .cp-bar {
@@ -240,7 +238,7 @@ body.proj-on .stage { overflow: hidden; }
 }
 .cp-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
             gap: calc(var(--u) * 1); color: var(--cp-2); text-align: center; }
-.cp-empty svg { width: calc(var(--u) * 9); height: calc(var(--u) * 9); color: #8A2FD6; margin-bottom: calc(var(--u) * 1); }
+.cp-empty svg { width: calc(var(--u) * 9); height: calc(var(--u) * 9); color: #0F8F86; margin-bottom: calc(var(--u) * 1); }
 .cp-empty b { font-size: calc(var(--u) * 3); color: #fff; font-weight: 700; }
 .cp-empty small { font-size: calc(var(--u) * 2); }
 
@@ -341,12 +339,13 @@ body.proj-on .stage { overflow: hidden; }
 .proj-aa [data-app="nowplaying"] .proj-icon, .aa-bar-ic[data-app="nowplaying"] { background: #E8710A; }
 .proj-aa [data-app="phone"] .proj-icon, .aa-bar-ic[data-app="phone"] { background: #1A73E8; }
 .proj-aa [data-app="messages"] .proj-icon, .aa-bar-ic[data-app="messages"] { background: #0B8BD6; }
-.proj-aa [data-app="podcasts"] .proj-icon, .aa-bar-ic[data-app="podcasts"] { background: #7B61FF; }
+.proj-aa [data-app="podcasts"] .proj-icon, .aa-bar-ic[data-app="podcasts"] { background: #00897B; }
 .proj-aa [data-app="calendar"] .proj-icon, .aa-bar-ic[data-app="calendar"] { background: #D93025; }
 .proj-aa [data-app="settings"] .proj-icon, .aa-bar-ic[data-app="settings"] { background: #5F6368; }
 .proj-aa [data-app="omacar"] .proj-icon {
-  background: radial-gradient(90% 90% at 50% 30%, #173640, #0A1314 72%); color: #22CDEC;
-  box-shadow: inset 0 0 0 1px rgba(34, 205, 236, .25);
+  background: radial-gradient(90% 90% at 50% 30%, color-mix(in srgb, var(--accent) 18%, var(--ground)), var(--ground) 72%);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
 /* ---- cards */
@@ -409,7 +408,8 @@ body.proj-on .stage { overflow: hidden; }
 .aa-media { display: flex; flex-direction: column; padding: calc(var(--u) * 2.4) calc(var(--u) * 2.6) calc(var(--u) * 1.8);
             cursor: pointer;
             /* Tinted by the art, as the platform tints a media card by its cover. */
-            background: linear-gradient(150deg, #173640 0%, #1B2B30 40%, var(--aa-card) 85%); }
+            background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 18%, var(--ground)) 0%,
+                                        color-mix(in srgb, var(--accent) 8%, var(--aa-card)) 40%, var(--aa-card) 85%); }
 .aa-media-top { display: flex; align-items: center; gap: calc(var(--u) * 2); min-width: 0; }
 .proj-art.sm { width: calc(var(--u) * 19); height: calc(var(--u) * 19); border-radius: calc(var(--u) * 1.6);
                padding: calc(var(--u) * 1.6); box-shadow: none; }
@@ -508,7 +508,7 @@ body.proj-on .stage { overflow: hidden; }
 .aa-thread .aa-sg-acts { margin-top: calc(var(--u) * 1); }
 .aa-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
             gap: calc(var(--u) * 1); color: var(--aa-2); text-align: center; }
-.aa-empty svg { width: calc(var(--u) * 9); height: calc(var(--u) * 9); color: #7B61FF; margin-bottom: calc(var(--u) * 1); }
+.aa-empty svg { width: calc(var(--u) * 9); height: calc(var(--u) * 9); color: #00897B; margin-bottom: calc(var(--u) * 1); }
 .aa-empty b { font-size: calc(var(--u) * 3); font-weight: 500; color: var(--aa-on); }
 .aa-empty small { font-size: calc(var(--u) * 2); }
 .aa-switch { width: calc(var(--u) * 6.6); height: calc(var(--u) * 4); border-radius: 99px; flex: none; position: relative;

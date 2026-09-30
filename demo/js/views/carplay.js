@@ -13,7 +13,7 @@
 
 import { h, clear } from "../../../js/core.js";
 import {
-  withDeps, takeover, createRouter, openScreen, glyph, mapArt, runClock, onLive,
+  withDeps, takeover, createRouter, openScreen, glyph, runClock, onLive,
   mapPane, paintTurn, turnOf, tripOf, setText, mediaButtons, bindMedia, stationArt,
   FAVOURITES, THREAD, EVENT, whenText,
 } from "../projection.js";
@@ -25,12 +25,11 @@ const LABEL = {
   maps: "Maps", nowplaying: "Now Playing", phone: "Phone", messages: "Messages",
   podcasts: "Podcasts", calendar: "Calendar", settings: "Settings", omacar: "OmaCar",
 };
-const GLYPH = { nowplaying: "bars", phone: "handset", messages: "bubble", podcasts: "podcast",
+const GLYPH = { maps: "pin", nowplaying: "bars", phone: "handset", messages: "bubble", podcasts: "podmic",
                 settings: "gear", omacar: "omacar" };
 const DOW = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 function iconOf(id, now) {
-  if (id === "maps") return mapArt();
   if (id === "calendar") {
     const d = new Date(now());
     return h("span.cp-cal", h("b.cp-cal-dow", DOW[d.getDay()]), h("b.cp-cal-num", String(d.getDate())));
@@ -180,7 +179,7 @@ function make(el, d, arg) {
       host.append(h("div.cp-list",
         h("header.cp-bar.cp-bar-tabs",
           h("div.cp-tabs", h("span.on", "Up Next"), h("span", "Library"), h("span", "Browse"))),
-        h("div.cp-empty", glyph("podcast"), h("b", "Nothing Up Next"),
+        h("div.cp-empty", glyph("podmic"), h("b", "Nothing Up Next"),
           h("small", "Episodes of the shows you follow appear here."))));
     },
 
@@ -227,8 +226,10 @@ function make(el, d, arg) {
       for (const b of recentBox.children) b.classList.toggle("on", b.dataset.app === id);
     },
   });
+  // The first screen before the clock: a screen that throws here leaves no
+  // interval behind, and takeover() puts the bars back.
+  try { router.go(arg || "home"); } catch (e) { router.stop(); throw e; }
   const stopClock = runClock(el, d.now);
-  router.go(arg || "home");
   return { go: (id) => router.go(id), stop() { router.stop(); stopClock(); } };
 }
 

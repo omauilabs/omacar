@@ -27,7 +27,7 @@ const LABEL = {
   podcasts: "Podcasts", calendar: "Calendar", settings: "Settings", omacar: "OmaCar",
 };
 const GLYPH = { maps: "pin", nowplaying: "note", phone: "handset", messages: "bubble",
-                podcasts: "podcast", calendar: "calendar", settings: "gear", omacar: "omacar" };
+                podcasts: "podmic", calendar: "calendar", settings: "gear", omacar: "omacar" };
 
 function icon(id, cls, onclick) {
   return h(`button.${cls}`, { data: { app: id }, "aria-label": LABEL[id], onclick },
@@ -221,7 +221,7 @@ function make(el, d, arg) {
     podcasts(host) {
       host.append(h("div.aa-list",
         appBar("podcasts", "Podcasts"),
-        h("div.aa-empty", glyph("podcast"), h("b", "Your queue is empty"),
+        h("div.aa-empty", glyph("podmic"), h("b", "Your queue is empty"),
           h("small", "New episodes of the shows you follow appear here."))));
     },
 
@@ -268,8 +268,9 @@ function make(el, d, arg) {
       paintRecents(id);
     },
   });
+  // The first screen before the clock, as in carplay.js.
+  try { router.go(arg || "dashboard"); } catch (e) { router.stop(); throw e; }
   const stopClock = runClock(el, d.now);
-  router.go(arg || "dashboard");
   return { go: (id) => router.go(id), stop() { router.stop(); stopClock(); } };
 }
 
