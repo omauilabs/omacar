@@ -6,6 +6,9 @@
     omacar cams sim         the recorder, here, with lavfi test pictures for
                             every role that has no camera (SIMULATED in the app)
     omacar cams run [--sim] the recorder itself; what the unit runs
+    omacar cams demo [--from DIR]
+                            the meetup demo's cameras: footage on a loop, in
+                            place of live cameras (see "the demo's cameras")
 
 ONE FFMPEG PER CAMERA. The input is decoded once and split two ways: the
 recording, compressed on the GPU into one-minute fragmented-MP4 clips, and a
@@ -30,6 +33,7 @@ Stdlib only; ffmpeg and v4l2-ctl do the work.
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -696,7 +700,7 @@ def _ours(pid):
             argv = f.read().decode("utf-8", "replace").split("\0")
     except OSError:
         return True
-    return any(a.endswith("cams.py") for a in argv) and ("run" in argv or "sim" in argv)
+    return any(a.endswith("cams.py") for a in argv) and ("run" in argv or "sim" in argv or "demo" in argv)
 
 
 def running(st):
@@ -799,6 +803,520 @@ def _print_status():
     return 0
 
 
+# ---- the demo's cameras --------------------------------------------------------
+#
+# The meetup demo has no cameras and no car. `cams.py demo` plays footage from
+# files as if the three cameras were live, and leaves behind exactly what the
+# recorder above leaves, so the app's own Cameras tab, Home's Dashcams card and
+# overview() need no demo code at all:
+#
+#   clips   the last 50 minutes as one-minute pieces, named as the recorder
+#           names them, in the videos folder; then one more each minute
+#   live    <role>.jpg, 640 px wide at 10 fps, in the runtime folder
+#   status  status.json, every second, in write_status()'s shape
+#
+# It writes only where OMACAR_VIDEOS and XDG_RUNTIME_DIR point, and refuses to
+# run unless both are inside a folder called omacar-demo: pointed at the live
+# app's own folders it would overwrite the real recorder's pictures and status.
+# It opens no video device, and nothing above that finds one is called from here.
+
+DEMO_MARK = "omacar-demo"
+DEMO_MINUTES = 50
+DEMO_ROLES = ROLES
+DEMO_SEG_TRIES = (1.15, 1.6, 2.6)   # how far past 50 minutes to ask ffmpeg to run, in turn
+DEMO_RETRY_SECS = 5                 # a feed that dies is started again, but not more often than this
+DEMO_SCENE_FRESH = 10               # a live.json older than this is a world that has stopped
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEMO_CLIPS = os.path.join(_ROOT, "share", "assets", "private", "demo", "clips")
+
+
+class DemoRefused(RuntimeError):
+    """The demo was asked to run somewhere it must not write."""
+
+
+def demo_refusal():
+    """Why `cams.py demo` must not run with this environment, or None.
+
+    Both folders it writes must be named by the environment and be inside a
+    folder called omacar-demo, by the name given and by where it really leads,
+    so neither a path that climbs out of it nor a link into the live app's
+    folders gets by."""
+    for var in ("OMACAR_VIDEOS", "XDG_RUNTIME_DIR"):
+        val = os.environ.get(var)
+        if not val:
+            return (f"{var} is not set; the demo writes only under a folder called {DEMO_MARK}, "
+                    f"which the demo's own launcher sets")
+        if DEMO_MARK not in val or DEMO_MARK not in os.path.realpath(os.path.expanduser(val)):
+            return (f"{var}={val} is not inside a folder called {DEMO_MARK}; run from there, the demo "
+                    f"would overwrite the live app's cameras")
+    return None
+
+
+def probe_clip(path):
+    """{fmt, w, h, fps} of a clip's picture, from ffprobe; None if it cannot be read."""
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=codec_name,width,height,avg_frame_rate", "-of", "json", path],
+                           capture_output=True, text=True, timeout=20)
+        s = json.loads(r.stdout)["streams"][0]
+        num, _, den = str(s.get("avg_frame_rate") or "0/1").partition("/")
+        den = float(den or 1)
+        fps = float(num) / den if den else 0.0
+        name = str(s["codec_name"])
+        return {"fmt": {"h264": "H264", "mjpeg": "MJPG"}.get(name, name.upper()),
+                "w": int(s["width"]), "h": int(s["height"]), "fps": round(fps, 2) or 30.0}
+    except (OSError, ValueError, KeyError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def demo_frame_args(src, out):
+    """The live picture: `src` on a loop at its own speed, cut to 10 fps and
+    640 px wide, one JPEG rewritten whole (atomic_writing renames it into
+    place, so a reader never sees half of one). No sound. -y, because the
+    picture is already there when a feed restarts: without it ffmpeg stops to
+    ask whether to overwrite it, and with no stdin it just stops."""
+    return ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats", "-y",
+            "-stream_loop", "-1", "-re", "-i", src, "-an",
+            "-vf", f"fps={LIVE_FPS},scale={LIVE_WIDTH}:-2", "-q:v", "5",
+            "-f", "image2", "-update", "1", "-atomic_writing", "1", out]
+
+
+def demo_segment_args(src, pattern, secs, clip_secs=camstore.CLIP_SECS):
+    """`secs` of `src` on a loop, copied (never re-encoded, and with no sound
+    track) into one-minute fragmented-MP4 pieces, as the recorder writes them.
+    A piece ends at the first keyframe past its minute, so each is a minute
+    and a little."""
+    return ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats", "-y",
+            "-stream_loop", "-1", "-i", src, "-t", str(secs), "-map", "0:v:0", "-an", "-c", "copy",
+            "-f", "segment", "-segment_time", str(clip_secs), "-segment_format", "mp4",
+            "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
+            "-reset_timestamps", "1", pattern]
+
+
+def demo_live_path():
+    """The demo world's live.json, which says which scene it is in."""
+    base = os.environ.get("OMACAR_STATE") or os.path.join(
+        os.path.expanduser(os.environ.get("XDG_STATE_HOME") or "~/.local/state"), "omacar")
+    return os.path.join(base, "live.json")
+
+
+class DemoFeed:
+    """One role's ffmpeg: a clip on a loop, cut into live pictures. Restarting
+    it on another clip (the drowsy cabin) is stop and start."""
+
+    def __init__(self, role, src, popen):
+        self.role, self.src, self.popen = role, src, popen
+        self.proc = None
+        self.started = None
+        self.last_frame = None
+        self.retry_at = 0.0
+        self.last_line = None
+
+    def start(self, now, keep_frame=False):
+        """Start it. Unless `keep_frame`, the last picture goes: it is the
+        last of a feed that has died, and would read as fresh to nobody."""
+        if not keep_frame:
+            self.last_frame = None
+            try:
+                os.remove(live_path(self.role))
+            except OSError:
+                pass
+        self.proc = self.popen(demo_frame_args(self.src, live_path(self.role)), stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.started = now
+        self.last_line = None
+        threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+
+    def _read(self, proc):
+        try:
+            for raw in proc.stderr:
+                line = raw.decode("utf-8", "replace").strip()
+                if line:
+                    self.last_line = line[:300]
+        except Exception:                                      # noqa: BLE001
+            pass
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def poll_frame(self):
+        try:
+            self.last_frame = os.stat(live_path(self.role)).st_mtime
+        except OSError:
+            pass
+
+    def stalled(self, now):
+        if not self.alive():
+            return False
+        if self.last_frame is None:
+            return now - (self.started or now) > START_GRACE
+        return now - self.last_frame > STALL_SECS
+
+    def terminate(self):
+        if self.alive():
+            self.proc.terminate()
+
+    def reap(self):
+        if self.proc is None:
+            return
+        try:
+            self.proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+
+    def kill(self):
+        if self.alive():
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+
+    def switch(self, src, now):
+        """The same role, on another clip. The picture in place stays until the
+        new one writes over it, so the tab sees no gap."""
+        self.terminate()
+        self.reap()
+        self.src = src
+        self.start(now, keep_frame=True)
+
+    def status(self, now, mode):
+        """What Camera.status() says, for a feed that is a clip."""
+        alive, lf = self.alive(), self.last_frame
+        stalled = self.stalled(now)
+        recording = alive and lf is not None and not stalled
+        starting = alive and not recording and not stalled
+        if stalled:
+            error = f"stalled: no picture for {int(now - (lf or self.started or now))} s"
+        elif starting:
+            error = f"starting: no picture yet ({int(now - (self.started or now))} s)"
+        elif not alive:
+            error = self.last_line or "the footage stopped; starting it again"
+        else:
+            error = None
+        return {"device": os.path.basename(self.src), "mode": mode, "sim": False,
+                "recording": recording, "stalled": stalled, "starting": starting,
+                "live": recording and now - lf < 3,
+                "fps": mode["fps"] if mode and recording else None,
+                "since": self.started, "error": error}
+
+
+class DemoRecorder:
+    """Every role's footage, the clips on disk, and the drowsy cabin."""
+
+    def __init__(self, src_dir, minutes=DEMO_MINUTES, popen=subprocess.Popen):
+        self.src_dir, self.minutes, self.popen = src_dir, minutes, popen
+        self.sources = {}
+        for role in DEMO_ROLES:
+            path = os.path.join(src_dir, f"{role}.mp4")
+            if os.path.isfile(path):
+                self.sources[role] = path
+        drowsy = os.path.join(src_dir, "cabin-drowsy.mp4")
+        self.drowsy_src = drowsy if os.path.isfile(drowsy) else None
+        self.modes, self.feeds = {}, {}
+        # Per role, from seed(): the pieces the loop is made from, when the next
+        # minute's clip begins, and which piece is next. `pool` is set last:
+        # roll() walks it while seed() is still laying down the next role.
+        self.pool, self.next_start, self.turn = {}, {}, {}
+        self.problems = {}
+        self.note = None
+        self.drowsy = False
+        self.stopping = threading.Event()
+        self._building = None
+        self._seeder = None
+        self._next_slow = 0.0
+
+    # -- the guard
+    def _guard(self):
+        why = demo_refusal()
+        if why:
+            raise DemoRefused(why)
+
+    # -- the clips
+    def _wipe(self, root):
+        """The last run's clips, its pieces, its locked events and its list of
+        them: a start is a fresh timeline. Only what this writes."""
+        with camstore._lock(root):
+            for role in DEMO_ROLES:
+                d = os.path.join(root, role)
+                for name in camstore._ls(d):
+                    if camstore.CLIP_RE.match(name):
+                        try:
+                            os.remove(os.path.join(d, name))
+                        except OSError:
+                            pass
+            for junk in (".pool", "locked"):
+                shutil.rmtree(os.path.join(root, junk), ignore_errors=True)
+            try:
+                os.remove(os.path.join(root, "events.json"))
+            except OSError:
+                pass
+
+    def _segments(self, role, src, root):
+        """The pieces, oldest first: exactly `minutes` whole ones, or [].
+        Asks ffmpeg for more than 50 minutes, and more again if a clip's
+        keyframes fall far apart and the pieces run long."""
+        pool = os.path.join(root, ".pool", role)
+        for factor in DEMO_SEG_TRIES:
+            shutil.rmtree(pool, ignore_errors=True)
+            os.makedirs(pool)
+            secs = int(self.minutes * camstore.CLIP_SECS * factor) + 30
+            self._building = subprocess.Popen(
+                demo_segment_args(src, os.path.join(pool, "seg%04d.mp4"), secs),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            _, err = self._building.communicate()
+            code, self._building = self._building.returncode, None
+            if self.stopping.is_set():
+                return []
+            if code != 0:
+                tail = err.decode("utf-8", "replace").strip().splitlines()[-1:] or ["no message"]
+                self.problems[role] = f"{role}: could not cut the clip into minutes ({tail[0][:160]})"
+                return []
+            segs = sorted(os.path.join(pool, n) for n in os.listdir(pool) if n.startswith("seg"))
+            if len(segs) > self.minutes:           # the last one may be short: it is not used
+                for extra in segs[self.minutes:]:
+                    os.remove(extra)
+                return segs[:self.minutes]
+        self.problems[role] = f"{role}: the clip does not fill {self.minutes} minutes"
+        return []
+
+    @staticmethod
+    def _place(src, dst):
+        """`src` as a regular file at `dst`, whole from the moment it has the
+        name: a link where the disk allows one (it costs nothing), else a copy."""
+        tmp = os.path.join(os.path.dirname(dst), ".placing-" + os.path.basename(dst))
+        try:
+            os.link(src, tmp)
+        except OSError:
+            shutil.copyfile(src, tmp)
+        os.replace(tmp, dst)
+
+    def _note(self):
+        self.note = "; ".join(self.problems.values()) or None
+
+    def seed(self, now=None):
+        """Lay out the last `minutes` minutes of clips, a minute apart, the
+        newest begun half a minute ago. {role: clips laid down}."""
+        self._guard()
+        now = time.time() if now is None else now
+        root = camstore.videos()
+        self.note = f"laying out the last {self.minutes} minutes of clips"
+        self.problems.clear()
+        self._wipe(root)
+        newest = int(now) - camstore.CLIP_SECS // 2
+        got = {}
+        for role, src in self.sources.items():
+            if self.stopping.is_set():
+                break
+            segs = self._segments(role, src, root)
+            if not segs:
+                continue
+            dest = os.path.join(root, role)
+            os.makedirs(dest, exist_ok=True)
+            for i, seg in enumerate(segs):
+                t = newest - camstore.CLIP_SECS * (len(segs) - 1 - i)
+                self._place(seg, os.path.join(dest, camstore.clip_name(t)))
+            self.turn[role] = 0
+            self.next_start[role] = newest + camstore.CLIP_SECS
+            self.pool[role] = segs
+            got[role] = len(segs)
+        self._note()
+        return got
+
+    def _expire(self, role, newest, root):
+        cutoff = newest - (self.minutes - 1) * camstore.CLIP_SECS
+        d = os.path.join(root, role)
+        with camstore._lock(root):
+            for name in camstore._ls(d):
+                start = camstore.clip_start(name)
+                if start is not None and start < cutoff:
+                    try:
+                        os.remove(os.path.join(d, name))
+                    except OSError:
+                        pass
+
+    def roll(self, now):
+        """The clips that have begun since the last call: one a minute a role,
+        the loop's pieces round again, and the oldest go, so the timeline is
+        always the last 50 minutes. Clips an event has locked are elsewhere,
+        and stay. Returns how many were laid down."""
+        root = camstore.videos()
+        added = 0
+        for role in list(self.pool):
+            pool = self.pool[role]
+            behind = int((now - self.next_start[role]) // camstore.CLIP_SECS)
+            if behind > self.minutes:              # asleep for a long while: not hours of clips
+                self.next_start[role] += (behind - self.minutes) * camstore.CLIP_SECS
+            while now >= self.next_start[role]:
+                t = self.next_start[role]
+                dst = os.path.join(root, role, camstore.clip_name(t))
+                if not os.path.exists(dst):
+                    self._place(pool[self.turn[role] % len(pool)], dst)
+                    added += 1
+                self.turn[role] += 1
+                self.next_start[role] = t + camstore.CLIP_SECS
+                self._expire(role, t, root)
+        return added
+
+    # -- the live pictures
+    def start(self, now=None):
+        """One ffmpeg a role, each cutting its clip into live pictures."""
+        self._guard()
+        now = time.time() if now is None else now
+        os.makedirs(run_dir(), exist_ok=True)
+        for role, src in self.sources.items():
+            self.modes[role] = probe_clip(src)
+            feed = DemoFeed(role, src, self.popen)
+            feed.start(now)
+            self.feeds[role] = feed
+
+    def _scene(self, now):
+        path = demo_live_path()
+        try:
+            if now - os.stat(path).st_mtime > DEMO_SCENE_FRESH:
+                return None
+            with open(path, encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError):
+            return None
+        demo = doc.get("demo") if isinstance(doc, dict) else None
+        return demo.get("scene") if isinstance(demo, dict) else None
+
+    def _follow_scene(self, now):
+        """The cabin shows the drowsy clip while the world's scene is
+        'drowsy', and its own again after. Only that one ffmpeg restarts."""
+        feed = self.feeds.get("cabin")
+        if feed is None or self.drowsy_src is None:
+            return
+        want = self._scene(now) == "drowsy"
+        if want != self.drowsy:
+            self.drowsy = want
+            feed.switch(self.drowsy_src if want else self.sources["cabin"], now)
+
+    def write_status(self, now=None):
+        doc = {"pid": os.getpid(), "t": time.time() if now is None else now, "sim": False, "demo": True,
+               "note": self.note, "children": {r: f.proc.pid for r, f in self.feeds.items() if f.alive()},
+               "roles": {}}
+        t = time.time()
+        for role in DEMO_ROLES:
+            feed = self.feeds.get(role)
+            doc["roles"][role] = feed.status(t, self.modes.get(role)) if feed else {
+                "device": None, "mode": None, "sim": False, "recording": False, "stalled": False,
+                "starting": False, "live": False, "fps": None, "since": None,
+                "error": f"no demo clip: {role}.mp4"}
+        os.makedirs(run_dir(), exist_ok=True)
+        tmp = status_path() + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        os.replace(tmp, status_path())
+
+    def _safely(self, what, fn):
+        try:
+            fn()
+        except Exception as e:                                 # noqa: BLE001
+            self.problems["demo"] = f"{what} failed: {type(e).__name__}: {e}"[:300]
+            self._note()
+
+    def tick(self, now=None):
+        """One pass: follow the scene, mind every feed, and once a second lock
+        what an event asked for, lay down the minute's clip and write the status."""
+        now = time.time() if now is None else now
+        self._safely("the scene", lambda: self._follow_scene(now))
+        for feed in list(self.feeds.values()):
+            feed.poll_frame()
+            if feed.stalled(now):
+                feed.kill()
+                feed.retry_at = 0.0
+            if not feed.alive() and now >= feed.retry_at:
+                feed.retry_at = now + DEMO_RETRY_SECS
+                self._safely("a feed", lambda f=feed: f.start(now))
+        if now >= self._next_slow:
+            self._next_slow = now + 1
+            self._safely("locking", lambda: camstore.settle(now=now))
+            self._safely("the minute's clip", lambda: self.roll(now))
+            self._safely("the status file", lambda: self.write_status())
+
+    def stop(self):
+        """Every ffmpeg ends, the pieces the loop was made from go, and so does
+        the status file. The clips stay: the tab plays them."""
+        self.stopping.set()
+        building = self._building
+        if building is not None:
+            try:
+                building.terminate()
+            except OSError:
+                pass
+        if self._seeder is not None:
+            self._seeder.join(timeout=10)
+        for feed in self.feeds.values():
+            feed.terminate()
+        for feed in self.feeds.values():
+            feed.reap()
+        shutil.rmtree(os.path.join(camstore.videos(), ".pool"), ignore_errors=True)
+        try:
+            os.remove(status_path())
+        except OSError:
+            pass
+
+    def _seed_quietly(self):
+        try:
+            self.seed()
+        except Exception as e:                                 # noqa: BLE001
+            self.problems["seed"] = f"laying out the clips failed: {type(e).__name__}: {e}"[:300]
+            self._note()
+
+    def run(self):
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(sig, lambda *_: self.stopping.set())
+        self.start()
+        # The pictures are live from the first second; the clips follow as
+        # they are cut, and the status says so meanwhile.
+        self.note = f"laying out the last {self.minutes} minutes of clips"
+        self._seeder = threading.Thread(target=self._seed_quietly, daemon=True)
+        self._seeder.start()
+        self.write_status()
+        while not self.stopping.wait(0.25):
+            self.tick()
+        self.stop()
+
+
+def demo_main(args):
+    src = DEMO_CLIPS
+    rest = list(args)
+    while rest:
+        a = rest.pop(0)
+        if a == "--from" and rest:
+            src = rest.pop(0)
+        elif a.startswith("--from="):
+            src = a[len("--from="):]
+        else:
+            print("usage: cams.py demo [--from DIR]   (DIR holds front.mp4, rear.mp4, cabin.mp4 "
+                  "and, for the drowsy moment, cabin-drowsy.mp4)", file=sys.stderr)
+            return 2
+    why = demo_refusal()
+    if why:
+        print(f"omacar: cams demo refused: {why}", file=sys.stderr)
+        return 2
+    rec = DemoRecorder(src)
+    if not rec.sources:
+        print(f"omacar: no footage in {src}: it needs front.mp4, rear.mp4 and cabin.mp4", file=sys.stderr)
+        return 1
+    missing = [r for r in DEMO_ROLES if r not in rec.sources]
+    if missing:
+        print(f"omacar: no footage for {', '.join(missing)} in {src}; those cameras will read empty",
+              file=sys.stderr)
+    st = _read_status()
+    if running(st) and st.get("pid") != os.getpid():
+        print(f"omacar: the demo's cameras are already running (pid {st['pid']})", file=sys.stderr)
+        return 1
+    rec.run()
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "status"
     if cmd == "status":
@@ -806,6 +1324,8 @@ def main(argv):
     if cmd in ("on", "off"):
         how = ["enable", "--now"] if cmd == "on" else ["disable", "--now"]
         return subprocess.run(["systemctl", "--user", *how, "omacar-cams.service"]).returncode
+    if cmd == "demo":
+        return demo_main(argv[2:])
     if cmd in ("run", "sim"):
         st = _read_status()
         if running(st) and st.get("pid") != os.getpid():
