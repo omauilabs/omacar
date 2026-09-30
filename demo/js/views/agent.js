@@ -32,12 +32,19 @@ const CAR_PIC = "/demo-media/crz-home.png";
 // line this answers with is "I've dimmed the rest".
 export const NIGHT_LOOK = "dim";
 
-// The night arrangement: navigation large, the speed dial, the music, and the
-// three tiles a night drive needs (share/data/home-cards.json sizes). Every
-// other card on Home keeps its place after these.
+// The night arrangement: navigation first and large, the speed dial and the car
+// beside it, the four tiles a night drive watches (the pack first), then the
+// music, the cameras and the agent (share/data/home-cards.json sizes). It
+// TILES Home's grid, in the default's rows: landscape nav 4x3 + dial 3x3 + car
+// 5x3, four 3x1 tiles, and three 4x2; portrait the same cards at their portrait
+// sizes. (The first one, nav 4x3, dial 4x3 and phone 4x2 before three 3x1
+// tiles and the rest where they were, left holes and ran past the screen.) A
+// card Home has beyond these keeps its place after them.
 export const NIGHT = {
-  landscape: [["nav", "m"], ["dial", "l"], ["phone", "m"], ["charge", "s"], ["coolant", "s"], ["fuel", "s"]],
-  portrait:  [["nav", "m"], ["dial", "m"], ["phone", "m"], ["charge", "s"], ["coolant", "s"], ["fuel", "s"]],
+  landscape: [["nav", "m"], ["dial", "m"], ["car", "l"], ["charge", "s"], ["coolant", "s"],
+              ["fuel", "s"], ["volts", "s"], ["phone", "m"], ["dashcam", "m"], ["agent", "m"]],
+  portrait:  [["nav", "m"], ["dial", "m"], ["car", "l"], ["charge", "s"], ["coolant", "s"],
+              ["fuel", "s"], ["volts", "s"], ["phone", "m"], ["dashcam", "m"], ["agent", "m"]],
 };
 
 // ------------------------------------------------------------------ icons
