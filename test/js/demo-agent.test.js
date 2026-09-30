@@ -7,6 +7,7 @@
 import { eq, ok } from "./assert.js";
 import { store } from "../js/core.js";
 import { MUSIC_DB, audioContext } from "../js/audiobus.js";
+import { VOICE_DB as ALERT_VOICE_DB } from "../js/alertplayer.js";
 import { savedLook } from "../js/looks.js";
 import { orientation, loadCatalogue, spanOf } from "../js/homecards.js";
 import { say, LINES, linesReady, voiceIO } from "../demo/js/voice.js";
@@ -565,6 +566,29 @@ export default [
     } finally {
       voiceIO.fetch = realFetch; voiceIO.schedule = realSchedule; voiceIO.levelAt = realLevel;
       document.removeEventListener("omacar-demo:say", onSay);
+    }
+  }],
+  // The demo's lines go straight to the output, past the stage's limiter, so
+  // they sit where the alert player's quietest voice does (Level 1: -7), not
+  // where Level 2 and 3's do (-3).
+  ["a line plays at the alert player's Level 1 voice level, -7 dB", async () => {
+    const realFetch = voiceIO.fetch, realSchedule = voiceIO.schedule, realLevel = voiceIO.levelAt;
+    const ctx = audioContext();
+    const proto = Object.getPrototypeOf(ctx);
+    const made = [];
+    try {
+      voiceIO.fetch = async () => new Response(silentWav(0.05));
+      voiceIO.schedule = () => true;
+      voiceIO.levelAt = () => MUSIC_DB;
+      ctx.createGain = () => { const g = proto.createGain.call(ctx); made.push(g); return g; };
+      await say("radio");
+      eq(made.length, 1, "the line made its one gain node");
+      const db = 20 * Math.log10(made[0].gain.value);
+      eq(ALERT_VOICE_DB[1], -7, "Level 1's voice is -7");
+      ok(Math.abs(db - ALERT_VOICE_DB[1]) < 0.01, `the line's gain is ${db.toFixed(2)} dB`);
+    } finally {
+      delete ctx.createGain;
+      voiceIO.fetch = realFetch; voiceIO.schedule = realSchedule; voiceIO.levelAt = realLevel;
     }
   }],
 ];
