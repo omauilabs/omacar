@@ -12,29 +12,28 @@ Skipped loudly without a browser, like app_test.py: a test that cannot run is
 not a failure, and a test that silently does nothing is.
 """
 
-import base64
 import collections
-import hashlib
-import http.client
+import fcntl
+import http.server
 import json
 import os
+import select
 import shutil
 import signal
-import socket
-import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHARE = os.path.join(ROOT, "share")
 TESTS = os.path.join(ROOT, "test", "js")
 
-# The browser finder and the free port come from app_test.py, the suite that
-# first ran this app in a browser -- one copy of how a browser is found.
+# The browser finder comes from app_test.py, the suite that first ran this app
+# in a browser -- one copy of how a browser is found.
 sys.path.insert(0, os.path.join(ROOT, "test"))
-from app_test import browser, free_port  # noqa: E402
+from app_test import browser  # noqa: E402
 
 # REAL seconds the page has, from Chromium's launch to its RESULT. A healthy
 # machine needs a few (the demo build's 557 tests take about four); this is the
@@ -68,132 +67,58 @@ document.title = "RESULT " + JSON.stringify(out);
 """
 
 
-# ------------------------------------------------------------------ WebSocket
-# The DevTools protocol is JSON over a WebSocket (RFC 6455), and a WebSocket
-# library is not something every machine this runs on has. The client half of
-# the protocol is small enough to write here: one handshake, masked frames out,
-# whole frames in. test/js_runner_test.py holds the frame code to the RFC's own
-# examples.
+class Failed(Exception):
+    """The runner page did not finish. `str()` says why; `notes` says what the
+    page and Chromium had said on the way."""
 
-_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
-
-def ws_accept(key):
-    """The Sec-WebSocket-Accept a server must answer `key` with."""
-    return base64.b64encode(hashlib.sha1((key + _GUID).encode()).digest()).decode()
+    def __init__(self, why, notes=()):
+        super().__init__(why)
+        self.notes = list(notes)
 
 
-def ws_encode(payload, opcode=0x1, mask=None):
-    """One final, masked client frame. `mask` is pinned only by the tests."""
-    n = len(payload)
-    if n < 126:
-        head = struct.pack(">BB", 0x80 | opcode, 0x80 | n)
-    elif n < 1 << 16:
-        head = struct.pack(">BBH", 0x80 | opcode, 0x80 | 126, n)
-    else:
-        head = struct.pack(">BBQ", 0x80 | opcode, 0x80 | 127, n)
-    mask = os.urandom(4) if mask is None else mask
-    return head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-
-
-def ws_decode(buf):
-    """(fin, opcode, payload, bytes used) for the first whole frame in `buf`,
-    or None while `buf` holds only part of one."""
-    if len(buf) < 2:
-        return None
-    fin, opcode = bool(buf[0] & 0x80), buf[0] & 0x0F
-    n, at = buf[1] & 0x7F, 2
-    if n == 126:
-        if len(buf) < 4:
-            return None
-        n, at = struct.unpack(">H", bytes(buf[2:4]))[0], 4
-    elif n == 127:
-        if len(buf) < 10:
-            return None
-        n, at = struct.unpack(">Q", bytes(buf[2:10]))[0], 10
-    mask = None
-    if buf[1] & 0x80:                       # a server does not mask; be able to read one that does
-        if len(buf) < at + 4:
-            return None
-        mask, at = bytes(buf[at:at + 4]), at + 4
-    if len(buf) < at + n:
-        return None
-    payload = bytes(buf[at:at + n])
-    if mask:
-        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-    return fin, opcode, payload, at + n
-
-
+# --------------------------------------------------------------------- DevTools
 class Devtools:
-    """One page's DevTools connection. `call` sends a command and returns its
-    result. What the page says on its own goes into `heard` (its last few
+    """A DevTools session over Chromium's --remote-debugging-pipe: JSON
+    messages, each ended by a NUL byte, down one pipe (`w`) and back up another
+    (`r`). No port is open and nothing else can connect, and Chromium leaves when
+    the pipe closes, however the runner dies. `call` sends a command and returns
+    its result. What the page says on its own goes into `heard` (its last few
     exceptions and console errors, newest last) and `inflight` (the requests it
     has out), for the failure message; a crash raises."""
 
-    def __init__(self, port, path, timeout=10):
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout)
-        self.buf = bytearray()
-        self.partial = b""
+    def __init__(self, r, w):
+        self.r, self.w = r, w
+        self.buf = b""
         self.n = 0
+        self.session = None
         self.heard = collections.deque(maxlen=8)
         self.inflight = {}
         self.on_budget = None
-        key = base64.b64encode(os.urandom(16)).decode()
-        self.sock.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
-                           "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                           f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
-        while b"\r\n\r\n" not in self.buf:
-            more = self.sock.recv(4096)
-            if not more:
-                raise ConnectionError("Chromium closed the DevTools socket during the handshake")
-            self.buf += more
-        head, _, rest = bytes(self.buf).partition(b"\r\n\r\n")
-        self.buf = bytearray(rest)
-        lines = head.decode("latin-1").split("\r\n")
-        got = {k.strip().lower(): v.strip() for k, _, v in (ln.partition(":") for ln in lines[1:])}
-        if " 101 " not in lines[0] or got.get("sec-websocket-accept") != ws_accept(key):
-            raise ConnectionError(f"DevTools did not accept the WebSocket: {lines[0]}")
 
     def close(self):
-        try:
-            self.sock.close()
-        except OSError:
-            pass
-
-    def _frame(self, end):
-        while True:
-            got = ws_decode(self.buf)
-            if got:
-                del self.buf[:got[3]]
-                return got[:3]
-            left = end - time.monotonic()
-            if left <= 0:
-                raise TimeoutError("no answer from the page")
-            self.sock.settimeout(left)
+        for fd in (self.r, self.w):
             try:
-                more = self.sock.recv(65536)
-            except socket.timeout:
-                raise TimeoutError("no answer from the page") from None
-            if not more:
-                raise ConnectionError("Chromium closed the DevTools connection")
-            self.buf += more
+                os.close(fd)
+            except OSError:
+                pass
 
     def _message(self, end):
         while True:
-            fin, opcode, payload = self._frame(end)
-            if opcode == 0x8:
-                raise ConnectionError("Chromium closed the DevTools connection")
-            if opcode == 0x9:
-                self.sock.sendall(ws_encode(payload, 0xA))
-            elif opcode <= 0x2:
-                self.partial += payload
-                if fin:
-                    text, self.partial = self.partial, b""
-                    return json.loads(text)
+            head, nul, rest = self.buf.partition(b"\0")
+            if nul:
+                self.buf = rest
+                return json.loads(head)
+            left = end - time.monotonic()
+            if left <= 0 or not select.select([self.r], [], [], left)[0]:
+                raise TimeoutError("no answer from the page")
+            more = os.read(self.r, 65536)
+            if not more:
+                raise ConnectionError("Chromium closed the DevTools pipe")
+            self.buf += more
 
     def _heard(self, msg):
         method, p = msg.get("method"), msg.get("params", {})
-        if method == "Inspector.targetCrashed":
+        if method in ("Inspector.targetCrashed", "Target.targetCrashed"):
             raise ConnectionError("the page crashed")
         if method == "Emulation.virtualTimeBudgetExpired" and self.on_budget:
             self.on_budget()
@@ -211,8 +136,12 @@ class Devtools:
 
     def send(self, method, params=None):
         self.n += 1
-        self.sock.sendall(ws_encode(json.dumps(
-            {"id": self.n, "method": method, "params": params or {}}).encode()))
+        msg = {"id": self.n, "method": method, "params": params or {}}
+        if self.session:
+            msg["sessionId"] = self.session
+        data = json.dumps(msg).encode() + b"\0"
+        while data:
+            data = data[os.write(self.w, data):]
         return self.n
 
     def call(self, method, params=None, timeout=10):
@@ -232,36 +161,94 @@ class Devtools:
         return self.call("Runtime.evaluate", {"expression": expression, "returnByValue": True},
                          timeout)["result"].get("value")
 
+    def attach(self, end):
+        """Attach to the browser's one page, once it has opened; every command
+        after this goes to it."""
+        while True:
+            for t in self.call("Target.getTargets")["targetInfos"]:
+                if t.get("type") == "page":
+                    self.session = self.call("Target.attachToTarget",
+                                             {"targetId": t["targetId"], "flatten": True})["sessionId"]
+                    return
+            if time.monotonic() > end:
+                raise TimeoutError("Chromium opened no page")
+            time.sleep(0.05)
+
 
 # --------------------------------------------------------------------- Chromium
-class Failed(Exception):
-    """The runner page did not finish. `str()` says why; `notes` says what the
-    page and Chromium had said on the way."""
+def high(fd):
+    """`fd` moved above 9, and the original closed, so that nothing about where
+    the OS happened to number it can collide with descriptors 3 and 4."""
+    moved = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 10)
+    os.close(fd)
+    return moved
 
-    def __init__(self, why, notes=()):
-        super().__init__(why)
-        self.notes = list(notes)
 
+class Chromium:
+    """Chromium, headless, on the scratch profile `prof`, with its DevTools on a
+    pipe (`self.page`, a Devtools). `close()` leaves nothing of it running."""
 
-def stop(proc):
-    """Chromium and everything it started, gone. Asked first, then made to:
-    the whole process group, because its renderer, GPU and utility processes
-    are not its parent's to outlive."""
-    def signal_group(sig):
+    def __init__(self, exe, prof, log):
+        cmd_r, cmd_w = map(high, os.pipe())         # our commands, its input
+        ans_r, ans_w = map(high, os.pipe())         # its answers, our input
+        self.log = log
+        # --mute-audio: the units build the page's real AudioContext (the
+        # audio stage, the alert player), and nothing a test does may ever
+        # sound on this machine's speakers. The sound tests render into
+        # OfflineAudioContexts, which never reach an output at all; this is
+        # the second lock on the same door.
+        #
+        # --remote-debugging-pipe reads commands on descriptor 3 and answers on
+        # 4, and exits when 3 closes -- which is the point: a runner that is
+        # killed, hung up on or out of memory takes Chromium with it, where a
+        # debugging port would outlive it. The shell only puts the pipes where
+        # Chromium wants them, whatever numbers the OS gave them here, and
+        # becomes Chromium by exec.
         try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            pass
-    signal_group(signal.SIGTERM)
-    try:
-        proc.wait(5)
-    except subprocess.TimeoutExpired:
-        pass
-    signal_group(signal.SIGKILL)        # what ignored the request, and any straggler its parent outlived
-    try:
-        proc.wait(10)
-    except subprocess.TimeoutExpired:
-        pass
+            with open(log, "wb") as errs:
+                self.proc = subprocess.Popen(
+                    ["/bin/sh", "-c", f'exec "$@" 3<&{cmd_r} 4>&{ans_w}', "sh", exe,
+                     "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
+                     "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+                     "--disable-backgrounding-occluded-windows",
+                     f"--user-data-dir={prof}", "--remote-debugging-pipe", "about:blank"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errs,
+                    pass_fds=(cmd_r, ans_w),
+                    # TMPDIR inside the profile: Chromium keeps a directory of
+                    # its own in TMPDIR and removes it only on a clean exit, so a
+                    # Chromium that is signalled would leave one behind in /tmp
+                    # on every run.
+                    env=dict(os.environ, TMPDIR=prof), start_new_session=True)
+        except BaseException:
+            for fd in (cmd_w, ans_r):
+                os.close(fd)
+            raise
+        finally:
+            os.close(cmd_r)
+            os.close(ans_w)
+        self.page = Devtools(ans_r, cmd_w)
+
+    def exited(self, wait=3):
+        """Chromium's exit status if it has exited (or does within `wait`
+        seconds), else None."""
+        try:
+            return self.proc.wait(wait)
+        except subprocess.TimeoutExpired:
+            return None
+
+    def close(self):
+        """Chromium and everything it started, gone. The pipe closes first, and
+        Chromium leaves by itself; then it is asked, then made to: the whole
+        process group, because its renderer, GPU and utility processes are not
+        its parent's to outlive."""
+        self.page.close()
+        self.exited(3)
+        for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 10)):
+            try:
+                os.killpg(self.proc.pid, sig)     # what is still there, and any straggler its parent outlived
+            except (ProcessLookupError, PermissionError):
+                break
+            self.exited(wait)
 
 
 def tail(path, n=6):
@@ -272,47 +259,15 @@ def tail(path, n=6):
         return []
 
 
-def listening(proc, prof, end, log):
-    """The port Chromium's DevTools listens on. It writes it into its profile
-    once it is up; `--remote-debugging-port=0` lets it choose a free one."""
-    active = os.path.join(prof, "DevToolsActivePort")
-    while time.monotonic() < end:
-        if proc.poll() is not None:
-            raise Failed(f"Chromium exited (status {proc.returncode}) before it was listening", tail(log))
-        try:
-            with open(active) as f:
-                lines = f.read().split("\n")
-            if len(lines) > 1:
-                return int(lines[0])
-        except (OSError, ValueError):
-            pass
-        time.sleep(0.05)
-    raise Failed("Chromium never started listening", tail(log))
-
-
-def page_path(port, end):
-    """The WebSocket path of the browser's one open page."""
-    while time.monotonic() < end:
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-        try:
-            conn.request("GET", "/json/list")
-            for t in json.loads(conn.getresponse().read()):
-                if t.get("type") == "page":
-                    return "/" + t["webSocketDebuggerUrl"].split("/", 3)[3]
-        finally:
-            conn.close()
-        time.sleep(0.05)
-    raise Failed("Chromium opened no page")
-
-
 def stalled(page, title, limit):
     """The failure for a page still at `title` when the real-time limit ran out,
     with what is worth knowing about why."""
     notes = list(page.heard)
     notes += [f"request still out: {u}" for u in list(page.inflight.values())[:5]]
     try:
-        notes.append(f"the page's visibility is {page.value('document.visibilityState', timeout=3)!r}")
-    except (OSError, RuntimeError):
+        visible, focused = page.value("[document.visibilityState, document.hasFocus()]", timeout=3)
+        notes.append(f"the page's visibility is {visible!r}, and it is {'focused' if focused else 'not focused'}")
+    except (OSError, RuntimeError, ValueError, TypeError):
         notes.append("the page did not answer a last question")
     return Failed(f"after {limit} s of real time it was still at {title!r}", notes)
 
@@ -333,47 +288,29 @@ def stalled(page, title, limit):
 # they are spent, and the runner asks the page, on the real clock, whether it has
 # said RESULT yet. The real limit is then the only budget there is.
 #
-# THE PAGE MUST BE VISIBLE AND FOCUSED. On the tablet, headless Chromium's tab is
-# HIDDEN from the moment it navigates to the runner page (the box's stays
-# visible, and focused, as the --dump-dom runs saw it). Chromium throttles a
-# hidden page's timers: each one waits for the next whole second, and after five
-# minutes hidden, for the next whole minute -- and virtual time reaches five
-# minutes in an instant. A test's 5 ms wait then cost a virtual minute, the whole
-# budget went in the first forty tests, and the page was dumped RUNNING. Nothing
-# was wrong with those tests. Bringing the tab to the front ends that, and the
-# anti-throttling flags are the second lock on the same door.
+# THE PAGE MUST BE VISIBLE AND FOCUSED, and bringToFront and focus emulation are
+# there for the tablet's hidden headless tab. Nothing else needs them: the box's
+# tab is visible and focused without, and so is a Mac's. On the tablet, headless
+# Chromium's tab is HIDDEN from the moment it navigates to the runner page.
+# Chromium throttles a hidden page's timers: each one waits for the next whole
+# second, and after five minutes hidden, for the next whole minute -- and virtual
+# time reaches five minutes in an instant. A test's 5 ms wait then cost a virtual
+# minute, the whole budget went in the first forty tests, and the page was dumped
+# RUNNING. Nothing was wrong with those tests. Bringing the tab to the front ends
+# that, and the anti-throttling flags are the second lock on the same door.
 #
 # It is not enough alone. With the tab in front and the page unfocused, the
 # tablet finished, but a <video> pointed at a 404 often never fired its `error`
 # (the box's fires in 3 ms): none of 10 runs passed all 557, cameras.test.js's
 # real-404 test being the one that failed. With focus emulated as well, 20 of 20
 # did. Both come after the navigation, since the navigation is what hides the tab.
-def drive(exe, prof, url, log, limit=LIMIT):
-    """Launch Chromium on the scratch profile `prof`, open `url`, and wait IN
-    REAL TIME for the page's title to start with "RESULT ". Returns that title,
-    or raises Failed. Chromium is gone, and `prof` is no longer in use, when
-    this returns either way."""
+def drive(chrome, url, limit=LIMIT):
+    """Open `url` in `chrome`, and wait IN REAL TIME for the page's title to
+    start with "RESULT ". Returns that title, or raises Failed."""
     end = time.monotonic() + limit
-    with open(log, "wb") as errs:
-        # --mute-audio: the units build the page's real AudioContext (the
-        # audio stage, the alert player), and nothing a test does may ever
-        # sound on this machine's speakers. The sound tests render into
-        # OfflineAudioContexts, which never reach an output at all; this is
-        # the second lock on the same door.
-        proc = subprocess.Popen(
-            [exe, "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
-             "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-             "--disable-backgrounding-occluded-windows",
-             f"--user-data-dir={prof}", "--remote-debugging-port=0", "about:blank"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errs,
-            # TMPDIR inside the profile: Chromium keeps a directory of its own in
-            # TMPDIR and removes it only on a clean exit, so a Chromium that is
-            # signalled would leave one behind in /tmp on every run.
-            env=dict(os.environ, TMPDIR=prof), start_new_session=True)
-    page = None
+    page = chrome.page
     try:
-        port = listening(proc, prof, end, log)
-        page = Devtools(port, page_path(port, end))
+        page.attach(end)
         for domain in ("Inspector", "Runtime", "Network"):
             page.call(domain + ".enable")
         # Virtual time waits, stopped, while the page loads: nothing of the
@@ -403,12 +340,22 @@ def drive(exe, prof, url, log, limit=LIMIT):
             if title.startswith("RESULT "):
                 return title
             time.sleep(min(0.1, max(0, end - time.monotonic())))
-    except (OSError, RuntimeError) as e:
-        raise Failed(str(e), (page.heard if page else []) or tail(log)) from None
-    finally:
-        if page:
-            page.close()
-        stop(proc)
+    except (OSError, RuntimeError, ValueError, KeyError) as e:
+        status = chrome.exited() if isinstance(e, ConnectionError) else None
+        if status is not None:
+            raise Failed(f"Chromium exited (status {status}) before the page finished",
+                         tail(chrome.log)) from None
+        raise Failed(str(e), list(page.heard) or tail(chrome.log)) from None
+
+
+class Quiet(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+
+class Server(http.server.ThreadingHTTPServer):
+    def handle_error(self, *args):              # a browser that hangs up on a request is not news
+        pass
 
 
 def run_units(exe, share, tests, files, limit=LIMIT):
@@ -419,37 +366,31 @@ def run_units(exe, share, tests, files, limit=LIMIT):
     # A COPY of share/, so nothing here can leave a test page in the repo.
     work = tempfile.mkdtemp()
     prof = tempfile.mkdtemp()
-    srv = None
+    server = thread = chrome = None
     try:
         copy = os.path.join(work, "share")
         shutil.copytree(share, copy)
         shutil.copytree(tests, os.path.join(copy, "_tests"))
         with open(os.path.join(copy, "_run.html"), "w", encoding="utf-8") as f:
             f.write(RUNNER % json.dumps(files))
-        port = free_port()
-        srv = subprocess.Popen([sys.executable, "-m", "http.server", str(port),
-                                "--bind", "127.0.0.1"], cwd=copy,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(40):
-            time.sleep(0.25)
-            try:
-                with socket.create_connection(("127.0.0.1", port), 0.25):
-                    break
-            except OSError:
-                continue
-        title = drive(exe, prof, f"http://127.0.0.1:{port}/_run.html",
-                      os.path.join(work, "chromium.log"), limit)
+        # In this process, not a child of it: a runner that dies any way at all
+        # takes its server down with it.
+        server = Server(("127.0.0.1", 0), lambda *a: Quiet(*a, directory=copy))
+        thread = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
+        thread.start()
+        chrome = Chromium(exe, prof, os.path.join(work, "chromium.log"))
+        title = drive(chrome, f"http://127.0.0.1:{server.server_address[1]}/_run.html", limit)
         try:
             return json.loads(title[len("RESULT "):])
         except ValueError:
             raise Failed(f"the page's result could not be read: {title[:200]!r}") from None
     finally:
-        if srv:
-            srv.terminate()
-            try:
-                srv.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                srv.kill()
+        if chrome:
+            chrome.close()
+        if server:
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
         shutil.rmtree(prof, ignore_errors=True)
         shutil.rmtree(work, ignore_errors=True)
 
@@ -465,9 +406,11 @@ def main():
     if not files:
         print("    FAIL  test/js holds no *.test.js files\n")
         return 1
-    # A killed runner must still take Chromium down with it: the signal becomes
-    # an exit, and the exit runs the finally blocks that stop it.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    # A runner that is told to stop, or hung up on (an ssh session that drops),
+    # must still take Chromium down cleanly: the signal becomes an exit, and the
+    # exit runs the finally blocks that stop it and remove what it wrote.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda n, _: sys.exit(128 + n))
     try:
         res = run_units(exe, SHARE, TESTS, files)
     except Failed as e:
