@@ -157,4 +157,11 @@ python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 
+# ---- meetup demo: Agent, Work and the voice (Task 6) --------------------------
+# tools/demo_voice.py against a stand-in Piper that writes silence: no voice
+# model, no sound. The screens' own units are test/js/demo-agent.test.js, run
+# by js_test.py above.
+python3 "$ROOT/test/demo_voice_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: Task 6 --------------------------------------------------
+
 exit $((fails > 0))

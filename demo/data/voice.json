@@ -1,0 +1,22 @@
+[
+  { "id": "work-update",
+    "text": "Two agents are running. Bulletin Builder passed its tests and is ready for your review. OmaSaber needs your input on the saber colour." },
+  { "id": "work-sent",
+    "text": "Sent. OmaSaber will document the setup first." },
+  { "id": "layout-applied",
+    "text": "Night drive is on. Navigation stays large, and I've dimmed the rest." },
+  { "id": "radio",
+    "text": "Playing Omarchy Radio." },
+  { "id": "drowsy-l2",
+    "text": "James, are you with me?" },
+  { "id": "health",
+    "text": "All systems normal." },
+  { "id": "night-ready",
+    "text": "Ready to preview. Navigation stays prominent, brightness is reduced, and essential telemetry stays visible." },
+  { "id": "warning",
+    "text": "No warnings right now. The last one was P0420 in March, cleared after the cat was replaced.",
+    "speak": "No warnings right now. The last one was P oh four twenty, in March. It cleared after the cat was replaced." },
+  { "id": "drive",
+    "text": "Your last 30 minutes: 38.2 mpg, 64% of braking recovered by the IMA, one hard stop on CA-1 near Castroville.",
+    "speak": "Your last thirty minutes: thirty-eight point two miles per gallon. Sixty-four percent of your braking was recovered by the I M A, and there was one hard stop on Highway 1, near Castroville." }
+]
