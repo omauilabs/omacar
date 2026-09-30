@@ -72,7 +72,8 @@
 #                             data or the live app, and will not start while moving.
 #                             `video` plays the tour's backup film full-screen;
 #                             `mend server|world|cams` starts one part again, as
-#                             the demo's guard does when one dies.
+#                             the demo's guard does when one dies; `off --now`
+#                             skips the music's fade, as the guard does.
 #   omacar server status|stop|watch PORT
 #                             the loopback server the app is served from; `watch`
 #                             restarts it on PORT if it dies, and the kiosk runs it
@@ -685,7 +686,7 @@ os.replace(tmp, out)
     if [[ "$part" == server ]] && port_taken "$DEMO_PORT"; then
       echo "omacar: port $DEMO_PORT is held by something that is not this demo's server" \
            "(another demo? \`omacar demo off\` from where it was started)" >&2
-      demo_off >/dev/null 2>&1 || true
+      demo_off --now >/dev/null 2>&1 || true
       exit 1
     fi
     rc=0
@@ -696,7 +697,7 @@ os.replace(tmp, out)
       2 | 3) ;;
       # ACTIVE went while this was starting (see below): nothing more is started.
       4)
-        demo_off >/dev/null 2>&1 || true
+        demo_off --now >/dev/null 2>&1 || true
         echo "omacar: the demo was stopped while it was starting;" \
              "nothing of it is left running" >&2
         exit 1 ;;
@@ -708,7 +709,7 @@ os.replace(tmp, out)
           continue
         fi
         echo "omacar: $(demo_what "$part") did not start; see $OMACAR_STATE/demo-$part.log" >&2
-        demo_off >/dev/null 2>&1 || true
+        demo_off --now >/dev/null 2>&1 || true
         exit 1 ;;
     esac
   done
@@ -719,7 +720,7 @@ os.replace(tmp, out)
     if ! demo_up guard; then
       echo "omacar: the guard did not start, and the demo does not run without it;" \
            "see $OMACAR_STATE/demo-guard.log" >&2
-      demo_off >/dev/null 2>&1 || true
+      demo_off --now >/dev/null 2>&1 || true
       exit 1
     fi
     started+=("the guard")
@@ -736,7 +737,7 @@ os.replace(tmp, out)
       [[ -n "$(demo_window_pids)" ]] && break
       sleep 0.1
     done
-    demo_off >/dev/null 2>&1 || true
+    demo_off --now >/dev/null 2>&1 || true
     echo "omacar: the demo was stopped while it was starting (the guard, or the car moving);" \
          "nothing of it is left running" >&2
     exit 1
@@ -806,19 +807,42 @@ demo_window() {
     >/dev/null 2>&1 </dev/null
 }
 
+# The demo window, closed: each pid pgrep found is checked again, by its exact
+# profile argument, before it is signalled. False when there was none.
+demo_close_window() {
+  local p pids=()
+  for p in $(demo_window_pids); do
+    demo_still window "$p" && pids+=("$p")
+  done
+  (( ${#pids[@]} )) || return 1
+  kill "${pids[@]}" 2>/dev/null || true
+  demo_wait window "${pids[@]}"
+}
+
+# `demo off`, a presenter's: the music fades before the window goes.
+# `demo off --now`, the guard's and every abort's: THE WINDOW GOES AT ONCE. The
+# guard runs it when the real car moves, and the owner's dashboard is under
+# that window; or when ACTIVE has gone, when something else is already
+# stopping the demo. No quiet cue, no wait, and the window before anything.
 demo_off() {
+  local now=""
+  case "${1:-}" in
+    --now) now=1 ;;
+    "") ;;
+    *) echo "usage: omacar demo off [--now]" >&2; exit 2 ;;
+  esac
   demo_env
-  local stopped=() h pid pids p name rest root from=()
+  local stopped=() h pid name rest root from=()
   # ACTIVE FIRST. A `demo on` still starting checks it again once its window
   # is open, and takes the window down if it has gone; removed last, a window
   # opened while this was running would be left up. The bar widget is back on
   # your car within a second of this.
   rm -f "$DEMO_ROOT/ACTIVE"
+  if [[ -n "$now" ]] && demo_close_window; then stopped+=("the demo window"); fi
   # Then the guard, which runs `demo off` itself when ACTIVE goes; stopped
   # here straight away, it rarely gets the chance to run a second one.
-  # Then quiet from the page, and the window, so the page is not left asking
-  # a server that has gone: each pid pgrep found is checked again, by its
-  # exact profile argument, before it is signalled. Then the rest.
+  # Then, for a presenter, quiet from the page and the window, so the page is
+  # not left asking a server that has gone. Then the rest.
   h=$(demo_holder guard)
   case "$h" in
     "ours "*) pid=${h#ours }; root="" ;;
@@ -839,7 +863,7 @@ demo_off() {
   # never of whatever holds the port; and only waited for when it answered at
   # all: a server that is gone, or says nothing within 1 s, is not waited on.
   local code="" quiet=""
-  if [[ "$(demo_holder server)" != none ]]; then
+  if [[ -z "$now" && "$(demo_holder server)" != none ]]; then
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 1 \
              -H 'Content-Type: application/json' -d '{"cue": "quiet"}' \
              "http://127.0.0.1:$DEMO_PORT/api/demo/cue" 2>/dev/null || true)
@@ -848,15 +872,7 @@ demo_off() {
       sleep 2.5
     fi
   fi
-  pids=()
-  for p in $(demo_window_pids); do
-    demo_still window "$p" && pids+=("$p")
-  done
-  if (( ${#pids[@]} )); then
-    kill "${pids[@]}" 2>/dev/null || true
-    demo_wait window "${pids[@]}"
-    stopped+=("the demo window")
-  fi
+  if [[ -z "$now" ]] && demo_close_window; then stopped+=("the demo window"); fi
   # THIS DEMO'S PROCESSES, WHICHEVER CHECKOUT STARTED THEM (demo_holder): the
   # guard runs this from its own checkout and must never be vetoed by a demo
   # started from another, and on the tablet the one on PATH is the live one.
@@ -1801,7 +1817,7 @@ print()
     case "${2:-status}" in
       # start and stop are the names the bar widget's button uses.
       on | start) demo_on ;;
-      off | stop) demo_off ;;
+      off | stop) shift 2; demo_off "$@" ;;
       tour) demo_tour ;;
       video) demo_video ;;
       # One part of a demo that is on, started again: the guard's watchdog.

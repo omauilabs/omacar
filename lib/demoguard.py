@@ -7,10 +7,11 @@
 `omacar demo on` starts it with the REAL live.json (read before the demo's
 environment moves OMACAR_STATE) and the demo's folder. Every 2 s it reads that
 file, read-only. While the demo is on (DEMO_ROOT/ACTIVE exists) and the real
-car is moving, it runs `omacar demo off`, and exits once that has worked; one
-that fails is tried again (TRIES, LATER), and the guard never leaves while
-the demo is still up. When ACTIVE goes, however that happened, it runs
-`omacar demo off` once more and exits.
+car is moving, it runs `omacar demo off --now`, and exits once that has
+worked; one that fails is tried again (TRIES, LATER), and the guard never
+leaves while the demo is still up. When ACTIVE goes, however that happened, it
+runs `omacar demo off --now` once more and exits. --now, because neither is a
+presenter's goodbye: the window comes down at once, without the music's fade.
 
 MOVING MEANS A FRESH SAMPLE ABOVE 3 KM/H. Fresh is `t` within 5 s of now: the
 daemon rewrites live.json several times a second while it is talking to the
@@ -88,8 +89,13 @@ def omacar_env(root):
 
 
 def stop_demo(root):
-    """`omacar demo off`, for the demo in `root`."""
-    return subprocess.run([os.path.join(ROOT, "bin", "omacar"), "demo", "off"],
+    """`omacar demo off --now`, for the demo in `root`.
+
+    --now: the window goes at once, with no quiet cue and no wait for the
+    music's fade. The guard stops the demo for a car that is moving, with the
+    owner's dashboard under the window, or because ACTIVE went, when something
+    else is already stopping it; neither is a presenter's goodbye."""
+    return subprocess.run([os.path.join(ROOT, "bin", "omacar"), "demo", "off", "--now"],
                           env=omacar_env(root), stdin=subprocess.DEVNULL,
                           timeout=120).returncode
 

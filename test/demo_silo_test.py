@@ -167,11 +167,17 @@ for name in ("systemctl", "wpctl", "pactl", "hyprctl"):
 # Chromium stays up until it is told to go, as the real one does, and keeps its
 # arguments on its command line, which is what `demo off` finds it by.
 # It also writes down the cache folder it was given (the demo's own, on its
-# command line only).
+# command line only), and when it was told to go.
 CHROMIUM_ENV = os.path.join(SCRATCH, "chromium.env")
+CHROMIUM_TERMS = os.path.join(SCRATCH, "chromium.terms")
 with open(os.path.join(SHIMS, "chromium"), "w", encoding="utf-8") as f:
     f.write(f"""#!{PY}
-import os, sys, time
+import os, signal, sys, time
+def term(*_):
+    with open({CHROMIUM_TERMS!r}, "a") as f:
+        f.write(str(time.time()) + "\\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, term)
 with open({CHROMIUM_ENV!r}, "w") as f:
     f.write(os.environ.get("XDG_CACHE_HOME", ""))
 with open({SHIM_LOG!r}, "a") as f:
@@ -487,43 +493,6 @@ try:
             time.sleep(0.2)
         return still_up(), round(time.time() - t0, 1)
 
-    head("the real car moves: the guard takes the whole demo down")
-    write_live(0)
-    rc, out = omacar("demo", "on", timeout=180)
-    check("demo on", rc, 0)
-    try:
-        with open(os.path.join(DEMO_ROOT, "pids", "guard.pid"), encoding="utf-8") as f:
-            guard_pid = int(f.read().strip())
-    except (OSError, ValueError):
-        guard_pid = None
-    check("the guard is running, from guard.pid",
-          bool(guard_pid) and cmdline(guard_pid) is not None
-          and os.path.join(ROOT, "lib", "demoguard.py") in cmdline(guard_pid), True)
-    check("with the window, world, server and camera feed up",
-          all(any(w in p[1] for p in ours_running())
-              for w in ("demoworld.py", "serve.py", "cams.py", "--user-data-dir=")), True)
-    write_live(42)                      # the real car, fresh, at 42 km/h
-    left, took = gone_within(10)
-    check(f"within 10 s the window, world, server, camera feed, guard and ACTIVE are all gone "
-          f"(took {took} s)", left, [])
-    check("and nothing holds the demo's port", listening(PORT), False)
-    write_live(0)
-
-    head("the marker removed by something else: the guard takes the rest down")
-    # The old bar widget's "Demo Off" removes ACTIVE and knows nothing of the
-    # window, the feed or the guard. The guard sees the marker go, and runs
-    # `demo off` once before it leaves.
-    rc, out = omacar("demo", "on", timeout=180)
-    check("demo on", rc, 0)
-    os.remove(os.path.join(DEMO_ROOT, "ACTIVE"))
-    left, took = gone_within(10)
-    check(f"within 10 s the window, world, server, camera feed and guard are all gone "
-          f"(took {took} s)", left, [])
-    check("and nothing holds the demo's port", listening(PORT), False)
-    check("no systemctl, wpctl or pactl", [c for c in shim_calls()
-                                           if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
-    open(SHIM_LOG, "w").close()
-
     PIDS = os.path.join(DEMO_ROOT, "pids")
     GUARD_LOG = os.path.join(DEMO_ROOT, "state", "omacar", "demo-guard.log")
 
@@ -557,6 +526,77 @@ try:
                 return f.read()
         except OSError:
             return ""
+
+    def window_told_to_go():
+        """When the shim window last had its SIGTERM, or None."""
+        try:
+            with open(CHROMIUM_TERMS, encoding="utf-8") as f:
+                return [float(ln) for ln in f if ln.strip()][-1]
+        except (OSError, ValueError, IndexError):
+            return None
+
+    def cue_now():
+        """The demo's last cue, as the server wrote it: (cue, at), or None."""
+        try:
+            with open(os.path.join(DEMO_ROOT, "state", "omacar", "demo-cue.json"),
+                      encoding="utf-8") as f:
+                d = json.load(f)
+            return d.get("cue"), d.get("at")
+        except (OSError, ValueError):
+            return None
+
+    head("the real car moves: the guard takes the whole demo down")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    try:
+        with open(os.path.join(DEMO_ROOT, "pids", "guard.pid"), encoding="utf-8") as f:
+            guard_pid = int(f.read().strip())
+    except (OSError, ValueError):
+        guard_pid = None
+    check("the guard is running, from guard.pid",
+          bool(guard_pid) and cmdline(guard_pid) is not None
+          and os.path.join(ROOT, "lib", "demoguard.py") in cmdline(guard_pid), True)
+    check("with the window, world, server and camera feed up",
+          all(any(w in p[1] for p in ours_running())
+              for w in ("demoworld.py", "serve.py", "cams.py", "--user-data-dir=")), True)
+    said_before = guard_says()
+    moved = time.time()
+    write_live(42)                      # the real car, fresh, at 42 km/h
+    left, took = gone_within(10)
+    check(f"within 10 s the window, world, server, camera feed, guard and ACTIVE are all gone "
+          f"(took {took} s)", left, [])
+    check("and nothing holds the demo's port", listening(PORT), False)
+    # THE WINDOW AT ONCE: the owner's dashboard is under it. The guard looks
+    # every 2 s, and its `demo off --now` sends no quiet cue and waits for no
+    # fade, so the window has gone within 2.5 s of the moving sample.
+    went = window_told_to_go()
+    gap = round(went - moved, 2) if went else None
+    check(f"the window was told to go within 2.5 s of the moving sample (took {gap} s)",
+          gap is not None and 0 <= gap <= 2.5, True)
+    cue = cue_now()
+    check("and no quiet cue was sent: no fade on a moving car",
+          (bool(cue) and cue[0] == "quiet" and (cue[1] or 0) >= moved,
+           "asked the demo page for quiet" in guard_says()[len(said_before):]), (False, False))
+    write_live(0)
+
+    head("the marker removed by something else: the guard takes the rest down")
+    # The old bar widget's "Demo Off" removes ACTIVE and knows nothing of the
+    # window, the feed or the guard. The guard sees the marker go, and runs
+    # `demo off` once before it leaves.
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    said_before = guard_says()
+    os.remove(os.path.join(DEMO_ROOT, "ACTIVE"))
+    left, took = gone_within(10)
+    check(f"within 10 s the window, world, server, camera feed and guard are all gone "
+          f"(took {took} s)", left, [])
+    check("and nothing holds the demo's port", listening(PORT), False)
+    check("without a quiet cue: something else is already stopping it",
+          "asked the demo page for quiet" in guard_says()[len(said_before):], False)
+    check("no systemctl, wpctl or pactl", [c for c in shim_calls()
+                                           if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
+    open(SHIM_LOG, "w").close()
 
     head("the watchdog: a part that dies is back within 10 s, started as demo on started it")
     write_live(0)
@@ -1170,6 +1210,8 @@ time.sleep(600)
         rc, out = omacar("demo", "check")
         check("check says it has not arrived yet, and is not a failure",
               (rc, "the check arrives with Task 8" in out), (0, True))
+    rc, out = omacar("demo", "off", "--soon")
+    check("demo off takes --now and nothing else", (rc, "demo off [--now]" in out), (2, True))
     rc, out = omacar("help")
     check("help names on, off, check, tour, video, mend and trash",
           "omacar demo on|off|check|tour|video|mend|trash" in out, True)
