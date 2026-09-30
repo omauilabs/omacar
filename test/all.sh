@@ -163,6 +163,7 @@ python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # and chromium are shims that write down every call. Scratch ports only: never
 # 7580, so a real demo on this machine is never met.
 python3 "$ROOT/test/demoserve_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/demo_silo_test.py" || fails=$((fails + 1))
 # ---- end demo/meetup: the silo ------------------------------------------------
 
 exit $((fails > 0))

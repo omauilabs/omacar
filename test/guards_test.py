@@ -826,6 +826,14 @@ check("every write command is marked to be confirmed",
 check("and so is anything that throws data away",
       [c["command"] for g in _doc["groups"] for c in g["commands"]
        if c["verb"] in ("prune", "demo") and not c["confirm"]], [])
+# The demo's verbs grew from start|stop|status|trash to on|off|check|tour|trash
+# (the meetup demo). `on` opens a fullscreen window over the dashboard and
+# `trash` deletes the demo's data, so a brushed sleeve must not fire either.
+_demo_cmds = [c for g in _doc["groups"] for c in g["commands"] if c["verb"] == "demo"]
+check("the demo's command is on the reference, with its new verbs",
+      [c["command"] for c in _demo_cmds], ["omacar demo on|off|check|tour|trash"])
+check("and it is asked about before it runs",
+      [c["confirm"] for c in _demo_cmds], [True])
 check("and no column is left empty",
       [c for c in _cs.pack(_grouped) if not c], [])
 
