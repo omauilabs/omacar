@@ -289,6 +289,30 @@ const VIEWS = [
   ...OFF_NAV,
 ];
 
+// THE MEETUP DEMO'S ONE DOOR (doc/design/2026-09-30-meetup-demo.md, §2.5).
+//
+// demo/js/boot.js sets globalThis.OMACAR_DEMO before this module runs, and
+// only /demo.html loads that script. The live app.html never does, so on the
+// live page DEMO is null and nothing below changes anything. Through it the
+// demo swaps a view's mount, adds its own routable screens, chooses the screen
+// a tab opens on, dresses the top bar and takes its own keys. None of that is
+// a door to the car: those are all on the server, and the demo's server
+// refuses them.
+const DEMO = globalThis.OMACAR_DEMO || null;
+if (DEMO) {
+  for (const v of VIEWS) if (DEMO.views && DEMO.views[v.id]) v.mount = DEMO.views[v.id];
+  for (const x of DEMO.extraViews || []) VIEWS.push(Object.assign({ off: "a demo screen" }, x));
+  for (const [tabId, viewId] of Object.entries(DEMO.tabRoots || {})) {
+    const t = TABS.find((x) => x.id === tabId);
+    const g = t && t.groups[0];
+    const i = g ? g.views.findIndex((v) => v.id === viewId) : -1;
+    if (i > 0) {
+      g.views.unshift(...g.views.splice(i, 1));
+      t.views = t.groups.flatMap((gr) => gr.views);
+    }
+  }
+}
+
 // THE APP HAS ONE HOME AND CHOOSES A SCREEN EXACTLY ONCE, AT COLD BOOT.
 //
 // It used to have two. route() fell back to "#dash" while the arrival screen
@@ -814,6 +838,7 @@ function paintBar() {
   els.name.hidden = onHome || !who;
   if (els.name.textContent !== who) els.name.textContent = who;
   els.priv.hidden = !privacy.on;
+  if (DEMO && DEMO.afterBar) DEMO.afterBar(document.getElementById("vbar"));
 }
 
 // ------------------------------------------------------- the settings sheet
@@ -1262,6 +1287,7 @@ async function boot() {
   // and typing to jump through its options otherwise moved the whole app.
   document.addEventListener("keydown", (e) => {
     if (e.target.matches("input, textarea, select, [contenteditable]")) return;
+    if (DEMO && DEMO.onKey && DEMO.onKey(e)) return;
     const n = parseInt(e.key, 10);
     if (n >= 1 && n <= TABS.length) {
       const t = TABS[n - 1];

@@ -1,0 +1,169 @@
+<!doctype html>
+<!-- OmaCar — the workshop.
+     One page, no build step, served over http://127.0.0.1 by lib/serve.py.
+
+     Everything here is an ES module loaded straight from disk. There is no
+     bundler, no framework and no lockfile, because the thing this replaces is
+     a five-thousand-dollar tablet that stops getting updates when its vendor
+     decides it should, and a tool you cannot open and repair is the same trap
+     in a different colour.
+
+     Layout is a fixed vehicle bar at the top, one scrolling view, and a
+     navigation block pinned to the bottom. The vehicle identity NEVER leaves
+     the screen: every scan tool that has ever shown somebody the wrong car's
+     data got there by letting it. -->
+<meta charset="utf-8">
+<!-- viewport-fit=cover, without which every env(safe-area-inset-*) in app.css
+     silently resolves to its 0px fallback. The nav block reserves the bottom
+     inset for a tablet in a cradle behind a home-button bar; that reservation
+     had never once been applied, because the browser only exposes the insets
+     when the page asks to draw into them. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OmaCar</title>
+<link rel="icon" href="icon.svg">
+<!-- app.css first: every sheet below builds on its tokens, and two of them
+     (nav.css, omaplay.css) read custom properties it defines. A sheet that
+     loads first sees those as undefined, which does not warn — it silently
+     invalidates any calc() using them, and the rule is dropped. That is
+     exactly how the bottom tab bar shipped unstyled and unnoticed: nav.css
+     was written, was correct, and was never linked here at all. -->
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/radio.css">
+<link rel="stylesheet" href="css/replay.css">
+<link rel="stylesheet" href="css/car3d.css">
+<!-- After app.css: ima.css completes app.css's tint family and builds on its
+     tokens, so it has nothing to style against if it loads first. -->
+<link rel="stylesheet" href="css/ima.css">
+<link rel="stylesheet" href="css/omaplay.css">
+<link rel="stylesheet" href="css/home.css">
+<link rel="stylesheet" href="css/vehicle.css">
+<link rel="stylesheet" href="css/roadcams.css">
+<!-- The boot screen, last, so it can rely on every token above it and cover
+     every layer below it. It is markup and CSS on purpose: a splash drawn by a
+     module arrives after the frame it was meant to cover. -->
+<link rel="stylesheet" href="css/boot.css">
+
+<!-- The palette on paper.
+     app.css already declares a print palette on :root, and it never arrives:
+     main.js applies the Omarchy theme as INLINE custom properties on the root
+     element, and an inline declaration outranks any stylesheet rule, print
+     media query or not. So a printed report came out in the dark theme's
+     near-white ink on white paper — a page of headings you cannot read, which
+     is the one artefact here that leaves the machine.
+
+     The surfaces are app.css's own print values, re-asserted at the only
+     weight that beats an inline declaration. The five semantic colours are new
+     here, because app.css does not print them at all: a theme's amber is
+     chosen to carry on a near-black panel and on white paper it is a smudge,
+     so paper gets darker versions of the same five meanings. Nothing here
+     changes the screen. -->
+<style>
+  @media print {
+    :root {
+      --ground: #fff !important; --panel: #fff !important; --panel-2: #fff !important;
+      --ink: #111 !important; --dim: #444 !important; --faint: #666 !important;
+      --edge: #ccc !important;
+      --ok: #1B7A4B !important; --warn: #8A5A05 !important; --bad: #A32A1B !important;
+      --info: #17558F !important; --ai: #4B3FA8 !important;
+    }
+  }
+</style>
+
+<!-- d3 is an ES module like everything else here, so the import in
+     js/charts-d3.js is the whole of its wiring. This line only asks the
+     browser to start fetching it alongside the HTML rather than two module
+     hops later; drop it and the app still works. -->
+<link rel="modulepreload" href="js/vendor/d3.min.js">
+
+<!-- THE BOOT SCREEN, BEFORE THE APP AND OUTSIDE IT.
+     Opening this in a car is not opening an app: the tablet woke because the
+     adapter appeared, which is to say because somebody turned a key, and for
+     the second before there is anything true to show they were looking at a
+     vehicle bar with a hole under it.
+
+     It is dismissed by js/bootscreen.js watching data-booting on #app, so
+     nothing in main.js knows or cares that it is here — including main.js's
+     own failure path, which sets the same attribute and therefore uncovers the
+     error card rather than leaving a mark spinning over a dead server. -->
+<div id="boot" class="boot" data-done="0" role="status" aria-label="OmaCar starting">
+  <video class="boot-film" muted playsinline preload="none"></video>
+  <div class="boot-stack">
+    <svg class="boot-mark" viewBox="0 0 256 256" aria-hidden="true">
+      <circle class="boot-ring" cx="128" cy="128" r="62"/>
+      <circle class="boot-hub" cx="128" cy="128" r="16"/>
+    </svg>
+    <div class="boot-word">Oma<b>Car</b></div>
+    <div class="boot-said"></div>
+  </div>
+  <div class="boot-skip">tap to skip</div>
+</div>
+
+<div id="app" class="app" data-booting="1">
+  <header class="vbar" id="vbar"></header>
+
+  <!-- The screens inside a Vehicle group (Diagnose: Codes, Scan, Readiness).
+       Built by main.js, hidden whenever the group has only one screen. -->
+  <div class="segbar" id="segbar" hidden></div>
+
+  <main class="stage" id="stage" tabindex="-1"></main>
+
+  <!-- THE NAVIGATION COMES AFTER THE STAGE, AND THAT IS DELIBERATE.
+       It is placed by grid area, not by position:fixed on a DOM-first
+       element. Put visually-bottom navigation first in the document and every
+       keyboard user pays five tab stops before reaching a word of the screen
+       they just opened — the accessibility failure that "just make it fixed"
+       always ships with. Reading order, focus order and visual order are the
+       same order here.
+
+       The document itself does not scroll; .stage does. So this block is
+       already outside the scroller and needs no hide-on-scroll behaviour —
+       and it never hides. In a moving car, navigation that comes and goes is
+       navigation you look down to hunt for.
+
+       Both rows are filled by main.js, which builds them once and afterwards
+       only updates their text and their state. -->
+  <nav class="navbar" id="navbar" aria-label="Sections">
+    <div class="subbar">
+      <div class="subbar-lead" id="subbar-lead"></div>
+      <div class="subbar-chips" id="subbar-chips"></div>
+    </div>
+    <div class="tabbar" id="tabbar"></div>
+  </nav>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div class="modal-host" id="modal-host" hidden></div>
+</div>
+
+<noscript>
+  <p style="padding:2rem;font-family:monospace">OmaCar needs JavaScript. Everything
+  it shows is also available from the terminal — try <code>omacar doctor</code>.</p>
+</noscript>
+
+<!-- THE MEETUP DEMO (doc/design/2026-09-30-meetup-demo.md). This page is
+     share/app.html with four changes, and only the demo server serves it:
+     demo/js/boot.js opens main.js's one door before main.js runs; the demo's
+     stylesheet; and neither js/awake.js (the live radio stream) nor
+     js/alertness.js (the live drowsy engine and the volume pin), whose parts
+     the demo plays itself. -->
+<link rel="stylesheet" href="demo/css/demo.css">
+<script type="module" src="demo/js/boot.js"></script>
+<script type="module" src="js/main.js"></script>
+<!-- Loaded after the app, and separately, because it is not part of any view:
+     it holds a screen wake lock while the car is connected or the radio is
+     playing, so a drive is not punctuated by reaching over to tap a key. -->
+<!-- (js/awake.js: not in the demo) -->
+<!-- Also separate, and for the same reason: it is not part of any view. It
+     only decides when the boot screen goes away and what it says while it is
+     there. -->
+<script type="module" src="js/bootscreen.js"></script>
+<!-- ---- redesign/cameras ------------------------------------------------------
+     The Cameras tab, Home's Dashcams card, the audio stage and drowsy mode
+     (doc/design/2026-09-28-cameras-drowsy.md). One block at the end of the
+     page, so this branch meets the foundation branch's edits here in one
+     place. A stylesheet link is valid in the body; these style only what this
+     branch adds. -->
+<link rel="stylesheet" href="css/cameras.css">
+<link rel="stylesheet" href="css/drowsy.css">
+<!-- (js/alertness.js: not in the demo) -->
+<!-- ---- end redesign/cameras ------------------------------------------------ -->

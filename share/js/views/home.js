@@ -214,6 +214,11 @@ const MAKERS = {
 function makeCard(id, cat) {
   const c = cat.cards[id];
   if (!c) return null;
+  // The meetup demo may dress a card the catalogue already has
+  // (globalThis.OMACAR_DEMO, set only by demo/js/boot.js). Never a new one:
+  // the live app's layout rules still decide what is on the page.
+  const demo = globalThis.OMACAR_DEMO && globalThis.OMACAR_DEMO.cards;
+  if (demo && demo[id]) return demo[id]();
   if (c.reading) {
     // Named by the readings catalogue, as Vehicle and Gauges name it.
     const t = makeSignalTile(c.reading);

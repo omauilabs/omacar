@@ -369,7 +369,15 @@ def run_units(exe, share, tests, files, limit=LIMIT):
     server = thread = chrome = None
     try:
         copy = os.path.join(work, "share")
-        shutil.copytree(share, copy)
+        # Not share/assets/private: the owner's pictures and the demo's songs
+        # and footage, tens of megabytes no test reads (and CI never has).
+        shutil.copytree(share, copy, ignore=lambda d, names:
+                        ["private"] if os.path.basename(d) == "assets" else [])
+        # The meetup demo's modules, beside share/ in the repo and at /demo/
+        # on the demo server, so its tests import them as ../demo/js/<file>.
+        demo = os.path.join(os.path.dirname(os.path.abspath(share)), "demo")
+        if os.path.isdir(demo):
+            shutil.copytree(demo, os.path.join(copy, "demo"))
         shutil.copytree(tests, os.path.join(copy, "_tests"))
         with open(os.path.join(copy, "_run.html"), "w", encoding="utf-8") as f:
             f.write(RUNNER % json.dumps(files))
