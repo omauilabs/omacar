@@ -73,7 +73,8 @@ CALLS = os.path.join(SCRATCH, "calls.log")
 os.makedirs(BIN)
 
 # THE STAND-IN PACTL: the state in WORLD, every call written to CALLS.
-# `fail_inputs: n` makes the next n listings of sink-inputs fail.
+# `fail_inputs: n` makes the next n listings of sink-inputs fail, and
+# `hang_inputs: s` makes each one take s seconds (a PipeWire that is stuck).
 with open(os.path.join(BIN, "pactl"), "w", encoding="utf-8") as f:
     f.write(f"""#!{sys.executable}
 import json, sys
@@ -85,6 +86,9 @@ w = json.load(open(W))
 def save():
     json.dump(w, open(W, "w"))
 if a[:2] == ["-f", "json"] and a[2] == "list":
+    if a[3] == "sink-inputs" and w.get("hang_inputs"):
+        import time
+        time.sleep(w["hang_inputs"])
     if a[3] == "sink-inputs" and w.get("fail_inputs", 0) > 0:
         w["fail_inputs"] -= 1
         save()
@@ -261,6 +265,24 @@ try:
 
     b = browser_stand_in(prof)
     time.sleep(0.5)
+    with_ours(hang_inputs=30)
+    g = R.Guard(sink, b.pid, prof, [])
+    t0 = time.monotonic()
+    g.start()
+    while not g.violation and time.monotonic() - t0 < 10:
+        time.sleep(0.05)
+    took = time.monotonic() - t0
+    check(f"a pactl that hangs is a failed look after {R.GUARD_TIMEOUT:.0f} s, and the guard, "
+          f"blind for more than {R.BLIND_SECS:.0f} s, stops the run (took {took:.1f} s)",
+          bool(g.violation) and "could not see" in g.violation and took < R.GUARD_TIMEOUT + 1.5,
+          True)
+    time.sleep(0.3)
+    check("and the browser is killed for it", alive(b.pid), False)
+    g.stop()
+    b.wait(5)
+
+    b = browser_stand_in(prof)
+    time.sleep(0.5)
     with_ours()
     dead = R.Guard(sink, b.pid, prof, [])            # never started: not watching
     try:
@@ -400,25 +422,37 @@ try:
           (changing(), s.module, any("could not be listed" in p for p in problems)),
           (["unload-module 77"], None, True))
 
+    with_ours(fail_inputs=2)
+    s = sink_at_900()
+    problems = s.unload(prof, wait=3.0)
+    check("a listing that fails is tried again: two failures, then an empty sink, and it unloads",
+          (problems, changing(), s.module, len([c for c in calls() if "sink-inputs" in c])),
+          ([], ["unload-module 77"], None, 3))
+
     with_ours()
     s = sink_at_900()
     check("nothing left: unloaded, and nothing said", (s.unload(prof, wait=0.3), changing(), s.module),
           ([], ["unload-module 77"], None))
 
-    head("signals during the teardown")
-    # The real guarded() and take_down(), in a process of their own. The
-    # teardown stops an ffmpeg stand-in that takes two seconds to finish, and
-    # INT, TERM and HUP arrive meanwhile; it must still reach the unload.
-    #   `first`: the body waits, and a first Ctrl+C stops it;
-    #   `clean`: the body ends by itself, and the teardown is where the first
-    #     signal lands.
+    head("signals, and a terminal that has gone")
+    # The real guarded(), take_down() and interruptible(), in a process of their
+    # own. The teardown stops an ffmpeg stand-in that takes two seconds to
+    # finish. The driver writes what happened to a file, since its stdout may
+    # be dead. Modes:
+    #   first    the body waits, and a first Ctrl+C stops it; INT, TERM and HUP
+    #            arrive during the teardown;
+    #   clean    the body ends by itself, and INT, TERM and HUP arrive during
+    #            the teardown;
+    #   deadout  stdout is a pipe nobody reads (an ssh that dropped): every
+    #            print fails, and the teardown must still unload;
+    #   film     after a clean teardown, a slow "film" that a Ctrl+C must stop.
     driver = os.path.join(SCRATCH, "driver.py")
     with open(driver, "w", encoding="utf-8") as f:
         f.write(f"""
 import json, os, subprocess, sys, time
 sys.path.insert(0, {TOOLS!r})
 import demo_record_headless as R
-mode, marks = sys.argv[1], sys.argv[2]
+mode, marks, result = sys.argv[1], sys.argv[2], sys.argv[3]
 class A:
     out = "/nowhere.mp4"; keep = True; probe = True
 r = R.Run(A(), {SCRATCH!r})
@@ -434,22 +468,41 @@ r.ff = subprocess.Popen([sys.executable, "-c",
     "signal.signal(signal.SIGINT, slow)\\n"
     "time.sleep(60)\\n", marks], start_new_session=True)
 time.sleep(0.3)
+if mode == "deadout":
+    rd, wr = os.pipe()
+    os.close(rd)
+    sys.stdout = os.fdopen(wr, "w")
 sigs = R.Signals()
 sigs.arm()
 def body(r):
-    print("BODY", flush=True)
+    R.say("BODY")
     if mode == "first":
         time.sleep(30)
 R.guarded(sigs, body, r)
-print("DONE " + json.dumps(r.problems), flush=True)
+took = None
+if mode == "film":
+    def film(r):
+        R.say("FILM")
+        time.sleep(20)
+    t0 = time.monotonic()
+    R.interruptible(film, r, "making the film")
+    took = time.monotonic() - t0
+with open(result, "w") as f:
+    json.dump({{"problems": r.problems, "module": r.sink.module, "took": took}}, f)
+R.say("DONE")
 """)
 
-    def teardown_under_fire(mode):
+    def drive(mode, fire=(signal.SIGINT, signal.SIGTERM, signal.SIGHUP), during_film=False):
         marks = os.path.join(SCRATCH, f"marks-{mode}")
+        result = os.path.join(SCRATCH, f"result-{mode}.json")
         with_ours()
-        d = subprocess.Popen([sys.executable, driver, mode, marks], stdout=subprocess.PIPE, text=True,
-                             env=dict(os.environ, PATH=BIN + os.pathsep + os.environ["PATH"]))
-        first = d.stdout.readline().strip()
+        d = subprocess.Popen([sys.executable, driver, mode, marks, result], stdout=subprocess.PIPE,
+                             text=True, env=dict(os.environ, PATH=BIN + os.pathsep + os.environ["PATH"]))
+        if mode == "deadout":
+            d.stdout.close()                          # nobody will read it: an ssh that dropped
+            lines = []
+        else:
+            lines = [d.stdout.readline().strip()]
         if mode == "first":
             time.sleep(0.3)
             d.send_signal(signal.SIGINT)
@@ -457,35 +510,58 @@ print("DONE " + json.dumps(r.problems), flush=True)
             if os.path.exists(marks):
                 break
             time.sleep(0.1)
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        if during_film:
+            while True:
+                ln = d.stdout.readline()
+                if not ln or ln.strip() == "FILM":
+                    break
+            time.sleep(0.3)
+        for sig in fire:
             d.send_signal(sig)
             time.sleep(0.1)
         # The rest from the same buffered stream readline() used (communicate
         # with a timeout reads the raw pipe, and loses what readline read
         # ahead); a timer stands in for the timeout.
-        stop = threading.Timer(30, d.kill)
+        stop = threading.Timer(40, d.kill)
         stop.start()
-        lines = [first] + d.stdout.read().splitlines()
+        if mode != "deadout":
+            lines += d.stdout.read().splitlines()
         d.wait()
         stop.cancel()
-        done = [ln for ln in lines if ln.startswith("DONE ")]
-        return (first, os.path.exists(marks), d.returncode, len(done),
-                "unload-module 77" in changing(), json.loads(done[0][5:]) if done else None, lines)
+        got = json.load(open(result)) if os.path.exists(result) else None
+        return {"lines": lines, "rc": d.returncode, "reached": os.path.exists(marks), "got": got,
+                "unloaded": "unload-module 77" in changing()}
 
-    first, reached, rc, done, unloaded, got, _ = teardown_under_fire("first")
-    check("a first Ctrl+C stops the body", first, "BODY")
-    check("and the teardown reaches ffmpeg", reached, True)
+    x = drive("first")
+    check("a first Ctrl+C stops the body, and the teardown reaches ffmpeg",
+          (x["lines"][0], x["reached"]), ("BODY", True))
     check("a second INT, a TERM and a HUP do not stop it: it reaches the unload",
-          (rc, done, unloaded), (0, 1, True))
-    check("and only the first signal is recorded", [p for p in got or [] if "signal" in p],
+          (x["rc"], x["unloaded"], (x["got"] or {}).get("module", 77)), (0, True, None))
+    check("and only the first signal is recorded",
+          [p for p in (x["got"] or {}).get("problems", []) if "signal" in p],
           ["stopped by signal SIGINT"])
 
-    first, reached, rc, done, unloaded, got, lines = teardown_under_fire("clean")
-    check("a body that ends by itself: the teardown reaches ffmpeg", (first, reached), ("BODY", True))
-    check("INT, TERM and HUP during that teardown do not stop it: it reaches the unload",
-          (rc, done, unloaded), (0, 1, True))
+    x = drive("clean")
+    check("a body that ends by itself: INT, TERM and HUP during its teardown do not stop it",
+          (x["lines"][0], x["reached"], x["rc"], x["unloaded"]), ("BODY", True, 0, True))
     check("and it said, as the teardown began, that signals are ignored until it is done",
-          any("ignored until it is done" in ln for ln in lines), True)
+          any("ignored until it is done" in ln for ln in x["lines"]), True)
+
+    x = drive("deadout", fire=())
+    check("a dead stdout (every print fails): the teardown still runs and unloads the sink",
+          (x["rc"], x["reached"], x["unloaded"], (x["got"] or {}).get("module", 77)),
+          (0, True, True, None))
+    check("and nothing that failed to print is taken for a failed unload",
+          [p for p in (x["got"] or {}).get("problems", []) if "UNLOAD" in p or "LEFT" in p], [])
+
+    x = drive("film", fire=(signal.SIGINT,), during_film=True)
+    took = (x["got"] or {}).get("took")
+    check("after the teardown, Ctrl+C works again: it stops the film "
+          f"(took {took if took is None else round(took, 1)} s of 20)",
+          took is not None and took < 5, True)
+    check("and says what it stopped",
+          [p for p in (x["got"] or {}).get("problems", []) if "signal" in p],
+          ["stopped by signal SIGINT while making the film"])
 
     head("one recording at a time")
     lock = os.path.join(SCRATCH, "rec.lock")

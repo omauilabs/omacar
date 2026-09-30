@@ -87,7 +87,28 @@ STILLS = (("home", 30, "home-radio"), ("navigation", 20, "navigation"),
           ("drowsy", 12, "drowsy"), ("agent", 36, "agent-applied"),
           ("carplay", 16, "carplay-maps"))
 
-log = e2e.log
+
+def say(*a):
+    """print, to a terminal that may have gone. An ssh that drops takes the
+    recorder's stdout with it, and a print then raises (BrokenPipeError, EIO):
+    one of those in the teardown would skip the unload that follows it. So a
+    write that fails is dropped, and after the first, everything goes to
+    /dev/null. Every message here goes through this."""
+    try:
+        print(*a, flush=True)
+    except (OSError, ValueError):
+        # The descriptor itself onto /dev/null: what is still buffered, and
+        # anything started from here that inherits it, then write nowhere
+        # instead of failing again.
+        try:
+            null = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null, sys.stdout.fileno())
+            os.close(null)
+        except (OSError, ValueError):
+            try:
+                sys.stdout = open(os.devnull, "w")
+            except OSError:
+                pass
 
 
 class Refused(Exception):
@@ -181,8 +202,8 @@ class NullSink:
     def sinks(self):
         return json.loads(self.pactl("-f", "json", "list", "sinks"))
 
-    def inputs(self):
-        return json.loads(self.pactl("-f", "json", "list", "sink-inputs"))
+    def inputs(self, timeout=10):
+        return json.loads(self.pactl("-f", "json", "list", "sink-inputs", timeout=timeout))
 
     def state(self):
         """The default sink, and its volume and mute: read only."""
@@ -207,7 +228,7 @@ class NullSink:
                 if playing or listening:
                     raise Refused(f"{SINK} is in use ({len(playing)} stream(s) in, "
                                   f"{len(listening)} recording): another recording is running")
-                log(f"  a {SINK} left by an earlier run (module {s['owner_module']}): unloaded")
+                say(f"  a {SINK} left by an earlier run (module {s['owner_module']}): unloaded")
                 self.pactl("unload-module", str(s["owner_module"]))
         out = self.pactl("load-module", "module-null-sink", f"sink_name={SINK}",
                          f"sink_properties={SINK_PROPS}")
@@ -220,7 +241,7 @@ class NullSink:
         moved = self.moved()
         if moved:
             raise RuntimeError("loading the null sink moved " + "; ".join(moved))
-        log(f"  {SINK}: module {self.module}, sink #{self.index}; "
+        say(f"  {SINK}: module {self.module}, sink #{self.index}; "
             f"the default is still {self.was['default']}, {self.was['volume'].splitlines()[0].strip()}")
 
     def moved(self):
@@ -236,8 +257,9 @@ class NullSink:
         sink. A sink removed from under a stream sends it to the default sink,
         out loud; a null sink left loaded outputs nothing. So when something
         is left after `wait` seconds, the sink stays, and the problem says so,
-        with the command for later. When the streams cannot be listed and the
-        browser is gone, the unload is still tried."""
+        with the command for later. A listing that fails is tried again until
+        the deadline; if the last one failed too, and the browser is gone, the
+        unload is still tried, and that is said."""
         if self.module is None:
             return []
         problems = []
@@ -247,10 +269,11 @@ class NullSink:
             try:
                 streams, listed = self.on_sink(), None
             except Exception as e:                              # noqa: BLE001
-                streams, listed = [], e
-            if (not alive and not streams) or time.monotonic() >= end:
+                streams, listed = None, e                       # unknown: looked at again
+            if (not alive and streams == []) or time.monotonic() >= end:
                 break
             time.sleep(0.25)
+        streams = streams or []
         if alive or streams:
             what = [f"browser process {p}" for p, _ in alive] + \
                    [f"stream #{i['index']} ({i.get('properties', {}).get('application.name')})"
@@ -258,7 +281,7 @@ class NullSink:
             problems.append(f"{SINK} LEFT LOADED (module {self.module}): {'; '.join(what)} "
                             f"still there. It outputs nothing, so it is silent. Once they "
                             f"are gone: pactl unload-module {self.module}")
-            log(f"  !!! {problems[-1]}")
+            say(f"  !!! {problems[-1]}")
             return problems
         if listed is not None:
             problems.append(f"the streams on {SINK} could not be listed ({listed!r}); "
@@ -267,10 +290,11 @@ class NullSink:
             self.pactl("unload-module", str(self.module))
         except Exception as e:                                  # noqa: BLE001
             problems.append(f"UNLOAD FAILED: pactl unload-module {self.module} ({e!r})")
-            log(f"  !!! {problems[-1]}")
+            say(f"  !!! {problems[-1]}")
             return problems
-        log(f"  {SINK} unloaded (module {self.module})")
-        self.module = None
+        # The state first, then the words: nothing said can undo an unload.
+        module, self.module = self.module, None
+        say(f"  {SINK} unloaded (module {module})")
         try:
             if any(s["name"] == SINK for s in self.sinks()):
                 problems.append(f"{SINK} is still there after unloading")
@@ -329,8 +353,13 @@ def kill_browser(prof, browser=None, wait=5.0):
 # A stream that exists and is not linked to any sink yet: PipeWire-Pulse gives
 # its sink as SPA_ID_INVALID. It plays nowhere, and is looked at again.
 UNLINKED = (None, -1, 0xFFFFFFFF)
-# Looks in a row the guard may fail before it stops the run: blind is not safe.
+# BLIND IS NOT SAFE. The guard stops the run after BLIND failed looks in a
+# row, or at the first failed look more than BLIND_SECS after its last good
+# one; and a look that hangs is a failed look after GUARD_TIMEOUT seconds. So
+# it is never blind for more than about two seconds.
 BLIND = 3
+BLIND_SECS = 1.0
+GUARD_TIMEOUT = 2.0
 
 
 def serial(i):
@@ -364,17 +393,20 @@ class Guard(threading.Thread):
 
     def run(self):
         blind = 0
+        last_good = time.monotonic()
         try:
             while not self.stopping and not self.violation:
                 try:
                     self.look()
-                    blind = 0
+                    blind, last_good = 0, time.monotonic()
                 except Exception as e:                          # noqa: BLE001
                     blind += 1
                     self.errors += 1
-                    if blind >= BLIND:
-                        self.violation = (f"the guard could not see the streams {BLIND} times "
-                                          f"running ({e!r}), so the recording browser was stopped")
+                    dark = time.monotonic() - last_good
+                    if blind >= BLIND or dark > BLIND_SECS:
+                        self.violation = (f"the guard could not see the streams ({blind} failed "
+                                          f"look(s) in a row, {dark:.1f} s without a good one: "
+                                          f"{e!r}), so the recording browser was stopped")
                         self.cut(None)
                         break
                 time.sleep(0.1)
@@ -384,7 +416,7 @@ class Guard(threading.Thread):
             self.cut(None)
 
     def look(self):
-        for i in self.sink.inputs():
+        for i in self.sink.inputs(timeout=GUARD_TIMEOUT):
             if serial(i) in self.before:
                 continue
             props = i.get("properties", {})
@@ -549,6 +581,16 @@ def mux(frames, v0, v1, audio, a0, out, work):
     if offset < 0:
         raise RuntimeError(f"the sound started {-offset:.2f} s after the film does")
     tmp = out + ".part.mp4"
+    try:
+        _mux(lst, offset, audio, v1 - v0, tmp, work)
+        os.replace(tmp, out)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    return len(sel)
+
+
+def _mux(lst, offset, audio, secs, tmp, work):
     subprocess.run(
         ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
          "-f", "concat", "-safe", "0", "-i", lst,
@@ -557,10 +599,8 @@ def mux(frames, v0, v1, audio, a0, out, work):
          "-vf", f"fps={FPS},scale=out_range=tv,format=yuv420p",
          "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-g", str(FPS * 2), "-r", str(FPS),
          "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-         "-t", f"{v1 - v0:.3f}", "-movflags", "+faststart", tmp],
+         "-t", f"{secs:.3f}", "-movflags", "+faststart", tmp],
         check=True, timeout=1800, cwd=work)
-    os.replace(tmp, out)
-    return len(sel)
 
 
 VOL = re.compile(r"(mean|max)_volume: (-?[\d.]+|-inf) dB")
@@ -643,7 +683,7 @@ def take_down(r):
             if moved:
                 p.append("the default sink or its volume moved: " + "; ".join(moved))
             elif r.sink.was:
-                log(f"  the default sink, its volume and mute: as they were ({r.sink.was['default']})")
+                say(f"  the default sink, its volume and mute: as they were ({r.sink.was['default']})")
         except Exception as e:                                  # noqa: BLE001
             p.append(f"reading the default sink back: {e!r}")
     if r.sc:
@@ -685,10 +725,10 @@ def guarded(sigs, body, r):
         # FIRST, an attribute store and no call: see Signals.
         sigs.tearing = True
         sigs.quiet()
-        log("  taking everything down; Ctrl+C, TERM and HUP are ignored until it is done")
+        say("  taking everything down; Ctrl+C, TERM and HUP are ignored until it is done")
         take_down(r)
     if r.sink and r.sink.module is not None:
-        log(f"\n  !!! {SINK} IS STILL LOADED (module {r.sink.module}). It is silent. "
+        say(f"\n  !!! {SINK} IS STILL LOADED (module {r.sink.module}). It is silent. "
             f"When nothing plays into it: pactl unload-module {r.sink.module}\n")
 
 
@@ -701,7 +741,7 @@ def record(r):
         raise Refused("missing here: chromium")
     server = pulse_server()
     r.sink = NullSink(server)
-    log(f"\n  the sound goes to a null sink on {server}")
+    say(f"\n  the sound goes to a null sink on {server}")
     r.sink.load()
     existing = [serial(i) for i in r.sink.inputs()]
 
@@ -715,7 +755,7 @@ def record(r):
         r.report["on"] = said.strip().splitlines()
         if rc != 0 or not e2e.wait_page(url):
             raise Refused(f"demo on did not bring up {url} (exit {rc}):\n{said}")
-        log(f"  the demo, muted, in {r.sc.home}: {url}")
+        say(f"  the demo, muted, in {r.sc.home}: {url}")
 
     r.browser = e2e.Browser(exe, r.prof, SIZE, mute=False,
                             env={"PULSE_SERVER": server, "PULSE_SINK": SINK,
@@ -733,9 +773,9 @@ def record(r):
         r.steps = e2e.open_demo(r.cdp, url, SIZE, watch)
     streams = prove_route(r.cdp, r.guard)
     r.report["streams_proven"] = streams
-    log(f"  proven with silence: the browser's streams are on {SINK}, and nothing else of it:")
+    say(f"  proven with silence: the browser's streams are on {SINK}, and nothing else of it:")
     for st in streams:
-        log(f"    {st}")
+        say(f"    {st}")
     if a.probe:
         raise Proven()
 
@@ -749,7 +789,7 @@ def record(r):
     r.guard.check()
     if r.ff.poll() is not None:
         raise RuntimeError("ffmpeg stopped recording: " + r.ff.stderr.read().decode()[-400:])
-    log("  recording: the tour, from the top")
+    say("  recording: the tour, from the top")
     r.entries, tour_problems = e2e.follow_tour(r.cdp, r.steps, watch, out=None,
                                                check=r.guard.check)
     r.problems += tour_problems
@@ -765,6 +805,19 @@ def record(r):
         last = r.entries[-1]
         r.v1 = last[2] / 1000 + float(r.steps[last[0]]["secs"]) + TAIL
     r.a0 = float(probe_json(audio, "format=start_time").get("format", {}).get("start_time", "nan"))
+
+
+def interruptible(fn, r, what):
+    """fn(r), after the teardown, with INT, TERM and HUP working again: the
+    mux, volumedetect and the stills can be stopped as anything can. The first
+    one stops fn and is recorded; any after it are ignored while the run
+    tidies up."""
+    sigs = Signals()
+    sigs.arm()
+    try:
+        fn(r)
+    except Stop as e:
+        r.problems.append(f"stopped by signal {signal.Signals(e.args[0]).name} while {what}")
 
 
 def finish(r, stills_dir):
@@ -819,7 +872,7 @@ def main(argv=None):
         lock = open(lock_path(), "w")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as e:
-        log(f"demo_record_headless: another recording is running, or the lock "
+        say(f"demo_record_headless: another recording is running, or the lock "
             f"{lock_path()} cannot be taken ({e}); not starting")
         return 2
 
@@ -830,7 +883,7 @@ def main(argv=None):
     report, problems = r.report, r.problems
 
     if not a.probe and r.v0 is not None and r.frames and r.frames.list and not math.isnan(r.a0):
-        finish(r, stills_dir)
+        interruptible(lambda run: finish(run, stills_dir), r, "making the film")
     elif not a.probe and not problems:
         problems.append("nothing was recorded")
 
@@ -843,16 +896,16 @@ def main(argv=None):
         with open(os.path.join(stills_dir, "report.json"), "w", encoding="utf-8") as f:
             json.dump(report, f, indent=1)
     if "duration" in report:
-        log(f"\n  {a.out}\n  {report['duration']:.1f} s, {report['size'] / 1e6:.1f} MB, "
+        say(f"\n  {a.out}\n  {report['duration']:.1f} s, {report['size'] / 1e6:.1f} MB, "
             f"{report['frames_used']} frames at {report['capture_fps']} captured per second")
-        log(f"  volume: mean {report['volume'].get('mean')} dB, max {report['volume'].get('max')} dB")
+        say(f"  volume: mean {report['volume'].get('mean')} dB, max {report['volume'].get('max')} dB")
         for st in report["volume_by_step"]:
-            log(f"    step {st['step']:2d} {st['id']:<12} from {st['start']:6.1f} s"
+            say(f"    step {st['step']:2d} {st['id']:<12} from {st['start']:6.1f} s"
                 f"  mean {st.get('mean')} dB  max {st.get('max')} dB")
-        log(f"  stills and report.json in {stills_dir}")
+        say(f"  stills and report.json in {stills_dir}")
     for p in problems:
-        log(f"  FAIL  {p}")
-    log("\n  " + ("FAILED" if problems else "done") + "\n")
+        say(f"  FAIL  {p}")
+    say("\n  " + ("FAILED" if problems else "done") + "\n")
     return 1 if problems else 0
 
 

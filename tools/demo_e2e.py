@@ -84,7 +84,24 @@ FAULTY_WARNINGS = ("demo tour", "demo reset", "Omarchy Radio")
 
 
 def log(*a):
-    print(*a, flush=True)
+    """print, to a terminal that may have gone (an ssh that dropped): a write
+    that fails is dropped, and never stops what called it. After the first,
+    everything goes to /dev/null, so nothing waits on a dead terminal again."""
+    try:
+        print(*a, flush=True)
+    except (OSError, ValueError):
+        # The descriptor itself onto /dev/null: what is still buffered, and
+        # anything started from here that inherits it, then write nowhere
+        # instead of failing again.
+        try:
+            null = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(null, sys.stdout.fileno())
+            os.close(null)
+        except (OSError, ValueError):
+            try:
+                sys.stdout = open(os.devnull, "w")
+            except OSError:
+                pass
 
 
 # ============================================================ DevTools, threaded
