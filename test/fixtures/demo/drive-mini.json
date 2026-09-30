@@ -327,7 +327,5 @@
 "scenes":[
 {"t":180,"kind":"parked","secs":120}
 ],
-"events":[
-{"t":100,"kind":"hard_brake"}
-]
+"events":[]
 }

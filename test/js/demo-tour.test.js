@@ -94,7 +94,7 @@ export default [
       [170, "go", "#vehicle"], [185, "go", "#scan"],
       [200, "go", "#advisor"], [200, "cue", "park"], [208, "do", "agent.ask(night)"],
       [230, "do", "agent.apply"], [245, "do", "agent.ask(radio)"],
-      [260, "go", "#work"], [260, "cue", "drive"], [270, "do", "work.update"],
+      [260, "go", "#work"], [260, "cue", "drive"], [284, "do", "work.update"],
       [300, "go", "#carplay"], [312, "do", "projection.open(maps)"], [324, "do", "projection.open(nowplaying)"],
       [335, "go", "#androidauto"], [355, "do", "home.restore"],
       [365, "go", "#home"],
@@ -380,10 +380,12 @@ export default [
     click("Play backup video");
     ok(menu.isOpen(), "the video row stays open to say what to run");
     ok(host.textContent.includes(BACKUP_TEXT), "and says it");
-    eq(BACKUP_TEXT, "omacar demo video", "the command");
+    eq(BACKUP_TEXT, "omacar-demo video", "the command: the wrapper, not the tablet's own omacar");
+    ok(host.textContent.includes("Run omacar-demo video on the tablet."), "in a sentence");
     click("Exit demo");
     ok(host.textContent.includes(EXIT_TEXT), "how to leave");
-    eq(EXIT_TEXT, "Run omacar demo off, or press Super+W", "its words");
+    eq(EXIT_TEXT, "Run omacar-demo off, or press Super+W", "its words");
+    ok(!/omacar demo/.test(host.textContent), "and neither row names the tablet's own omacar");
     click("Restart the drive");
     eq(restarts, 1, "restart");
     eq(posted.length, 3, "restart is the restart function's, not a bare cue here");

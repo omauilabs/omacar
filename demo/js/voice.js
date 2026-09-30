@@ -28,8 +28,10 @@ export const DUCK_DB = 12;
 export const DOWN_SECS = 0.4;
 export const UP_SECS = 0.8;
 // Under full scale: the voice goes straight to the output, past the stage's
-// limiter, and Piper normalises its lines to peak near 0 dBFS.
-const VOICE_DB = -3;
+// limiter, and Piper normalises its lines to peak near 0 dBFS. -7 is the alert
+// player's Level 1 voice (alertplayer.js VOICE_DB), the quietest of its three:
+// a line here has no limiter to catch it, so it sits low.
+const VOICE_DB = -7;
 const BASE = "/demo-media/voice/";
 // Music at or below this (the alert player's duck, plus a little for rounding)
 // has already been made room for.

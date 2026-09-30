@@ -32,7 +32,9 @@ second, and holds for 120 s. That hold is the loop's `parked` scene.
 
 The rest is what the screens need from the same trip: `maneuvers` (every
 turn, with plain-English instructions), `streets` (which road it is on), the
-route simplified to 5 m for the map to draw, and the scripted hard brake.
+route simplified to 5 m for the map to draw, and `events`: none, unless
+--hard-brake-at asks for a scripted hard brake. The tour cues its own at the
+Cameras step, and the B key cues one.
 """
 
 import argparse
@@ -416,10 +418,15 @@ def simulate(line, limits, caps, stop_s, loop_secs):
 
 # ---- the drive -----------------------------------------------------------------
 
-def build(osrm, loop_secs=900):
-    """The drive.json document for one OSRM response."""
+def build(osrm, loop_secs=900, hard_brake_at=None):
+    """The drive.json document for one OSRM response. It has no scripted event
+    unless `hard_brake_at`, a second of the driving, asks for a hard brake."""
     if loop_secs < PARK_SECS + 60:
         raise ValueError(f"--loop-secs {loop_secs} leaves no time to drive")
+    if hard_brake_at is not None and not 0 < hard_brake_at < loop_secs - PARK_SECS:
+        raise ValueError(
+            f"--hard-brake-at {hard_brake_at} is not a second of the driving "
+            f"(1 to {loop_secs - PARK_SECS - 1})")
     route = osrm["routes"][0]
     coords = [(lat, lon) for lon, lat in route["geometry"]["coordinates"]]
     line = Line(coords)
@@ -499,7 +506,8 @@ def build(osrm, loop_secs=900):
         "maneuvers": maneuvers,
         "streets": streets,
         "scenes": [{"t": loop_secs - PARK_SECS, "kind": "parked", "secs": PARK_SECS}],
-        "events": [{"t": loop_secs // 3, "kind": "hard_brake"}],
+        "events": ([] if hard_brake_at is None
+                   else [{"t": hard_brake_at, "kind": "hard_brake"}]),
     }
 
 
@@ -566,11 +574,14 @@ def main(argv=None):
     ap.add_argument("--osrm", required=True, help="the OSRM route response")
     ap.add_argument("--out", required=True, help="where to write drive.json")
     ap.add_argument("--loop-secs", type=int, default=900)
+    ap.add_argument("--hard-brake-at", type=int, metavar="SECONDS",
+                    help="script one hard brake at this second of the loop "
+                         "(none by default: the tour and the B key cue their own)")
     args = ap.parse_args(argv)
     try:
         with open(args.osrm, encoding="utf-8") as f:
             osrm = json.load(f)
-        doc = build(osrm, args.loop_secs)
+        doc = build(osrm, args.loop_secs, args.hard_brake_at)
     except (OSError, ValueError, KeyError, IndexError) as e:
         print(f"demo_route: {args.osrm}: {e}", file=sys.stderr)
         return 2

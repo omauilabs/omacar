@@ -86,6 +86,9 @@ with open(os.path.join(FIXTURES, "drive-mini.json"), encoding="utf-8") as f:
 
 LOOP = MINI["loop_secs"]
 DRIVING = LOOP - 120
+# The mini drive scripts no hard brake, as the real one does not. The tests of
+# the scripted event build it in, so they still run.
+SCRIPTED = dict(MINI, events=[{"t": 100, "kind": "hard_brake"}])
 MS = 1 / 3.6
 
 # ---- the drive builder --------------------------------------------------------
@@ -122,8 +125,12 @@ ok("the last 120 s are parked: stopped, and not moving an inch",
    and len({(p[1], p[2]) for p in tail}) == 1)
 ok("the hold is declared as a scene",
    built["scenes"] == [{"t": DRIVING, "kind": "parked", "secs": 120}])
-ok("one scripted hard brake, a third of the way through the loop",
-   built["events"] == [{"t": 100, "kind": "hard_brake"}])
+ok("no scripted hard brake by default: the tour cues its own, and so does B",
+   built["events"] == [])
+scripted = demo_route.build(OSRM, loop_secs=300, hard_brake_at=100)
+ok("hard_brake_at puts one back, at the second it is given, and changes nothing else",
+   scripted["events"] == [{"t": 100, "kind": "hard_brake"}]
+   and dict(scripted, events=[]) == built)
 ok("it leaves from rest, and route_m never goes backwards",
    pts[0][3] == 0 and pts[0][5] == 0
    and all(b[5] >= a[5] for a, b in zip(pts, pts[1:])))
@@ -425,6 +432,24 @@ cli = subprocess.run(
 ok("the command line writes the same drive", cli.returncode == 0
    and json.load(open(out, encoding="utf-8")) == MINI)
 ok("and says what it made", "max speed" in cli.stdout)
+scripted_out = os.path.join(TMP, "drive-scripted.json")
+cli = subprocess.run(
+    [sys.executable, os.path.join(ROOT, "tools", "demo_route.py"),
+     "--osrm", os.path.join(FIXTURES, "osrm-mini.json"), "--out", scripted_out,
+     "--loop-secs", "300", "--hard-brake-at", "100"], capture_output=True, text=True)
+ok("--hard-brake-at 100 writes the drive with its one scripted hard brake",
+   cli.returncode == 0
+   and json.load(open(scripted_out, encoding="utf-8")) == SCRIPTED)
+for wrong_at in ("0", "180", "-5"):
+    cli = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "tools", "demo_route.py"),
+         "--osrm", os.path.join(FIXTURES, "osrm-mini.json"),
+         "--out", os.path.join(TMP, "drive-wrong.json"),
+         "--loop-secs", "300", "--hard-brake-at", wrong_at],
+        capture_output=True, text=True)
+    ok(f"--hard-brake-at {wrong_at} is outside the driving, so an error and no file",
+       cli.returncode == 2 and "hard-brake-at" in cli.stderr
+       and not os.path.exists(os.path.join(TMP, "drive-wrong.json")))
 bad = subprocess.run(
     [sys.executable, os.path.join(ROOT, "tools", "demo_route.py"),
      "--osrm", os.path.join(TMP, "nope.json"), "--out", out],
@@ -624,7 +649,8 @@ def loop_t(p):
 # car is on the second road and not in the middle of a stop.
 STOP_END = stop_i + 26
 CRUISE = float(STOP_END + 15)
-# The same drive without its scripted hard brake, for the tests of the cues.
+# The same drive without a scripted hard brake, said outright, for the tests of
+# the cues: they hold if the mini drive ever scripts one.
 QUIET = dict(MINI, events=[])
 
 # Pacing.
@@ -865,7 +891,7 @@ ok("a car that has not caught the drive in RECOVER_LIMIT seconds is put back on 
        demoworld.state_at(QUIET, loop_t(p), {"now": NOW}))) < 0.2)
 
 # The scripted event is the same thing, at its own time.
-w, c = make()
+w, c = make(SCRIPTED)
 w.step()
 first_flag = None
 dip = None
@@ -880,7 +906,7 @@ for _ in range(int(130 / 0.2)):
 ok("the scripted hard brake fires at t=100, with nobody's cue",
    first_flag is not None and 99.5 <= first_flag <= 101.0)
 ok("and does what the cue does", dip is not None)
-w, c = make()
+w, c = make(SCRIPTED)
 w.step()
 fired = 0
 was = False
@@ -911,7 +937,7 @@ AT_REST = {"at 1.5 s, before it has pulled away": 1.5,
            "in the closing hold": 200.0}
 for where, when in AT_REST.items():
     for cue_name in ("park", "hard_brake"):
-        w, c, p = at_loop_time(MINI, when)
+        w, c, p = at_loop_time(SCRIPTED, when)
         t_cued, wall_cued = loop_t(p), c.wall()
         w.cue(cue_name)
         trail = go(w, c, 30.0, dt=0.2, keep=True)
