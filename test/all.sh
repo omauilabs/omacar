@@ -203,6 +203,11 @@ python3 "$ROOT/test/demotidy_test.py" || fails=$((fails + 1))
 # (`omacar demo video` is in workshop_test.py; tools/demo_e2e.py is a tool, run
 # by hand: a tour is six minutes of real time per size.)
 python3 "$ROOT/test/demo_record_test.py" || fails=$((fails + 1))
+# tools/demo_record_headless.py's safety logic (the box's one unmuted browser)
+# against a stand-in pactl: the guard on the browser's streams, the null sink
+# never taken from under a stream, and one recording at a time. No sound
+# server, browser or sink is touched.
+python3 "$ROOT/test/demo_record_headless_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 9 --------------------------------------------------
 
 exit $((fails > 0))

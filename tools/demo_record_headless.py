@@ -32,6 +32,7 @@ the sound is a PipeWire null sink's monitor:
 
 import argparse
 import base64
+import fcntl
 import json
 import math
 import os
@@ -119,9 +120,19 @@ class NullSink:
     def load(self):
         self.was = self.state()
         # A sink of this name left by a run that was killed outright: only
-        # this tool makes one, so its module is this tool's to unload.
+        # this tool makes one, so its module is this tool's to unload. BUT
+        # ONLY IF NOTHING IS USING IT. A sink unloaded from under a playing
+        # stream sends that stream to the default sink, out loud.
         for s in self.sinks():
             if s["name"] == SINK:
+                playing = [i for i in self.inputs() if i.get("sink") == s["index"]]
+                monitor = {m["index"] for m in json.loads(self.pactl("-f", "json", "list", "sources"))
+                           if m.get("name") == s.get("monitor_source")}
+                listening = [o for o in json.loads(self.pactl("-f", "json", "list", "source-outputs"))
+                             if o.get("source") in monitor]
+                if playing or listening:
+                    raise Refused(f"{SINK} is in use ({len(playing)} stream(s) in, "
+                                  f"{len(listening)} recording): another recording is running")
                 log(f"  a {SINK} left by an earlier run (module {s['owner_module']}): unloaded")
                 self.pactl("unload-module", str(s["owner_module"]))
         out = self.pactl("load-module", "module-null-sink", f"sink_name={SINK}")
@@ -212,10 +223,17 @@ def kill_browser(prof, browser=None, wait=5.0):
         time.sleep(0.1)
 
 
+# A stream that exists and is not linked to any sink yet: PipeWire-Pulse gives
+# its sink as SPA_ID_INVALID. It plays nowhere, and is looked at again.
+UNLINKED = (None, -1, 0xFFFFFFFF)
+
+
 class Guard(threading.Thread):
-    """Every tenth of a second: each stream of this browser's must be on the
-    null sink. One that is not is cut, and the browser killed. A new Chromium
-    stream that cannot be traced to a process counts as this browser's."""
+    """Every tenth of a second: each stream of this browser's that is linked
+    to a sink must be linked to the null sink. One that is linked anywhere else
+    is cut, and the browser killed. `ours` holds the streams seen on the null
+    sink. A new Chromium stream that cannot be traced to a process counts as
+    this browser's."""
 
     def __init__(self, sink, root, prof, before):
         super().__init__(daemon=True)
@@ -236,10 +254,11 @@ class Guard(threading.Thread):
                     name = str(props.get("application.name", ""))
                     mine = descends(int(pid), self.root) if str(pid or "").isdigit() else \
                         "chrom" in name.lower()
-                    if not mine:
+                    if not mine or i.get("sink") in UNLINKED:
                         continue
-                    self.ours.add(i["index"])
-                    if i.get("sink") != self.sink.index:
+                    if i.get("sink") == self.sink.index:
+                        self.ours.add(i["index"])
+                    else:
                         self.violation = (f"stream #{i['index']} of the recording browser "
                                           f"({name}, pid {pid}) went to sink #{i.get('sink')}, "
                                           f"not {SINK} (#{self.sink.index})")
@@ -279,8 +298,8 @@ SILENCE_JS = """(async () => {
 
 
 def prove_route(cdp, guard, timeout=12):
-    """A silent AudioContext in the page, which must show up on the null sink
-    and nowhere else, before anything in the tour can play."""
+    """A silent AudioContext in the page, which must show up linked to the
+    null sink and to nothing else, before anything in the tour can play."""
     state = cdp.value(SILENCE_JS, wait=True, timeout=15)
     end = time.monotonic() + timeout
     while time.monotonic() < end and not guard.ours and not guard.violation:
@@ -417,6 +436,15 @@ def main(argv=None):
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda n, _: sys.exit(128 + n))
 
+    # ONE RECORDING AT A TIME. A second would find the first's sink and take
+    # it for a leftover.
+    lock = open(os.path.join(tempfile.gettempdir(), f"omacar-demo-rec-{os.getuid()}.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("demo_record_headless: another recording is running (the lock is held); not starting")
+        return 2
+
     stamp = time.strftime("%Y%m%d-%H%M%S")
     work = tempfile.mkdtemp(prefix="omacar-demo-rec-", dir=a.work)
     stills_dir = a.stills or os.path.join(a.work, f"omacar-demo-backup-stills-{stamp}")
@@ -483,8 +511,6 @@ def main(argv=None):
         time.sleep(TAIL + 0.5)
         cdp.call("Page.stopScreencast")
         stop_proc(ff)
-        if guard.violation:
-            problems.append(guard.violation)
         report["console"] = {"errors": watch.errors, "failed": watch.failed,
                              "warnings": watch.warnings}
         problems += [f"{w}: {e}" for w, e in watch.errors + watch.failed]
@@ -500,6 +526,10 @@ def main(argv=None):
     except (OSError, RuntimeError, TimeoutError, ValueError, KeyError,
             subprocess.CalledProcessError) as e:
         problems.append(f"stopped: {e!r}")
+        if browser:
+            said = e2e.js_test.tail(browser.log, 8)
+            if said:
+                problems.append("Chromium said: " + " | ".join(said))
     finally:
         # THE ORDER MATTERS, and nothing may skip the last step. The browser,
         # every process of it, then the sound's recorder (on the sink's
@@ -523,6 +553,8 @@ def main(argv=None):
             finally:
                 if guard:
                     guard.stop()
+                    if guard.violation and guard.violation not in problems:
+                        problems.append(guard.violation)
                 if sink:
                     try:
                         problems += sink.unload()
