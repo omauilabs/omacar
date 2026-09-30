@@ -245,7 +245,10 @@ export function createTour(deps = {}) {
 //   createReset({ fade, radio, cue, resetWork, restoreHome, later, cancel }) -> () => Promise
 //
 // `fade` (quiet.js fadeOut) takes the music down to silence first, so it never
-// cuts in one step (hardening B).
+// cuts in one step (hardening B), for RESET_FADE_MS at most: the fade takes
+// 1.2 s, and a restart is never held by the music.
+
+export const RESET_FADE_MS = 2000;
 
 export function createReset({ fade, radio, cue, resetWork, restoreHome,
                               later = (fn, ms) => setTimeout(fn, ms), cancel = (id) => clearTimeout(id) } = {}) {
@@ -253,7 +256,13 @@ export function createReset({ fade, radio, cue, resetWork, restoreHome,
     try { return fn(); } catch (e) { console.warn(`demo reset: ${what}:`, e); return undefined; }
   };
   return async function reset() {
-    await Promise.resolve(step("the music", () => fade && fade())).catch((e) => console.warn("demo reset: the music:", e));
+    if (fade) {
+      let cap = null;
+      const capped = new Promise((done) => { cap = later(done, RESET_FADE_MS); });
+      const faded = Promise.resolve(step("the music", () => fade())).catch((e) => console.warn("demo reset: the music:", e));
+      await Promise.race([faded, capped]);
+      cancel(cap);
+    }
     step("the radio", () => radio && radio.pause());
     Promise.resolve(step("the restart cue", () => cue && cue("restart"))).catch(() => {});
     step("Work", () => resetWork && resetWork());

@@ -3,11 +3,12 @@
 // before the tour's reset starts the drive over.
 //
 // `demo off` POSTs the `quiet` cue, and the world says so in live.json for
-// 10 s as `demo.quiet_at` (the cue's own epoch). On seeing a FRESH one --
-// newer than this page, and not yet acted on -- the page fades the music bus
-// to silence and pauses the radio. One from before the page loaded is somebody
-// else's (a reload just after an exit), and the world saying the same one for
-// 10 s is still one quiet.
+// 10 s as `demo.quiet_at` (the cue's own epoch). On seeing a NEW one, the page
+// fades the music bus to silence and pauses the radio. The world saying the
+// same one for 10 s is still one quiet. Only a quiet_at in the FIRST sample
+// the page sees is held against the page's load time: at or before it, it is
+// somebody else's (a reload just after an exit). After that the wall clock
+// plays no part, so a clock that steps back cannot disable the fade.
 //
 // THE FADE KEEPS THE STAGE'S RULE: no 100 ms moves the music more than 3 dB
 // (ramps.js). It takes at least FADE_MS, and a span too big for that is
@@ -21,6 +22,7 @@
 //   createQuiet({ radio, stage, later, loadedAt }) -> { fadeOut(ms), feed(demo) }
 //   register(D, deps)        follows the store's samples (and /api/live when it has none)
 //   fadeOut(ms)              the page's own, for the tour's reset (tour.js createReset)
+//   quietsBegun()            how many fades have begun on the page, for voice.js
 
 import { store, api } from "../../js/core.js";
 import { audioContext, schedule, levelAt, MUSIC_DB } from "../../js/audiobus.js";
@@ -40,8 +42,14 @@ export const RETRIES = 3;
 // ask /api/live ourselves, this often. `demo off` waits only a moment.
 export const POLL_STALE_SECS = 0.6;
 export const POLL_EVERY_MS = 250;
-// When this page began, in the world's clock (epoch seconds, the same machine).
+// When this page began (epoch seconds, the world's machine's clock), held only
+// against a quiet_at in the page's first sample.
 export const LOADED_AT = Date.now() / 1000;
+
+// Fades begun on the page. A line voice.js ducked for, ending while one it did
+// not see begin is under way or done, leaves the music to it (voice.js).
+let begun = 0;
+export function quietsBegun() { return begun; }
 
 // The page's own music bus.
 const liveStage = {
@@ -54,7 +62,8 @@ const liveStage = {
 export function createQuiet({
   radio = null, stage = liveStage, loadedAt = LOADED_AT, later = (fn, ms) => setTimeout(fn, ms),
 } = {}) {
-  let handled = loadedAt;
+  let seen = false;        // the page's first sample has been seen
+  let last = null;         // the last quiet_at seen
   let fading = null;
   const theRadio = () => radio || getRadio();
 
@@ -73,43 +82,53 @@ export function createQuiet({
     if (fading) return fading;
     const r = theRadio();
     if (!r || !r.playing) return Promise.resolve(false);   // nothing sounding: nothing to fade
-    fading = new Promise((done) => {
-      let tries = 0;
-      const finish = (moved = true) => {
-        try { r.pause(); } catch (e) { console.warn("demo quiet: the radio:", e); }
-        // The bus back to its level under the paused radio, for the next play.
-        if (moved) {
-          try { glide(MUSIC_DB, ms / 1000); } catch (e) { console.warn("demo quiet: the music bus:", e); }
-        }
-        fading = null;
-        done(true);
-      };
-      // A context that is not running (still waiting for its tap) is silent,
-      // and its clock stands still, so a fade on it would never arrive.
-      let still = false;
-      try { still = !!stage.running && !stage.running(); } catch { still = false; }
-      if (still) { finish(false); return; }
-      const down = () => {
-        let end;
-        try {
-          const lvl = stage.levelAt("music", stage.now() + LEAD_SECS);
-          if (!(lvl > SILENCE_DB + 0.01) || tries++ >= RETRIES) { finish(); return; }
-          end = glide(SILENCE_DB, ms / 1000);
-        } catch (e) { console.warn("demo quiet: the fade:", e); end = null; }
-        // A stage that would not move the bus: the pause is the only fade left.
-        if (end === null) { finish(); return; }
-        later(down, Math.max(0, end - stage.now()) * 1000 + TAIL_MS);
-      };
-      down();
-    });
-    return fading;
+    // THE PROMISE IS KEPT BEFORE ANYTHING RUNS (fix round 1). A fade can
+    // settle at once (a stage not running, a bus already silent); settled
+    // inside its own constructor, it was then stored as `fading` for good, and
+    // every later quiet returned it and did nothing. It is cleared where it
+    // settles, and only if it is still the one in hand.
+    let done = null;
+    const p = new Promise((d) => { done = d; });
+    fading = p;
+    let tries = 0;
+    const finish = (moved = true) => {
+      try { r.pause(); } catch (e) { console.warn("demo quiet: the radio:", e); }
+      // The bus back to its level under the paused radio, for the next play.
+      if (moved) {
+        try { glide(MUSIC_DB, ms / 1000); } catch (e) { console.warn("demo quiet: the music bus:", e); }
+      }
+      if (fading === p) fading = null;
+      done(true);
+    };
+    const down = () => {
+      let end;
+      try {
+        const lvl = stage.levelAt("music", stage.now() + LEAD_SECS);
+        if (!(lvl > SILENCE_DB + 0.01) || tries++ >= RETRIES) { finish(); return; }
+        end = glide(SILENCE_DB, ms / 1000);
+      } catch (e) { console.warn("demo quiet: the fade:", e); end = null; }
+      // A stage that would not move the bus: the pause is the only fade left.
+      if (end === null) { finish(); return; }
+      later(down, Math.max(0, end - stage.now()) * 1000 + TAIL_MS);
+    };
+    // A context that is not running (still waiting for its tap) is silent,
+    // and its clock stands still, so a fade on it would never arrive.
+    let still = false;
+    try { still = !!stage.running && !stage.running(); } catch { still = false; }
+    if (still) finish(false);
+    else { begun++; down(); }
+    return p;
   }
 
   // One sample of the demo world (live.json's `demo`). True if it asked for quiet.
   function feed(demo) {
-    const q = demo && typeof demo === "object" ? demo.quiet_at : null;
-    if (typeof q !== "number" || !Number.isFinite(q) || q <= handled) return false;
-    handled = q;
+    if (!demo || typeof demo !== "object") return false;
+    const q = typeof demo.quiet_at === "number" && Number.isFinite(demo.quiet_at) ? demo.quiet_at : null;
+    const first = !seen;
+    seen = true;
+    if (q === null || q === last) return false;
+    last = q;
+    if (first && q <= loadedAt) return false;
     Promise.resolve(fadeOut()).catch((e) => console.warn("demo quiet:", e));
     return true;
   }

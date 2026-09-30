@@ -25,10 +25,14 @@
 // over both is caught with them rather than added after the limiter.
 //
 //   line -> its gain (VOICE_DB) -> voiceIn() -> limiter -> out
+//
+// A QUIET FADE (quiet.js) begun while a line holds its duck has the music from
+// then on: the line leaves the bus alone when it ends.
 
 import { audioContext, schedule, levelAt, dbToGain, voiceIn, MUSIC_DB } from "../../js/audiobus.js";
 import { glidePlan } from "../../js/ramps.js";
 import { DUCK_DB as ALERT_DUCK_DB } from "../../js/alertplayer.js";
+import { quietsBegun } from "./quiet.js";
 
 export const DUCK_DB = 12;
 export const DOWN_SECS = 0.4;
@@ -119,7 +123,9 @@ export async function say(id) {
   // bringing the music back; and however this one ends -- played, cut short,
   // or failing to build or start at all -- the finally brings it back, unless
   // a newer line has taken it on by then.
-  const me = { base, ducked, cutAt: null, cut: () => {} };
+  // `quiets`: the quiet fades begun on the page when the duck began (quiet.js).
+  const quiets = prev ? prev.quiets : quietsBegun();
+  const me = { base, ducked, quiets, cutAt: null, cut: () => {} };
   speaking = me;
   if (prev) prev.cut();
   if (ducked) voiceIO.schedule("music", glidePlan(from, low, DOWN_SECS).points, now);
@@ -129,7 +135,11 @@ export async function say(id) {
   finally {
     if (speaking === me) {
       speaking = null;
-      if (ducked) {
+      // A QUIET FADE BEGUN SINCE THE DUCK HAS THE MUSIC NOW (fix round 1): it
+      // takes the bus down to silence, pauses the radio and gives the bus back
+      // itself. A glide up from the duck in the middle of that fade was a step
+      // up, and a second fade after it.
+      if (ducked && quietsBegun() === quiets) {
         // A line that played out finds the music at the bottom of its duck. One
         // that stop() cut inside the duck's first 0.4 s finds it halfway down,
         // and the music comes back from there, not from a level it never reached.
