@@ -100,12 +100,12 @@ def free_port():
         return s.getsockname()[1]
 
 
-def run(work, private, kiosk=True, port=None):
+def run(work, private, kiosk=True, port=None, extra=None):
     bindir = os.path.join(work, "bin")
     shim(bindir, kiosk)
     env = {"PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
            "HOME": os.path.join(work, "home"), "LANG": "C.UTF-8",
-           "OMACAR_DEMO_PORT": str(port or free_port())}
+           "OMACAR_DEMO_PORT": str(port or free_port()), **(extra or {})}
     r = subprocess.run([sys.executable, TOOL, "--private", private],
                        capture_output=True, text=True, env=env, timeout=60)
     lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
@@ -187,6 +187,16 @@ def main():
         check("clips missing: named, and not ready: clips",
               any("stock/owner clips missing: rear, cabin-drowsy" in ln for ln in lines)
               and lines[-1] == "not ready: clips", r.stdout)
+        # The launcher's OMACAR_DEMO_CLIPS (another folder of footage) is where
+        # the camera feed reads, so it is where the check looks.
+        other = os.path.join(work, "clips")
+        os.makedirs(other)
+        for role in ("front", "rear", "cabin", "cabin-drowsy"):
+            with open(os.path.join(other, role + ".mp4"), "wb") as f:
+                f.write(b"\0" * 64)
+        r, lines = run(work, private, extra={"OMACAR_DEMO_CLIPS": other})
+        check("clips in OMACAR_DEMO_CLIPS, as the camera feed is given: ready",
+              lines[-1] == "ready" and any(other in ln for ln in lines), r.stdout)
         for role in ("rear", "cabin-drowsy"):
             with open(os.path.join(private, "demo", "clips", role + ".mp4"), "wb") as f:
                 f.write(b"\0" * 64)
@@ -244,7 +254,8 @@ def main():
         os.rmdir(active)
         after = listing(work)
         ignore = lambda d: {k: v for k, v in d.items()
-                            if not k.startswith(("bin" + os.sep, "private" + os.sep, "private2" + os.sep))
+                            if not k.startswith(("bin" + os.sep, "private" + os.sep, "private2" + os.sep,
+                                                     "clips" + os.sep))
                             and k != os.path.join("home", ".config", "omarchy", "omacar-audio.json")}
         check("it wrote nothing in HOME", ignore(after) == ignore(before),
               str(set(ignore(after)) ^ set(ignore(before))))

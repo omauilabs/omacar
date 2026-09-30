@@ -11,7 +11,8 @@ stopped, and nothing is played.
                  pins, as the station's playlist.json names them
     drive, map   demo/drive.json and demo/map.json, whole
     voice        a wav for every line in demo/data/voice.json
-    clips        the cameras' footage: front, rear, cabin and cabin-drowsy
+    clips        the cameras' footage: front, rear, cabin and cabin-drowsy, in
+                 demo/clips or where OMACAR_DEMO_CLIPS says, as the camera feed reads
     logo         omacar-logo.png, the top bar's
     car picture  demo/crz-home.png, Home's (tools/demo_carpic.py makes it)
     volume pin   the LIVE app's `omacar audio on` is off: while it is on, the
@@ -115,13 +116,15 @@ def voice(private):
 
 
 def clips(private):
-    here = os.path.join(private, "demo", "clips")
+    # Where the camera feed reads them: bin/omacar passes OMACAR_DEMO_CLIPS to
+    # `cams.py demo --from` when it is set, and the private tree's otherwise.
+    here = os.environ.get("OMACAR_DEMO_CLIPS") or os.path.join(private, "demo", "clips")
     missing = [r for r in CLIP_ROLES
                if not (os.path.isfile(os.path.join(here, r + ".mp4"))
                        and os.path.getsize(os.path.join(here, r + ".mp4")) > 0)]
     if missing:
-        return False, "stock/owner clips missing: " + ", ".join(missing)
-    return True, ", ".join(CLIP_ROLES)
+        return False, "stock/owner clips missing: " + ", ".join(missing) + f" (in {here})"
+    return True, ", ".join(CLIP_ROLES) + f" (in {here})"
 
 
 def picture(private, rel, note=""):
