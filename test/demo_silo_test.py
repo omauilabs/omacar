@@ -14,6 +14,8 @@ real state:
   the guard is the demo's watchdog: a server, world or camera feed that dies
     is started again, as `demo on` started it, through `demo mend`, with a
     backoff, and never while the real car moves or once the demo is off;
+  `demo off` asks the demo's own server for quiet and gives the music its
+    fade before it closes the window;
   `demo off` stops only the demo's own processes, found by what they are and
     never by a pid alone or a port;
   another checkout's running demo is neither stopped nor forgotten from here,
@@ -1030,6 +1032,114 @@ try:
             d.kill()
             d.wait()
     DECOYS.clear()
+
+    head("demo off asks the page for quiet before it closes the window, and gives it 2.5 s")
+    # A demo server that writes down every POST and its time (and answers 400,
+    # as the real one does to a cue it does not take), from a checkout of its
+    # own, run as the demo runs its server; and a window that writes down when
+    # it was told to go.
+    QUIET = os.path.join(SCRATCH, "quiet checkout")
+    os.makedirs(os.path.join(QUIET, "lib"))
+    POSTS = os.path.join(SCRATCH, "quiet-posts.log")
+    TERMS = os.path.join(SCRATCH, "quiet-window.log")
+    with open(os.path.join(QUIET, "lib", "serve.py"), "w", encoding="utf-8") as f:
+        f.write("""import http.server, json, os, sys, time
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        self.send_response(200); self.send_header("Content-Length", "13"); self.end_headers()
+        self.wfile.write(b"omacar-server")
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        with open(os.environ["POSTS"], "a") as f:
+            f.write(json.dumps({"t": time.time(), "path": self.path, "body": body}) + "\\n")
+        if os.environ.get("HANG"):
+            time.sleep(5)
+        out = b'{"error": "not that cue"}'
+        self.send_response(400); self.send_header("Content-Length", str(len(out)))
+        self.end_headers(); self.wfile.write(out)
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+""")
+    WINDOW_REC = os.path.join(SCRATCH, "window-rec.py")
+    with open(WINDOW_REC, "w", encoding="utf-8") as f:
+        f.write(f"""import signal, sys, time
+def term(*_):
+    with open({TERMS!r}, "a") as f:
+        f.write(str(time.time()) + "\\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, term)
+time.sleep(600)
+""")
+
+    def quiet_run(server_env=None, in_pid_file=True):
+        """demo off over the recording server and window; what each wrote down."""
+        for p in (POSTS, TERMS):
+            if os.path.exists(p):
+                os.remove(p)
+        srv = spawn_decoy(PY, os.path.join(QUIET, "lib", "serve.py"), str(PORT),
+                          os.path.join(QUIET, "share"), "--demo", os.path.join(QUIET, "demo"),
+                          env=server_env)
+        win = spawn_decoy(PY, WINDOW_REC, f"--user-data-dir={DEMO_ROOT}/browser")
+        DECOYS.extend([srv, win])
+        if in_pid_file:
+            with open(os.path.join(DEMO_ROOT, "pids", "server.pid"), "w") as f:
+                f.write(str(srv.pid))
+        with open(ACTIVE, "w", encoding="utf-8"):
+            pass
+        for _ in range(100):
+            if listening(PORT):
+                break
+            time.sleep(0.1)
+        time.sleep(0.3)
+        rc, out = omacar("demo", "off")
+        try:
+            with open(POSTS, encoding="utf-8") as f:
+                posts = [json.loads(ln) for ln in f if ln.strip()]
+        except OSError:
+            posts = []
+        try:
+            with open(TERMS, encoding="utf-8") as f:
+                terms = [float(ln) for ln in f if ln.strip()]
+        except OSError:
+            terms = []
+        return rc, out, srv, win, posts, terms
+
+    def ended(proc):
+        try:
+            return proc.wait(timeout=10) is not None
+        except subprocess.TimeoutExpired:
+            return False
+
+    rc, out, srv, win, posts, terms = quiet_run(dict(DEMO_STATE_ENV, POSTS=POSTS))
+    check("demo off sends the demo's server one quiet cue",
+          [(p["path"], json.loads(p["body"] or "null")) for p in posts],
+          [("/api/demo/cue", {"cue": "quiet"})])
+    gap = round(terms[0] - posts[0]["t"], 2) if posts and terms else None
+    # 2.5 s, pinned from both sides: the page starts its fade 0.30-0.45 s after
+    # the ask and pauses the radio 1.4-1.7 s after it (measured), so less cuts
+    # the music, and more only keeps a closing demo on the screen.
+    check(f"and closes the window 2.5 s after it was answered, not sooner and not much "
+          f"later (took {gap} s)", gap is not None and 2.5 <= gap < 3.3, True)
+    check("then stops the rest as ever",
+          (rc, ended(win), ended(srv)), (0, True, True))
+
+    rc, out, srv, win, posts, terms = quiet_run(dict(DEMO_STATE_ENV, POSTS=POSTS, HANG="1"))
+    gap = round(terms[0] - posts[0]["t"], 2) if posts and terms else None
+    check(f"a server that does not answer within 1 s: it asks, and goes on at once "
+          f"(window closed {gap} s after asking)", gap is not None and gap < 2.0, True)
+    check("and still stops everything", (rc, ended(win), ended(srv)), (0, True, True))
+
+    rc, out, srv, win, posts, terms = quiet_run(dict(ENV, POSTS=POSTS), in_pid_file=False)
+    check("a server on the port that is not the demo's is asked nothing, and left running",
+          (rc, posts, ended(win), srv.poll()), (0, [], True, None))
+    for d in DECOYS:
+        if d.poll() is None:
+            d.kill()
+            d.wait()
+    DECOYS.clear()
+    for n in os.listdir(os.path.join(DEMO_ROOT, "pids")):
+        os.remove(os.path.join(DEMO_ROOT, "pids", n))
 
     head("demo cache writes the demo's own panel rollup, never the real one")
     BEFORE = outside_demo()

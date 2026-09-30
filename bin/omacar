@@ -816,9 +816,9 @@ demo_off() {
   rm -f "$DEMO_ROOT/ACTIVE"
   # Then the guard, which runs `demo off` itself when ACTIVE goes; stopped
   # here straight away, it rarely gets the chance to run a second one.
-  # Then the window, so the page is not left asking a server that has gone:
-  # each pid pgrep found is checked again, by its exact profile argument,
-  # before it is signalled. Then the rest.
+  # Then quiet from the page, and the window, so the page is not left asking
+  # a server that has gone: each pid pgrep found is checked again, by its
+  # exact profile argument, before it is signalled. Then the rest.
   h=$(demo_holder guard)
   case "$h" in
     "ours "*) pid=${h#ours }; root="" ;;
@@ -832,6 +832,22 @@ demo_off() {
     [[ -z "$root" ]] || from+=("$root")
   fi
   if [[ "$(demo_holder guard)" == none ]]; then rm -f "$DEMO_PIDS/guard.pid"; fi
+  # THE MUSIC FADES, IT DOES NOT CUT. The page is asked for quiet (the `quiet`
+  # cue), and given 2.5 s before its window goes: measured, it starts to fade
+  # 0.30-0.45 s after the ask, takes up to 1.2 s, and pauses the radio 1.4-1.7 s
+  # after the ask. Asked of the demo's own server only, found by what it is,
+  # never of whatever holds the port; and only waited for when it answered at
+  # all: a server that is gone, or says nothing within 1 s, is not waited on.
+  local code="" quiet=""
+  if [[ "$(demo_holder server)" != none ]]; then
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 1 \
+             -H 'Content-Type: application/json' -d '{"cue": "quiet"}' \
+             "http://127.0.0.1:$DEMO_PORT/api/demo/cue" 2>/dev/null || true)
+    if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
+      quiet=1
+      sleep 2.5
+    fi
+  fi
   pids=()
   for p in $(demo_window_pids); do
     demo_still window "$p" && pids+=("$p")
@@ -869,6 +885,7 @@ demo_off() {
     fi
   done
   demo_unlock
+  [[ -z "$quiet" ]] || echo "  asked the demo page for quiet, and gave its music 2.5 s to fade"
   if (( ${#stopped[@]} )); then
     for name in "${stopped[@]}"; do echo "  stopped $name"; done
   else
