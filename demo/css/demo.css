@@ -30,6 +30,15 @@
    DEMO says, on this page, and never on the live one. */
 .vbar .tb-src { display: none !important; }
 
+/* Portrait has room for the logo, the page, the clock, the drowsy chip, DEMO
+   and the buttons, as mockup 3's portrait bar does, and not the car's name as
+   well (it is Home's title already): it was cut to "2015 Honda C…" and the
+   chip wrapped to two lines. */
+@media (max-width: 1000px) {
+  .vbar .tb-car { display: none; }
+  .vbar .tb-drowsy { white-space: nowrap; }
+}
+
 /* Where the mockups write "CONCEPT · DEMO DATA": quiet, and there on every screen. */
 .demo-pill {
   flex: none; display: inline-flex; align-items: center; gap: 7px;
