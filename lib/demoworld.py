@@ -8,6 +8,7 @@ knowing the difference; and takes cues from the presenter -- park, drive, get
 drowsy, brake hard, start over.
 
     python3 lib/demoworld.py run [--drive PATH]
+    python3 lib/demoworld.py tidy        the seeded car, all systems normal
 
 It writes `$OMACAR_STATE/live.json` at 5 Hz and `$OMACAR_STATE/sim.pid`, so
 `omacar demo status` and the daemon's "the simulator is running" refusal work
@@ -46,6 +47,7 @@ import json
 import math
 import os
 import signal
+import sqlite3
 import sys
 import time
 
@@ -658,10 +660,155 @@ def run(drive):
     return 0
 
 
+# ---- the demo car, tidied -------------------------------------------------------
+#
+# `sim.py seed` writes a year of a real CR-Z's life, and a real CR-Z at 138,000
+# km has codes: an IMA pack on its way out, an O2 heater, a blower resistor and
+# the deflation warning after a rotation, and the readiness monitors those hold
+# back. In front of a room that is a broken car -- Vehicle said "4 systems
+# need attention", its tab carried a red 5 and Home's car said "Tyres Check",
+# a minute before the demo's own scan said all normal. The demo's car is the
+# same car on a good day (doc/design/2026-09-30-meetup-demo.md §4: "All systems
+# normal ... no trouble codes"). Tidying it:
+#
+#   * every stored, pending or permanent code is cleared; the rows stay, so the
+#     history still says what the car has had;
+#   * the last full scan found nothing in any module, and it was run earlier
+#     today (9:41, the mockups' clock, or half an hour ago before that);
+#   * the readiness monitors are complete, and every Mode 06 result sits well
+#     inside its limits;
+#   * nothing in the service book is due, over the loop's own miles;
+#   * the year of trips, days and samples is not touched.
+#
+# It writes only the demo car's own database, under the same rules as `run`.
+# `omacar demo on` runs it every time, after the seed, and a second run
+# changes nothing.
+
+TIDY_SCAN_AT = (9, 41)
+TIDY_MARGIN_KM = 250.0          # further than a loop of the drive ever takes the odometer
+TIDY_LIFE = 0.75                # a service item tidied is three quarters of its interval away
+# Mode 06 notes that describe the fault the seed gave the car, and what they
+# say once the result is healthy.
+TIDY_NOTES = {
+    "0x39": "Heater resistance, measured as the engine starts.",
+    "0x5B": "Measured usable capacity against a new pack. Below 0.70 the motor "
+            "control unit limits assist.",
+    "0x5C": "Voltage spread between the weakest and strongest cell blocks at the "
+            "end of a discharge.",
+}
+TIDY_SERVICE_NOTES = {"IMA battery inspection": "capacity test, pack balanced"}
+
+
+def _has(db, table):
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                      (table,)).fetchone() is not None
+
+
+def _healthy(value, lo, hi):
+    """A Mode 06 result comfortably inside its limits: at most 60% of a
+    ceiling, 25% over a floor, and half way between the two when it has both.
+    A result that already is stays as it is."""
+    if value is None:
+        return None
+    if lo is not None and hi is not None:
+        return value if lo + 0.2 * (hi - lo) <= value <= hi - 0.2 * (hi - lo) \
+            else round((lo + hi) / 2, 3)
+    if hi is not None:
+        return value if value <= 0.6 * hi else round(0.5 * hi, 3)
+    if lo is not None:
+        return value if value >= 1.2 * lo else round(1.25 * lo, 3)
+    return value
+
+
+def _earlier_today(now):
+    lt = time.localtime(now)
+    at = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, *TIDY_SCAN_AT, 0, 0, 0, -1))
+    if at <= now - 600:
+        return int(at)
+    midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    return int(max(midnight, now - 1800))
+
+
+def tidy(state=None, now=None):
+    """Make the seeded car the demo's: see above. 0, or 2 if it may not."""
+    state = state or state_dir()
+    why = refusal(state)
+    if why:
+        print(f"demoworld: not tidying: {why}", file=sys.stderr)
+        return 2
+    if os.path.abspath(garage.STATE) != os.path.abspath(state):
+        print(f"demoworld: not tidying: the garage is in {garage.STATE}, not {state}",
+              file=sys.stderr)
+        return 2
+    path = garage.path_for(garage.SIM_KEY)
+    if not os.path.exists(path):
+        print(f"demoworld: no demo car to tidy at {path} (sim.py seed makes one)",
+              file=sys.stderr)
+        return 2
+    now = time.time() if now is None else now
+    db = sqlite3.connect(path, timeout=10.0)
+    try:
+        with db:
+            cleared = 0
+            if _has(db, "faults"):
+                cleared = db.execute(
+                    "UPDATE faults SET status = 'cleared' "
+                    "WHERE status IN ('stored', 'pending', 'permanent')").rowcount
+            if _has(db, "modules"):
+                db.execute("UPDATE modules SET codes = '[]' WHERE codes IS NOT '[]'")
+            if _has(db, "readiness"):
+                db.execute("UPDATE readiness SET complete = 1, why = '' "
+                           "WHERE supported = 1 AND (complete = 0 OR why IS NOT '')")
+            if _has(db, "mode06"):
+                for mid, value, lo, hi in db.execute(
+                        "SELECT mid, value, lo, hi FROM mode06").fetchall():
+                    good = _healthy(value, lo, hi)
+                    if good != value:
+                        db.execute("UPDATE mode06 SET value = ? WHERE mid = ?", (good, mid))
+                    if mid in TIDY_NOTES:
+                        db.execute("UPDATE mode06 SET note = ? WHERE mid = ?",
+                                   (TIDY_NOTES[mid], mid))
+            if _has(db, "service"):
+                odo = sim.ODO_NOW + TIDY_MARGIN_KM
+                for item, last_km, last_at, ikm, idays in db.execute(
+                        "SELECT item, last_km, last_at, interval_km, interval_days "
+                        "FROM service").fetchall():
+                    used = [((odo - last_km) / ikm) if ikm and last_km else 0.0,
+                            ((now + 2 * 86400 - last_at) / 86400.0 / idays)
+                            if idays and last_at else 0.0]
+                    if (1.0 - max(used)) * 100 <= records.LIFE_SOON + 5:
+                        db.execute(
+                            "UPDATE service SET last_km = ?, last_at = ? WHERE item = ?",
+                            (round(sim.ODO_NOW - (1 - TIDY_LIFE) * ikm, 1) if ikm else last_km,
+                             round(now - (1 - TIDY_LIFE) * idays * 86400) if idays else last_at,
+                             item))
+                for item, note in TIDY_SERVICE_NOTES.items():
+                    db.execute("UPDATE service SET note = ? WHERE item = ?", (note, item))
+            if _has(db, "vehicle"):
+                row = db.execute("SELECT v FROM vehicle WHERE k = 'surveyed_at'").fetchone()
+                had = None
+                try:
+                    had = json.loads(row[0]) if row else None
+                except (TypeError, ValueError):
+                    pass
+                # Earlier today, once: a second tidy the same day keeps the stamp.
+                if not (isinstance(had, (int, float))
+                        and time.localtime(had)[:3] == time.localtime(now)[:3] and had <= now):
+                    db.execute("INSERT OR REPLACE INTO vehicle VALUES ('surveyed_at', ?)",
+                               (json.dumps(_earlier_today(now)),))
+    finally:
+        db.close()
+    print(f"demoworld: the demo car is tidy: {cleared} code(s) cleared, "
+          "all systems normal", file=sys.stderr)
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "tidy":
+        return tidy()
     if not argv or argv[0] != "run":
-        print("usage: demoworld.py run [--drive PATH]", file=sys.stderr)
+        print("usage: demoworld.py run [--drive PATH] | demoworld.py tidy", file=sys.stderr)
         return 2
     ap = argparse.ArgumentParser(prog="demoworld.py run")
     ap.add_argument("--drive", help="the drive to play (default: the built one)")
