@@ -827,12 +827,13 @@ check("and so is anything that throws data away",
       [c["command"] for g in _doc["groups"] for c in g["commands"]
        if c["verb"] in ("prune", "demo") and not c["confirm"]], [])
 # The demo's verbs grew from start|stop|status|trash to on|off|check|tour|trash
-# (the meetup demo), and then `video`. `on` opens a fullscreen window over the
-# dashboard, `video` plays the backup film out loud and `trash` deletes the
-# demo's data, so a brushed sleeve must not fire any of them.
+# (the meetup demo), then `video`, then `mend`. `on` opens a fullscreen window
+# over the dashboard, `video` plays the backup film out loud, `mend` starts a
+# part of the demo again and `trash` deletes the demo's data, so a brushed
+# sleeve must not fire any of them.
 _demo_cmds = [c for g in _doc["groups"] for c in g["commands"] if c["verb"] == "demo"]
 check("the demo's command is on the reference, with its new verbs",
-      [c["command"] for c in _demo_cmds], ["omacar demo on|off|check|tour|video|trash"])
+      [c["command"] for c in _demo_cmds], ["omacar demo on|off|check|tour|video|mend|trash"])
 check("and it is asked about before it runs",
       [c["confirm"] for c in _demo_cmds], [True])
 check("and no column is left empty",

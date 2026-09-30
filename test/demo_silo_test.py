@@ -11,6 +11,9 @@ real state:
     starts nothing;
   the guard closes the demo when the real car starts moving, and goes when
     the demo does;
+  the guard is the demo's watchdog: a server, world or camera feed that dies
+    is started again, as `demo on` started it, through `demo mend`, with a
+    backoff, and never while the real car moves or once the demo is off;
   `demo off` stops only the demo's own processes, found by what they are and
     never by a pid alone or a port;
   another checkout's running demo is neither stopped nor forgotten from here,
@@ -519,6 +522,142 @@ try:
                                            if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
     open(SHIM_LOG, "w").close()
 
+    PIDS = os.path.join(DEMO_ROOT, "pids")
+    GUARD_LOG = os.path.join(DEMO_ROOT, "state", "omacar", "demo-guard.log")
+
+    def pid_in(name):
+        try:
+            with open(os.path.join(PIDS, name + ".pid"), encoding="utf-8") as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def started_as(pid):
+        """What a process was started with: its command line, and its
+        environment less what every shell changes on its own (_, SHLVL)."""
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                env = dict(e.decode(errors="replace").split("=", 1)
+                           for e in f.read().split(b"\0") if b"=" in e)
+        except OSError:
+            return None
+        for k in ("_", "SHLVL", "OLDPWD"):
+            env.pop(k, None)
+        return cmdline(pid), env
+
+    def answers():
+        st, body = hreq("GET", "/.mark")
+        return st == 200 and b"omacar-server" in body
+
+    def guard_says():
+        try:
+            with open(GUARD_LOG, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    head("the watchdog: a part that dies is back within 10 s, started as demo on started it")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    said_before = guard_says()
+    for name, what in (("server", "the demo server"), ("world", "the demo world"),
+                       ("cams", "the camera feed")):
+        old = pid_in(name)
+        before = started_as(old) if old else None
+        if not before:
+            bad(f"{what} was not running to be killed (pid file: {old})")
+            continue
+        try:
+            os.kill(old, signal.SIGKILL)
+        except OSError:
+            pass
+        t0, new = time.time(), None
+        while time.time() - t0 < 12:
+            p = pid_in(name)
+            argv = cmdline(p) if p else None
+            # Up means exec'd into its script (not the shell before it), and
+            # for the server, answering.
+            if p and p != old and argv and argv[1:2] == before[0][1:2] \
+                    and (name != "server" or answers()):
+                new = p
+                break
+            time.sleep(0.2)
+        took = round(time.time() - t0, 1)
+        check(f"{what}, killed, is back within 10 s (took {took} s)",
+              bool(new) and took <= 10, True)
+        check("with the command line and environment demo on gave it",
+              started_as(new) if new else None, before)
+    # A server that is there and says nothing (stopped, as a hung one is): the
+    # guard counts it down after two unanswered looks, and `demo mend` stops
+    # it, by what it is, before it starts another.
+    old = pid_in("server")
+    try:
+        if old:
+            os.kill(old, signal.SIGSTOP)
+    except OSError:
+        old = None
+    t0, new = time.time(), None
+    while old and time.time() - t0 < 25:
+        p = pid_in("server")
+        if p and p != old and answers():
+            new = p
+            break
+        time.sleep(0.5)
+    took = round(time.time() - t0, 1)
+    check(f"a server that stops answering is stopped and started again within 20 s "
+          f"(took {took} s)", (bool(new) and took <= 20, cmdline(old) if old else None),
+          (True, None))
+    said = guard_says()[len(said_before):]
+    check("each restart is written in demo-guard.log",
+          [w for w in ("the demo server", "the demo world", "the camera feed")
+           if f"{w} " not in said or "starting it again" not in said], [])
+    check("the demo is whole again: the window, the guard and ACTIVE are as they were",
+          (bool(pid_in("guard")) and cmdline(pid_in("guard")) is not None,
+           any("--user-data-dir=" in p[1] for p in ours_running()),
+           os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE"))), (True, True, True))
+
+    head("demo mend: one part of a demo that is on, only when it is down")
+    rc, out = omacar("demo", "mend", "world")
+    check("it will not start a part that is running, and says so",
+          (rc != 0, "running" in out), (True, True))
+    rc, out = omacar("demo", "mend", "window")
+    check("nor one it does not know", (rc, "server|world|cams" in out), (2, True))
+
+    head("a part down while the real car moves: nothing is started again, and the demo goes")
+    said_before = guard_says()
+    write_live(42)                      # the real car, fresh, at 42 km/h
+    world_pid = pid_in("world")
+    try:
+        if world_pid:
+            os.kill(world_pid, signal.SIGKILL)
+    except OSError:
+        pass
+    left, took = gone_within(10)
+    check(f"within 10 s the whole demo is gone (took {took} s)", left, [])
+    check("and the guard started nothing again",
+          "starting it again" in guard_says()[len(said_before):], False)
+    check("nothing holds the demo's port", listening(PORT), False)
+
+    write_live(42)                      # fresh again: a sample 5 s old is a car nothing reads
+    rc, out = omacar("demo", "mend", "world")
+    check("demo mend with the car moving: refused, and nothing is started",
+          (rc != 0, "moving" in out, ours_running()), (True, True, []))
+    write_live(0)
+    rc, out = omacar("demo", "mend", "world")
+    check("with the demo off: refused, and nothing is started",
+          (rc != 0, "not on" in out, ours_running()), (True, True, []))
+    with open(os.path.join(DEMO_ROOT, "ACTIVE"), "w", encoding="utf-8"):
+        pass
+    rc, out = omacar("demo", "mend", "world", timeout=60)
+    running_now = [p[1] for p in ours_running()]
+    check("with ACTIVE there and the car parked it starts the world, and only the world",
+          (rc, [r for r in running_now if "demoworld.py" not in r], len(running_now)),
+          (0, [], 1))
+    rc, out = omacar("demo", "off", timeout=120)
+    check("and demo off takes it down", (rc, ours_running()), (0, []))
+    open(SHIM_LOG, "w").close()
+
     head("the guard closes the demo when the real car moves, and goes with it")
     write_live(0)
     os.makedirs(DEMO_ROOT, exist_ok=True)
@@ -630,6 +769,106 @@ try:
     check("ACTIVE gone some other way: it runs demo off once, then goes",
           (got, calls), ("gone", [groot]))
 
+    head("the watchdog in the guard: what it starts again, when, and when never")
+    wroot = os.path.join(SCRATCH, "watchdog-unit", "omacar-demo")
+    os.makedirs(wroot)
+    wlive = os.path.join(SCRATCH, "watchdog-unit", "live.json")
+    wactive = os.path.join(wroot, "ACTIVE")
+    ALL_UP = {"server": True, "world": True, "cams": True}
+    DOG_T = [0]                           # the fake clock's t, for fakes that need it
+
+    def dog_run(secs, up, moving=lambda t: False, mend_rc=lambda t, name: 0):
+        """The guard on a fake clock, a tick every 2 s from t=0 until t=secs,
+        when ACTIVE goes. up(t) is what the watchdog finds at t; a part's mend
+        answers mend_rc(t, name): an exit status, or something still running
+        (with a poll(), as a Popen has). Returns what watch returned, each mend
+        as (t, part), each demo off's t, and what the guard wrote."""
+        clock = [1000.0]
+        mends, offs = [], []
+        open(wactive, "w").close()
+
+        def at():
+            return round(clock[0] - 1000)
+
+        def write():
+            DOG_T[0] = at()
+            with open(wlive, "w", encoding="utf-8") as f:
+                json.dump({"t": clock[0], "values": {"SPEED": 60 if moving(at()) else 0}}, f)
+
+        def tick(s):
+            clock[0] += s
+            write()
+            if at() >= secs and os.path.exists(wactive):
+                os.remove(wactive)
+
+        def mend(name):
+            mends.append((at(), name))
+            return mend_rc(at(), name)
+
+        write()
+        dog = demoguard.Watchdog(wroot, probe=lambda: dict(up(at())), mend=mend)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            got = demoguard.watch(wlive, wroot, every=2, off=lambda r: offs.append(at()) or 0,
+                                  clock=lambda: clock[0], sleep=tick, parts=dog)
+        return got, mends, offs, err.getvalue()
+
+    got, mends, offs, said = dog_run(60, lambda t: ALL_UP)
+    check("everything up: it starts nothing, and goes when ACTIVE does",
+          (got, mends, offs), ("gone", [], [60]))
+
+    got, mends, offs, said = dog_run(240, lambda t: dict(ALL_UP, world=t < 10))
+    check("a world that stays down: started again at once, then 2, 4, 8 and 16 s apart, "
+          "then once a minute", [t for t, _ in mends], [10, 12, 16, 24, 40, 100, 160, 220])
+    check("only the world", {n for _, n in mends}, {"world"})
+    check("each one written down",
+          (said.count("the demo world is not running; starting it again"), "is back" in said),
+          (8, True))
+
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, server=t != 10))
+    check("a server that misses one /.mark is not started again", mends, [])
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, server=t not in (20, 22)))
+    check("one that misses two in a row is", mends, [(22, "server")])
+
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, world=t < 10),
+                                     moving=lambda t: t >= 10)
+    check("the world down while the real car moves: nothing started, and demo off",
+          (got, mends, offs), ("moving", [], [10]))
+
+    got, mends, offs, said = dog_run(10, lambda t: dict(ALL_UP, world=t < 10))
+    check("the world down as ACTIVE goes: nothing started", (got, mends), ("gone", []))
+
+    def gone_mid_tick(t):
+        if t == 10 and os.path.exists(wactive):
+            os.remove(wactive)            # `demo off`, between the look and the start
+        return dict(ALL_UP, world=t < 10)
+    got, mends, offs, said = dog_run(60, gone_mid_tick)
+    check("ACTIVE gone between finding a part down and starting it: nothing started",
+          (got, mends), ("gone", []))
+
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, cams=False))
+    check("a camera feed never seen running (a build without one) is left alone", mends, [])
+    got, mends, offs, said = dog_run(60, lambda t: dict(ALL_UP, cams=t < 10 or t >= 12))
+    check("one that was running and died is started again", mends, [(10, "cams")])
+
+    got, mends, offs, said = dog_run(
+        140, lambda t: dict(ALL_UP, world=not (10 <= t <= 40 or t >= 120)))
+    check("a minute up and its backoff starts again from 2 s",
+          [t for t, _ in mends], [10, 12, 16, 24, 40, 120, 122, 126, 134])
+
+    class Starting:
+        """A `demo mend` still under way until the fake clock reaches `until`."""
+        def __init__(self, until):
+            self.until = until
+
+        def poll(self):
+            return 0 if DOG_T[0] >= self.until else None
+
+    got, mends, offs, said = dog_run(30, lambda t: dict(ALL_UP, world=t < 10),
+                                     mend_rc=lambda t, name: Starting(20) if t == 10 else 0)
+    check("while one start is under way nothing else is started",
+          [t for t, _ in mends][:2], [10, 20])
+
     head("demo off stops only what is the demo's")
     # Look-alikes in the demo's pid files, each started with the demo's own
     # state folder in its environment, so what else they are is all that tells
@@ -658,6 +897,8 @@ try:
                               f"--user-data-dir={DEMO_ROOT}/browser-not"))
     time.sleep(0.5)
     open(SHIM_LOG, "w").close()
+    check("the watchdog counts none of them as a running world or camera feed",
+          [n for n in ("world", "cams") if demoguard.part_alive(DEMO_ROOT, n)], [])
     with open(ACTIVE, "w", encoding="utf-8"):
         pass
     rc, out = omacar("demo", "off")
@@ -698,6 +939,7 @@ try:
     rc, out = omacar("demo", "status")
     check("status counts neither as the demo's",
           ("demo world     not running" in out, "demo server    not running" in out), (True, True))
+    check("nor does the watchdog count that world", demoguard.part_alive(DEMO_ROOT, "world"), False)
     rc, out = omacar("demo", "off")
     check("demo off leaves the live server running, and answering",
           (rc, live_srv.poll(), listening(live_port)), (0, None, True))
@@ -743,6 +985,8 @@ try:
     time.sleep(0.5)
     open(SHIM_LOG, "w").close()
 
+    check("the watchdog counts that checkout's world as the demo's, as demo off does",
+          demoguard.part_alive(DEMO_ROOT, "world"), True)
     rc, out = omacar("demo", "status")
     check("status says where it runs",
           (f"running from {other} (pid {OTHER['world'].pid})" in out,
@@ -817,8 +1061,8 @@ try:
         check("check says it has not arrived yet, and is not a failure",
               (rc, "the check arrives with Task 8" in out), (0, True))
     rc, out = omacar("help")
-    check("help names on, off, check, tour, video and trash",
-          "omacar demo on|off|check|tour|video|trash" in out, True)
+    check("help names on, off, check, tour, video, mend and trash",
+          "omacar demo on|off|check|tour|video|mend|trash" in out, True)
     check("no systemctl, wpctl or pactl, in the whole run",
           [c for c in shim_calls() if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
 finally:
