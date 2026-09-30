@@ -1,0 +1,8 @@
+/* The demo's drowsy moment (demo/js/drowsy.js). The chip, the cards and their
+   buttons are the live app's own, styled by css/drowsy.css. This only says how
+   they behave here. */
+
+/* In the demo the chip is a readout. In the live app it opens the drowsy
+   settings sheet, which needs the live engine and its settings file, and the
+   demo has neither: a tap on it does nothing, and looks it. */
+.tb-drowsy { cursor: default; pointer-events: none; }
