@@ -488,6 +488,17 @@ const ui = [
       eq(r.playing, false);
     } finally { c.destroy(); history.replaceState(null, "", location.pathname); }
   }],
+  // Task 8: the row's button says which song it opens, for a screen reader.
+  ["the radio row's button names the song it opens", () => {
+    const r = fakeRadio();
+    const c = phoneCard({ radio: r });
+    try {
+      const open = c.node.querySelector(".pc-radio-open");
+      eq(open.getAttribute("aria-label"), "Open Now Playing: Track One", "the first song");
+      r.index = 2; r.push();
+      eq(open.getAttribute("aria-label"), "Open Now Playing: Track Three", "follows the song");
+    } finally { c.destroy(); }
+  }],
   ["the card follows the song, on a push and on paint()", () => {
     const r = fakeRadio();
     const c = phoneCard({ radio: r });

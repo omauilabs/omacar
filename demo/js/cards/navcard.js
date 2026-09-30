@@ -20,7 +20,7 @@ export function navCard() {
   const turnIcon = h("div.dnc-icon", { "aria-hidden": "true" });
   const dist = h("div.dnc-dist");
   const what = h("div.dnc-what");
-  const needle = h("span.dnc-needle", h("i"), "N");
+  const needle = h("span.dnc-needle", h("i"), h("b", "N"));
   const turn = compassTurner(needle);
   const mapEl = h("div.dnc-map", h("div.dnc-credit", CREDIT));
   const etaTime = h("b.dnc-time");

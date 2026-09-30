@@ -11,7 +11,7 @@
 import { eq, ok } from "./assert.js";
 import { project, unproject, createMap, STYLES, loadMapData } from "../demo/js/map.js";
 import { bannerOf, etaOf, iconOf, iconSvg, distanceText, streetLine } from "../demo/js/nav.js";
-import navigationView, { mountMap, register as registerNav } from "../demo/js/views/navigation.js";
+import navigationView, { mountMap, compassTurner, register as registerNav } from "../demo/js/views/navigation.js";
 import { navCard, register as registerCard } from "../demo/js/cards/navcard.js";
 import { store } from "../js/core.js";
 
@@ -281,6 +281,48 @@ export default [
     ok(!el.querySelector("canvas"), "the canvas goes with it");
     el.remove();
   }],
+  // Task 8: a map that cannot load says so, quietly, instead of a blank canvas.
+  ["a map that cannot load says \"Map unavailable\" in its place, and the words go with it", async () => {
+    const el = document.createElement("div");
+    el.style.cssText = "width:200px;height:120px";
+    document.body.appendChild(el);
+    const m = mountMap(el, { style: "omacar", follow: true });
+    for (let i = 0; i < 20 && !el.querySelector(".dmap-missing"); i++) await settle();
+    const said = el.querySelector(".dmap-missing");
+    ok(said, "a note in the map's place");
+    eq(said.textContent, "Map unavailable", "its words");
+    eq(el.dataset.missing, "1", "and the mark");
+    m.destroy();
+    ok(!el.querySelector(".dmap-missing"), "gone with the map");
+    el.remove();
+  }],
+  // Task 8: the needle turns to north, and the N on it stays upright, as mockup 3.
+  ["the compass turns its needle and keeps its N upright", () => {
+    for (const cls of ["dnav-needle", "dnc-needle"]) {
+      const needle = document.createElement("span");
+      needle.className = cls;
+      needle.innerHTML = "<i></i><b>N</b>";
+      const turn = compassTurner(needle);
+      turn(90);
+      eq(needle.style.transform, "rotate(-90deg)", "the needle points north");
+      eq(needle.querySelector("b").style.transform, "rotate(90deg)", "the N turned back upright");
+      turn(350);
+      eq(needle.style.transform, "rotate(10deg)", "the short way round: 100 degrees, not 260");
+      eq(needle.querySelector("b").style.transform, "rotate(-10deg)", "still upright");
+    }
+  }],
+  ["both compasses draw their N as its own element, to keep it upright", () => withLive(DEMO, async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const off = navigationView(root);
+    const c = navCard();
+    try {
+      for (const n of [root.querySelector(".dnav-needle"), c.node.querySelector(".dnc-needle")]) {
+        ok(n, "a needle");
+        eq(n.querySelector("b") && n.querySelector("b").textContent, "N", "the N in a <b>");
+      }
+    } finally { off(); c.destroy(); root.remove(); }
+  })],
 ];
 
 function hex(s) {
