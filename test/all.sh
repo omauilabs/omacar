@@ -157,4 +157,11 @@ python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 
+# ---- demo/meetup --------------------------------------------------------------
+# The demo's car: the drive built from a route, the world that plays it in real
+# time, its cues, and that the module has no way to reach the adapter, the
+# cameras or the sound. Scratch folders and held clocks only.
+python3 "$ROOT/test/demoworld_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup ----------------------------------------------------------
+
 exit $((fails > 0))
