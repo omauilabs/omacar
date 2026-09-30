@@ -9,9 +9,12 @@ tablet both have them), and skips loudly anywhere else. Scratch folders only:
 nothing here touches ~/Videos or the real runtime directory.
 """
 
+import builtins
+import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -625,6 +628,650 @@ else:
               for c in _out), True)
     check("in H.264", _probe(_out[0], "-select_streams", "v", "-show_entries",
                              "stream=codec_name", "-of", "csv=p=0"), "h264")
+
+# ------------------------------------------------------------ the demo's cameras
+head("cams.py demo: footage on a loop, standing in for the live cameras")
+
+# The meetup demo has no cameras and no car. `cams.py demo` plays footage from
+# files as if the three cameras were live: one-minute clips for the last 50
+# minutes, a live picture per role, and a status file that makes overview()
+# report the recorder running. It writes only where OMACAR_VIDEOS and
+# XDG_RUNTIME_DIR point, and only when both are inside a folder called
+# omacar-demo. Scratch folders throughout: nothing here touches ~/Videos, the
+# real runtime directory or a device.
+
+DEMO_ROOT = os.path.join(SCRATCH, "omacar-demo")
+DEMO_VIDEOS = os.path.join(DEMO_ROOT, "videos")
+DEMO_RUN = os.path.join(DEMO_ROOT, "run")
+DEMO_STATE = os.path.join(DEMO_ROOT, "state", "omacar")
+DEMO_ENV = {"OMACAR_VIDEOS": DEMO_VIDEOS, "XDG_RUNTIME_DIR": DEMO_RUN, "OMACAR_STATE": DEMO_STATE,
+            "XDG_STATE_HOME": os.path.join(DEMO_ROOT, "state"),
+            "XDG_CONFIG_HOME": os.path.join(DEMO_ROOT, "config")}
+CAMS_PY = os.path.join(ROOT, "lib", "cams.py")
+
+
+def _env(**over):
+    """This process's environment, made the demo's; a None removes a variable."""
+    e = dict(os.environ)
+    e.update(DEMO_ENV)
+    for k, v in over.items():
+        if v is None:
+            e.pop(k, None)
+        else:
+            e[k] = v
+    return e
+
+
+def _cli(env, *args, timeout=60):
+    return subprocess.run([sys.executable, CAMS_PY, "demo", *args], capture_output=True,
+                          text=True, env=env, timeout=timeout)
+
+
+_r = _cli(_env(OMACAR_VIDEOS=None))
+check("with OMACAR_VIDEOS unset, it refuses and says which variable",
+      (_r.returncode != 0, "OMACAR_VIDEOS" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_VIDEOS=os.path.join(SCRATCH, "videos")))
+check("with OMACAR_VIDEOS outside omacar-demo, it refuses",
+      (_r.returncode != 0, "omacar-demo" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_VIDEOS=os.path.join(DEMO_ROOT, "..", "videos")))
+check("and the name in a path that climbs out of it does not count",
+      (_r.returncode != 0, "omacar-demo" in _r.stderr), (True, True))
+_r = _cli(_env(XDG_RUNTIME_DIR=os.path.join(SCRATCH, "run")))
+check("nor does a runtime folder outside it: the live recorder's live pictures are not the demo's",
+      (_r.returncode != 0, "XDG_RUNTIME_DIR" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_VIDEOS=os.path.join(DEMO_ROOT + "-lookalike", "videos")))
+check("a folder that only contains the name (omacar-demo-lookalike) is not the demo's: the name is a path component",
+      (_r.returncode != 0, "omacar-demo" in _r.stderr), (True, True))
+_r = _cli(_env(XDG_RUNTIME_DIR=os.path.join(SCRATCH, "not-omacar-demo", "run")))
+check("nor is 'not-omacar-demo'", (_r.returncode != 0, "XDG_RUNTIME_DIR" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_STATE=None))
+check("with OMACAR_STATE unset it refuses too: live.json must be the demo world's, never the live app's",
+      (_r.returncode != 0, "OMACAR_STATE" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_STATE=os.path.join(SCRATCH, "state", "omacar")))
+check("and with OMACAR_STATE outside the demo's folder",
+      (_r.returncode != 0, "OMACAR_STATE" in _r.stderr), (True, True))
+check("a refusal writes nothing", (os.path.exists(DEMO_VIDEOS), os.path.exists(DEMO_RUN)), (False, False))
+
+# Task 2's launcher starts the feed only if `cams.py demo --help` exits 0, and
+# runs that probe in whatever environment it has, the demo's or not.
+for _flag in ("--help", "-h"):
+    for _label, _e in (("the demo's environment", _env()),
+                       ("no environment at all", {"PATH": os.environ.get("PATH", "")})):
+        _r = _cli(_e, _flag)
+        check(f"`cams.py demo {_flag}` in {_label} prints usage on stdout and exits 0",
+              (_r.returncode, _r.stdout.startswith("usage: cams.py demo"), "--from" in _r.stdout),
+              (0, True, True))
+_r = _cli(_env(), "--bogus")
+check("an argument it does not know is still a usage error (2), on stderr",
+      (_r.returncode, _r.stderr.startswith("usage: cams.py demo"), _r.stdout), (2, True, ""))
+check("and neither wrote anything", (os.path.exists(DEMO_VIDEOS), os.path.exists(DEMO_RUN)), (False, False))
+
+_saved_env = {k: os.environ.get(k) for k in DEMO_ENV}
+os.environ.update(DEMO_ENV)
+check("inside the demo's folders there is nothing to refuse", cams.demo_refusal(), None)
+
+with open(CAMS_PY, encoding="utf-8") as f:
+    _src = f.read()
+_demo_src = _src[_src.index("# ---- the demo's cameras"):_src.index("def main(argv):")]
+check("the demo's code never names a camera device or the probing paths",
+      [w for w in ("v4l2", "find_cameras", "probe_modes", "refused_cameras", "BY_ID", "/dev/video",
+                   "by-id", "usb_floor") if w in _demo_src], [])
+
+# ---- an _ours() that knows the demo
+_stand_in = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "lib/cams.py", "demo"])
+_other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "lib/cams.py", "status"])
+try:
+    for _pid, _want in ((_stand_in.pid, True), (_other.pid, False)):
+        os.makedirs(cams.run_dir(), exist_ok=True)
+        with open(cams.status_path(), "w", encoding="utf-8") as f:
+            json.dump({"pid": _pid, "t": time.time(), "sim": False, "roles": {}}, f)
+        check("a fresh status file from a `cams.py demo` process is a running recorder"
+              if _want else "and from any other cams.py process it is not",
+              cams.overview()["running"], _want)
+finally:
+    for _p in (_stand_in, _other):
+        _p.kill()
+        _p.wait()
+    os.remove(cams.status_path())
+
+
+class FakePopen:
+    """ffmpeg that runs nothing: alive until terminated or killed."""
+    made = []
+    pids = iter(range(50000, 60000))
+
+    def __init__(self, args, **kw):
+        self.args, self.kw, self.code = list(args), kw, None
+        self.pid = next(FakePopen.pids)
+        self.stderr = io.BytesIO(b"")
+        FakePopen.made.append(self)
+
+    def poll(self):
+        return self.code
+
+    def terminate(self):
+        self.code = -15
+
+    def send_signal(self, sig):
+        self.code = -int(sig)
+
+    def kill(self):
+        self.code = -9
+
+    def wait(self, timeout=None):
+        return self.code
+
+
+def _dev_guard():
+    """Every path under /dev that this process tried to open, /dev/null
+    (which subprocess opens for DEVNULL) excepted."""
+    seen = []
+    real_os_open, real_open = os.open, builtins.open
+
+    def _bad(p):
+        p = os.fspath(p) if isinstance(p, (str, bytes, os.PathLike)) else ""
+        p = p.decode() if isinstance(p, bytes) else p
+        return p.startswith("/dev/") and p != "/dev/null"
+
+    def os_open(p, *a, **k):
+        if _bad(p):
+            seen.append(p)
+            raise PermissionError(f"the demo must not open {p}")
+        return real_os_open(p, *a, **k)
+
+    def bopen(p, *a, **k):
+        if _bad(p):
+            seen.append(p)
+            raise PermissionError(f"the demo must not open {p}")
+        return real_open(p, *a, **k)
+
+    os.open, builtins.open = os_open, bopen
+    return seen, lambda: (setattr(os, "open", real_os_open), setattr(builtins, "open", real_open))
+
+
+if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+    print("    (skipping the rest: no ffmpeg or ffprobe here. The box and the tablet\n"
+          "     have both, and that is where it counts.)")
+else:
+    def _make_clip(name, lavfi, audio=False):
+        # A clip with a sound track, when asked: the demo's clips must come out silent whatever they went in as.
+        sound = ["-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:a", "aac"] if audio else []
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", lavfi,
+                        *sound, "-t", "3", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "40",
+                        "-g", "25", "-pix_fmt", "yuv420p", os.path.join(CLIPS, name + ".mp4")],
+                       check=True, capture_output=True, timeout=60)
+
+    def _probe(path, *q):
+        return subprocess.run(["ffprobe", "-v", "error", *q, path],
+                              capture_output=True, text=True).stdout.strip()
+
+    CLIPS = os.path.join(DEMO_ROOT, "clips")
+    os.makedirs(CLIPS)
+    _make_clip("front", "testsrc2=size=192x108:rate=25", audio=True)
+    _make_clip("rear", "testsrc2=size=192x108:rate=25")
+    _make_clip("cabin", "testsrc2=size=128x96:rate=25")
+    _make_clip("cabin-drowsy", "smptebars=size=128x96:rate=25")
+
+    # ---- the last 50 minutes of clips
+    head("it lays out the last 50 minutes as one-minute clips")
+    _T = time.time()
+    _d = cams.DemoRecorder(CLIPS)
+    check("it finds the footage: a clip for each role, and the drowsy cabin",
+          (sorted(_d.sources), os.path.basename(_d.drowsy_src or "")),
+          (["cabin", "front", "rear"], "cabin-drowsy.mp4"))
+    check("seeding says how many clips each role got", _d.seed(now=_T),
+          {"front": 50, "rear": 50, "cabin": 50})
+    for _role in cams.ROLES:
+        _dir = os.path.join(DEMO_VIDEOS, _role)
+        _names = sorted(os.listdir(_dir))
+        _starts = [camstore.clip_start(n) for n in _names]
+        check(f"{_role}: fifty clips, each named YYYYmmdd-HHMMSS.mp4",
+              (len(_names), all(camstore.CLIP_RE.match(n) for n in _names)), (50, True))
+        check(f"{_role}: a minute apart, the newest begun within the last minute, the oldest 50 minutes back",
+              (set(b - a for a, b in zip(_starts, _starts[1:])), 0 < _T - _starts[-1] <= 60,
+               _T - _starts[0] <= 50 * 60), ({60.0}, True, True))
+        check(f"{_role}: regular files, never symlinks, and the store will serve every one",
+              all(os.path.isfile(os.path.join(_dir, n)) and not os.path.islink(os.path.join(_dir, n))
+                  and camstore.clip_path(_role, n) for n in _names), True)
+        _durs = [float(_probe(os.path.join(_dir, n), "-show_entries", "format=duration", "-of", "csv=p=0"))
+                 for n in (_names[0], _names[25], _names[-1])]
+        check(f"{_role}: each a minute long ({_durs})", all(59 <= x <= 62 for x in _durs), True)
+    with open(os.path.join(DEMO_VIDEOS, "front", sorted(os.listdir(os.path.join(DEMO_VIDEOS, "front")))[0]),
+              "rb") as f:
+        _bytes = f.read()
+    check("they are fragmented MP4, as the recorder writes them",
+          (b"moov" in _bytes[:4096], b"moof" in _bytes), (True, True))
+    check("the store lists all of them for the timeline",
+          len(camstore.list_clips(t0=_T - 3600)), 150)
+    check("the source had a sound track; the clips carry none",
+          (_probe(os.path.join(CLIPS, "front.mp4"), "-select_streams", "a", "-show_entries",
+                  "stream=codec_type", "-of", "csv=p=0"),
+           _probe(os.path.join(DEMO_VIDEOS, "front", sorted(os.listdir(os.path.join(DEMO_VIDEOS, "front")))[0]),
+                  "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0")),
+          ("audio", ""))
+
+    # ---- reseeding, and the minute that goes by
+    head("a second start replaces the first; each minute adds a clip and the oldest goes")
+    with open(os.path.join(DEMO_VIDEOS, "front", "20200101-000000.mp4"), "wb"):
+        pass
+    os.makedirs(os.path.join(DEMO_VIDEOS, "locked", "old", "front"))
+    with open(os.path.join(DEMO_VIDEOS, "events.json"), "w", encoding="utf-8") as f:
+        json.dump({"events": [{"id": "old", "kind": "marked", "t": 1, "t0": 0, "t1": 2, "state": "locked",
+                               "files": []}]}, f)
+    _d = cams.DemoRecorder(CLIPS)
+    _d.seed(now=_T)
+    check("the last run's clips, locked folder and events are gone, and there are 50 again",
+          (len(os.listdir(os.path.join(DEMO_VIDEOS, "front"))),
+           os.path.exists(os.path.join(DEMO_VIDEOS, "front", "20200101-000000.mp4")),
+           os.path.exists(os.path.join(DEMO_VIDEOS, "locked")),
+           camstore.load_events()["events"]), (50, False, False, []))
+    _before = sorted(os.listdir(os.path.join(DEMO_VIDEOS, "rear")))
+    check("nothing is added until the next minute begins", _d.roll(now=_T + 25), 0)
+    check("then each role gets its next clip", _d.roll(now=_T + 31), 3)
+    _after = sorted(os.listdir(os.path.join(DEMO_VIDEOS, "rear")))
+    check("still fifty, the oldest gone and the new one a minute after the last",
+          (len(_after), _after[0] == _before[1],
+           camstore.clip_start(_after[-1]) - camstore.clip_start(_before[-1])), (50, True, 60.0))
+    check("and a minute that has come and gone twice while nothing ran is caught up",
+          _d.roll(now=_T + 31 + 120), 6)
+    _ev = camstore.mark("marked", t=_T + 150, now=_T + 150)
+    _d.tick(now=_T + 150)
+    _d.roll(now=_T + 400)
+    check("a marked event's clips are locked, and the minutes that follow never take them",
+          (bool(_ev["files"]), all(os.path.exists(os.path.join(DEMO_VIDEOS, "locked", _ev["id"], *r.split("/")))
+                                   for r in camstore.load_events()["events"][0]["files"])), (True, True))
+
+    # ---- footage the tab's player may not play
+    head("it says so when footage will not play in the tab")
+    _hevc = os.path.join(DEMO_ROOT, "clips-odd")
+    os.makedirs(_hevc)
+    for _n in ("front", "rear", "cabin"):
+        shutil.copy(os.path.join(CLIPS, _n + ".mp4"), _hevc)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=size=128x96:rate=25", "-t", "1", "-c:v", "mpeg4", os.path.join(_hevc, "rear.mp4")],
+                   check=True, capture_output=True, timeout=60)
+    with open(os.path.join(_hevc, "cabin.mp4"), "wb") as f:
+        f.write(b"not a video")
+    _warn = cams.demo_warnings(cams.DemoRecorder(_hevc).sources)
+    check("H.264 says nothing; another codec and an unreadable file each get a sentence",
+          [w.split(" ")[0] for w in _warn], ["rear.mp4", "cabin.mp4"])
+    check("naming the file and what to do about it",
+          (any(w.startswith("rear.mp4 is MPEG4, not H264") and "libx264" in w for w in _warn),
+           any(w.startswith("cabin.mp4 could not be read") for w in _warn),
+           any(w.startswith("front.mp4") for w in _warn)), (True, True, False))
+
+    # ---- the ffmpeg commands
+    head("its two kinds of ffmpeg")
+    _seg = " ".join(cams.demo_segment_args("/c/front.mp4", "/o/seg%04d.mp4", 3100))
+    check("clips: the source looped, copied not re-encoded, cut at a minute, fragmented as the recorder's are",
+          all(x in _seg for x in ("-stream_loop -1 -i /c/front.mp4", "-c copy", "-f segment", "-segment_time 60",
+                                  "-reset_timestamps 1", "movflags=+frag_keyframe+empty_moov+default_base_moof",
+                                  "-an")), True)
+    _fr = cams.demo_frame_args("/c/front.mp4", "/r/front.jpg")
+    check("live pictures: real time, looped, 10 fps, 640 wide, quality 5, one file rewritten whole",
+          (" ".join(_fr).startswith("ffmpeg") and
+           all(x in " ".join(_fr) for x in ("-stream_loop -1 -re -i /c/front.mp4", "-vf fps=10,scale=640:-2",
+                                            "-q:v 5", "-update 1", "-atomic_writing 1", " -y ")), _fr[-1]),
+          (True, "/r/front.jpg"))
+
+    # ---- the drowsy cabin, the watchdog and the status, against an ffmpeg that runs nothing
+    head("the drowsy cabin swaps in for the scene, and only the cabin restarts")
+    os.makedirs(DEMO_STATE, exist_ok=True)
+    _B = time.time()          # `now` for the ticks below: the scene file's age is read against it
+    LIVE = os.path.join(DEMO_STATE, "live.json")
+
+    def _live(scene, age=0.0):
+        with open(LIVE, "w", encoding="utf-8") as f:
+            json.dump({"connected": True, "simulated": True, "demo": {"scene": scene}}, f)
+        os.utime(LIVE, (time.time() - age, time.time() - age))
+
+    def _src_of(proc):
+        return proc.args[proc.args.index("-i") + 1]
+
+    _live("drive")
+    FakePopen.made.clear()
+    _f = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _f.start(now=_B)
+    check("one ffmpeg per role", sorted(_src_of(p) for p in FakePopen.made),
+          sorted(os.path.join(CLIPS, r + ".mp4") for r in ("front", "rear", "cabin")))
+    check("each writing its live picture, in the demo's runtime folder",
+          sorted(p.args[-1] for p in FakePopen.made),
+          sorted(cams.live_path(r) for r in cams.ROLES))
+    check("and nothing on any command line names a path under /dev",
+          any(a.startswith("/dev/") or "=/dev/" in a for p in FakePopen.made for a in p.args), False)
+    _front, _rear, _cabin = (next(p for p in FakePopen.made if _src_of(p).endswith(r + ".mp4"))
+                             for r in ("front", "rear", "cabin"))
+    _f.tick(now=_B)
+    check("with the scene 'drive', nothing restarts", len(FakePopen.made), 3)
+    _live("drowsy")
+    _f.tick(now=_B + 1)
+    check("on 'drowsy' the cabin's ffmpeg is replaced by one reading cabin-drowsy.mp4",
+          (len(FakePopen.made), _cabin.code is not None, _src_of(FakePopen.made[-1])),
+          (4, True, os.path.join(CLIPS, "cabin-drowsy.mp4")))
+    check("front and rear are left alone", (_front.code, _rear.code), (None, None))
+    _f.tick(now=_B + 2)
+    check("and it does not restart again while the scene lasts", len(FakePopen.made), 4)
+    _live("drive")
+    _f.tick(now=_B + 3)
+    check("when the scene ends the cabin goes back to its own clip",
+          (len(FakePopen.made), _src_of(FakePopen.made[-1]), FakePopen.made[3].code is not None),
+          (5, os.path.join(CLIPS, "cabin.mp4"), True))
+    _live("drowsy", age=60)
+    _f.tick(now=_B + 4)
+    check("a live.json a minute old is a world that has stopped: no drowsy cabin", len(FakePopen.made), 5)
+    os.remove(LIVE)
+    _f.tick(now=_B + 5)
+    check("nor is one that is not there", len(FakePopen.made), 5)
+
+    _no_drowsy = os.path.join(DEMO_ROOT, "clips-no-drowsy")
+    os.makedirs(_no_drowsy)
+    for _n in ("front", "rear", "cabin"):
+        shutil.copy(os.path.join(CLIPS, _n + ".mp4"), _no_drowsy)
+    FakePopen.made.clear()
+    _live("drowsy")
+    _g = cams.DemoRecorder(_no_drowsy, popen=FakePopen)
+    _g.start(now=_B)
+    _g.tick(now=_B + 1)
+    check("with no drowsy clip the cabin just carries on", len(FakePopen.made), 3)
+
+    head("a feed that dies is started again, and one that stalls is killed")
+    _live("drive")
+    FakePopen.made.clear()
+    _w = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _w.start(now=_B)
+    _front = next(p for p in FakePopen.made if _src_of(p).endswith("front.mp4"))
+    _front.code = 1
+    _w.tick(now=_B + 2)
+    check("a dead ffmpeg is replaced at the next pass", len(FakePopen.made), 4)
+    FakePopen.made[-1].code = 1
+    _w.tick(now=_B + 3)
+    check("but not more than once in five seconds", len(FakePopen.made), 4)
+    _w.tick(now=_B + 8)
+    check("and then it is", len(FakePopen.made), 5)
+
+    head("a demo that fails on the way still ends its ffmpegs")
+    _live("drive")
+
+    class Boom(cams.DemoRecorder):
+        """Fails on its first status write; lays down no clips."""
+
+        def seed(self, now=None):
+            return {}
+
+        def write_status(self, now=None):
+            raise RuntimeError("the disk went away")
+
+    FakePopen.made.clear()
+    _handlers = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    _boom = Boom(CLIPS, popen=FakePopen)
+    try:
+        try:
+            _boom.run()
+            _raised = None
+        except RuntimeError as e:
+            _raised = str(e)
+    finally:
+        for _s, _h in _handlers.items():
+            signal.signal(_s, _h)
+    check("run() lets the error out, and every ffmpeg it started is ended",
+          (_raised, len(FakePopen.made), all(p.code is not None for p in FakePopen.made)),
+          ("the disk went away", 3, True))
+    check("with its status file gone", os.path.exists(cams.status_path()), False)
+
+    FakePopen.made.clear()
+    _tk = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _tk.start(now=_B)
+    _real_poll = cams.DemoFeed.poll_frame
+
+    def _bad_poll(self):
+        raise RuntimeError("stat failed in a way nobody planned for")
+
+    cams.DemoFeed.poll_frame = _bad_poll
+    try:
+        try:
+            _tk.tick(now=_B + 1)
+            _tick_raised = False
+        except Exception:                                      # noqa: BLE001
+            _tick_raised = True
+    finally:
+        cams.DemoFeed.poll_frame = _real_poll
+    check("a feed that raises in a tick does not take the loop down, and the status says so",
+          (_tick_raised, "stat failed" in (_tk.note or "")), (False, True))
+    _tk.stop()
+
+    # ---- a hard brake in the demo world is marked by the feed, as the recorder marks one
+    head("a hard_brake in the world's live.json is marked 'hard-braking', once per event")
+
+    def _world(event=None, age=0.0, speed=42.0):
+        with open(LIVE, "w", encoding="utf-8") as f:
+            json.dump({"connected": True, "simulated": True, "values": {"SPEED": speed},
+                       "demo": {"scene": "drive", "event": event}}, f)
+        os.utime(LIVE, (time.time() - age, time.time() - age))
+
+    camstore._save_events(DEMO_VIDEOS, {"events": []})
+    FakePopen.made.clear()
+    _hb = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _hb.start(now=_B)
+    _at = time.time()
+    _world({"kind": "hard_brake", "at": _at})
+    for _i in range(5):
+        _hb.tick(now=time.time())
+    _evs = camstore.load_events()["events"]
+    check("five ticks that see one event mark it once, kind hard-braking, at the event's own time",
+          ([e["kind"] for e in _evs], [e["t"] for e in _evs]), (["hard-braking"], [_at]))
+    check("and its speed is the world's", _evs[0]["speed_kph"], 42.0)
+    _world({"kind": "hard_brake", "at": _at + 100})
+    _hb.tick(now=time.time())
+    check("a new event, at another time, is another mark", len(camstore.load_events()["events"]), 2)
+    _world({"kind": "pothole", "at": _at + 200})
+    _hb.tick(now=time.time())
+    _world(None)
+    _hb.tick(now=time.time())
+    check("other events, and none, mark nothing", len(camstore.load_events()["events"]), 2)
+    _world({"kind": "hard_brake", "at": _at + 300}, age=60)
+    _hb.tick(now=time.time())
+    check("an event in a live.json a minute old is a world that stopped: not marked",
+          len(camstore.load_events()["events"]), 2)
+    _world({"kind": "hard_brake", "at": _at + 400}, speed=None)
+    _hb.tick(now=time.time())
+    check("a world with no speed still marks it, with none",
+          [e["speed_kph"] for e in camstore.load_events()["events"]][-1], None)
+    _hb.stop()
+
+    head("its status is the recorder's status")
+    os.makedirs(cams.run_dir(), exist_ok=True)
+    _real_time = time.time()
+    _s = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _s.start(now=_real_time)
+    _s.write_status()
+    with open(cams.status_path(), encoding="utf-8") as f:
+        _doc = json.load(f)
+    _shape = set(cams.Camera("front", None, cams.SIM_MODE["front"]).status())
+    check("the same keys as the recorder's, top and role by role",
+          (set(_doc) >= {"pid", "t", "sim", "note", "roles"},
+           {r: set(v) == _shape for r, v in _doc["roles"].items()}),
+          (True, {"front": True, "rear": True, "cabin": True}))
+    check("it is this process's pid and this second's time, and not a simulator",
+          (_doc["pid"], abs(_doc["t"] - _real_time) < 5, _doc["sim"]), (os.getpid(), True, False))
+    _fr = _doc["roles"]["front"]
+    check("each role names its clip and reports its real mode, at the clip's own rate",
+          (_fr["device"], _fr["mode"]["h"], _fr["mode"]["fps"], _doc["roles"]["cabin"]["mode"]["h"]),
+          ("front.mp4", 108, 25.0, 96))
+    check("before its first picture a role is starting, not REC",
+          (_fr["recording"], _fr["starting"], _fr["live"]), (False, True, False))
+    _live_jpg = cams.live_path("front")
+    with open(_live_jpg, "wb") as f:
+        f.write(b"\xff\xd8x\xff\xd9")
+    _s.tick(now=time.time())
+    with open(cams.status_path(), encoding="utf-8") as f:
+        _fr = json.load(f)["roles"]["front"]
+    check("with a fresh picture it is REC and live", (_fr["recording"], _fr["live"], _fr["stalled"]),
+          (True, True, False))
+    os.utime(_live_jpg, (time.time() - 6, time.time() - 6))
+    _s.tick(now=time.time())
+    _s.write_status()
+    with open(cams.status_path(), encoding="utf-8") as f:
+        _fr = json.load(f)["roles"]["front"]
+    check("six seconds without a new picture is REC but not live", (_fr["recording"], _fr["live"]), (True, False))
+    _n = len(FakePopen.made)
+    os.utime(_live_jpg, (time.time() - 12, time.time() - 12))
+    _s.tick(now=time.time())
+    check("twelve is a stall: the feed is killed and started again", len(FakePopen.made) > _n, True)
+    _s.stop()
+    check("stopping ends every ffmpeg and takes the status file with it",
+          (all(p.code is not None for p in FakePopen.made[-3:]), os.path.exists(cams.status_path())),
+          (True, False))
+
+    # ---- it opens nothing under /dev
+    head("it never opens a device")
+    _seen, _restore = _dev_guard()
+    try:
+        _z = cams.DemoRecorder(CLIPS)
+        _z.seed(now=time.time())
+        _z.start(now=time.time())
+        _z.tick(now=time.time())
+        _z.write_status()
+        _z.stop()
+    finally:
+        _restore()
+    check("with open() and os.open() refusing every path under /dev, a whole seed and start ran",
+          (_seen, len(os.listdir(os.path.join(DEMO_VIDEOS, "cabin")))), ([], 50))
+
+    # ---- the real thing, end to end: the command, the status, the drowsy cabin and SIGTERM
+    head("the command itself: live pictures, status, the cabin scene, and SIGTERM")
+    _live("drive")
+    _log = open(os.path.join(DEMO_ROOT, "feed.log"), "w")
+    _p = subprocess.Popen([sys.executable, CAMS_PY, "demo", "--from", CLIPS], env=_env(),
+                          stdout=_log, stderr=_log)
+
+    def _status():
+        try:
+            with open(cams.status_path(), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def _until(what, cond, secs=90):
+        end = time.time() + secs
+        while time.time() < end:
+            if _p.poll() is not None:
+                return False
+            if cond():
+                return True
+            time.sleep(0.4)
+        return False
+
+    _kids = {}
+    try:
+        _ready = _until("ready", lambda: (lambda o: o["running"] and o["note"] is None and all(
+            o["roles"][r]["live"] and o["roles"][r]["clips"] >= 50 for r in cams.ROLES))(cams.overview()))
+        check("it comes up: seeded, every role recording and live", _ready, True)
+        _ov = cams.overview()
+        check("overview() reports the recorder running, not simulated",
+              (_ov["running"], _ov["sim"], [_ov["roles"][r]["recording"] for r in cams.ROLES],
+               [_ov["roles"][r]["sim"] for r in cams.ROLES]), (True, False, [True] * 3, [False] * 3))
+        check("with the real resolution, so the tab can say 1080p or whatever the footage is",
+              [_ov["roles"][r]["mode"]["h"] for r in cams.ROLES], [108, 108, 96])
+        check("and fifty clips a role on the timeline", [_ov["roles"][r]["clips"] for r in cams.ROLES],
+              [50, 50, 50])
+        check("the live pictures are 640 px wide JPEGs",
+              [_probe(cams.live_path(r), "-show_entries", "stream=width,codec_name", "-of", "csv=p=0")
+               for r in cams.ROLES], ["mjpeg,640"] * 3)
+        _t1 = _status()["t"]
+        time.sleep(1.4)
+        check("the status file is rewritten every second", _status()["t"] > _t1, True)
+        _kids = dict(_status()["children"])
+        check("its children are one ffmpeg a role, alive",
+              (sorted(_kids), all(cams._alive(pid) for pid in _kids.values())), (["cabin", "front", "rear"], True))
+        _live("drowsy")
+        check("on the drowsy scene the cabin's source changes",
+              _until("drowsy", lambda: _status()["roles"]["cabin"]["device"] == "cabin-drowsy.mp4", 12), True)
+        _now_kids = dict(_status()["children"])
+        check("and only the cabin's process is new",
+              (_now_kids["front"], _now_kids["rear"], _now_kids["cabin"] != _kids["cabin"]),
+              (_kids["front"], _kids["rear"], True))
+        check("the cabin stays REC through the swap", _status()["roles"]["cabin"]["recording"], True)
+        _live("drive")
+        check("and back again",
+              _until("back", lambda: _status()["roles"]["cabin"]["device"] == "cabin.mp4", 12), True)
+        _bat = time.time()
+        with open(LIVE, "w", encoding="utf-8") as f:
+            json.dump({"connected": True, "simulated": True, "values": {"SPEED": 30.0},
+                       "demo": {"scene": "drive", "event": {"kind": "hard_brake", "at": _bat}}}, f)
+        check("a hard_brake in live.json is marked by the running feed",
+              _until("brake", lambda: [e["kind"] for e in camstore.list_events()] == ["hard-braking"], 12), True)
+        _ev = camstore.list_events()[0]
+        check("and the clips around it are locked, so the timeline says Hard braking",
+              (_ev["t"], bool(_ev["files"]),
+               all(os.path.exists(os.path.join(DEMO_VIDEOS, "locked", _ev["id"], *f.split("/")))
+                   for f in _ev["files"])), (_bat, True, True))
+        _kids = dict(_status()["children"])
+        _p.send_signal(signal.SIGTERM)
+        try:
+            _code = _p.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            _code = "timed out"
+        check("SIGTERM ends it promptly and cleanly", _code, 0)
+        check("its ffmpeg children are all gone", [pid for pid in _kids.values() if cams._alive(pid)], [])
+        check("and so is its status file", os.path.exists(cams.status_path()), False)
+        check("the recorder reads as off again", cams.overview()["running"], False)
+        check("its clips are left on disk for the tab, the locked ones too",
+              len(camstore.list_clips("front")) >= 50, True)
+    finally:
+        if _p.poll() is None:
+            _p.kill()
+            _p.wait()
+        for _pid in _kids.values():
+            if cams._alive(_pid):
+                os.kill(_pid, signal.SIGKILL)
+        _log.close()
+
+    # ---- the parent killed outright takes its ffmpegs with it
+    head("kill -9 on the demo leaves no ffmpeg looping behind it")
+    if not sys.platform.startswith("linux"):
+        print("    (skipping: PR_SET_PDEATHSIG is Linux's. The box and the tablet are.)")
+    else:
+        _live("drive")
+        _log = open(os.path.join(DEMO_ROOT, "feed9.log"), "w")
+        _p = subprocess.Popen([sys.executable, CAMS_PY, "demo", "--from", CLIPS], env=_env(),
+                              stdout=_log, stderr=_log)
+        _kids = {}
+        try:
+            check("it comes up", _until("up", lambda: (_status() or {}).get("children", {}).keys()
+                                        >= {"front", "rear", "cabin"}, 60), True)
+            _kids = dict(_status()["children"])
+
+            def _ours_alive():
+                out = subprocess.run(["pgrep", "-f", os.path.join(DEMO_RUN, "omacar-cams")],
+                                     capture_output=True, text=True).stdout.split()
+                return [int(x) for x in out if int(x) != os.getpid()]
+
+            check("its three ffmpegs carry the demo's runtime path in their argv", len(_ours_alive()) >= 3, True)
+            _p.send_signal(signal.SIGKILL)
+            _p.wait(timeout=10)
+            _end = time.time() + 3
+            while time.time() < _end and _ours_alive():
+                time.sleep(0.1)
+            check("three seconds after kill -9 none of them is left", _ours_alive(), [])
+            check("nor is any of the pids its status file named", [x for x in _kids.values() if cams._alive(x)], [])
+        finally:
+            if _p.poll() is None:
+                _p.kill()
+                _p.wait()
+            for _pid in _kids.values():
+                if cams._alive(_pid):
+                    os.kill(_pid, signal.SIGKILL)
+            _log.close()
+            try:
+                os.remove(cams.status_path())
+            except OSError:
+                pass
+
+for _k, _v in _saved_env.items():
+    if _v is None:
+        os.environ.pop(_k, None)
+    else:
+        os.environ[_k] = _v
 
 shutil.rmtree(SCRATCH, ignore_errors=True)
 print()
