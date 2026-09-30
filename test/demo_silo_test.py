@@ -297,6 +297,171 @@ try:
     rc, out = omacar("demo", "start")
     check("and so does start, the old name for on", (rc != 0, "moving" in out), (True, True))
 
+    head("demo on, a cue, demo off: the whole demo, and not a byte of yours")
+    # Three seconds of test pattern per camera, for the real `cams.py demo`.
+    os.makedirs(CLIPS)
+    for role, src in (("front", "testsrc2=size=192x108:rate=25"),
+                      ("rear", "testsrc2=size=192x108:rate=25"),
+                      ("cabin", "testsrc2=size=128x96:rate=25"),
+                      ("cabin-drowsy", "smptebars=size=128x96:rate=25")):
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                        "-i", src, "-t", "3", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-crf", "40", "-g", "25", "-pix_fmt", "yuv420p",
+                        os.path.join(CLIPS, role + ".mp4")],
+                       check=True, capture_output=True, timeout=60)
+    write_live(0)                      # the real car, parked and answering
+    open(SHIM_LOG, "w").close()
+    BEFORE = outside_demo()
+    URL = f"http://127.0.0.1:{PORT}/demo.html"
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on starts", rc, 0)
+    if rc != 0:
+        print(out)
+    check("and says where the demo is", URL in out, True)
+    check("it started the world, the camera feed, the server, the guard and the window",
+          [w for w in ("the demo world", "the camera feed", "the demo server", "the guard",
+                       "the demo window") if w not in out.split("started", 1)[-1]], [])
+
+    # setsid -f: the window starts on its own time, so wait for it to say so.
+    for _ in range(50):
+        opened = [c.split()[1:] for c in shim_calls() if c.startswith("chromium ")]
+        if opened:
+            break
+        time.sleep(0.2)
+    check("the window was opened once", len(opened), 1)
+    argv = opened[0] if opened else []
+    check("on the demo's own profile",
+          f"--user-data-dir={DEMO_ROOT}/browser" in argv, True)
+    check("at the demo page", f"--app={URL}" in argv, True)
+    # The live kiosk's flags, read from kiosk() itself, so the two windows stay
+    # in step: everything it passes but its profile and its page.
+    with open(OMACAR, encoding="utf-8") as f:
+        _kiosk = f.read().split("kiosk() {", 1)[1].split("\n}", 1)[0]
+    KIOSK_FLAGS = [ln.strip().rstrip("\\").strip() for ln in _kiosk.splitlines()
+                   if ln.strip().startswith("--")
+                   and not ln.strip().startswith(("--user-data-dir", "--app"))]
+    check("with every flag the live kiosk has", (len(KIOSK_FLAGS) >= 10,
+          [f for f in KIOSK_FLAGS if f not in argv]), (True, []))
+    check("muted under OMACAR_DEMO_MUTE=1, and no camera or microphone prompt, ever",
+          ("--mute-audio" in argv, "--deny-permission-prompts" in argv), (True, True))
+    try:
+        with open(CHROMIUM_ENV, encoding="utf-8") as f:
+            cache = f.read()
+    except OSError:
+        cache = None
+    check("with the demo's own cache folder, given on its command line",
+          cache, os.path.join(DEMO_ROOT, "cache"))
+
+    import http.client
+
+    def hreq(method, path, body=None):
+        c = http.client.HTTPConnection("127.0.0.1", PORT, timeout=20)
+        try:
+            c.request(method, path, body=body,
+                      headers={"Content-Type": "application/json"} if body else {})
+            r = c.getresponse()
+            return r.status, r.read()
+        except (OSError, http.client.HTTPException):
+            return None, b""
+        finally:
+            c.close()
+
+    st, body = hreq("GET", "/demo.html")
+    check("the demo server serves the demo page", (st, b"demo/js/boot.js" in body), (200, True))
+    st, _ = hreq("POST", "/api/begin", "{}")
+    check("and refuses the route that stops the real recorder", st, 403)
+
+    demo_live = os.path.join(DEMO_ROOT, "state", "omacar", "live.json")
+    fresh = None
+    for _ in range(50):
+        try:
+            with open(demo_live, encoding="utf-8") as f:
+                fresh = json.load(f)
+            if time.time() - fresh.get("t", 0) < 3:
+                break
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.2)
+    check("the demo world is driving, in the demo's own live.json",
+          bool(fresh) and time.time() - fresh.get("t", 0) < 3 and "demo" in fresh, True)
+    run_cams = os.path.join(DEMO_ROOT, "run", "omacar-cams")
+    front_clips = os.path.join(DEMO_ROOT, "videos", "front")
+
+    def _clips():
+        return len(os.listdir(front_clips)) if os.path.isdir(front_clips) else 0
+    # The pictures come first; the 50 minutes of clips are laid down beside them.
+    for _ in range(150):
+        if all(os.path.exists(os.path.join(run_cams, r + ".jpg")) for r in ("front", "rear", "cabin")) \
+                and _clips() >= 50:
+            break
+        time.sleep(0.2)
+    check("the real camera feed draws each camera's live picture in the demo's runtime folder",
+          [r for r in ("front", "rear", "cabin")
+           if not os.path.exists(os.path.join(run_cams, r + ".jpg"))], [])
+    check("with its status, and the last 50 minutes of clips in the demo's videos",
+          (os.path.exists(os.path.join(run_cams, "status.json")), _clips()), (True, 50))
+    rc, out = omacar("demo", "status")
+    check("status: the world, the server, the guard and the window",
+          [w for w in ("demo world     running", URL, "watching", "demo window    open")
+           if w not in out], [])
+    check("ACTIVE is there for the bar widget",
+          os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE")), True)
+    check("the road cameras' saved list and pins were copied in, for no signal",
+          (os.path.exists(os.path.join(DEMO_ROOT, "state", "omacar", "roadcams", "list.json")),
+           os.path.exists(os.path.join(DEMO_ROOT, "config", "omarchy", "omacar-roadcams.json"))),
+          (True, True))
+
+    st, body = hreq("POST", "/api/demo/cue", '{"cue": "park"}')
+    check("a park cue is taken", st, 200)
+    time.sleep(3)
+    try:
+        with open(os.path.join(DEMO_ROOT, "state", "omacar", "demo-cue.json"),
+                  encoding="utf-8") as f:
+            cue = json.load(f).get("cue")
+    except (OSError, ValueError):
+        cue = None
+    check("and waits for the world in the demo's state", cue, "park")
+
+    rc, out = omacar("demo", "off", timeout=120)
+    check("demo off", rc, 0)
+    check("and says what it stopped",
+          [w for w in ("the demo window", "the demo server", "the demo world", "the guard",
+                       "the camera feed") if f"stopped {w}" not in out], [])
+    check("nothing holds the demo's port", listening(PORT), False)
+    check("nothing of the demo's is left running, not one of the feed's ffmpegs", ours_running(), [])
+    check("ACTIVE is gone", os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE")), False)
+    check("every file outside the demo's folder is byte-identical, the real runtime "
+          "folder's camera pictures included", outside_demo(), BEFORE)
+    check("no systemctl, wpctl or pactl, and no hyprctl either",
+          [c for c in shim_calls() if c.split()[0] != "chromium"], [])
+    # Each section after this one counts its own calls from zero.
+    open(SHIM_LOG, "w").close()
+
+    head("a road-camera copy that fails leaves nothing half made, and is tried again")
+    shutil.rmtree(os.path.join(DEMO_ROOT, "state", "omacar", "roadcams"), ignore_errors=True)
+    os.remove(os.path.join(DEMO_ROOT, "config", "omarchy", "omacar-roadcams.json"))
+    locked = os.path.join(REAL_STATE, "roadcams", "list.json")
+    os.chmod(locked, 0)
+    try:
+        rc, out = omacar("demo", "on", timeout=180)
+    finally:
+        os.chmod(locked, 0o644)
+    check("demo on still starts", rc, 0)
+    check("and says the stills could not be copied",
+          "the saved stills could not be copied" in out, True)
+    state_dir = os.path.join(DEMO_ROOT, "state", "omacar")
+    check("with no half copy left behind, under either name",
+          (os.path.exists(os.path.join(state_dir, "roadcams")),
+           [n for n in os.listdir(state_dir) if n.startswith(".roadcams.copy")]), (False, []))
+    rc, _ = omacar("demo", "off", timeout=120)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("the next demo on copies them",
+          (rc, os.path.exists(os.path.join(state_dir, "roadcams", "list.json")),
+           "could not be copied" in out), (0, True, False))
+    rc, _ = omacar("demo", "off", timeout=120)
+    check("and goes cleanly", (rc, ours_running(), listening(PORT)), (0, [], False))
+    open(SHIM_LOG, "w").close()
+
     head("the guard closes the demo when the real car moves, and goes with it")
     write_live(0)
     os.makedirs(DEMO_ROOT, exist_ok=True)
