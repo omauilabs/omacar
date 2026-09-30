@@ -1044,6 +1044,48 @@ p = go(w, c, 10.0, dt=0.5)
 ok("and it takes the park cue from the file, as the server writes it",
    speed(p) == 0 and p["demo"]["parked"] is True)
 
+# The quiet cue (hardening B). `omacar demo off` sends it first, and the page,
+# seeing a fresh demo.quiet_at, fades its music out before the window goes.
+# The world only says when, for 10 s, and changes nothing else about the car.
+w, c, p = cruising_with_file()
+twin, tc = make(QUIET)                      # the same drive, never told
+twin.step()
+go(twin, tc, CRUISE, dt=0.5)
+ok("with no quiet cue there is no quiet_at", p["demo"].get("quiet_at", "missing") is None)
+at = c.wall() + 0.1
+write_cue("quiet", at)
+
+
+def both(secs):
+    c.t += secs
+    tc.t += secs
+    return w.step(), twin.step()
+
+
+def but_quiet(x):
+    d = json.loads(json.dumps(x))
+    d["demo"].pop("quiet_at", None)
+    return d
+
+
+p, q = both(0.5)
+ok("a quiet cue puts its own `at` in live.json as demo.quiet_at",
+   p["demo"].get("quiet_at") == at)
+ok("and nothing else about the car changes: the same payload as a world never told",
+   but_quiet(p) == but_quiet(q) and speed(p) > 0 and p["demo"]["scene"] == "drive")
+for _ in range(18):
+    p, q = both(0.5)
+ok("it is still there 9.5 s later, and the drive still has not changed",
+   p["demo"].get("quiet_at") == at and but_quiet(p) == but_quiet(q))
+p, q = both(1.0)
+ok("and gone after 10 s", p["demo"].get("quiet_at", "missing") is None and but_quiet(p) == but_quiet(q))
+later_at = c.wall() + 0.1
+write_cue("quiet", later_at)
+p, q = both(0.5)
+ok("a later quiet is another one", p["demo"].get("quiet_at") == later_at)
+w.cue("quiet")
+ok("told directly, it is now", w.step()["demo"]["quiet_at"] == c.wall())
+
 # Where the drive comes from.
 fake_root = os.path.join(TMP, "root")
 os.makedirs(os.path.join(fake_root, "test", "fixtures", "demo"))
@@ -1198,6 +1240,14 @@ time.sleep(1.5)
 with open(live_path, encoding="utf-8") as f:
     live3 = json.load(f)
 ok("it takes a cue from $OMACAR_STATE/demo-cue.json", live3["demo"]["scene"] == "drowsy")
+quiet_at = time.time() + 0.2
+with open(os.path.join(STATE, "demo-cue.json"), "w", encoding="utf-8") as f:
+    json.dump({"cue": "quiet", "at": quiet_at}, f)
+time.sleep(1.5)
+with open(live_path, encoding="utf-8") as f:
+    live4 = json.load(f)
+ok("and a quiet cue shows in live.json as demo.quiet_at",
+   live4["demo"].get("quiet_at") == quiet_at and live4["demo"]["scene"] == "drowsy")
 proc.send_signal(signal.SIGTERM)
 try:
     proc.wait(timeout=10)

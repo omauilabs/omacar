@@ -242,14 +242,18 @@ export function createTour(deps = {}) {
 // goes through the server (/api/home), so the wait for it is capped at
 // RESET_WAIT_MS: a server that does not answer never holds a restart.
 //
-//   createReset({ radio, cue, resetWork, restoreHome, later, cancel }) -> () => Promise
+//   createReset({ fade, radio, cue, resetWork, restoreHome, later, cancel }) -> () => Promise
+//
+// `fade` (quiet.js fadeOut) takes the music down to silence first, so it never
+// cuts in one step (hardening B).
 
-export function createReset({ radio, cue, resetWork, restoreHome,
+export function createReset({ fade, radio, cue, resetWork, restoreHome,
                               later = (fn, ms) => setTimeout(fn, ms), cancel = (id) => clearTimeout(id) } = {}) {
   const step = (what, fn) => {
     try { return fn(); } catch (e) { console.warn(`demo reset: ${what}:`, e); return undefined; }
   };
   return async function reset() {
+    await Promise.resolve(step("the music", () => fade && fade())).catch((e) => console.warn("demo reset: the music:", e));
     step("the radio", () => radio && radio.pause());
     Promise.resolve(step("the restart cue", () => cue && cue("restart"))).catch(() => {});
     step("Work", () => resetWork && resetWork());

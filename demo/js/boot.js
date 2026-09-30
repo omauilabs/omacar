@@ -20,6 +20,8 @@
 //   3. and its own: the scripted Scan vehicle, Home's car and agent cards, the top
 //      bar (the logo, DEMO and the long press), the menu, the tour and its
 //      keys, and the `demo-tour` screen `omacar demo tour` asks for.
+//   4. the quiet cue (hardening B): the music fades out when `demo off`
+//      asks, and before the tour's reset:                       register(D, { radio })
 
 import { h, store } from "../../js/core.js";
 import { tyreState } from "../../js/systems.js";
@@ -39,6 +41,7 @@ import { register as scan } from "./views/scan.js";
 import { createTour, createCaptions, createReset, loadSteps } from "./tour.js";
 import { createMenu, createCues } from "./menu.js";
 import { createBar } from "./bar.js";
+import { register as quiet, fadeOut } from "./quiet.js";
 
 const D = globalThis.OMACAR_DEMO = {
   views: {}, extraViews: [], tabRoots: {}, cards: {}, afterBar: null, onKey: null,
@@ -65,6 +68,7 @@ agent(D, deps);
 work(D, deps);
 scan(D);
 agentCard(D);
+quiet(D, { radio });
 
 // So Home's radio row and every Now Playing have the station's names from the
 // first paint. Loading plays nothing.
@@ -112,11 +116,12 @@ function show(hash) {
   else location.hash = hash;
 }
 
-// The demo back to its start (tour.js createReset): the radio quiet, the drive
-// from Marina, Work's sessions fresh, and Home and its look as they were before
-// the agent's Apply, waiting for Home at most 3 s. A tour from the top and
-// "Restart the drive" both run it.
+// The demo back to its start (tour.js createReset): the music faded out and
+// the radio quiet, the drive from Marina, Work's sessions fresh, and Home and
+// its look as they were before the agent's Apply, waiting for Home at most
+// 3 s. A tour from the top and "Restart the drive" both run it.
 const resetDemo = createReset({
+  fade: () => fadeOut(),
   radio,
   cue: (name) => cues.send(name),
   resetWork,
