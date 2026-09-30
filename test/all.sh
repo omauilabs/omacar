@@ -190,6 +190,11 @@ python3 "$ROOT/test/demo_silo_test.py" || fails=$((fails + 1))
 # The tour, its menu and keys, the top bar and the scripted scan are
 # test/js/demo-tour.test.js, run by js_test.py above.
 python3 "$ROOT/test/democheck_test.py" || fails=$((fails + 1))
+# demoworld.py tidy: the seeded demo car with no active code, an all-clear last
+# scan, readiness complete and nothing due, its history kept; and, in headless
+# Chromium, Vehicle's "All systems normal", no tab badge, and Home's tyres not
+# "Check". A scratch HOME inside an omacar-demo folder.
+python3 "$ROOT/test/demotidy_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 8 --------------------------------------------------
 # ---- meetup demo: the backup video (Task 9) -----------------------------------
 # tools/demo_record.sh, the tablet's recorder, dry-run against a stand-in

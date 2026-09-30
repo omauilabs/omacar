@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOL = os.path.join(ROOT, "lib", "democheck.py")
@@ -100,10 +101,11 @@ def free_port():
         return s.getsockname()[1]
 
 
-def run(work, private, kiosk=True, port=None, extra=None):
+def run(work, private, kiosk=True, port=None, extra=None, real_pgrep=False):
     bindir = os.path.join(work, "bin")
     shim(bindir, kiosk)
-    env = {"PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+    path = os.environ.get("PATH", "") if real_pgrep else bindir + os.pathsep + os.environ.get("PATH", "")
+    env = {"PATH": path,
            "HOME": os.path.join(work, "home"), "LANG": "C.UTF-8",
            "OMACAR_DEMO_PORT": str(port or free_port()), **(extra or {})}
     r = subprocess.run([sys.executable, TOOL, "--private", private],
@@ -159,7 +161,9 @@ def main():
         log = os.path.join(work, "bin", "pgrep.log")
         with open(log, encoding="utf-8") as f:
             asked = f.read()
-        check("the kiosk is looked for by its profile", "user-data-dir=.*/omacar/kiosk-profile" in asked, asked)
+        profile = os.path.join(home, ".local", "share", "omacar", "kiosk-profile")
+        check("the kiosk is looked for by its own profile, exactly",
+              "--user-data-dir=" + profile.replace(".", "\\.") + "( |$)" in asked, asked)
         check("the demo off: its server is not asked for", any("off" in ln for ln in lines if "server" in ln),
               "\n".join(lines))
 
@@ -229,6 +233,31 @@ def main():
         # No live kiosk.
         r, lines = run(work, private, kiosk=False)
         check("no live kiosk: not ready: kiosk", lines[-1] == "not ready: kiosk", r.stdout)
+
+        # The real pgrep, against stand-ins: a test's fake kiosk under /tmp (the
+        # box had one left running, and it passed for the live kiosk) and a
+        # profile that only starts with the real one's name do not count; a
+        # process on the real profile does.
+        sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+        decoys = [subprocess.Popen(sleeper + [f"--user-data-dir={os.path.join(work, 'tmp', 'omacar', 'kiosk-profile')}"]),
+                  subprocess.Popen(sleeper + [f"--user-data-dir={profile}-old", "--app=x"])]
+        try:
+            time.sleep(0.3)
+            r, lines = run(work, private, real_pgrep=True)
+            check("a test's stand-in, or a look-alike profile, is not the live kiosk",
+                  lines[-1] == "not ready: kiosk", r.stdout)
+            live = subprocess.Popen(sleeper + [f"--user-data-dir={profile}", "--app=http://127.0.0.1/app.html"])
+            try:
+                time.sleep(0.3)
+                r, lines = run(work, private, real_pgrep=True)
+                check("a process on the real kiosk profile is", lines[-1] == "ready", r.stdout)
+            finally:
+                live.kill()
+                live.wait()
+        finally:
+            for d in decoys:
+                d.kill()
+                d.wait()
 
         # The demo on: its server must answer /demo.html.
         active = os.path.join(home, ".local", "state", "omacar-demo")
