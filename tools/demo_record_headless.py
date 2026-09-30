@@ -11,23 +11,36 @@ Chromium's own (DevTools' Page.startScreencast, each frame with its time) and
 the sound is a PipeWire null sink's monitor:
 
   1. `pactl load-module module-null-sink sink_name=omacar-demo-rec`: a sink
-     that outputs to nothing. The default sink, its volume and its mute are
-     read before and after, and must not move. The module is ALWAYS unloaded
-     at the end, however this ends, and only after the browser is gone: a sink
-     removed from under a playing stream sends that stream to the default one.
+     that outputs to nothing, and that WirePlumber neither restores nor saves
+     (state.restore-props=false). The default sink, its volume and its mute
+     are read before and after, and must not move. The module is unloaded at
+     the end, however this ends, but ONLY once nothing of the browser's is
+     left: a sink removed from under a playing stream sends that stream to the
+     default one. If something is left, the sink stays loaded (it is silent),
+     and this says so, with its module, and fails.
   2. The demo, in a scratch HOME, muted, as tools/demo_e2e.py runs it.
   3. The one unmuted Chromium: headless, 1920x1080, with PULSE_SINK naming the
      null sink and no other way to a sound server (see demo_e2e.Browser). Its
-     route is PROVEN before anything plays: a silent AudioContext must show up
-     on the null sink. And a guard watches every stream of this browser's for
-     as long as it lives; one anywhere else is cut (pactl kill-sink-input) and
-     the browser killed.
+     streams are named omacar-demo-rec, not Chromium, and marked for
+     WirePlumber never to restore or save them, never to fall back to another
+     sink and never to be moved (STREAM_PROPS), so they can neither take nor
+     leave a volume on the owner's own Chromium. Its route is PROVEN before
+     anything plays: a silent AudioContext must show up on the null sink. And
+     a guard watches every stream of this browser's for as long as it lives;
+     one anywhere else is cut (pactl kill-sink-input) and the browser killed.
+     A guard that cannot see three times running, or that stops, stops the
+     run the same way.
   4. The tour, from the top; frames by screencast, and sound by `ffmpeg -f
      pulse` from omacar-demo-rec.monitor, on the same clock.
   5. Frames at their real times and the sound, muxed: H.264 and AAC at a
      constant 30 fps, written beside and renamed into place.
   6. Everything taken down; then the length, the size, five stills and
      ffmpeg's volumedetect, for the whole film and step by step.
+
+INT, TERM and HUP stop the run; the first one counts, and from then on, as
+from the moment the teardown starts, all three are ignored, so a second Ctrl+C
+or a dropped ssh cannot cut the teardown short. pactl, ffmpeg and the browser
+run in sessions of their own, where a terminal's Ctrl+C cannot reach them.
 """
 
 import argparse
@@ -49,6 +62,21 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import demo_e2e as e2e  # noqa: E402
 
 SINK = "omacar-demo-rec"
+# The null sink's own node: WirePlumber would otherwise remember its volume
+# under its name, in the owner's ~/.local/state/wireplumber/stream-properties.
+SINK_PROPS = "state.restore-props=false"
+# The recording browser's streams, as PipeWire sees them (libpulse's
+# PULSE_PROP_OVERRIDE, which wins over the name Chromium gives itself):
+#   a name of their own, so WirePlumber's restore can never key on "Chromium",
+#     the owner's browser;
+#   state.restore-props/-target false: neither restored nor saved;
+#   node.dont-fallback, dont-reconnect and dont-move: if omacar-demo-rec is not
+#     there, or goes, the stream waits unlinked instead of going to the
+#     default sink.
+STREAM_PROPS = (f"application.name={SINK} application.id={SINK} "
+                "state.restore-props=false state.restore-target=false "
+                "node.dont-fallback=true node.dont-reconnect=true node.dont-move=true")
+SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 SIZE = (1920, 1080)
 FPS = 30
 # The film starts this long before step 1 opens, and runs this long after the
@@ -70,17 +98,62 @@ class Proven(Exception):
     """--probe's end: the route is proven, and everything comes down."""
 
 
+class Stop(BaseException):
+    """INT, TERM or HUP: the run stops here, and the teardown runs."""
+
+
+class GuardDown(RuntimeError):
+    """The guard found a stream where it must not be, or stopped watching."""
+
+
+class Signals:
+    """The first INT, TERM or HUP stops the run (Stop); every one after it,
+    and every one once the teardown has started, is ignored.
+
+    `tearing` is set by the teardown's FIRST STATEMENT, an attribute store:
+    CPython runs a signal handler only at a call or a backward jump, so none
+    can land between the start of the `finally` and that store."""
+
+    def __init__(self):
+        self.got = None
+        self.tearing = False
+
+    def arm(self):
+        for s in SIGNALS:
+            signal.signal(s, self._on)
+
+    def quiet(self):
+        for s in SIGNALS:
+            signal.signal(s, signal.SIG_IGN)
+
+    def _on(self, n, _frame):
+        self.quiet()
+        if self.got is None:
+            self.got = n
+        if not self.tearing:
+            raise Stop(n)
+
+
 def need(*tools):
     missing = [t for t in tools if not shutil.which(t)]
     if missing:
         raise Refused("missing here: " + ", ".join(missing))
 
 
+def runtime_dir():
+    return os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+
+
+def lock_path():
+    """One per user, in the user's runtime folder: the same file whatever
+    TMPDIR says. OMACAR_REC_LOCK is for the tests."""
+    return os.environ.get("OMACAR_REC_LOCK") or os.path.join(runtime_dir(), f"{SINK}.lock")
+
+
 def pulse_server():
     """This user's PipeWire-Pulse socket. Over ssh there is no XDG_RUNTIME_DIR,
     so it is found where logind puts it."""
-    run = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
-    sock = os.path.join(run, "pulse", "native")
+    sock = os.path.join(runtime_dir(), "pulse", "native")
     if not os.path.exists(sock):
         raise Refused(f"no sound server at {sock}")
     return "unix:" + sock
@@ -98,8 +171,9 @@ class NullSink:
         self.was = None
 
     def pactl(self, *args, timeout=10):
+        # A session of its own: a terminal's Ctrl+C reaches this process only.
         r = subprocess.run(["pactl", *args], env=self.env, capture_output=True, text=True,
-                           timeout=timeout, stdin=subprocess.DEVNULL)
+                           timeout=timeout, stdin=subprocess.DEVNULL, start_new_session=True)
         if r.returncode != 0:
             raise RuntimeError(f"pactl {' '.join(args)}: {(r.stderr or r.stdout).strip()}")
         return r.stdout
@@ -135,7 +209,8 @@ class NullSink:
                                   f"{len(listening)} recording): another recording is running")
                 log(f"  a {SINK} left by an earlier run (module {s['owner_module']}): unloaded")
                 self.pactl("unload-module", str(s["owner_module"]))
-        out = self.pactl("load-module", "module-null-sink", f"sink_name={SINK}")
+        out = self.pactl("load-module", "module-null-sink", f"sink_name={SINK}",
+                         f"sink_properties={SINK_PROPS}")
         self.module = int(out.strip())
         for s in self.sinks():
             if s["name"] == SINK:
@@ -155,24 +230,52 @@ class NullSink:
     def on_sink(self):
         return [i for i in self.inputs() if i.get("sink") == self.index]
 
-    def unload(self):
-        """Nothing left playing into it, then gone. kill-sink-input ends a
-        stream without touching any volume WirePlumber would remember."""
+    def unload(self, prof=None, wait=8.0):
+        """Gone, but ONLY when nothing can play into it any more: no process of
+        the recording browser's (`prof`, found in /proc) and no stream on the
+        sink. A sink removed from under a stream sends it to the default sink,
+        out loud; a null sink left loaded outputs nothing. So when something
+        is left after `wait` seconds, the sink stays, and the problem says so,
+        with the command for later. When the streams cannot be listed and the
+        browser is gone, the unload is still tried."""
         if self.module is None:
             return []
         problems = []
-        end = time.monotonic() + 8
-        while self.on_sink() and time.monotonic() < end:
+        end = time.monotonic() + wait
+        while True:
+            alive = e2e.mentions(prof) if prof else []
+            try:
+                streams, listed = self.on_sink(), None
+            except Exception as e:                              # noqa: BLE001
+                streams, listed = [], e
+            if (not alive and not streams) or time.monotonic() >= end:
+                break
             time.sleep(0.25)
-        for i in self.on_sink():
-            problems.append(f"stream #{i['index']} ({i['properties'].get('application.name')}) "
-                            f"was still on {SINK}: cut")
-            self.pactl("kill-sink-input", str(i["index"]))
-        self.pactl("unload-module", str(self.module))
+        if alive or streams:
+            what = [f"browser process {p}" for p, _ in alive] + \
+                   [f"stream #{i['index']} ({i.get('properties', {}).get('application.name')})"
+                    for i in streams]
+            problems.append(f"{SINK} LEFT LOADED (module {self.module}): {'; '.join(what)} "
+                            f"still there. It outputs nothing, so it is silent. Once they "
+                            f"are gone: pactl unload-module {self.module}")
+            log(f"  !!! {problems[-1]}")
+            return problems
+        if listed is not None:
+            problems.append(f"the streams on {SINK} could not be listed ({listed!r}); "
+                            f"the browser is gone, so it was unloaded anyway")
+        try:
+            self.pactl("unload-module", str(self.module))
+        except Exception as e:                                  # noqa: BLE001
+            problems.append(f"UNLOAD FAILED: pactl unload-module {self.module} ({e!r})")
+            log(f"  !!! {problems[-1]}")
+            return problems
         log(f"  {SINK} unloaded (module {self.module})")
         self.module = None
-        if any(s["name"] == SINK for s in self.sinks()):
-            problems.append(f"{SINK} is still there after unloading")
+        try:
+            if any(s["name"] == SINK for s in self.sinks()):
+                problems.append(f"{SINK} is still there after unloading")
+        except Exception:                                       # noqa: BLE001
+            pass
         return problems
 
 
@@ -226,47 +329,80 @@ def kill_browser(prof, browser=None, wait=5.0):
 # A stream that exists and is not linked to any sink yet: PipeWire-Pulse gives
 # its sink as SPA_ID_INVALID. It plays nowhere, and is looked at again.
 UNLINKED = (None, -1, 0xFFFFFFFF)
+# Looks in a row the guard may fail before it stops the run: blind is not safe.
+BLIND = 3
+
+
+def serial(i):
+    """A stream's identity: PipeWire's object.serial, which is never reused,
+    where an index can be."""
+    return str(i.get("properties", {}).get("object.serial") or f"index:{i.get('index')}")
 
 
 class Guard(threading.Thread):
     """Every tenth of a second: each stream of this browser's that is linked
     to a sink must be linked to the null sink. One that is linked anywhere else
     is cut, and the browser killed. `ours` holds the streams seen on the null
-    sink. A new Chromium stream that cannot be traced to a process counts as
-    this browser's."""
+    sink. A new stream that cannot be traced to a process counts as this
+    browser's if it says it is Chromium or omacar-demo-rec. `before` holds the
+    object serials of the streams that were there before the browser.
+
+    IT FAILS CLOSED. A look that fails (pactl, its JSON, anything) is counted,
+    and BLIND of them in a row stop the run: the browser is killed, since a
+    guard that cannot see is not guarding. Anything else that would end the
+    thread does the same. The main thread asks `check()` between its steps,
+    which raises GuardDown once the guard has found a fault or has stopped."""
 
     def __init__(self, sink, root, prof, before):
         super().__init__(daemon=True)
         self.sink, self.root, self.prof, self.before = sink, root, prof, set(before)
         self.ours = set()
+        self.seen = {}
         self.violation = None
         self.stopping = False
         self.errors = 0
 
     def run(self):
-        while not self.stopping and not self.violation:
-            try:
-                for i in self.sink.inputs():
-                    if i["index"] in self.before:
-                        continue
-                    props = i.get("properties", {})
-                    pid = props.get("application.process.id")
-                    name = str(props.get("application.name", ""))
-                    mine = descends(int(pid), self.root) if str(pid or "").isdigit() else \
-                        "chrom" in name.lower()
-                    if not mine or i.get("sink") in UNLINKED:
-                        continue
-                    if i.get("sink") == self.sink.index:
-                        self.ours.add(i["index"])
-                    else:
-                        self.violation = (f"stream #{i['index']} of the recording browser "
-                                          f"({name}, pid {pid}) went to sink #{i.get('sink')}, "
-                                          f"not {SINK} (#{self.sink.index})")
-                        self.cut(i["index"])
+        blind = 0
+        try:
+            while not self.stopping and not self.violation:
+                try:
+                    self.look()
+                    blind = 0
+                except Exception as e:                          # noqa: BLE001
+                    blind += 1
+                    self.errors += 1
+                    if blind >= BLIND:
+                        self.violation = (f"the guard could not see the streams {BLIND} times "
+                                          f"running ({e!r}), so the recording browser was stopped")
+                        self.cut(None)
                         break
-            except (RuntimeError, ValueError, subprocess.TimeoutExpired):
-                self.errors += 1
-            time.sleep(0.1)
+                time.sleep(0.1)
+        except BaseException as e:                              # noqa: BLE001
+            if not self.violation:
+                self.violation = f"the guard stopped ({e!r}), so the recording browser was stopped"
+            self.cut(None)
+
+    def look(self):
+        for i in self.sink.inputs():
+            if serial(i) in self.before:
+                continue
+            props = i.get("properties", {})
+            pid = props.get("application.process.id")
+            name = str(props.get("application.name", ""))
+            mine = descends(int(pid), self.root) if str(pid or "").isdigit() else \
+                ("chrom" in name.lower() or name == SINK)
+            if not mine or i.get("sink") in UNLINKED:
+                continue
+            if i.get("sink") == self.sink.index:
+                self.ours.add(i["index"])
+                self.seen[i["index"]] = i
+            else:
+                self.violation = (f"stream #{i['index']} of the recording browser "
+                                  f"({name}, pid {pid}) went to sink #{i.get('sink')}, "
+                                  f"not {SINK} (#{self.sink.index})")
+                self.cut(i["index"])
+                return
 
     def cut(self, index):
         """The browser killed first, a signal and no process started, so it
@@ -276,11 +412,26 @@ class Guard(threading.Thread):
             os.killpg(self.root, signal.SIGKILL)
         except OSError:
             pass
-        kill_browser(self.prof, wait=1.0)
         try:
-            self.sink.pactl("kill-sink-input", str(index))
-        except (RuntimeError, subprocess.TimeoutExpired):
+            kill_browser(self.prof, wait=1.0)
+        except Exception:                                       # noqa: BLE001
             pass
+        if index is not None:
+            try:
+                self.sink.pactl("kill-sink-input", str(index))
+            except Exception:                                   # noqa: BLE001
+                pass
+
+    def check(self):
+        """For the main thread: a guard that has found a fault, or that is no
+        longer watching, stops the run (the browser is already killed, or is
+        killed here, before anything else is taken down)."""
+        if self.violation:
+            raise GuardDown(self.violation)
+        if not self.is_alive() and not self.stopping:
+            self.violation = "the guard stopped watching, so the recording browser was stopped"
+            self.cut(None)
+            raise GuardDown(self.violation)
 
     def stop(self):
         self.stopping = True
@@ -299,20 +450,31 @@ SILENCE_JS = """(async () => {
 
 def prove_route(cdp, guard, timeout=12):
     """A silent AudioContext in the page, which must show up linked to the
-    null sink and to nothing else, before anything in the tour can play."""
+    null sink and to nothing else, before anything in the tour can play.
+    Returns what PipeWire says of those streams: their names, their flags and
+    their volume."""
     state = cdp.value(SILENCE_JS, wait=True, timeout=15)
     end = time.monotonic() + timeout
-    while time.monotonic() < end and not guard.ours and not guard.violation:
+    while time.monotonic() < end and not guard.ours:
+        guard.check()
         time.sleep(0.1)
     time.sleep(0.5)
-    if guard.violation:
-        raise Refused(guard.violation)
+    guard.check()
     if not guard.ours:
         raise Refused(f"the page's audio (AudioContext {state}) never reached PipeWire, "
                       f"so its route cannot be proven; nothing was played")
     cdp.value("globalThis.__recSilence && globalThis.__recSilence.close().then(() => true)",
               wait=True)
-    return sorted(guard.ours)
+    keys = ("application.name", "application.id", "state.restore-props", "state.restore-target",
+            "node.dont-fallback", "node.dont-reconnect", "node.dont-move", "object.serial")
+    said = []
+    for index in sorted(guard.ours):
+        i = guard.seen.get(index, {})
+        props = i.get("properties", {})
+        vol = [v.get("value_percent") for v in (i.get("volume") or {}).values()]
+        said.append({"index": index, "volume": vol,
+                     **{k: props.get(k) for k in keys}})
+    return said
 
 
 # ============================================================ recording
@@ -362,7 +524,8 @@ def stop_proc(p, sig=signal.SIGINT, wait=15):
 
 
 def probe_json(path, *entries):
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", ",".join(entries),
+    # Sections are separated by ':' (format=a,b:stream=c,d).
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", ":".join(entries),
                         "-of", "json", path], capture_output=True, text=True, timeout=60)
     return json.loads(r.stdout or "{}")
 
@@ -420,6 +583,220 @@ def still(path, at, dest):
     return dest
 
 
+# ============================================================ the run
+class Run:
+    """What a recording has up, for take_down to bring down."""
+
+    def __init__(self, a, work):
+        self.a, self.work = a, work
+        self.prof = os.path.join(work, "browser")
+        self.problems = []
+        self.report = {"out": a.out, "problems": self.problems}
+        self.sink = self.sc = self.browser = self.cdp = self.guard = self.ff = self.frames = None
+        self.before = self.steps = None
+        self.entries = []
+        self.v0 = self.v1 = self.a0 = None
+
+
+def take_down(r):
+    """Everything down, in the one order that is safe, each step on its own so
+    that none can skip the next:
+      1. the browser: its DevTools reader, its pipe and group, then every
+         process that carries its profile, killed and waited for;
+      2. ffmpeg, which records the sink's monitor (it would move to the
+         microphone if the sink went first);
+      3. the guard;
+      4. the sink, unloaded only if nothing of the browser's is left
+         (NullSink.unload), and the default sink's state checked;
+      5. the demo, which plays nothing: `demo off`, and its silo."""
+    p = r.problems
+    try:
+        if r.cdp:
+            r.cdp.stop()
+    except Exception as e:                                      # noqa: BLE001
+        p.append(f"stopping the DevTools reader: {e!r}")
+    try:
+        left = kill_browser(r.prof, r.browser)
+        if left:
+            p.append("the recording browser outlived SIGKILL: "
+                     + "; ".join(f"{pid} {c}" for pid, c in left))
+    except Exception as e:                                      # noqa: BLE001
+        p.append(f"taking the browser down: {e!r}")
+    try:
+        stop_proc(r.ff)
+    except Exception as e:                                      # noqa: BLE001
+        p.append(f"stopping ffmpeg: {e!r}")
+    try:
+        if r.guard:
+            r.guard.stop()
+            if r.guard.violation and r.guard.violation not in p:
+                p.append(r.guard.violation)
+    except Exception as e:                                      # noqa: BLE001
+        p.append(f"stopping the guard: {e!r}")
+    if r.sink:
+        try:
+            p += r.sink.unload(r.prof)
+        except Exception as e:                                  # noqa: BLE001
+            p.append(f"UNLOAD FAILED: pactl unload-module {r.sink.module} ({e!r})")
+        try:
+            moved = r.sink.moved() if r.sink.was else []
+            if moved:
+                p.append("the default sink or its volume moved: " + "; ".join(moved))
+            elif r.sink.was:
+                log(f"  the default sink, its volume and mute: as they were ({r.sink.was['default']})")
+        except Exception as e:                                  # noqa: BLE001
+            p.append(f"reading the default sink back: {e!r}")
+    if r.sc:
+        try:
+            p += e2e.teardown(r.sc, r.report)
+            if r.before is not None:
+                r.report["silo"] = e2e.diff(r.before, r.sc.outside())
+                if r.report["silo"]:
+                    p.append("files outside the demo's folder changed: " + "; ".join(r.report["silo"]))
+            calls = r.sc.shim_calls()
+            if calls:
+                p.append("shims were called: " + "; ".join(calls))
+        except Exception as e:                                  # noqa: BLE001
+            p.append(f"taking the demo down: {e!r} (scratch kept: {r.sc.base})")
+        else:
+            if not r.a.keep:
+                r.sc.remove()
+
+
+def guarded(sigs, body, r):
+    """body(r), and then take_down(r), which nothing can stop: not an error in
+    body, not the signal that ended it, and not a second signal during the
+    teardown."""
+    try:
+        body(r)
+    except Proven:
+        pass
+    except Stop as e:
+        r.problems.append(f"stopped by signal {signal.Signals(e.args[0]).name}")
+    except Refused as e:
+        r.problems.append(f"refused: {e}")
+    except Exception as e:                                      # noqa: BLE001
+        r.problems.append(f"stopped: {e!r}")
+        if r.browser:
+            said = e2e.js_test.tail(r.browser.log, 8)
+            if said:
+                r.problems.append("Chromium said: " + " | ".join(said))
+    finally:
+        # FIRST, an attribute store and no call: see Signals.
+        sigs.tearing = True
+        sigs.quiet()
+        log("  taking everything down; Ctrl+C, TERM and HUP are ignored until it is done")
+        take_down(r)
+    if r.sink and r.sink.module is not None:
+        log(f"\n  !!! {SINK} IS STILL LOADED (module {r.sink.module}). It is silent. "
+            f"When nothing plays into it: pactl unload-module {r.sink.module}\n")
+
+
+def record(r):
+    """The run itself: the sink, the demo, the browser, the proof, the tour."""
+    a = r.a
+    need("pactl", "ffmpeg", "ffprobe")
+    exe = e2e.js_test.browser()
+    if not exe:
+        raise Refused("missing here: chromium")
+    server = pulse_server()
+    r.sink = NullSink(server)
+    log(f"\n  the sound goes to a null sink on {server}")
+    r.sink.load()
+    existing = [serial(i) for i in r.sink.inputs()]
+
+    if a.probe:
+        url = "about:blank"
+    else:
+        r.sc = e2e.Scratch(a.work, a.clips, a.roadcams, a.roadcams_pins)
+        url = r.sc.url
+        r.before = r.sc.outside()
+        rc, said = r.sc.demo("on")
+        r.report["on"] = said.strip().splitlines()
+        if rc != 0 or not e2e.wait_page(url):
+            raise Refused(f"demo on did not bring up {url} (exit {rc}):\n{said}")
+        log(f"  the demo, muted, in {r.sc.home}: {url}")
+
+    r.browser = e2e.Browser(exe, r.prof, SIZE, mute=False,
+                            env={"PULSE_SERVER": server, "PULSE_SINK": SINK,
+                                 "PULSE_PROP": STREAM_PROPS, "PULSE_PROP_OVERRIDE": STREAM_PROPS})
+    # Watching before the page exists: its first stream is checked from its
+    # first tenth of a second.
+    r.guard = Guard(r.sink, r.browser.proc.pid, r.prof, existing)
+    r.guard.start()
+    r.cdp = e2e.Cdp(r.browser)
+    watch = e2e.Watch()
+    if a.probe:
+        r.cdp.attach()
+        r.cdp.call("Runtime.enable")
+    else:
+        r.steps = e2e.open_demo(r.cdp, url, SIZE, watch)
+    streams = prove_route(r.cdp, r.guard)
+    r.report["streams_proven"] = streams
+    log(f"  proven with silence: the browser's streams are on {SINK}, and nothing else of it:")
+    for st in streams:
+        log(f"    {st}")
+    if a.probe:
+        raise Proven()
+
+    audio = os.path.join(r.work, "audio.mkv")
+    r.ff = start_audio(r.sink, audio)
+    r.frames = Frames(r.cdp, os.path.join(r.work, "frames"))
+    r.cdp.handlers.append(r.frames)
+    r.cdp.call("Page.startScreencast", {"format": "jpeg", "quality": 85, "maxWidth": SIZE[0],
+                                        "maxHeight": SIZE[1], "everyNthFrame": 1})
+    time.sleep(1.5)
+    r.guard.check()
+    if r.ff.poll() is not None:
+        raise RuntimeError("ffmpeg stopped recording: " + r.ff.stderr.read().decode()[-400:])
+    log("  recording: the tour, from the top")
+    r.entries, tour_problems = e2e.follow_tour(r.cdp, r.steps, watch, out=None,
+                                               check=r.guard.check)
+    r.problems += tour_problems
+    time.sleep(TAIL + 0.5)
+    r.guard.check()
+    r.cdp.call("Page.stopScreencast")
+    stop_proc(r.ff)
+    r.report["console"] = {"errors": watch.errors, "failed": watch.failed,
+                           "warnings": watch.warnings}
+    r.problems += [f"{w}: {e}" for w, e in watch.errors + watch.failed]
+    if r.entries:
+        r.v0 = r.entries[0][2] / 1000 - LEAD
+        last = r.entries[-1]
+        r.v1 = last[2] / 1000 + float(r.steps[last[0]]["secs"]) + TAIL
+    r.a0 = float(probe_json(audio, "format=start_time").get("format", {}).get("start_time", "nan"))
+
+
+def finish(r, stills_dir):
+    """The film from the frames and the sound, and what is said about it."""
+    a, p = r.a, r.problems
+    try:
+        n = mux(r.frames.list, r.v0, r.v1, os.path.join(r.work, "audio.mkv"), r.a0, a.out, r.work)
+        info = probe_json(a.out, "format=duration,size",
+                          "stream=codec_name,width,height,r_frame_rate,avg_frame_rate")
+        fmt = info.get("format", {})
+        r.report.update(frames_captured=len(r.frames.list), frames_used=n,
+                        capture_fps=round(n / (r.v1 - r.v0), 1),
+                        duration=float(fmt.get("duration", 0)), size=int(fmt.get("size", 0)),
+                        streams=info.get("streams"), audio_offset=round(r.v0 - r.a0, 3))
+        r.report["volume"] = volume(a.out)
+        per = []
+        for idx, sid, at_ms, _h in r.entries:
+            start = at_ms / 1000 - r.v0
+            per.append({"step": idx + 1, "id": sid, "start": round(start, 1),
+                        **volume(a.out, start, float(r.steps[idx]["secs"]))})
+        r.report["volume_by_step"] = per
+        os.makedirs(stills_dir, exist_ok=True)
+        r.report["stills"] = []
+        by_id = {sid: at_ms / 1000 - r.v0 for _i, sid, at_ms, _h in r.entries}
+        for sid, secs, name in STILLS:
+            if sid in by_id:
+                r.report["stills"].append(still(a.out, by_id[sid] + secs,
+                                                os.path.join(stills_dir, f"{name}.png")))
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as e:
+        p.append(f"the film could not be made: {e!r}")
+
+
 # ============================================================ main
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -433,191 +810,34 @@ def main(argv=None):
     ap.add_argument("--probe", action="store_true",
                     help="load the sink, prove the route with silence, unload, and stop")
     a = ap.parse_args(argv)
-    for sig in (signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, lambda n, _: sys.exit(128 + n))
+    sigs = Signals()
+    sigs.arm()
 
     # ONE RECORDING AT A TIME. A second would find the first's sink and take
     # it for a leftover.
-    lock = open(os.path.join(tempfile.gettempdir(), f"omacar-demo-rec-{os.getuid()}.lock"), "w")
     try:
+        lock = open(lock_path(), "w")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        log("demo_record_headless: another recording is running (the lock is held); not starting")
+    except OSError as e:
+        log(f"demo_record_headless: another recording is running, or the lock "
+            f"{lock_path()} cannot be taken ({e}); not starting")
         return 2
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    work = tempfile.mkdtemp(prefix="omacar-demo-rec-", dir=a.work)
+    r = Run(a, tempfile.mkdtemp(prefix="omacar-demo-rec-", dir=a.work))
     stills_dir = a.stills or os.path.join(a.work, f"omacar-demo-backup-stills-{stamp}")
-    report = {"out": a.out, "problems": []}
-    problems = report["problems"]
-    sink = sc = browser = cdp = guard = ff = frames = None
-    prof = os.path.join(work, "browser")
-    before = None
-    entries = []
-    v0 = v1 = a0 = None
-    try:
-        need("pactl", "ffmpeg", "ffprobe")
-        exe = e2e.js_test.browser()
-        if not exe:
-            raise Refused("missing here: chromium")
-        server = pulse_server()
-        sink = NullSink(server)
-        log(f"\n  the sound goes to a null sink on {server}")
-        sink.load()
-        existing = [i["index"] for i in sink.inputs()]
+    guarded(sigs, record, r)
+    report, problems = r.report, r.problems
 
-        if a.probe:
-            url = "about:blank"
-        else:
-            sc = e2e.Scratch(a.work, a.clips, a.roadcams, a.roadcams_pins)
-            url = sc.url
-            before = sc.outside()
-            rc, said = sc.demo("on")
-            report["on"] = said.strip().splitlines()
-            if rc != 0 or not e2e.wait_page(url):
-                raise Refused(f"demo on did not bring up {url} (exit {rc}):\n{said}")
-            log(f"  the demo, muted, in {sc.home}: {url}")
-
-        browser = e2e.Browser(exe, prof, SIZE, mute=False,
-                              env={"PULSE_SERVER": server, "PULSE_SINK": SINK})
-        # Watching before the page exists: its first stream is checked from
-        # its first tenth of a second.
-        guard = Guard(sink, browser.proc.pid, prof, existing)
-        guard.start()
-        cdp = e2e.Cdp(browser)
-        watch = e2e.Watch()
-        if a.probe:
-            cdp.attach()
-            cdp.call("Runtime.enable")
-        else:
-            steps = e2e.open_demo(cdp, url, SIZE, watch)
-        ours = prove_route(cdp, guard)
-        log(f"  proven with silence: the browser's stream {ours} is on {SINK}, and nothing else of it")
-        if a.probe:
-            raise Proven()
-
-        audio = os.path.join(work, "audio.mkv")
-        ff = start_audio(sink, audio)
-        frames = Frames(cdp, os.path.join(work, "frames"))
-        cdp.handlers.append(frames)
-        cdp.call("Page.startScreencast", {"format": "jpeg", "quality": 85, "maxWidth": SIZE[0],
-                                          "maxHeight": SIZE[1], "everyNthFrame": 1})
-        time.sleep(1.5)
-        if ff.poll() is not None:
-            raise RuntimeError("ffmpeg stopped recording: " + ff.stderr.read().decode()[-400:])
-        log("  recording: the tour, from the top")
-        entries, tour_problems = e2e.follow_tour(cdp, steps, watch, out=None)
-        problems += tour_problems
-        time.sleep(TAIL + 0.5)
-        cdp.call("Page.stopScreencast")
-        stop_proc(ff)
-        report["console"] = {"errors": watch.errors, "failed": watch.failed,
-                             "warnings": watch.warnings}
-        problems += [f"{w}: {e}" for w, e in watch.errors + watch.failed]
-        if entries:
-            v0 = entries[0][2] / 1000 - LEAD
-            last = entries[-1]
-            v1 = last[2] / 1000 + float(steps[last[0]]["secs"]) + TAIL
-        a0 = float(probe_json(audio, "format=start_time").get("format", {}).get("start_time", "nan"))
-    except Proven:
-        pass
-    except Refused as e:
-        problems.append(f"refused: {e}")
-    except (OSError, RuntimeError, TimeoutError, ValueError, KeyError,
-            subprocess.CalledProcessError) as e:
-        problems.append(f"stopped: {e!r}")
-        if browser:
-            said = e2e.js_test.tail(browser.log, 8)
-            if said:
-                problems.append("Chromium said: " + " | ".join(said))
-    finally:
-        # THE ORDER MATTERS, and nothing may skip the last step. The browser,
-        # every process of it, then the sound's recorder (on the sink's
-        # monitor, which would move to the microphone), then the sink, which
-        # is unloaded whatever went before. Then the demo, which plays nothing.
-        try:
-            if cdp:
-                cdp.stop()
-            if browser:
-                left = kill_browser(prof, browser)
-                if left:
-                    problems.append("the recording browser outlived SIGKILL: "
-                                    + "; ".join(f"{p} {c}" for p, c in left))
-        except Exception as e:                                  # noqa: BLE001
-            problems.append(f"taking the browser down: {e!r}")
-        finally:
-            try:
-                stop_proc(ff)
-            except Exception as e:                              # noqa: BLE001
-                problems.append(f"stopping ffmpeg: {e!r}")
-            finally:
-                if guard:
-                    guard.stop()
-                    if guard.violation and guard.violation not in problems:
-                        problems.append(guard.violation)
-                if sink:
-                    try:
-                        problems += sink.unload()
-                        moved = sink.moved() if sink.was else []
-                        if moved:
-                            problems.append("the default sink or its volume moved: "
-                                            + "; ".join(moved))
-                        elif sink.was:
-                            log(f"  the default sink, its volume and mute: as they were "
-                                f"({sink.was['default']})")
-                    except Exception as e:                      # noqa: BLE001
-                        problems.append(f"UNLOAD FAILED, run: pactl unload-module "
-                                        f"{sink.module} ({e!r})")
-        if sc:
-            try:
-                problems += e2e.teardown(sc, report)
-                if before is not None:
-                    report["silo"] = e2e.diff(before, sc.outside())
-                    if report["silo"]:
-                        problems.append("files outside the demo's folder changed: "
-                                        + "; ".join(report["silo"]))
-                calls = sc.shim_calls()
-                if calls:
-                    problems.append("shims were called: " + "; ".join(calls))
-            except Exception as e:                              # noqa: BLE001
-                problems.append(f"taking the demo down: {e!r} (scratch kept: {sc.base})")
-            else:
-                if not a.keep:
-                    sc.remove()
-
-    if not a.probe and v0 is not None and frames and frames.list and not math.isnan(a0):
-        try:
-            n = mux(frames.list, v0, v1, os.path.join(work, "audio.mkv"), a0, a.out, work)
-            info = probe_json(a.out, "format=duration,size",
-                              "stream=codec_name,width,height,r_frame_rate,avg_frame_rate")
-            fmt = info.get("format", {})
-            report.update(frames_captured=len(frames.list), frames_used=n,
-                          capture_fps=round(n / (v1 - v0), 1),
-                          duration=float(fmt.get("duration", 0)), size=int(fmt.get("size", 0)),
-                          streams=info.get("streams"), audio_offset=round(v0 - a0, 3))
-            report["volume"] = volume(a.out)
-            per = []
-            for idx, sid, at_ms, _h in entries:
-                start = at_ms / 1000 - v0
-                per.append({"step": idx + 1, "id": sid, "start": round(start, 1),
-                            **volume(a.out, start, float(steps[idx]["secs"]))})
-            report["volume_by_step"] = per
-            os.makedirs(stills_dir, exist_ok=True)
-            report["stills"] = []
-            by_id = {sid: at_ms / 1000 - v0 for _i, sid, at_ms, _h in entries}
-            for sid, secs, name in STILLS:
-                if sid in by_id:
-                    report["stills"].append(still(a.out, by_id[sid] + secs,
-                                                  os.path.join(stills_dir, f"{name}.png")))
-        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as e:
-            problems.append(f"the film could not be made: {e!r}")
+    if not a.probe and r.v0 is not None and r.frames and r.frames.list and not math.isnan(r.a0):
+        finish(r, stills_dir)
     elif not a.probe and not problems:
         problems.append("nothing was recorded")
 
     if a.keep:
-        report["work"] = work
+        report["work"] = r.work
     else:
-        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(r.work, ignore_errors=True)
     if not a.probe:
         os.makedirs(stills_dir, exist_ok=True)
         with open(os.path.join(stills_dir, "report.json"), "w", encoding="utf-8") as f:
@@ -626,9 +846,9 @@ def main(argv=None):
         log(f"\n  {a.out}\n  {report['duration']:.1f} s, {report['size'] / 1e6:.1f} MB, "
             f"{report['frames_used']} frames at {report['capture_fps']} captured per second")
         log(f"  volume: mean {report['volume'].get('mean')} dB, max {report['volume'].get('max')} dB")
-        for s in report["volume_by_step"]:
-            log(f"    step {s['step']:2d} {s['id']:<12} from {s['start']:6.1f} s"
-                f"  mean {s.get('mean')} dB  max {s.get('max')} dB")
+        for st in report["volume_by_step"]:
+            log(f"    step {st['step']:2d} {st['id']:<12} from {st['start']:6.1f} s"
+                f"  mean {st.get('mean')} dB  max {st.get('max')} dB")
         log(f"  stills and report.json in {stills_dir}")
     for p in problems:
         log(f"  FAIL  {p}")

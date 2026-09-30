@@ -407,10 +407,11 @@ STATE_JS = ("(() => { const t = OMACAR_DEMO_TOUR.tour; return [t.state, t.index,
             " t.state === 'idle' ? 0 : t.elapsed(), location.hash, Date.now()]; })()")
 
 
-def follow_tour(cdp, steps, watch, out=None, on_step=None, grace=90):
+def follow_tour(cdp, steps, watch, out=None, on_step=None, grace=90, check=None):
     """Start the tour from the top and follow it to its end. Screenshots into
-    `out` when given. Returns (entries, problems): entries are
-    [index, id, wall-clock ms at entry, hash at entry]."""
+    `out` when given. `check()`, when given, is called at every look and may
+    raise to stop the tour (the recorder's guard). Returns (entries,
+    problems): entries are [index, id, wall-clock ms at entry, hash at entry]."""
     plan = shot_plan(steps)
     total = sum(float(s["secs"]) for s in steps)
     problems = []
@@ -423,6 +424,8 @@ def follow_tour(cdp, steps, watch, out=None, on_step=None, grace=90):
     t0 = time.monotonic()
     watch.where = "start"
     while True:
+        if check:
+            check()
         state, index, el, hsh, now_ms = cdp.value(STATE_JS)
         if state == "running" and index is not None and index >= 0:
             if not entries or entries[-1][0] != index:
@@ -686,8 +689,11 @@ class Scratch:
         return d
 
     def demo(self, *args, timeout=180):
+        # A session of its own, so a terminal's Ctrl+C cannot cut `demo off`
+        # short in the middle of a teardown.
         r = subprocess.run([OMACAR, "demo", *args], env=self.env, capture_output=True,
-                           text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+                           text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                           start_new_session=True)
         return r.returncode, (r.stdout + r.stderr)
 
     def outside(self):
