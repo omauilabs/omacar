@@ -94,7 +94,7 @@ export default [
       [170, "go", "#vehicle"], [185, "go", "#scan"],
       [200, "go", "#advisor"], [200, "cue", "park"], [208, "do", "agent.ask(night)"],
       [230, "do", "agent.apply"], [245, "do", "agent.ask(radio)"],
-      [260, "go", "#work"], [260, "cue", "drive"], [270, "do", "work.update"],
+      [260, "go", "#work"], [260, "cue", "drive"], [284, "do", "work.update"],
       [300, "go", "#carplay"], [312, "do", "projection.open(maps)"], [324, "do", "projection.open(nowplaying)"],
       [335, "go", "#androidauto"], [355, "do", "home.restore"],
       [365, "go", "#home"],
