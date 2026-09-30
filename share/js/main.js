@@ -300,7 +300,12 @@ const VIEWS = [
 // refuses them.
 const DEMO = globalThis.OMACAR_DEMO || null;
 if (DEMO) {
-  for (const v of VIEWS) if (DEMO.views && DEMO.views[v.id]) v.mount = DEMO.views[v.id];
+  // A mount function, or { mount, fast } for a screen that needs the live
+  // sample four times a second where the live app's own screen did not.
+  for (const v of VIEWS) {
+    const o = DEMO.views && DEMO.views[v.id];
+    if (o) Object.assign(v, typeof o === "function" ? { mount: o } : o);
+  }
   for (const x of DEMO.extraViews || []) VIEWS.push(Object.assign({ off: "a demo screen" }, x));
   for (const [tabId, viewId] of Object.entries(DEMO.tabRoots || {})) {
     const t = TABS.find((x) => x.id === tabId);

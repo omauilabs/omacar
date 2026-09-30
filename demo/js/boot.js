@@ -3,7 +3,8 @@
 // Loaded only by demo/demo.html, and before js/main.js, so the door main.js
 // reads once at load (globalThis.OMACAR_DEMO) is open by then. The shape:
 //
-//   views:      { [viewId]: mount(root, {arg}) -> unmount|null }  replaces a live view's mount
+//   views:      { [viewId]: mount | { mount, fast } }             replaces a live view's mount;
+//               mount(root, {arg}) -> unmount|null, fast = poll /api/live at 4 Hz
 //   extraViews: [{ id, label, title, mount, fast }]               the demo's own routable screens
 //   tabRoots:   { [tabId]: viewId }                               the screen a tab opens on
 //   cards:      { [cardId]: () -> { node, paint(), destroy() } }   dresses an existing Home card
