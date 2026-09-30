@@ -157,4 +157,12 @@ python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 
+# ---- demo/meetup: the map (Task 3) --------------------------------------------
+# tools/demo_map.py against a hand-made map: the road classes, the ocean closed
+# on the water's side, clipping, labels, and the same bytes every time. The
+# renderer, the turn banner and the screens are test/js/demo-map.test.js, which
+# js_test.py above already runs.
+python3 "$ROOT/test/demo_map_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup: the map -------------------------------------------------
+
 exit $((fails > 0))
