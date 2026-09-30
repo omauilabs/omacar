@@ -415,7 +415,7 @@ export function workView(deps = {}) {
       if (!s) return;
       closeReview();
       const close = () => closeReview();
-      overlay = h("div.wk-overlay", { role: "dialog", "aria-modal": "true", "aria-label": `${s.name}, ready for review`,
+      overlay = h("div.wk-overlay", { "data-demo-overlay": "", role: "dialog", "aria-modal": "true", "aria-label": `${s.name}, ready for review`,
                                       onclick: (e) => { if (e.target === overlay) close(); } },
         h("div.wk-sheet",
           h("div.wk-sheet-h",
