@@ -1817,7 +1817,7 @@ print()
     case "${2:-status}" in
       # start and stop are the names the bar widget's button uses.
       on | start) demo_on ;;
-      off | stop) shift 2; demo_off "$@" ;;
+      off | stop) demo_off "${3:-}" ;;
       tour) demo_tour ;;
       video) demo_video ;;
       # One part of a demo that is on, started again: the guard's watchdog.
