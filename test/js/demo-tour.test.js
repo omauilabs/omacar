@@ -96,7 +96,7 @@ export default [
       [230, "do", "agent.apply"], [245, "do", "agent.ask(radio)"],
       [260, "go", "#work"], [260, "cue", "drive"], [270, "do", "work.update"],
       [300, "go", "#carplay"], [312, "do", "projection.open(maps)"], [324, "do", "projection.open(nowplaying)"],
-      [335, "go", "#androidauto"],
+      [335, "go", "#androidauto"], [355, "do", "home.restore"],
       [365, "go", "#home"],
     ];
     eq(r.log, want, "the tour");

@@ -102,6 +102,7 @@ const ACTIONS = {
   "agent.apply": () => agentActions.apply(),
   "work.update": () => workActions.update(),
   "projection.open": (id) => openScreen(id),
+  "home.restore": () => restoreHome(),
 };
 
 // A screen, opened afresh even when the page is already on it: main.js mounts
