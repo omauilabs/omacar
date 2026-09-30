@@ -304,7 +304,8 @@ if (DEMO) {
   // sample four times a second where the live app's own screen did not.
   for (const v of VIEWS) {
     const o = DEMO.views && DEMO.views[v.id];
-    if (o) Object.assign(v, typeof o === "function" ? { mount: o } : o);
+    if (typeof o === "function") v.mount = o;
+    else if (o) Object.assign(v, o);
   }
   for (const x of DEMO.extraViews || []) VIEWS.push(Object.assign({ off: "a demo screen" }, x));
   for (const [tabId, viewId] of Object.entries(DEMO.tabRoots || {})) {

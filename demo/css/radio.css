@@ -1,0 +1,260 @@
+/* Omarchy Radio in the meetup demo: the Now Playing screen (.np-*) and Home's
+   phone card (.pc-*). Both are the live app's own look, in the live app's own
+   tokens (share/css/app.css): dark slate, cyan accent, rounded cards. No colour
+   here is new; where the palette has no name for one, it is a mix of two that
+   do. Nothing on either moves except by a tap or a measurement: there is no
+   animation in this file at all.
+
+   Every target is 48px or more, and the transport buttons are 72px and 96px,
+   because the reference machine is bolted to a dashboard on a real road (see
+   the tap-target note in app.css). */
+
+/* ---- the glyphs ------------------------------------------------------------ */
+.np-g { display: inline-grid; place-items: center; line-height: 0; }
+.np-g svg { display: block; }
+
+/* =========================================================================
+   NOW PLAYING
+   ========================================================================= */
+
+/* The stage's own wrapper is a 1180px grid for prose. This screen fills the
+   stage, the way Home does (home.css: .wrap:has(> .home)). */
+.wrap.np-root { max-width: none; display: block; height: 100%; }
+
+/* Landscape: the station and the song stacked on the left, the seven on the
+   right, and the address as a quiet last line. */
+.np {
+  height: 100%; min-height: 0;
+  display: grid; gap: 14px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "station list" "now list" "src src";
+}
+.np-station { grid-area: station; }
+.np-now     { grid-area: now; }
+.np-list    { grid-area: list; }
+.np-src     { grid-area: src; }
+
+/* Portrait: one column, top to bottom. The stage scrolls if it must. */
+@media (orientation: portrait) {
+  .np {
+    height: auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "station" "now" "list" "src";
+    gap: 12px;
+  }
+}
+
+/* ---- the station card: type only ------------------------------------------ */
+.np-station {
+  position: relative; overflow: hidden;
+  padding: 18px 26px 20px 30px;
+  background:
+    radial-gradient(120% 160% at 100% 0%, var(--accent-bg), transparent 62%),
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 3%, var(--panel)), var(--panel));
+}
+/* A rule down the left edge, in the accent. The only ornament. */
+.np-station::before {
+  content: ""; position: absolute; left: 0; top: 20%; bottom: 20%;
+  width: 3px; border-radius: 0 3px 3px 0; background: var(--accent);
+}
+.np-st-name {
+  font-family: var(--mono); font-size: .8rem; font-weight: 700;
+  letter-spacing: .34em; color: var(--accent);
+}
+.np-st-tag {
+  margin-top: 8px;
+  font-family: var(--display); font-size: clamp(1.5rem, 2.5vw, 2.3rem);
+  font-weight: 500; letter-spacing: -.02em; line-height: 1.12; color: var(--ink);
+}
+
+/* ---- the song --------------------------------------------------------------- */
+.np-now { display: flex; flex-direction: column; min-height: 0; padding: 24px 30px 22px; }
+.np-eyebrow {
+  font-size: .78rem; font-weight: 600; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--accent);
+}
+/* The title and its artist take the room between the eyebrow and the bar and
+   sit in the middle of it, so the card is balanced whether the title runs to
+   one line or three. */
+.np-words { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; padding: 14px 0; }
+.np-title {
+  font-size: clamp(2.4rem, 4.2vw, 4.75rem); font-weight: 600;
+  letter-spacing: -.028em; line-height: 1.06; color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.np-artist {
+  margin-top: 10px; min-height: 1.5em;
+  font-size: clamp(1.15rem, 1.8vw, 1.7rem); color: var(--ink-2);
+}
+.np-artist[data-tone="warn"] { color: var(--warn); }
+
+.np-scrub { flex: none; padding-top: 8px; }
+.np-times {
+  display: flex; justify-content: space-between; margin-top: 2px;
+  font-size: 1rem; color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+
+/* The bar. A range input, so a finger, a mouse and the arrow keys all work with
+   no code of ours, drawn over a tall transparent box: the track is 8px, the
+   thing a thumb has to hit is 56. --p is the played fraction, set by the
+   screen, so the fill follows the real position and not the input's rounding. */
+.np-range {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%; height: 56px; margin: 0; padding: 0;
+  background: transparent; cursor: pointer; touch-action: pan-y;
+}
+.np-range::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) var(--p, 0%), var(--track) var(--p, 0%));
+}
+.np-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 28px; height: 28px; margin-top: -10px; border: 0; border-radius: 50%;
+  background: var(--bright);
+  box-shadow: 0 0 0 5px var(--accent-bg), 0 1px 5px rgba(0, 0, 0, .55);
+}
+.np-range:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; border-radius: 12px; }
+/* Until the song's length is known there is nothing to drag. */
+.np-range:disabled { cursor: default; }
+.np-range:disabled::-webkit-slider-thumb { visibility: hidden; }
+
+/* previous / play-pause / next */
+.np-ctl {
+  display: flex; align-items: center; justify-content: center;
+  gap: clamp(22px, 4vw, 48px); padding-top: 12px;
+}
+.np-btn {
+  display: grid; place-items: center; flex: none; padding: 0;
+  border: 1px solid var(--hair); border-radius: 50%;
+  background: var(--panel-2); color: var(--ink);
+  cursor: pointer; touch-action: manipulation;
+}
+.np-prev, .np-next { width: 72px; height: 72px; }
+.np-play {
+  width: 96px; height: 96px; border-color: transparent;
+  background: var(--accent); color: var(--on-accent);
+}
+.np-btn:active { background: var(--raise); }
+.np-play:active { background: var(--accent-fill); }
+.np-btn:focus-visible { outline: 2px solid var(--info); outline-offset: 3px; }
+
+/* ---- the seven ---------------------------------------------------------------- */
+.np-list { display: flex; flex-direction: column; min-height: 0; padding: 16px 12px 12px; }
+.np-list-h {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 4px 14px 10px;
+  font-size: .78rem; font-weight: 600; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--faint);
+}
+.np-count { letter-spacing: .08em; }
+/* Rows of 60 to 84px: the seven spread down the card rather than huddling at the
+   top of it, without ever going below a comfortable target. */
+.np-tracks { display: grid; gap: 4px; align-content: start; grid-auto-rows: minmax(60px, 84px); min-height: 0; overflow-y: auto; }
+/* Portrait: seven rows at 84px would push the page past the stage by a few
+   pixels and give it a scrollbar it has no use for. (After the rule above, so it
+   wins on order.) */
+@media (orientation: portrait) {
+  .np-tracks { grid-auto-rows: minmax(60px, 72px); }
+}
+.np-tracks > li { display: grid; min-height: 0; }
+.np-track {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  min-height: 60px; padding: 8px 14px;
+  border: 1px solid transparent; border-radius: 12px;
+  background: transparent; color: var(--ink); font: inherit; text-align: left;
+  cursor: pointer; touch-action: manipulation;
+}
+.np-track:active { background: var(--raise); }
+.np-track:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+/* The playing one: a tint and an accent hairline, not a colour change on the
+   words, so its title stays the ink every other title is. */
+.np-track[aria-current="true"] {
+  background: var(--accent-bg);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.np-tn {
+  flex: none; width: 28px; text-align: center; color: var(--faint);
+  font-size: .95rem; font-variant-numeric: tabular-nums;
+}
+.np-track[aria-current="true"] .np-tn { color: var(--accent); }
+.np-tx { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.np-tt { font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-ta { font-size: .8rem; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The quiet line. */
+.np-src { text-align: center; font-size: .78rem; letter-spacing: .08em; color: var(--faint); }
+
+/* =========================================================================
+   HOME'S PHONE CARD
+   =========================================================================
+   Home gives this card 4x2 grid cells: 431 x 204px on the 1368x912 tablet in
+   landscape, 426 x 194px in portrait, and 615 x 257px on a 1920x1080 projector
+   (measured). Title and three rows have to fit the smallest of those, so the
+   card's own padding and the gaps are tight, and the three rows share what is
+   left equally (flex 1 1 0) instead of each claiming --tap: that comes to 48px
+   or more in every one of the three, which is app.css's floor for a target.
+   The live .hc-row rules (home.css) supply the surface; these only tune the
+   size. */
+.hc-phone.pc { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px; }
+.hc-phone.pc .hc-title { flex: none; margin-bottom: 2px; line-height: 1.25; }
+.hc-phone.pc .pc-row {
+  flex: 1 1 0; min-height: 0; padding: 0 10px; gap: 10px; border-radius: 12px;
+  touch-action: manipulation;
+}
+.pc-row:focus-within { border-color: var(--faint); }
+.pc-row:focus-visible, .pc-radio-open:focus-visible, .pc-radio-play:focus-visible {
+  outline: 2px solid var(--info); outline-offset: 2px;
+}
+
+/* The two neutral glyphs: a rounded square with a play triangle, and an A wedge. */
+.pc-tile { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; }
+.pc-tile svg { display: block; }
+.pc-tile-cp {
+  color: var(--on-accent);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--ok) 100%, white 12%), color-mix(in srgb, var(--ok) 72%, black));
+}
+.pc-tile-aa { color: var(--info); }
+/* home.css tints any svg that is the first child of anything inside a .hc-row
+   with the accent, which would turn both glyphs above cyan. */
+.hc-phone.pc .hc-row svg:first-child { color: inherit; }
+
+.pc-words { display: flex; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.15; font-size: .92rem; }
+.pc-words .sub { font-size: .72rem; line-height: 1.2; }
+
+/* The radio row: a small type-set OR tile, the song, and a play button. The row
+   is a div holding two buttons; the open button takes all the width the play
+   button leaves, so the whole row is a target. */
+.hc-phone.pc .pc-radio { padding: 0 4px 0 10px; }
+.pc-radio-open {
+  flex: 1 1 auto; align-self: stretch; min-width: 0;
+  display: flex; align-items: center; gap: 10px; padding: 0;
+  border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.pc-or {
+  flex: none; width: 34px; height: 34px; display: grid; place-items: center;
+  border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: var(--accent-bg); color: var(--accent);
+  font-family: var(--mono); font-size: .74rem; font-weight: 700; letter-spacing: .04em;
+}
+.pc-radio[data-playing="1"] .pc-or { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+/* The song: "title · artist", two lines at most; the artist never breaks. */
+.pc-radio-text {
+  min-width: 0; font-size: .84rem; line-height: 1.2; color: var(--ink);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pc-radio-by { color: var(--dim); white-space: nowrap; }
+/* Both buttons reach over the row's 1px border, so each is the full 48px the
+   row is, not 46. */
+.pc-radio-open, .pc-radio-play { margin-block: -1px; }
+.pc-radio-play {
+  flex: none; align-self: stretch; width: 48px; min-height: 44px; padding: 0;
+  display: grid; place-items: center; border: 0; background: none; cursor: pointer;
+  touch-action: manipulation;
+}
+.pc-radio-play .np-g {
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent);
+}
+.pc-radio-play:active .np-g { background: var(--accent-fill); }
