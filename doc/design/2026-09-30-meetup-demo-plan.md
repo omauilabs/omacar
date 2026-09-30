@@ -746,8 +746,8 @@ The same payload `lib/sim.py run` publishes (`connected`, `simulated: true`, `va
 
    Check each tool exists first (`wf-recorder`, `pw-cli` or `pactl`), and say which is missing rather than improvising. It never changes the default sink or its volume.
 3. **On the tablet** (after 07:30, with the owner's go-ahead for sound):
-   1. `git -C ~/Projects/omacar fetch && git checkout` of the merged `demo/meetup` (the controller runs this: the live checkout is the owner's car app, so it must stay on a build containing `demo/2026-09-30` plus only this branch);
-   2. `omacar assets push` from the box;
+   1. Install the merged `demo/meetup` **beside** the live app, in its own checkout `~/Projects/.omacar-wt/meetup` (a `git worktree` of the tablet's repo). The live checkout `~/Projects/omacar` and its services are not touched at all, so the car app's code does not change. Add `~/.local/bin/omacar-demo`, a two-line wrapper that runs `~/Projects/.omacar-wt/meetup/bin/omacar demo "$@"`, with the owner's OK.
+   2. Private assets: `omacar assets push --to omacar:Projects/.omacar-wt/meetup/share/assets/private/` from the box;
    3. `omacar demo check`;
    4. three muted tours via `demo_e2e.py` on the tablet (headless);
    5. then the silo check.

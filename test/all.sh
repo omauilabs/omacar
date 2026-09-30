@@ -157,6 +157,25 @@ python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------
 
+# ---- demo/meetup: the map (Task 3) --------------------------------------------
+# tools/demo_map.py against a hand-made map: the road classes, the ocean closed
+# on the water's side, clipping, labels, and the same bytes every time. The
+# renderer, the turn banner and the screens are test/js/demo-map.test.js, which
+# js_test.py above already runs.
+python3 "$ROOT/test/demo_map_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup: the map -------------------------------------------------
+# ---- meetup demo: Agent, Work and the voice (Task 6) --------------------------
+# tools/demo_voice.py against a stand-in Piper that writes silence: no voice
+# model, no sound. The screens' own units are test/js/demo-agent.test.js, run
+# by js_test.py above.
+python3 "$ROOT/test/demo_voice_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: Task 6 --------------------------------------------------
+# ---- demo/meetup --------------------------------------------------------------
+# The demo's car: the drive built from a route, the world that plays it in real
+# time, its cues, and that the module has no way to reach the adapter, the
+# cameras or the sound. Scratch folders and held clocks only.
+python3 "$ROOT/test/demoworld_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup ----------------------------------------------------------
 # ---- demo/meetup: the silo ----------------------------------------------------
 # The demo server's allowlist and its folders, then `omacar demo` itself in a
 # scratch HOME with a fake real state, where systemctl, wpctl, pactl, hyprctl

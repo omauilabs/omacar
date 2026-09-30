@@ -1,0 +1,188 @@
+/* The demo's Navigation screen and Home's nav card
+   (demo/js/views/navigation.js, demo/js/cards/navcard.js), in mockup 3's look:
+   the map full-bleed, and the words on the app's own panels over it.
+
+   Only the app's tokens here. The map's own colours are the canvas's
+   (demo/js/map.js STYLES), because a canvas cannot read a var(). */
+
+/* ---- the screen ----------------------------------------------------------- */
+
+/* Full-bleed: the stage's padding and the wrap's width go, for this screen only. */
+.stage:has(> .wrap > .dnav) { padding: 0; overflow: hidden; }
+.wrap:has(> .dnav) { max-width: none; display: block; height: 100%; }
+
+.dnav {
+  position: relative; height: 100%; min-height: 320px; overflow: hidden;
+  background: #0F1A21; isolation: isolate;
+}
+.dnav-map { position: absolute; inset: 0; }
+.dmap-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.dmap-shade { position: absolute; inset: 0; pointer-events: none; }
+
+/* One glass for everything laid over the map. */
+.dnav-banner, .dnav-chip, .dnav-compass, .dnav-road, .dnav-speed, .dnav-bottom {
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  backdrop-filter: blur(14px) saturate(1.15);
+  border: 1px solid var(--hair);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .42);
+  z-index: 2;
+}
+
+.dnav-banner {
+  position: absolute; top: 16px; left: 16px;
+  display: flex; align-items: center; gap: 18px;
+  width: min(460px, calc(100% - 112px));
+  padding: 16px 22px 16px 16px; border-radius: var(--r-lg);
+}
+.dnav-icon { flex: none; width: 68px; height: 68px; color: var(--accent); }
+.dnav-icon svg { display: block; }
+.dnav-words { min-width: 0; }
+.dnav-dist {
+  font-family: var(--display); font-size: 2.5rem; font-weight: 600; line-height: 1.02;
+  color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+}
+.dnav-line { display: flex; flex-wrap: wrap; column-gap: .3em; margin-top: 4px; font-size: 1.2rem; line-height: 1.3; }
+.dnav-what { color: var(--ink); }
+.dnav-street { color: var(--ink-2); }
+
+.dnav-side {
+  position: absolute; top: 16px; right: 16px; z-index: 2;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 12px;
+}
+.dnav-chip {
+  display: inline-flex; align-items: center; gap: 9px; min-height: var(--tap);
+  padding: 0 18px 0 15px; border-radius: 999px;
+  color: var(--ink); text-decoration: none; font-size: .95rem; white-space: nowrap;
+}
+.dnav-chip svg { color: var(--accent); }
+.dnav-chip:active { transform: scale(.98); }
+
+.dnav-compass, .dnc-compass { flex: none; border-radius: 50%; display: grid; place-items: center; }
+.dnav-compass { width: 52px; height: 52px; }
+.dnav-needle, .dnc-needle {
+  position: relative; width: 100%; height: 100%; display: grid; place-items: center;
+  font-size: .8rem; font-weight: 700; color: var(--ink); transition: transform .35s linear;
+}
+.dnav-needle i, .dnc-needle i {
+  position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+  border-left: 3.5px solid transparent; border-right: 3.5px solid transparent;
+  border-bottom: 6px solid var(--bad);
+}
+
+/* The road the car is on, under it, as a satnav shows it. */
+.dnav-road {
+  position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%);
+  max-width: calc(100% - 220px); padding: 7px 16px; border-radius: 999px;
+  color: var(--ink); font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dnav-road[hidden] { display: none; }
+
+.dnav-speed {
+  position: absolute; left: 16px; bottom: 96px;
+  width: 76px; height: 76px; border-radius: 50%;
+  display: grid; place-content: center; text-align: center; line-height: 1;
+}
+.dnav-speed b {
+  font-family: var(--display); font-size: 1.75rem; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.dnav-speed span { margin-top: 3px; font-size: .72rem; color: var(--dim); }
+
+.dnav-bottom {
+  position: absolute; left: 16px; right: 16px; bottom: 16px;
+  display: flex; align-items: center; gap: 12px; min-height: 66px;
+  padding: 8px 24px; border-radius: var(--r-lg);
+  font-size: 1.15rem; color: var(--ink);
+}
+.dnav-eta, .dnav-to { display: flex; align-items: baseline; gap: 10px; }
+.dnav-k { color: var(--dim); font-size: .9rem; letter-spacing: .04em; }
+.dnav-time {
+  font-family: var(--display); font-size: 1.75rem; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.dnav-dot { color: var(--faint); }
+.dnav-left { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dnav-to { margin-left: auto; min-width: 0; }
+.dnav-dest { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.dnav-credit {
+  position: absolute; right: 18px; bottom: 86px; z-index: 2;
+  font-size: .68rem; color: rgba(255, 255, 255, .55); text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
+  pointer-events: none;
+}
+
+/* No demo drive yet: the map's start, dimmed, and a card that says so. */
+.dnav-wait {
+  position: absolute; inset: 0; z-index: 3; display: grid; place-items: center;
+  background: rgba(6, 12, 16, .55);
+}
+.dnav-wait[hidden] { display: none; }
+.dnav-wait-card {
+  max-width: min(440px, calc(100% - 48px)); padding: 22px 28px; text-align: center;
+  background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r-lg);
+}
+.dnav-wait-t { font-family: var(--display); font-size: 1.3rem; font-weight: 600; color: var(--ink); }
+.dnav-wait-s { margin-top: 6px; font-size: .9rem; color: var(--dim); }
+.dnav[data-state="waiting"] :is(.dnav-banner, .dnav-bottom, .dnav-road, .dnav-speed) { visibility: hidden; }
+
+/* Narrow (portrait): the banner takes the width, the side column drops under it. */
+@media (max-width: 760px) {
+  .dnav-banner { width: calc(100% - 32px); }
+  .dnav-side { top: auto; bottom: 186px; }
+  .dnav-bottom { flex-wrap: wrap; row-gap: 2px; padding: 10px 20px; }
+  .dnav-to { margin-left: 0; flex-basis: 100%; }
+  .dnav-road { bottom: 124px; max-width: calc(100% - 120px); }
+  .dnav-speed { bottom: 116px; }
+  .dnav-credit { bottom: 104px; }
+}
+
+/* ---- Home's card ------------------------------------------------------------ */
+
+.hc.hc-dnav { padding: 0; display: flex; flex-direction: column; container-type: size; }
+.dnc-banner {
+  display: flex; align-items: center; gap: 14px; padding: 14px 16px 12px 14px;
+  background: var(--panel); border-bottom: 1px solid var(--hair);
+}
+.dnc-icon { flex: none; width: 46px; height: 46px; color: var(--accent); }
+.dnc-icon svg { display: block; }
+.dnc-words { flex: 1; min-width: 0; }
+.dnc-dist {
+  font-family: var(--display); font-size: 1.8rem; font-weight: 600; line-height: 1.05;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.dnc-what { margin-top: 2px; font-size: 1rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dnc-compass { width: 38px; height: 38px; border: 1px solid var(--hair); }
+.dnc-needle i { top: 3px; }
+
+.dnc-map { position: relative; flex: 1; min-height: 0; background: #0F1A21; }
+.dnc-credit {
+  position: absolute; right: 7px; bottom: 4px; z-index: 1;
+  font-size: .58rem; color: rgba(255, 255, 255, .5); text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
+  pointer-events: none;
+}
+
+.dnc-eta {
+  display: flex; align-items: baseline; gap: 12px; padding: 10px 16px 12px;
+  background: var(--panel); border-top: 1px solid var(--hair);
+  font-size: 1rem; color: var(--ink);
+}
+.dnc-k { color: var(--dim); font-size: .9rem; }
+.dnc-time {
+  font-family: var(--display); font-size: 1.3rem; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.dnc-left { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.dnc-wait {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--ink-2); font-size: .95rem; text-align: center;
+}
+.dnc-wait[hidden] { display: none; }
+
+/* Too short for a map worth the name (portrait's 3 x 2): the turn and the ETA. */
+@container (max-height: 230px) {
+  .dnc-map { display: none; }
+  .dnc-banner { flex: 1; border-bottom: 0; }
+}

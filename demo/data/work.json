@@ -1,0 +1,45 @@
+{
+  "_comment": "The Work screen's demo sessions (demo/js/views/work.js), mockup 8. A concept: nothing here reaches a real agent. Each session's steps tick along on a timer and loop; `done` is how many are finished when the screen first opens.",
+  "accounts": [
+    { "id": "claude-01", "name": "Claude 01", "plan": "Max 20x", "kind": "claude", "usage": 0.64 },
+    { "id": "claude-02", "name": "Claude 02", "plan": "Max 20x", "kind": "claude", "usage": 0.41 },
+    { "id": "claude-03", "name": "Claude 03", "plan": "Max 20x", "kind": "claude", "usage": 0.23 },
+    { "id": "codex",     "name": "Codex",     "plan": "Subscription", "kind": "codex", "usage": 0.37 }
+  ],
+  "sessions": [
+    { "id": "omacar", "name": "OmaCar", "title": "Voice controls", "account": "claude-01", "icon": "car",
+      "status": "running", "summary": "Implementing voice controls", "branch": "feature/voice-controls",
+      "steps": ["Added microphone state", "Connected session queue", "Running checks",
+                "Wired push-to-talk", "Wrote the tests", "Updated the docs"],
+      "done": 2 },
+    { "id": "bulletin", "name": "Bulletin Builder", "title": "Weekly bulletin", "account": "claude-02", "icon": "doc",
+      "status": "review", "summary": "Tests passed, ready for review", "branch": "feature/bulletin-export",
+      "steps": ["Built the page template", "Added PDF export", "Fixed the date header",
+                "Ran the test suite", "Opened for review"],
+      "done": 4,
+      "review": {
+        "tests": "48 of 48 tests passed",
+        "files": [["src/template.html", 42, 8], ["src/export.py", 88, 12], ["src/dates.py", 6, 3],
+                  ["tests/test_export.py", 54, 0], ["tests/test_dates.py", 18, 2], ["README.md", 9, 1]]
+      } },
+    { "id": "omasaber", "name": "OmaSaber", "title": "Setup guide", "account": "claude-03", "icon": "book",
+      "status": "input", "summary": "Waiting for direction", "branch": "docs/setup-guide",
+      "question": "Which saber colour should the setup guide use?",
+      "steps": ["Drafted the wiring diagram", "Listed the parts", "Asked about the saber colour",
+                "Writing the setup guide", "Adding photos"],
+      "done": 2 },
+    { "id": "mobile", "name": "OmaCar mobile", "title": "Responsive layouts", "account": "codex", "icon": "phone",
+      "status": "running", "summary": "Checking responsive layouts", "branch": "feature/mobile-layouts",
+      "steps": ["Mapped the breakpoints", "Built the portrait layout", "Checking responsive layouts",
+                "Took tablet screenshots", "Fixed the overflow"],
+      "done": 2 }
+  ],
+  "update": { "ask": "Give me an update on all four sessions.", "voice": "work-update" },
+  "driving": {
+    "instruction": "Tell OmaSaber to document the setup first.",
+    "target": "omasaber",
+    "task": "Document setup before continuing.",
+    "after": "Documenting the setup",
+    "voice": "work-sent"
+  }
+}
