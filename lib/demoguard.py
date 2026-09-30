@@ -37,6 +37,9 @@ Nothing is ever started again while the real car is moving or once ACTIVE has
 gone: both are asked again just before each start, and `demo mend` asks them a
 third time itself. A camera feed this guard has never seen running (a build or
 a machine without one) is left alone.
+
+On every look it touches DEMO_ROOT/run/guard.beat, its heartbeat: `demo on`
+trusts a guard only while it beats, and replaces one that does not.
 """
 
 import http.client
@@ -269,6 +272,29 @@ def _log(msg):
         pass
 
 
+def beat(root):
+    """The guard's heartbeat: DEMO_ROOT/run/guard.beat, touched on every look.
+    `demo on` counts a guard as watching only while it beats (bin/omacar's
+    demo_guard_beating), so a guard on its way out, or stuck, is replaced
+    rather than trusted. Never raises: a heartbeat that cannot be written is a
+    guard `demo on` will replace, not a guard that stops watching the car."""
+    try:
+        with open(os.path.join(root, "run", "guard.beat"), "a", encoding="utf-8"):
+            pass
+        os.utime(os.path.join(root, "run", "guard.beat"))
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
+def _back_after_off(active):
+    """Said if ACTIVE is there again after this guard's `demo off`: a new demo
+    was started straight after it, and this guard is leaving; that demo's own
+    `demo on` sees that this one does not beat, and starts one that does."""
+    if os.path.exists(active):
+        _log("ACTIVE is back after this guard's `demo off` (a demo started again "
+             "straight after it); this guard is leaving, and `demo on` starts its own")
+
+
 def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
           sleep=time.sleep, tries=TRIES, later=LATER, parts=None):
     """Until the demo is gone: "gone" when ACTIVE went, "moving" when the real
@@ -282,6 +308,7 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
 
     while True:
         began = clock()
+        beat(root)
         if not os.path.exists(active):
             # THE MARKER WENT, BUT DID THE DEMO? `demo off` removes it first and
             # stops this guard straight after, so then this changes nothing.
@@ -294,6 +321,7 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
                 rc = f"{type(e).__name__}: {e}"
             if rc != 0:
                 _log(f"the demo's marker went, and `omacar demo off` failed ({rc})")
+            _back_after_off(active)
             return "gone"
         now = clock()
         moving = state(live_json, now) == "moving"
@@ -305,6 +333,7 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
             except Exception as e:                             # noqa: BLE001
                 rc = f"{type(e).__name__}: {e}"
             if rc == 0:
+                _back_after_off(active)
                 return "moving"
             failed += 1
             _log(f"`omacar demo off` failed ({rc}), try {failed}")
@@ -327,8 +356,10 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
                 # moving meanwhile is not left until the next look.
                 if state(live_json, clock()) == "moving":
                     continue
-        # A look every `every` seconds, however long this one took.
-        sleep(max(0.0, every - (clock() - began)))
+        # A look every `every` seconds, however long this one took, and never a
+        # longer sleep than that: a clock set back meanwhile (timesyncd does
+        # that) must not leave the car unwatched for as long as it jumped.
+        sleep(min(every, max(0.0, every - (clock() - began))))
 
 
 def main(argv):

@@ -670,12 +670,47 @@ try:
            any("--user-data-dir=" in p[1] for p in ours_running()),
            os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE"))), (True, True, True))
 
+    head("the guard's heartbeat: a guard that is there but not watching is replaced")
+    BEAT = os.path.join(DEMO_ROOT, "run", "guard.beat")
+    time.sleep(2.5)
+    try:
+        beat_age = round(time.time() - os.path.getmtime(BEAT), 1)
+        beat_after = os.path.getmtime(BEAT) > os.path.getmtime(os.path.join(PIDS, "guard.pid"))
+    except OSError:
+        beat_age, beat_after = None, False
+    check(f"the guard touches run/guard.beat on every look ({beat_age} s ago), since it started",
+          (beat_age is not None and beat_age <= 3.0, beat_after), (True, True))
+    stuck = pid_in("guard")
+    try:
+        if stuck:
+            os.kill(stuck, signal.SIGSTOP)      # there, by every identity check, and not watching
+    except OSError:
+        pass
+    time.sleep(3.5)
+    rc, out = omacar("demo", "on", timeout=180)
+    fresh = pid_in("guard")
+    check("demo on again: the guard that stopped beating is stopped, and a new one started",
+          (rc, "a new guard" in out, bool(fresh) and fresh != stuck,
+           stuck is not None and cmdline(stuck) is None, len([p for p in ours_running()
+                                                             if "/lib/demoguard.py" in p[1]])),
+          (0, True, True, True, 1))
+    time.sleep(2.5)
+    try:
+        beat_age = round(time.time() - os.path.getmtime(BEAT), 1)
+    except OSError:
+        beat_age = None
+    check(f"and it beats ({beat_age} s ago)", beat_age is not None and beat_age <= 3.0, True)
+
     head("demo mend: one part of a demo that is on, only when it is down")
     rc, out = omacar("demo", "mend", "world")
     check("it will not start a part that is running, and says so",
           (rc != 0, "running" in out), (True, True))
     rc, out = omacar("demo", "mend", "window")
     check("nor one it does not know", (rc, "server|world|cams" in out), (2, True))
+    rc, out = omacar("demo", "mend", "server")
+    check("a running server: refused, with its reason and its pid",
+          (rc != 0, "may still be starting" in out or "running and answers" in out,
+           "(pid " in out, "none" in out), (True, True, True, False))
 
     head("a part down while the real car moves: nothing is started again, and the demo goes")
     said_before = guard_says()
@@ -1124,6 +1159,97 @@ try:
           (got, slow_offs, slow_sleeps), ("moving", [7.5], [0.5, 0.5, 0.5]))
     if os.path.exists(wactive):
         os.remove(wactive)
+
+    # THE CLOCK STEPS (timesyncd): set back or forward 100 s during the second
+    # look. Back, the guard still sleeps at most 2 s; forward, it looks again at
+    # once; never a sleep of 102 s, never a negative one.
+    def stepped(step):
+        clk, sleeps, looks = [1000.0], [], [0]
+        with open(wlive, "w", encoding="utf-8") as f:
+            json.dump({"t": 0, "values": {"SPEED": 0}}, f)
+
+        def probe():
+            looks[0] += 1
+            if looks[0] == 2:
+                clk[0] += step
+            return dict(ALL_UP)
+
+        def nap(secs):
+            sleeps.append(round(secs, 2))
+            clk[0] += secs
+            if len(sleeps) >= 4 and os.path.exists(wactive):
+                os.remove(wactive)
+        open(wactive, "w").close()
+        with contextlib.redirect_stderr(io.StringIO()):
+            demoguard.watch(wlive, wroot, every=2, clock=lambda: clk[0], sleep=nap,
+                            off=lambda r: 0,
+                            parts=demoguard.Watchdog(wroot, probe=probe, mend=lambda n: 0))
+        return sleeps
+    check("the clock set back 100 s during a look: the guard still sleeps 2 s, not 102",
+          stepped(-100), [2, 2, 2, 2])
+    check("and set forward 100 s: it looks again at once, and never sleeps less than 0",
+          stepped(100), [2, 0, 2, 2])
+
+    # THE HEARTBEAT, and a demo started again straight after the guard's demo off.
+    os.makedirs(os.path.join(wroot, "run"), exist_ok=True)
+    wbeat = os.path.join(wroot, "run", "guard.beat")
+    got, mends, offs, said = dog_run(4, lambda t: ALL_UP)
+    check("the guard touches its heartbeat on every look", os.path.exists(wbeat), True)
+    open(wactive, "w").close()
+    with open(wlive, "w", encoding="utf-8") as f:
+        json.dump({"t": time.time(), "values": {"SPEED": 60}}, f)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        got = demoguard.watch(wlive, wroot, every=2, sleep=lambda s: None,
+                              off=lambda r: open(wactive, "w").close() or 0)
+    check("ACTIVE back after its demo off: it leaves, and says so",
+          (got, "ACTIVE is back" in err.getvalue()), ("moving", True))
+    os.remove(wactive)
+
+    head("the fade's wait: ten looks at the car, whatever the clock does")
+    # bin/omacar's own demo_fade_wait and demo_sleep_until, in a bash of their
+    # own, on a fake clock: every look at the car costs 50 ms, and the clock is
+    # stepped after the third look. `sleep` and `demo_parked` are stand-ins that
+    # write down what they were asked.
+    FADE = os.path.join(SCRATCH, "fade")
+    os.makedirs(FADE, exist_ok=True)
+
+    def fade(step_us):
+        clk, polls, slept = (os.path.join(FADE, n) for n in ("clock", "polls", "slept"))
+        script = f"""
+set -euo pipefail
+source <(sed -n '/^demo_sleep_until() {{/,/^}}/p;/^demo_fade_wait() {{/,/^}}/p' "$1")
+echo 1000000000000000 >"{clk}"; : >"{polls}"; : >"{slept}"
+demo_usec() {{ cat "{clk}"; }}
+sleep() {{
+  echo "$1" >>"{slept}"
+  echo $(( $(cat "{clk}") + 10#${{1%.*}} * 1000000 + 10#${{1#*.}} )) >"{clk}"
+}}
+demo_parked() {{
+  echo . >>"{polls}"
+  local n; n=$(wc -l <"{polls}")
+  echo $(( $(cat "{clk}") + 50000 + (n == 3 ? {step_us} : 0) )) >"{clk}"
+}}
+demo_fade_wait
+"""
+        r = subprocess.run(["bash", "-c", script, "fade", OMACAR], capture_output=True,
+                           text=True, timeout=30)
+        with open(polls) as f:
+            n = len(f.read().split())
+        with open(slept) as f:
+            naps = [float(x) for x in f.read().split()]
+        return r.returncode, n, naps
+
+    for step, what in ((0, "a steady clock"), (-100_000_000, "the clock set back 100 s"),
+                       (100_000_000, "the clock set forward 100 s")):
+        rc, n, naps = fade(step)
+        check(f"{what}: ten looks, and no sleep over 0.25 s, so 2.5 s of sleep at most "
+              f"({n} looks, {round(sum(naps), 2)} s asleep)",
+              (rc, n, max(naps or [0]) <= 0.25, sum(naps) <= 2.5 + 1e-6),
+              (0, 10, True, True))
+    rc, n, naps = fade(0)
+    check("on a steady clock the ten looks fill the 2.5 s exactly",
+          round(sum(naps) + n * 0.05, 3), 2.5)
 
     head("demo off stops only what is the demo's")
     # Look-alikes in the demo's pid files, each started with the demo's own

@@ -539,12 +539,17 @@ demo_age() {
 # and is never taken for a hung one. Its identity is asked again just before
 # the TERM. True when it was silent and is gone now; false when it answered,
 # is too young, or would not go.
+# DEMO_SILENT_WHY says which, for `demo mend` to say: young, answers or stuck.
 DEMO_SILENT_AFTER=10
+DEMO_SILENT_WHY=""
 demo_stop_silent() {
   local pid="$1" age
+  DEMO_SILENT_WHY=young
   age=$(demo_age "$pid") || return 1
   (( age >= DEMO_SILENT_AFTER )) || return 1
+  DEMO_SILENT_WHY=answers
   demo_answers && return 1
+  DEMO_SILENT_WHY=stuck
   if demo_still server "$pid"; then
     echo "  $(demo_what server) (pid $pid, up ${age} s) has not answered in 2 s; stopping it"
     # CONT after TERM: a stopped process does not act on a TERM until it runs.
@@ -553,6 +558,22 @@ demo_stop_silent() {
     demo_wait server "$pid"
   fi
   [[ "$(demo_holder server)" == none ]]
+}
+
+# Whether the demo's guard is watching: a guard of the demo's is running, and
+# its heartbeat (run/guard.beat, touched on every look, lib/demoguard.py) is
+# newer than its pid file (so it has looked since it started) and at most 3 s
+# old. Waited for up to 3 s, for a guard that has only just started.
+demo_guard_beating() {
+  local beat="$DEMO_RUN/guard.beat" i
+  for i in $(seq 1 15); do
+    if [[ "$(demo_holder guard)" != none && "$beat" -nt "$DEMO_PIDS/guard.pid" ]] \
+       && (( $(date +%s) - $(stat -c %Y "$beat" 2>/dev/null || echo 0) <= 3 )); then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
 }
 
 # ONE OF THE DEMO'S PARTS, STARTED THE ONE WAY. `demo on` starts each through
@@ -577,6 +598,7 @@ demo_stop_silent() {
 #   6  server only: its port is held by something that is not the demo's server
 demo_start() {
   local name="$1" how="${2:-}" rc=0 h pid
+  DEMO_SILENT_WHY=""
   demo_lock || { demo_unlock; return 1; }
   h=$(demo_holder "$name")
   pid=${h#* }; pid=${pid%% *}
@@ -740,7 +762,7 @@ os.replace(tmp, out)
   # guard below watches it too, and goes when it goes.
   : > "$DEMO_ROOT/ACTIVE"
 
-  local started=() i url="http://127.0.0.1:$DEMO_PORT/demo.html" cams_note="" part rc
+  local started=() i url="http://127.0.0.1:$DEMO_PORT/demo.html" cams_note="" part rc h pid
   # The world, the camera feed, the server and the guard, each the way `demo
   # mend` starts a part again (demo_start), under the start lock. The guard
   # last, on the REAL live.json: a demo without it would stay on the screen of
@@ -789,11 +811,31 @@ os.replace(tmp, out)
   if [[ -z "$(demo_window_pids)" ]]; then
     demo_window "$url" && started+=("the demo window")
   fi
+  # A GUARD THAT IS THERE BUT NOT WATCHING is no guard: one on its way out (it
+  # has just run `demo off` for a demo before this one), or stuck. So the one
+  # this demo leaves running must be beating (demo_guard_beating); one that is
+  # not is stopped, by what it is, and a new one started under the lock.
+  if [[ -f "$DEMO_ROOT/ACTIVE" ]] && ! demo_guard_beating; then
+    h=$(demo_holder guard)
+    if [[ "$h" != none ]]; then
+      pid=${h#* }; pid=${pid%% *}
+      if demo_still guard "$pid"; then
+        kill "$pid" 2>/dev/null || true
+        kill -CONT "$pid" 2>/dev/null || true
+        demo_wait guard "$pid"
+      fi
+    fi
+    rc=0
+    demo_start guard || rc=$?
+    if (( rc == 0 )) && demo_guard_beating; then
+      started+=("a new guard, in place of one that was not watching")
+    fi
+  fi
   # THE CAR MAY HAVE MOVED WHILE THIS WAS STARTING. The guard would then have
   # run `demo off` (ACTIVE gone), perhaps before the window existed to close.
   # A window with no demo and no guard under it is the one thing this must not
   # leave on a moving car's screen, so it goes, and so does everything else.
-  if [[ ! -f "$DEMO_ROOT/ACTIVE" ]] || ! demo_ident guard >/dev/null; then
+  if [[ ! -f "$DEMO_ROOT/ACTIVE" ]] || ! demo_ident guard >/dev/null || ! demo_guard_beating; then
     for i in $(seq 1 20); do
       [[ -n "$(demo_window_pids)" ]] && break
       sleep 0.1
@@ -868,12 +910,32 @@ demo_window() {
     >/dev/null 2>&1 </dev/null
 }
 
-# Sleep until the EPOCHREALTIME (in microseconds, no point) given; not at all
-# if that has passed.
+# The wall clock, in microseconds (EPOCHREALTIME without its point).
+demo_usec() { echo "${EPOCHREALTIME//[.,]/}"; }
+
+# Sleep until the time given (demo_usec's microseconds), and never longer than
+# $2 microseconds whatever the clock says: a clock set back meanwhile
+# (timesyncd does that) must not turn a short wait into a long one. Not at all
+# if the time has passed.
 demo_sleep_until() {
-  local d=$(( $1 - ${EPOCHREALTIME//[.,]/} ))
+  local d=$(( $1 - $(demo_usec) ))
+  (( d <= $2 )) || d=$2
   (( d > 0 )) || return 0
   sleep "$(( d / 1000000 )).$(printf '%06d' $(( d % 1000000 )))"
+}
+
+# THE FADE'S WAIT: ten looks at the real car, 0.25 s apart, 2.5 s in all.
+# Counted, not timed against an end on the clock, and no sleep longer than
+# 0.25 s: a clock that jumps mid-wait can shorten it, never leave the car
+# unwatched. False the moment the car is not parked.
+demo_fade_wait() {
+  local i tick
+  tick=$(demo_usec)
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    demo_parked || return 1
+    tick=$(( tick + 250000 ))
+    demo_sleep_until "$tick" 250000
+  done
 }
 
 # The demo window, closed: each pid pgrep found is checked again, by its exact
@@ -934,8 +996,9 @@ demo_off() {
   #
   # AND NEVER ON A MOVING CAR. The guard is stopped by now, so this asks the
   # real car itself (demo_parked): before the ask, and every 0.25 s of the
-  # wait. A car that is moving, or cannot be read, closes the window at once.
-  local code="" quiet="" cut="" end tick
+  # wait (demo_fade_wait). A car that is moving, or cannot be read, closes the
+  # window at once.
+  local code="" quiet="" cut=""
   if [[ -z "$now" ]] && ! demo_parked; then
     now=1; cut="before"
     if demo_close_window; then stopped+=("the demo window"); fi
@@ -946,14 +1009,7 @@ demo_off() {
              "http://127.0.0.1:$DEMO_PORT/api/demo/cue" 2>/dev/null || true)
     if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
       quiet=1
-      tick=${EPOCHREALTIME//[.,]/}
-      end=$(( tick + 2500000 ))
-      while (( ${EPOCHREALTIME//[.,]/} < end )); do
-        demo_parked || { cut="during"; break; }
-        tick=$(( tick + 250000 ))
-        (( tick < end )) || tick=$end
-        demo_sleep_until "$tick"
-      done
+      demo_fade_wait || cut="during"
     fi
   fi
   if [[ -z "$now" ]] && demo_close_window; then stopped+=("the demo window"); fi
@@ -1040,12 +1096,20 @@ demo_mend() {
     2) echo "omacar: this build has no camera feed to start" >&2; exit 1 ;;
     3)
       h=$(demo_holder "$name"); h=${h#* }; h=${h%% *}
-      if [[ "$name" == server ]]; then
-        echo "omacar: $(demo_what "$name") is running (pid $h), and answers or has been up" \
-             "less than ${DEMO_SILENT_AFTER} s, so there is nothing to mend" >&2
-      else
-        echo "omacar: $(demo_what "$name") is running (pid $h), so there is nothing to mend" >&2
-      fi
+      [[ "$h" == none ]] && h="" || h=" (pid $h)"
+      case "$name:$DEMO_SILENT_WHY" in
+        server:young)
+          echo "omacar: $(demo_what "$name")$h has been up less than ${DEMO_SILENT_AFTER} s," \
+               "so it may still be starting; there is nothing to mend" >&2 ;;
+        server:answers)
+          echo "omacar: $(demo_what "$name")$h is running and answers, so there is nothing" \
+               "to mend" >&2 ;;
+        server:stuck)
+          echo "omacar: $(demo_what "$name")$h has not answered in 2 s and would not stop," \
+               "so no second one is started beside it" >&2 ;;
+        *)
+          echo "omacar: $(demo_what "$name")$h is running, so there is nothing to mend" >&2 ;;
+      esac
       exit 1 ;;
     4) echo "omacar: the demo is not on, so $(demo_what "$name") is not being started again" >&2
        exit 1 ;;
