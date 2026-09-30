@@ -21,6 +21,7 @@ reads or writes the real HOME, and no route that could reach a car, a device
 or a service is ever let through to its handler.
 """
 
+import hashlib
 import http.client
 import json
 import os
@@ -105,6 +106,68 @@ def wait_for_port(port, secs=20):
 # not in the test mirrors at all. The server takes its share root on the
 # command line and finds the private tree under it, so a scratch root with a
 # scratch private tree is the same server on test data.
+
+# ---- a fake REAL state, beside the demo's, that nothing may touch ------------
+#
+# The files the ALLOW routes write, at the paths the modules would use if the
+# demo's environment ever fell through to the defaults (XDG unset, ~ = HOME),
+# and the live recorder's runtime folder. A write that escaped the demo's
+# folders would land on one of these.
+NOW = time.time()
+REAL = {
+    ".local/state/omacar/live.json": {"connected": True, "t": NOW, "values": {"SPEED": 0}},
+    ".local/state/omacar/screen.json": {"view": "home", "at": NOW, "who": "real"},
+    ".local/state/omacar/screens.json": {"at": NOW, "views": [{"id": "home"}]},
+    ".local/state/omacar/roadcams/pins-note.json": {"real": True},
+    ".local/state/omacar/drowsy/2026-09-30.jsonl": {"real": True},
+    ".local/state/omarchy/liquid-glass-car.json": {"name": "the real car"},
+    ".config/omarchy/omacar-home.json": {"landscape": [], "real": True},
+    ".config/omarchy/omacar-themes.json": {"active": "omarchy", "themes": {}},
+    ".config/omarchy/omacar-drowsy.json": {"sensitivity": "standard"},
+    ".config/omarchy/omacar-roadcams.json": {"pins": []},
+    "Videos/OmaCar/events.json": {"events": []},
+    "Videos/OmaCar/front/20260930-010000.mp4": "not really a clip",
+}
+for _rel, _body in REAL.items():
+    _p = os.path.join(HOME, _rel)
+    os.makedirs(os.path.dirname(_p), exist_ok=True)
+    with open(_p, "w", encoding="utf-8") as f:
+        f.write(_body if isinstance(_body, str) else json.dumps(_body))
+REAL_RUN = os.path.join(SCRATCH, "real-run")
+for _rel, _body in (("omacar-cams/status.json", '{"t": 1, "roles": {}}'),
+                    ("omacar-cams/front.jpg", "the real front camera")):
+    _p = os.path.join(REAL_RUN, _rel)
+    os.makedirs(os.path.dirname(_p), exist_ok=True)
+    with open(_p, "w", encoding="utf-8") as f:
+        f.write(_body)
+
+# The demo's own copy of Caltrans' list, fresh, so saving pins (which checks a
+# new pin against the list) is answered from disk and never the network.
+with open(os.path.join(ROOT, "test", "fixtures", "d5-cctv.json"), encoding="utf-8") as f:
+    D5 = json.load(f)
+os.makedirs(os.path.join(ENV["OMACAR_STATE"], "roadcams"), exist_ok=True)
+with open(os.path.join(ENV["OMACAR_STATE"], "roadcams", "d5-cctv.json"), "w",
+          encoding="utf-8") as f:
+    json.dump({"fetched_at": NOW, "url": "fixture", "feed": D5}, f)
+
+
+def real_files():
+    """sha256 of every file in the scratch HOME outside the demo's folder, and
+    in the fake real runtime folder."""
+    out = {}
+    for top, tag in ((HOME, "home"), (REAL_RUN, "run")):
+        for d, dirs, files in os.walk(top):
+            if os.path.realpath(d).startswith(os.path.realpath(DEMO_ROOT)):
+                dirs[:] = []
+                continue
+            for n in files:
+                p = os.path.join(d, n)
+                with open(p, "rb") as f:
+                    out[tag + ":" + os.path.relpath(p, top)] = hashlib.sha256(f.read()).hexdigest()
+    return out
+
+
+REAL_BEFORE = real_files()
 
 SHARE = os.path.join(SCRATCH, "share")
 PRIVATE = os.path.join(SHARE, "assets", "private")
@@ -267,6 +330,53 @@ try:
     st, _, body = req(PORT, "POST", "/api/assistant", body='{"action": "present"}')
     check("the voice assistant is not present, so its button stays hidden",
           (st, as_json(body)), (200, {"ok": False, "present": False}))
+
+    head("every ALLOW write lands in the demo, and nowhere else")
+    import roadcams  # noqa: E402  (the demo's environment is this process's)
+    PIN = roadcams.cameras(D5)[0]["id"]
+    st, _, body = req(PORT, "GET", "/api/home")
+    layout = as_json(body) or {}
+    WRITES = [
+        ("/api/demo/cue", {"cue": "drowsy"}),
+        ("/api/home", {"landscape": layout.get("landscape"), "portrait": layout.get("portrait")}),
+        ("/api/screen", {"views": [{"id": "home", "label": "Home"}, {"id": "demo-tour"}]}),
+        ("/api/screen", {"view": "demo-tour", "who": "demoserve_test"}),
+        ("/api/themes", {"action": "select", "id": "omarchy"}),
+        ("/api/cams/mark", {}),
+        ("/api/cams/lock", {"t": time.time() - 30}),
+        ("/api/drowsy", {"sensitivity": "sensitive"}),
+        ("/api/drowsy/event", {"level": 1, "trigger": "demoserve_test"}),
+        ("/api/drowsy/log", {"rows": [{"t": time.time(), "ear": 0.3}]}),
+        ("/api/roadcams/pins", {"pins": [PIN]}),
+    ]
+    # Every ALLOW entry is written to here, or has no write to make.
+    NO_WRITE = {"/api/cams": "GET only", "/api/roadcams": "GET only"}
+    covered = {serve.demo_entry(p) for p, _ in WRITES} | set(NO_WRITE)
+    check("every ALLOW entry in the table is written to by this suite",
+          sorted(k for k, v in serve.DEMO_ROUTES.items() if v == "allow" and k not in covered), [])
+    wrong = []
+    for p, b in WRITES:
+        st, _, body = req(PORT, "POST", p, body=json.dumps(b))
+        if st != 200:
+            wrong.append((p, st, body[:120]))
+    check(f"{len(WRITES)} valid writes, each answered 200", wrong, [])
+    landed = {
+        "home layout": os.path.join(ENV["XDG_CONFIG_HOME"], "omarchy", "omacar-home.json"),
+        "theme": os.path.join(ENV["XDG_CONFIG_HOME"], "omarchy", "omacar-themes.json"),
+        "drowsy settings": os.path.join(ENV["XDG_CONFIG_HOME"], "omarchy", "omacar-drowsy.json"),
+        "pins": os.path.join(ENV["XDG_CONFIG_HOME"], "omarchy", "omacar-roadcams.json"),
+        "screen ask": os.path.join(ENV["OMACAR_STATE"], "screen.json"),
+        "screen list": os.path.join(ENV["OMACAR_STATE"], "screens.json"),
+        "cue": os.path.join(ENV["OMACAR_STATE"], "demo-cue.json"),
+        "camera events": os.path.join(ENV["OMACAR_VIDEOS"], "events.json"),
+    }
+    check("and each landed in the demo's own folders",
+          sorted(k for k, v in landed.items() if not os.path.exists(v)), [])
+    drowsy_logs = os.path.join(ENV["OMACAR_STATE"], "drowsy")
+    check("drowsy events and measures too",
+          bool(os.path.isdir(drowsy_logs) and os.listdir(drowsy_logs)), True)
+    check("every real file, and the real runtime folder, is byte-identical after "
+          "the writes, the reads, the stubs and the refusals", real_files(), REAL_BEFORE)
 
     head("the demo page, its code and its media")
     st, h, body = req(PORT, "GET", "/demo.html")
