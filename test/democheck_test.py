@@ -11,8 +11,11 @@ own. Nothing here reads the real machine's files or plays anything.
 Checks that everything present is "ready"; that a truncated song, missing
 clips, the volume pin, no kiosk and a demo whose server does not answer are
 each named on the last line; that the road cameras have saved stills (in the
-demo's state or the real one) and the map was built from the drive; and that
-the check writes nothing.
+demo's state or the real one) and the map was built from the drive; that every
+clip present is H.264 (an `ffprobe` on PATH that answers as told), so the
+Cameras tab's player can play it; that the screen will not sleep mid-demo
+(Omarchy's stay-awake indicator, or the live kiosk that holds it); and that the
+check writes nothing.
 """
 
 import http.server
@@ -87,15 +90,40 @@ def build(private):
     return pins
 
 
-def shim(bindir, kiosk):
-    """A pgrep that says the kiosk is (or is not) running, and logs its args."""
+def shim(bindir, kiosk, launcher=True, pgrep=True, ffprobe=True):
+    """A pgrep that says the kiosk's Chromium is (or is not) running, and
+    separately that `omacar kiosk launcher` is (or is not), and logs its args;
+    and an ffprobe that calls a clip H.264 unless the file says otherwise
+    (a stand-in: the test's clips are a few bytes, not video). The file's text
+    says what the real one would have found: HEVC, or BROKEN for one ffprobe
+    cannot read. `pgrep=False` leaves the real pgrep in charge, `ffprobe=False`
+    leaves none at all (on a PATH that has no other)."""
     os.makedirs(bindir, exist_ok=True)
     path = os.path.join(bindir, "pgrep")
-    with open(path, "w", encoding="utf-8") as f:
+    if pgrep:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n"
+                    f'echo "$@" >> "{bindir}/pgrep.log"\n'
+                    'case "$*" in\n'
+                    + "  *'kiosk launcher'*) " + ("echo 4343; exit 0" if launcher else "exit 1") + " ;;\n"
+                    + "  *) " + ("echo 4242; exit 0" if kiosk else "exit 1") + " ;;\n"
+                    "esac\n")
+        os.chmod(path, 0o755)
+    elif os.path.exists(path):
+        os.remove(path)
+    probe = os.path.join(bindir, "ffprobe")
+    if not ffprobe:
+        if os.path.exists(probe):
+            os.remove(probe)
+        return
+    with open(probe, "w", encoding="utf-8") as f:
         f.write("#!/bin/sh\n"
-                f'echo "$@" >> "{bindir}/pgrep.log"\n'
-                + ("echo 4242\nexit 0\n" if kiosk else "exit 1\n"))
-    os.chmod(path, 0o755)
+                'for last; do :; done\n'
+                'if grep -q BROKEN "$last" 2>/dev/null; then exit 1; fi\n'
+                'codec=h264\n'
+                'if grep -q HEVC "$last" 2>/dev/null; then codec=hevc; fi\n'
+                'echo \'{"streams":[{"codec_name":"\'$codec\'","width":1280,"height":720,"avg_frame_rate":"30/1"}]}\'\n')
+    os.chmod(probe, 0o755)
 
 
 def free_port():
@@ -104,10 +132,13 @@ def free_port():
         return s.getsockname()[1]
 
 
-def run(work, private, kiosk=True, port=None, extra=None, real_pgrep=False):
+def run(work, private, kiosk=True, port=None, extra=None, real_pgrep=False, launcher=True, path=None,
+        ffprobe=True):
     bindir = os.path.join(work, "bin")
-    shim(bindir, kiosk)
-    path = os.environ.get("PATH", "") if real_pgrep else bindir + os.pathsep + os.environ.get("PATH", "")
+    shim(bindir, kiosk, launcher=launcher, pgrep=not real_pgrep, ffprobe=ffprobe)
+    # The real pgrep is found later on the PATH than the shims' folder; `path`
+    # is the whole PATH, for a run with no ffprobe at all.
+    path = path or bindir + os.pathsep + os.environ.get("PATH", "")
     env = {"PATH": path,
            "HOME": os.path.join(work, "home"), "LANG": "C.UTF-8",
            "OMACAR_DEMO_PORT": str(port or free_port()), **(extra or {})}
@@ -175,6 +206,11 @@ def main():
               "--user-data-dir=" + profile.replace(".", "\\.") + "( |$)" in asked, asked)
         check("the demo off: its server is not asked for", any("off" in ln for ln in lines if "server" in ln),
               "\n".join(lines))
+        check("clips play: every clip is H.264",
+              any(ln.split()[:3] == ["ok", "clips", "play"] for ln in lines), "\n".join(lines))
+        check("stay awake: the live kiosk's launcher holds it, and pgrep is asked for it by its command line",
+              any(ln.split()[:3] == ["ok", "stay", "awake"] for ln in lines)
+              and "-f -- omacar kiosk launcher" in asked, "\n".join(lines) + "\n" + asked)
         check("road cameras: the real state's saved still is found",
               any(ln.split()[:3] == ["ok", "road", "cameras"] for ln in lines), "\n".join(lines))
         check("map fits drive: the map's origin is the drive's first point",
@@ -260,6 +296,40 @@ def main():
         with open(os.path.join(private, "omarchy-radio", sorted(pins["radio"])[1]), "wb") as f:
             f.truncate(pins["radio"][sorted(pins["radio"])[1]])
 
+        # Clips play: the Cameras tab's <video> plays H.264, and the camera feed
+        # copies the clips as they are (cams.py demo_warnings, which this reuses).
+        clip = os.path.join(private, "demo", "clips", "cabin.mp4")
+        with open(clip, "rb") as f:
+            good = f.read()
+        with open(clip, "wb") as f:
+            f.write(good + b"HEVC")
+        r, lines = run(work, private)
+        check("an HEVC clip: not ready: clips play", r.returncode == 1 and lines[-1] == "not ready: clips play",
+              r.stdout + r.stderr)
+        check("and it names the clip, its codec and the fix",
+              any("cabin.mp4 is HEVC, not H264" in ln and "ffmpeg -i cabin.mp4 -c:v libx264" in ln for ln in lines),
+              r.stdout)
+        check("the other three are not named",
+              not any(n + ".mp4" in ln for ln in lines for n in ("front", "rear", "cabin-drowsy")
+                      if "play" in ln), r.stdout)
+        with open(clip, "wb") as f:
+            f.write(good + b"BROKEN")
+        r, lines = run(work, private)
+        check("a clip ffprobe cannot read: named, and not ready: clips play",
+              any("cabin.mp4 could not be read by ffprobe" in ln for ln in lines)
+              and lines[-1] == "not ready: clips play", r.stdout)
+        with open(clip, "wb") as f:
+            f.write(good)
+        bindir = os.path.join(work, "bin")
+        r, lines = run(work, private, ffprobe=False, path=bindir)
+        check("no ffprobe on the machine: every clip is named, not ready: clips play",
+              lines[-1] == "not ready: clips play"
+              and sum("could not be read by ffprobe" in ln for ln in lines) == 1
+              and all(n + ".mp4 could not be read" in " ".join(lines) for n in ("front", "rear", "cabin", "cabin-drowsy")),
+              r.stdout)
+        r, lines = run(work, private)
+        check("the clip whole again: ready", lines[-1] == "ready", r.stdout)
+
         # Clips missing.
         for role in ("rear", "cabin-drowsy"):
             os.remove(os.path.join(private, "demo", "clips", role + ".mp4"))
@@ -267,6 +337,28 @@ def main():
         check("clips missing: named, and not ready: clips",
               any("stock/owner clips missing: rear, cabin-drowsy" in ln for ln in lines)
               and lines[-1] == "not ready: clips", r.stdout)
+        check("the two that are there are still read: clips play is ok",
+              any(ln.split()[:3] == ["ok", "clips", "play"] for ln in lines), r.stdout)
+        with open(os.path.join(private, "demo", "clips", "front.mp4"), "ab") as f:
+            f.write(b"HEVC")
+        r, lines = run(work, private)
+        check("a present clip in the wrong codec is named beside the missing ones",
+              lines[-1] == "not ready: clips, clips play" and any("front.mp4 is HEVC" in ln for ln in lines), r.stdout)
+        with open(os.path.join(private, "demo", "clips", "front.mp4"), "wb") as f:
+            f.write(good)
+        held = {}
+        for role in ("front", "cabin"):
+            path = os.path.join(private, "demo", "clips", role + ".mp4")
+            with open(path, "rb") as f:
+                held[path] = f.read()
+            os.remove(path)
+        r, lines = run(work, private)
+        check("none at all: clips fails, and clips play has nothing to ask (it is not a failure)",
+              lines[-1] == "not ready: clips" and any(ln.split()[:3] == ["--", "clips", "play"] for ln in lines),
+              r.stdout)
+        for path, data in held.items():
+            with open(path, "wb") as f:
+                f.write(data)
         # The launcher's OMACAR_DEMO_CLIPS (another folder of footage) is where
         # the camera feed reads, so it is where the check looks.
         other = os.path.join(work, "clips")
@@ -280,6 +372,33 @@ def main():
         for role in ("rear", "cabin-drowsy"):
             with open(os.path.join(private, "demo", "clips", role + ".mp4"), "wb") as f:
                 f.write(b"\0" * 64)
+
+        # The real ffprobe, on clips the real ffmpeg makes: the question the camera
+        # feed asks (cams.py probe_clip), with no stand-in between. Skipped, and
+        # said, where there is no ffmpeg (or none that writes H.264).
+        ffmpeg, ffprobe = shutil.which("ffmpeg"), shutil.which("ffprobe")
+        real = os.path.join(work, "realclips")
+        os.makedirs(real)
+
+        def make(role, codec):
+            r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                                "-i", "testsrc=size=160x120:rate=10", "-t", "1", "-c:v", codec,
+                                "-pix_fmt", "yuv420p", os.path.join(real, role + ".mp4")],
+                               capture_output=True, timeout=60)
+            return r.returncode == 0
+        if ffmpeg and ffprobe and make("front", "libx264") and make("rear", "mpeg4"):
+            r, lines = run(work, private, extra={"OMACAR_DEMO_CLIPS": real}, path=os.environ.get("PATH", ""))
+            play = [ln for ln in lines if ln.split()[:3] in (["FAIL", "clips", "play"], ["ok", "clips", "play"])]
+            check("real ffprobe: an MPEG-4 clip is named, and the H.264 one beside it is not",
+                  len(play) == 1 and play[0].split()[0] == "FAIL" and "rear.mp4 is MPEG4, not H264" in play[0]
+                  and "front.mp4" not in play[0], "\n".join(lines))
+            os.remove(os.path.join(real, "rear.mp4"))
+            r, lines = run(work, private, extra={"OMACAR_DEMO_CLIPS": real}, path=os.environ.get("PATH", ""))
+            check("real ffprobe: an H.264 clip plays",
+                  any(ln.split()[:3] == ["ok", "clips", "play"] for ln in lines), "\n".join(lines))
+        else:
+            print("    (skipping the real-ffprobe check: no ffmpeg that writes H.264 here)")
+        shutil.rmtree(real)
 
         # The voice, the map, the car picture, Vehicle's X-ray.
         os.remove(os.path.join(private, "demo", "voice", "drowsy-l2.wav"))
@@ -315,6 +434,40 @@ def main():
         r, lines = run(work, private, kiosk=False)
         check("no live kiosk: not ready: kiosk", lines[-1] == "not ready: kiosk", r.stdout)
 
+        # Stay awake: the screen must not sleep mid-demo. The live kiosk holds
+        # Omarchy's indicator while it runs (bin/omacar kiosk_idle_hold), so either
+        # the indicator is there or the kiosk's launcher is running.
+        ind_dir = os.path.join(home, ".local", "state", "omarchy", "indicators")
+        ind = os.path.join(ind_dir, "stay-awake")
+        r, lines = run(work, private, launcher=False)
+        check("no launcher and no indicator: not ready: stay awake",
+              r.returncode == 1 and lines[-1] == "not ready: stay awake", r.stdout + r.stderr)
+        check("and it says what to do",
+              any("the screen may sleep during the demo: start the live kiosk, or turn on Omarchy's stay-awake" in ln
+                  for ln in lines), r.stdout)
+        os.makedirs(ind_dir)
+        with open(ind, "w", encoding="utf-8"):
+            pass
+        try:
+            r, lines = run(work, private, launcher=False)
+            check("Omarchy's stay-awake indicator alone: ready", lines[-1] == "ready", r.stdout)
+            check("and the line says which",
+                  any(ln.split()[:3] == ["ok", "stay", "awake"] and "stay-awake" in ln for ln in lines), r.stdout)
+            r, lines = run(work, private, launcher=False, kiosk=False)
+            check("with no kiosk either, only the kiosk is not ready", lines[-1] == "not ready: kiosk", r.stdout)
+            # From inside the demo's environment, whose XDG_STATE_HOME is the demo's:
+            # the machine's own indicator is the one that counts.
+            demo_state = os.path.join(home, ".local", "state", "omacar-demo", "state")
+            r, lines = run(work, private, launcher=False, extra={"XDG_STATE_HOME": demo_state})
+            check("and found from inside the demo's environment", lines[-1] == "ready", r.stdout)
+        finally:
+            os.remove(ind)
+            os.rmdir(ind_dir)
+            os.rmdir(os.path.dirname(ind_dir))
+        r, lines = run(work, private, launcher=True, kiosk=False)
+        check("the launcher's process alone holds it: only the kiosk is not ready",
+              lines[-1] == "not ready: kiosk", r.stdout)
+
         # XDG_DATA_HOME moves the kiosk's profile, as it does in bin/omacar.
         data = os.path.join(work, "data-home")
         open(os.path.join(work, "bin", "pgrep.log"), "w").close()
@@ -331,11 +484,17 @@ def main():
         sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
         decoys = [subprocess.Popen(sleeper + [f"--user-data-dir={os.path.join(work, 'tmp', 'omacar', 'kiosk-profile')}"]),
                   subprocess.Popen(sleeper + [f"--user-data-dir={profile}-old", "--app=x"])]
+        # (and a stand-in for the kiosk's launcher, so that the screen is held awake)
         try:
+            time.sleep(0.3)
+            holder = subprocess.Popen(sleeper + ["omacar", "kiosk", "launcher"])
+            decoys.append(holder)
             time.sleep(0.3)
             r, lines = run(work, private, real_pgrep=True)
             check("a test's stand-in, or a look-alike profile, is not the live kiosk",
                   lines[-1] == "not ready: kiosk", r.stdout)
+            check("and a process whose command line holds `omacar kiosk launcher` holds the screen awake",
+                  any(ln.split()[:3] == ["ok", "stay", "awake"] for ln in lines), r.stdout)
             live = subprocess.Popen(sleeper + [f"--user-data-dir={profile}", "--app=http://127.0.0.1/app.html"])
             try:
                 time.sleep(0.3)
