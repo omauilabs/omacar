@@ -15,6 +15,7 @@ stopped, and nothing is played.
                  demo/clips or where OMACAR_DEMO_CLIPS says, as the camera feed reads
     logo         omacar-logo.png, the top bar's
     car picture  demo/crz-home.png, Home's (tools/demo_carpic.py makes it)
+    vehicle picture  crz-xray.png, Vehicle's X-ray (without it, a placeholder)
     volume pin   the LIVE app's `omacar audio on` is off: while it is on, the
                  live page under the demo pushes the speakers to 100% every 30 s
     kiosk        the live kiosk is running underneath, as it should be
@@ -43,7 +44,11 @@ CLIP_ROLES = ("front", "rear", "cabin", "cabin-drowsy")
 # ends there. A looser `user-data-dir=.*/omacar/kiosk-profile` took a test's
 # stand-in kiosk left running under /tmp for the live one. The demo's window
 # has its own profile, under the demo's folder, and does not match either.
-KIOSK_PROFILE = os.path.join("~", ".local", "share", "omacar", "kiosk-profile")
+def kiosk_profile():
+    """bin/omacar's KIOSK_PROFILE: ${XDG_DATA_HOME:-$HOME/.local/share}/omacar/kiosk-profile.
+    (`omacar demo` moves the state and config folders, never the data one.)"""
+    data = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
+    return os.path.join(os.path.expanduser(data), "omacar", "kiosk-profile")
 
 
 def _ere(text):
@@ -52,7 +57,7 @@ def _ere(text):
 
 
 def kiosk_pattern():
-    return "--user-data-dir=" + _ere(os.path.expanduser(KIOSK_PROFILE)) + "( |$)"
+    return "--user-data-dir=" + _ere(kiosk_profile()) + "( |$)"
 DEMO_MARK = "omacar-demo"
 
 
@@ -224,6 +229,7 @@ def run(private):
         ("logo", *picture(private, "omacar-logo.png")),
         ("car picture", *picture(private, os.path.join("demo", "crz-home.png"),
                                  " (tools/demo_carpic.py makes it)")),
+        ("vehicle picture", *picture(private, "crz-xray.png", " (omacar assets push copies it to the tablet)")),
         ("volume pin", *volume_pin()),
         ("kiosk", *kiosk()),
     ]
@@ -240,7 +246,7 @@ def main(argv=None):
     results = run(os.path.abspath(a.private))
     for name, ok, what in results:
         mark = "--  " if ok is None else ("ok  " if ok else "FAIL")
-        print(f"  {mark}  {name:<12} {what}")
+        print(f"  {mark}  {name:<15} {what}")
     failed = [name for name, ok, _ in results if ok is False]
     print()
     print("not ready: " + ", ".join(failed) if failed else "ready")

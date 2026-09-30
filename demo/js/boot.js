@@ -36,7 +36,7 @@ import { openScreen } from "./projection.js";
 import { register as agent, agentActions, restoreHome } from "./views/agent.js";
 import { register as work, workActions, resetWork } from "./views/work.js";
 import { register as scan } from "./views/scan.js";
-import { createTour, createCaptions, loadSteps } from "./tour.js";
+import { createTour, createCaptions, createReset, loadSteps } from "./tour.js";
 import { createMenu, createCues } from "./menu.js";
 import { createBar } from "./bar.js";
 
@@ -112,14 +112,16 @@ function show(hash) {
   else location.hash = hash;
 }
 
-// The demo back to its start: the drive from Marina, Home and its look as they
-// were before the agent's Apply, Work's sessions fresh, and the radio quiet.
-async function resetDemo() {
-  try { radio.pause(); } catch (e) { console.warn("demo reset: the radio:", e); }
-  cues.send("restart").catch(() => {});
-  try { resetWork(); } catch (e) { console.warn("demo reset: Work:", e); }
-  await restoreHome().catch((e) => console.warn("demo reset: Home:", e));
-}
+// The demo back to its start (tour.js createReset): the radio quiet, the drive
+// from Marina, Work's sessions fresh, and Home and its look as they were before
+// the agent's Apply, waiting for Home at most 3 s. A tour from the top and
+// "Restart the drive" both run it.
+const resetDemo = createReset({
+  radio,
+  cue: (name) => cues.send(name),
+  resetWork,
+  restoreHome: () => restoreHome(),
+});
 
 const steps = [];
 // In #app, so the captions read its --nav, which is shorter on a screen with

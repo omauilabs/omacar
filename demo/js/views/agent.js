@@ -16,6 +16,8 @@ import { h, icon, store, api as coreApi, toast, temp, pct, U } from "../../../js
 import { ICONS } from "../../../js/icons.js";
 import { applyLook as coreApplyLook, lookById, savedLook } from "../../../js/looks.js";
 import { say as coreSay, LINES, linesReady } from "../voice.js";
+import { loadCatalogue, spanOf, orientation } from "../../../js/homecards.js";
+import { tyreState } from "../../../js/systems.js";
 
 // The pace of a reply: thinking for 700-1200 ms, then about 45 characters a
 // second; the mic listens for 1.6 s and types at 40. A test makes these fast.
@@ -267,7 +269,17 @@ function dialSvg() {
 
 // The night layout, drawn small in the reply and full size in the overlay:
 // nav, the dial, the music and three tiles, with the car's own numbers.
+// THE NIGHT LAYOUT, AS HOME WILL LOOK: drawn small in the reply and full size
+// in the overlay, from NIGHT itself, card for card in its order and at Home's
+// own spans (share/data/home-cards.json, the orientation the screen is in), so
+// what the preview shows is what Apply posts. Each card is Home's in miniature,
+// with the car's own numbers.
 function nightPicture({ radio, mountMap, big = false }) {
+  const o = orientation();
+  const cols = o === "portrait" ? 6 : 12;
+  const pieces = {};
+
+  // Navigation: the map, the next turn and the ETA.
   const map = h("div.nl-map");
   let mapHandle = null;
   if (typeof mountMap === "function") {
@@ -275,23 +287,21 @@ function nightPicture({ radio, mountMap, big = false }) {
   }
   if (!mapHandle) map.appendChild(sketchMap());
   const turn = h("span.nl-turn"), turnIn = h("b"), street = h("span.nl-street"), eta = h("div.nl-eta");
-  const nav = h("div.nl-nav", map,
-    h("div.nl-man", turn, h("div", turnIn, street)), eta);
+  pieces.nav = h("div.nl-nav", map, h("div.nl-man", turn, h("div", turnIn, street)), eta);
 
+  // The speed dial.
   const spd = h("b"), unit = h("small");
   const arc = dialSvg();
+  pieces.dial = h("div.nl-dial", h("div.nl-gauge", arc, h("div.nl-speed", spd, unit), h("span.nl-gear", "D")));
+
+  // The car, and its tyres as Home's callout says them.
   const carPic = h("img.nl-car", { alt: "", hidden: true, draggable: "false" });
   carPic.onload = () => { carPic.hidden = false; };
   carPic.src = CAR_PIC;
-  const dial = h("div.nl-dial", h("div.nl-gauge", arc, h("div.nl-speed", spd, unit), h("span.nl-gear", "D")),
-    carPic, h("span.nl-ready", "READY"));
+  const tyres = h("span.nl-tyres");
+  pieces.car = h("div.nl-carcard", carPic, h("span.nl-ready", "READY"), tyres);
 
-  const title = h("b.nl-song"), artist = h("span.nl-artist");
-  const music = h("div.nl-music",
-    h("div.nl-np", h("span.nl-or", "OR"), h("div.nl-np-w", title, artist)),
-    h("div.nl-prog", h("i")),
-    h("div.nl-ctl", icon(GLYPH.prev, 16), h("span.nl-pp", icon(GLYPH.pause, 18)), icon(GLYPH.next, 16)));
-
+  // The four tiles.
   const tile = (ico, cls, label) => {
     const v = h("b");
     return { v, node: h("div.nl-tile." + cls, h("span.nl-ti", icon(ico, 16)), v, h("small", label)) };
@@ -299,9 +309,40 @@ function nightPicture({ radio, mountMap, big = false }) {
   const tHybrid = tile(ICONS.battery, "hy", "Hybrid battery");
   const tCool = tile(ICONS.thermo, "co", "Engine temp");
   const tFuel = tile(ICONS.fuel, "fu", "Fuel");
-  const tiles = h("div.nl-tiles", tHybrid.node, tCool.node, tFuel.node);
+  const tVolts = tile(ICONS.battery, "vo", "12V system");
+  Object.assign(pieces, { charge: tHybrid.node, coolant: tCool.node, fuel: tFuel.node, volts: tVolts.node });
 
-  const node = h("div.nl-wrap", h("div.nl" + (big ? ".big" : ""), nav, dial, h("div.nl-right", music, tiles)));
+  // The phone card, with the radio on it.
+  const title = h("b.nl-song"), artist = h("span.nl-artist");
+  pieces.phone = h("div.nl-music",
+    h("div.nl-np", h("span.nl-or", "OR"), h("div.nl-np-w", title, artist)),
+    h("div.nl-prog", h("i")),
+    h("div.nl-ctl", icon(GLYPH.prev, 16), h("span.nl-pp", icon(GLYPH.pause, 18)), icon(GLYPH.next, 16)));
+
+  // The dashcams and the agent, as their cards' titles.
+  pieces.dashcam = h("div.nl-mini.nl-cam", h("span.nl-mini-t", icon(ICONS.camera, 16), "Dashcams"),
+    h("span.nl-rec", h("i"), "REC"));
+  pieces.agent = h("div.nl-mini.nl-agent", h("span.nl-mini-t", waveform(7, "nl-wave").node, "Oma Agent"),
+    h("span.nl-bubble", "Temperatures look steady."));
+
+  const grid = h("div.nl.nl-home" + (big ? ".big" : ""),
+    { data: { orient: o }, style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } });
+  for (const [id, size] of NIGHT[o]) {
+    const n = pieces[id] || h("div.nl-mini", h("span.nl-mini-t", id));
+    n.dataset.card = id;
+    n.dataset.size = size;
+    grid.appendChild(n);
+  }
+  // Home's own spans, from the catalogue Home itself reads (usually already
+  // fetched by then); until they arrive the cards sit in order, one cell each.
+  loadCatalogue().then((cat) => {
+    for (const n of grid.children) {
+      const [w, hh] = spanOf(cat, n.dataset.card, n.dataset.size, o);
+      n.style.gridColumn = `span ${w}`;
+      n.style.gridRow = `span ${hh}`;
+    }
+  }).catch(() => { /* one cell each: still NIGHT's cards, in its order */ });
+  const node = h("div.nl-wrap", grid);
 
   function paint() {
     const v = store.values || {};
@@ -313,6 +354,11 @@ function nightPicture({ radio, mountMap, big = false }) {
     tHybrid.v.textContent = pct(v.HYBRID_BATTERY_REMAINING ?? 52);
     tCool.v.textContent = temp(v.COOLANT_TEMP ?? 88, false) + U.units.temp;
     tFuel.v.textContent = pct(v.FUEL_LEVEL ?? 64);
+    const volts = Number(v.CONTROL_MODULE_VOLTAGE);
+    tVolts.v.textContent = `${(Number.isFinite(volts) ? volts : 14.2).toFixed(1)} V`;
+    const ty = tyreState(store.car);
+    tyres.textContent = `Tyres ${ty.text}`;
+    tyres.dataset.tone = ty.tone;
     const nx = d && d.next;
     turn.replaceChildren(icon(GLYPH[nx && /left/.test(nx.modifier || "") ? "left"
                                     : nx && /straight|continue/.test(nx.modifier || nx.type || "") ? "straight" : "right"], 22));
@@ -459,7 +505,9 @@ export function agentView(deps = {}) {
       const entry = { btn, why };
       applyBtns.add(entry);
       const close = () => closePreview();
+      // data-demo-overlay: Esc is this overlay's (below), not the presenter's menu (tour.js).
       overlay = h("div.ag-overlay", { role: "dialog", "aria-modal": "true", "aria-label": "Night drive preview",
+                                      "data-demo-overlay": "",
                                       onclick: (e) => { if (e.target === overlay) close(); } },
         h("div.ag-ov-card",
           h("div.ag-ov-h",

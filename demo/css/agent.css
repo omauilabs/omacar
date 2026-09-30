@@ -213,6 +213,59 @@
 .nl-ti { color: var(--ink-2); display: grid; }
 .nl-tile.hy .nl-ti { color: var(--ok); }
 
+/* THE PREVIEW IS HOME'S GRID (agent.js nightPicture): NIGHT's cards at Home's
+   spans, the columns set inline (12 landscape, 6 portrait), and the rows
+   sharing the height, as Home's do. */
+.nl.nl-home {
+  grid-auto-rows: minmax(0, 1fr); grid-auto-flow: row dense; gap: .8cqw;
+  height: clamp(200px, 26cqw, 340px);
+}
+.nl.nl-home.big { height: min(62vh, 46cqw); }
+.nl.nl-home[data-orient="portrait"] { height: clamp(300px, 54cqw, 460px); }
+.nl.nl-home.big[data-orient="portrait"] { height: min(72vh, 124cqw); }
+.nl-home > * { min-width: 0; min-height: 0; }
+.nl-carcard, .nl-mini {
+  position: relative; overflow: hidden; border-radius: 1cqw;
+  border: 1px solid var(--edge); background: var(--panel);
+}
+.nl-carcard {
+  display: grid; grid-template-rows: minmax(0, 1fr) auto auto; justify-items: center; align-items: center;
+  padding: .6cqw; gap: .2cqw;
+  background: radial-gradient(ellipse at 50% 55%, color-mix(in srgb, var(--ink) 6%, var(--panel)), var(--panel) 72%);
+}
+.nl-home .nl-car { height: 100%; max-height: 100%; max-width: 96%; }
+.nl-tyres {
+  font-size: clamp(9px, .85cqw, 14px); color: var(--ink-2); white-space: nowrap;
+  padding: .1cqw .7cqw; border-radius: 999px; border: 1px solid var(--edge);
+}
+.nl-tyres[data-tone="ok"] { color: var(--ok); }
+.nl-home .nl-dial { grid-template-rows: minmax(0, 1fr); }
+/* A 1-row tile is short: the icon, the value and the label on one line. */
+.nl-home .nl-tile {
+  grid-auto-flow: column; grid-template-columns: auto auto minmax(0, 1fr); justify-content: start;
+  justify-items: start; align-items: center; gap: .7cqw; padding: 0 1cqw; text-align: left;
+}
+.nl-home .nl-tile small { overflow: hidden; text-overflow: ellipsis; }
+.nl-home .nl-music { padding: .7cqw .9cqw; }
+.nl-mini { display: grid; align-content: space-between; padding: .8cqw 1cqw; }
+.nl-mini-t {
+  display: flex; align-items: center; gap: .7cqw; min-width: 0;
+  font-size: clamp(10px, 1.1cqw, 18px); font-weight: 600; white-space: nowrap;
+}
+.nl-mini-t svg { color: var(--ink-2); flex: none; }
+.nl-cam {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--info) 14%, var(--panel)), var(--panel) 70%);
+}
+.nl-rec { display: flex; align-items: center; gap: .4cqw; font-size: clamp(9px, .85cqw, 14px); color: var(--ink-2); font-weight: 600; }
+.nl-rec i { width: .7cqw; height: .7cqw; min-width: 6px; min-height: 6px; border-radius: 50%; background: var(--rec); }
+.nl-wave { height: clamp(12px, 1.6cqw, 24px); gap: 2px; }
+.nl-wave i { width: 2px; box-shadow: none; }
+.nl-bubble {
+  justify-self: end; max-width: 100%; padding: .4cqw .9cqw; border-radius: .8cqw;
+  font-size: clamp(9px, .95cqw, 15px); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--ink) 5%, var(--panel-2)); border: 1px solid var(--edge);
+}
+
 /* ---- chips, the input, the label */
 .ag-chips { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 10px; }
 .ag-chips:empty { display: none; }
@@ -274,7 +327,6 @@
     border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--edge)); background: var(--panel);
   }
   .ag-picbox { order: -1; height: 76px; min-height: 0; }
-  .ag-preview .nl { height: clamp(200px, 34cqw, 420px); }
   .ag-chev.ag-car-go { display: grid; }
   .ag-ctx { display: none; }
   .ag-hello { grid-area: hello; display: flex; justify-content: flex-start; align-items: center; gap: 22px;
