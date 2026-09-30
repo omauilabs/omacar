@@ -856,6 +856,25 @@ else:
           (bool(_ev["files"]), all(os.path.exists(os.path.join(DEMO_VIDEOS, "locked", _ev["id"], *r.split("/")))
                                    for r in camstore.load_events()["events"][0]["files"])), (True, True))
 
+    # ---- footage the tab's player may not play
+    head("it says so when footage will not play in the tab")
+    _hevc = os.path.join(DEMO_ROOT, "clips-odd")
+    os.makedirs(_hevc)
+    for _n in ("front", "rear", "cabin"):
+        shutil.copy(os.path.join(CLIPS, _n + ".mp4"), _hevc)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+                    "testsrc2=size=128x96:rate=25", "-t", "1", "-c:v", "mpeg4", os.path.join(_hevc, "rear.mp4")],
+                   check=True, capture_output=True, timeout=60)
+    with open(os.path.join(_hevc, "cabin.mp4"), "wb") as f:
+        f.write(b"not a video")
+    _warn = cams.demo_warnings(cams.DemoRecorder(_hevc).sources)
+    check("H.264 says nothing; another codec and an unreadable file each get a sentence",
+          [w.split(" ")[0] for w in _warn], ["rear.mp4", "cabin.mp4"])
+    check("naming the file and what to do about it",
+          (any(w.startswith("rear.mp4 is MPEG4, not H264") and "libx264" in w for w in _warn),
+           any(w.startswith("cabin.mp4 could not be read") for w in _warn),
+           any(w.startswith("front.mp4") for w in _warn)), (True, True, False))
+
     # ---- the ffmpeg commands
     head("its two kinds of ffmpeg")
     _seg = " ".join(cams.demo_segment_args("/c/front.mp4", "/o/seg%04d.mp4", 3100))

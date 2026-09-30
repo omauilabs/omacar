@@ -869,6 +869,22 @@ def probe_clip(path):
         return None
 
 
+def demo_warnings(sources):
+    """What is wrong with footage that will still run: the clips are copied,
+    not re-encoded, so a role's clip in any codec but H.264 goes to the
+    Cameras tab's <video> as it is, and Chromium plays HEVC only on some
+    hardware. `sources` is {role: path}; the answer is a list of sentences."""
+    out = []
+    for role, path in sources.items():
+        mode = probe_clip(path)
+        if mode is None:
+            out.append(f"{role}.mp4 could not be read by ffprobe")
+        elif mode["fmt"] != "H264":
+            out.append(f"{role}.mp4 is {mode['fmt']}, not H264: the Cameras tab's player may not play its "
+                       f"clips (re-encode it: ffmpeg -i {role}.mp4 -c:v libx264 -pix_fmt yuv420p -an)")
+    return out
+
+
 def demo_frame_args(src, out):
     """The live picture: `src` on a loop at its own speed, cut to 10 fps and
     640 px wide, one JPEG rewritten whole (atomic_writing renames it into
@@ -1301,6 +1317,9 @@ def demo_main(args):
     if why:
         print(f"omacar: cams demo refused: {why}", file=sys.stderr)
         return 2
+    if not shutil.which("ffmpeg"):
+        print("omacar: cams demo needs ffmpeg, and it is not installed", file=sys.stderr)
+        return 1
     rec = DemoRecorder(src)
     if not rec.sources:
         print(f"omacar: no footage in {src}: it needs front.mp4, rear.mp4 and cabin.mp4", file=sys.stderr)
@@ -1309,6 +1328,8 @@ def demo_main(args):
     if missing:
         print(f"omacar: no footage for {', '.join(missing)} in {src}; those cameras will read empty",
               file=sys.stderr)
+    for line in demo_warnings(rec.sources):
+        print(f"omacar: {line}", file=sys.stderr)
     st = _read_status()
     if running(st) and st.get("pid") != os.getpid():
         print(f"omacar: the demo's cameras are already running (pid {st['pid']})", file=sys.stderr)
