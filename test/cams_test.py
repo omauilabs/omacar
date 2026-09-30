@@ -679,7 +679,32 @@ check("and the name in a path that climbs out of it does not count",
 _r = _cli(_env(XDG_RUNTIME_DIR=os.path.join(SCRATCH, "run")))
 check("nor does a runtime folder outside it: the live recorder's live pictures are not the demo's",
       (_r.returncode != 0, "XDG_RUNTIME_DIR" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_VIDEOS=os.path.join(DEMO_ROOT + "-lookalike", "videos")))
+check("a folder that only contains the name (omacar-demo-lookalike) is not the demo's: the name is a path component",
+      (_r.returncode != 0, "omacar-demo" in _r.stderr), (True, True))
+_r = _cli(_env(XDG_RUNTIME_DIR=os.path.join(SCRATCH, "not-omacar-demo", "run")))
+check("nor is 'not-omacar-demo'", (_r.returncode != 0, "XDG_RUNTIME_DIR" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_STATE=None))
+check("with OMACAR_STATE unset it refuses too: live.json must be the demo world's, never the live app's",
+      (_r.returncode != 0, "OMACAR_STATE" in _r.stderr), (True, True))
+_r = _cli(_env(OMACAR_STATE=os.path.join(SCRATCH, "state", "omacar")))
+check("and with OMACAR_STATE outside the demo's folder",
+      (_r.returncode != 0, "OMACAR_STATE" in _r.stderr), (True, True))
 check("a refusal writes nothing", (os.path.exists(DEMO_VIDEOS), os.path.exists(DEMO_RUN)), (False, False))
+
+# Task 2's launcher starts the feed only if `cams.py demo --help` exits 0, and
+# runs that probe in whatever environment it has, the demo's or not.
+for _flag in ("--help", "-h"):
+    for _label, _e in (("the demo's environment", _env()),
+                       ("no environment at all", {"PATH": os.environ.get("PATH", "")})):
+        _r = _cli(_e, _flag)
+        check(f"`cams.py demo {_flag}` in {_label} prints usage on stdout and exits 0",
+              (_r.returncode, _r.stdout.startswith("usage: cams.py demo"), "--from" in _r.stdout),
+              (0, True, True))
+_r = _cli(_env(), "--bogus")
+check("an argument it does not know is still a usage error (2), on stderr",
+      (_r.returncode, _r.stderr.startswith("usage: cams.py demo"), _r.stdout), (2, True, ""))
+check("and neither wrote anything", (os.path.exists(DEMO_VIDEOS), os.path.exists(DEMO_RUN)), (False, False))
 
 _saved_env = {k: os.environ.get(k) for k in DEMO_ENV}
 os.environ.update(DEMO_ENV)
@@ -964,6 +989,95 @@ else:
     _w.tick(now=_B + 8)
     check("and then it is", len(FakePopen.made), 5)
 
+    head("a demo that fails on the way still ends its ffmpegs")
+    _live("drive")
+
+    class Boom(cams.DemoRecorder):
+        """Fails on its first status write; lays down no clips."""
+
+        def seed(self, now=None):
+            return {}
+
+        def write_status(self, now=None):
+            raise RuntimeError("the disk went away")
+
+    FakePopen.made.clear()
+    _handlers = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    _boom = Boom(CLIPS, popen=FakePopen)
+    try:
+        try:
+            _boom.run()
+            _raised = None
+        except RuntimeError as e:
+            _raised = str(e)
+    finally:
+        for _s, _h in _handlers.items():
+            signal.signal(_s, _h)
+    check("run() lets the error out, and every ffmpeg it started is ended",
+          (_raised, len(FakePopen.made), all(p.code is not None for p in FakePopen.made)),
+          ("the disk went away", 3, True))
+    check("with its status file gone", os.path.exists(cams.status_path()), False)
+
+    FakePopen.made.clear()
+    _tk = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _tk.start(now=_B)
+    _real_poll = cams.DemoFeed.poll_frame
+
+    def _bad_poll(self):
+        raise RuntimeError("stat failed in a way nobody planned for")
+
+    cams.DemoFeed.poll_frame = _bad_poll
+    try:
+        try:
+            _tk.tick(now=_B + 1)
+            _tick_raised = False
+        except Exception:                                      # noqa: BLE001
+            _tick_raised = True
+    finally:
+        cams.DemoFeed.poll_frame = _real_poll
+    check("a feed that raises in a tick does not take the loop down, and the status says so",
+          (_tick_raised, "stat failed" in (_tk.note or "")), (False, True))
+    _tk.stop()
+
+    # ---- a hard brake in the demo world is marked by the feed, as the recorder marks one
+    head("a hard_brake in the world's live.json is marked 'hard-braking', once per event")
+
+    def _world(event=None, age=0.0, speed=42.0):
+        with open(LIVE, "w", encoding="utf-8") as f:
+            json.dump({"connected": True, "simulated": True, "values": {"SPEED": speed},
+                       "demo": {"scene": "drive", "event": event}}, f)
+        os.utime(LIVE, (time.time() - age, time.time() - age))
+
+    camstore._save_events(DEMO_VIDEOS, {"events": []})
+    FakePopen.made.clear()
+    _hb = cams.DemoRecorder(CLIPS, popen=FakePopen)
+    _hb.start(now=_B)
+    _at = time.time()
+    _world({"kind": "hard_brake", "at": _at})
+    for _i in range(5):
+        _hb.tick(now=time.time())
+    _evs = camstore.load_events()["events"]
+    check("five ticks that see one event mark it once, kind hard-braking, at the event's own time",
+          ([e["kind"] for e in _evs], [e["t"] for e in _evs]), (["hard-braking"], [_at]))
+    check("and its speed is the world's", _evs[0]["speed_kph"], 42.0)
+    _world({"kind": "hard_brake", "at": _at + 100})
+    _hb.tick(now=time.time())
+    check("a new event, at another time, is another mark", len(camstore.load_events()["events"]), 2)
+    _world({"kind": "pothole", "at": _at + 200})
+    _hb.tick(now=time.time())
+    _world(None)
+    _hb.tick(now=time.time())
+    check("other events, and none, mark nothing", len(camstore.load_events()["events"]), 2)
+    _world({"kind": "hard_brake", "at": _at + 300}, age=60)
+    _hb.tick(now=time.time())
+    check("an event in a live.json a minute old is a world that stopped: not marked",
+          len(camstore.load_events()["events"]), 2)
+    _world({"kind": "hard_brake", "at": _at + 400}, speed=None)
+    _hb.tick(now=time.time())
+    check("a world with no speed still marks it, with none",
+          [e["speed_kph"] for e in camstore.load_events()["events"]][-1], None)
+    _hb.stop()
+
     head("its status is the recorder's status")
     os.makedirs(cams.run_dir(), exist_ok=True)
     _real_time = time.time()
@@ -1080,6 +1194,17 @@ else:
         _live("drive")
         check("and back again",
               _until("back", lambda: _status()["roles"]["cabin"]["device"] == "cabin.mp4", 12), True)
+        _bat = time.time()
+        with open(LIVE, "w", encoding="utf-8") as f:
+            json.dump({"connected": True, "simulated": True, "values": {"SPEED": 30.0},
+                       "demo": {"scene": "drive", "event": {"kind": "hard_brake", "at": _bat}}}, f)
+        check("a hard_brake in live.json is marked by the running feed",
+              _until("brake", lambda: [e["kind"] for e in camstore.list_events()] == ["hard-braking"], 12), True)
+        _ev = camstore.list_events()[0]
+        check("and the clips around it are locked, so the timeline says Hard braking",
+              (_ev["t"], bool(_ev["files"]),
+               all(os.path.exists(os.path.join(DEMO_VIDEOS, "locked", _ev["id"], *f.split("/")))
+                   for f in _ev["files"])), (_bat, True, True))
         _kids = dict(_status()["children"])
         _p.send_signal(signal.SIGTERM)
         try:
@@ -1090,8 +1215,8 @@ else:
         check("its ffmpeg children are all gone", [pid for pid in _kids.values() if cams._alive(pid)], [])
         check("and so is its status file", os.path.exists(cams.status_path()), False)
         check("the recorder reads as off again", cams.overview()["running"], False)
-        check("its clips are left on disk for the tab",
-              len(os.listdir(os.path.join(DEMO_VIDEOS, "front"))) >= 50, True)
+        check("its clips are left on disk for the tab, the locked ones too",
+              len(camstore.list_clips("front")) >= 50, True)
     finally:
         if _p.poll() is None:
             _p.kill()
@@ -1100,6 +1225,47 @@ else:
             if cams._alive(_pid):
                 os.kill(_pid, signal.SIGKILL)
         _log.close()
+
+    # ---- the parent killed outright takes its ffmpegs with it
+    head("kill -9 on the demo leaves no ffmpeg looping behind it")
+    if not sys.platform.startswith("linux"):
+        print("    (skipping: PR_SET_PDEATHSIG is Linux's. The box and the tablet are.)")
+    else:
+        _live("drive")
+        _log = open(os.path.join(DEMO_ROOT, "feed9.log"), "w")
+        _p = subprocess.Popen([sys.executable, CAMS_PY, "demo", "--from", CLIPS], env=_env(),
+                              stdout=_log, stderr=_log)
+        _kids = {}
+        try:
+            check("it comes up", _until("up", lambda: (_status() or {}).get("children", {}).keys()
+                                        >= {"front", "rear", "cabin"}, 60), True)
+            _kids = dict(_status()["children"])
+
+            def _ours_alive():
+                out = subprocess.run(["pgrep", "-f", os.path.join(DEMO_RUN, "omacar-cams")],
+                                     capture_output=True, text=True).stdout.split()
+                return [int(x) for x in out if int(x) != os.getpid()]
+
+            check("its three ffmpegs carry the demo's runtime path in their argv", len(_ours_alive()) >= 3, True)
+            _p.send_signal(signal.SIGKILL)
+            _p.wait(timeout=10)
+            _end = time.time() + 3
+            while time.time() < _end and _ours_alive():
+                time.sleep(0.1)
+            check("three seconds after kill -9 none of them is left", _ours_alive(), [])
+            check("nor is any of the pids its status file named", [x for x in _kids.values() if cams._alive(x)], [])
+        finally:
+            if _p.poll() is None:
+                _p.kill()
+                _p.wait()
+            for _pid in _kids.values():
+                if cams._alive(_pid):
+                    os.kill(_pid, signal.SIGKILL)
+            _log.close()
+            try:
+                os.remove(cams.status_path())
+            except OSError:
+                pass
 
 for _k, _v in _saved_env.items():
     if _v is None:

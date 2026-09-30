@@ -815,10 +815,11 @@ def _print_status():
 #   live    <role>.jpg, 640 px wide at 10 fps, in the runtime folder
 #   status  status.json, every second, in write_status()'s shape
 #
-# It writes only where OMACAR_VIDEOS and XDG_RUNTIME_DIR point, and refuses to
-# run unless both are inside a folder called omacar-demo: pointed at the live
-# app's own folders it would overwrite the real recorder's pictures and status.
-# It opens no video device, and nothing above that finds one is called from here.
+# It writes only where OMACAR_VIDEOS and XDG_RUNTIME_DIR point, and reads the
+# demo world's live.json from OMACAR_STATE, and refuses to run unless all three
+# are inside a folder called omacar-demo: pointed at the live app's own folders
+# it would overwrite the real recorder's pictures and status. It opens no video
+# device, and nothing above that finds one is called from here.
 
 DEMO_MARK = "omacar-demo"
 DEMO_MINUTES = 50
@@ -834,22 +835,57 @@ class DemoRefused(RuntimeError):
     """The demo was asked to run somewhere it must not write."""
 
 
+def _in_demo(path):
+    """Whether `path` has a folder called omacar-demo in it, as a whole path
+    component (not omacar-demo-old, not not-omacar-demo), once ~ and .. are
+    resolved and again once every link is followed."""
+    for p in (os.path.normpath(os.path.expanduser(path)), os.path.realpath(os.path.expanduser(path))):
+        if DEMO_MARK not in p.split(os.sep):
+            return False
+    return True
+
+
 def demo_refusal():
     """Why `cams.py demo` must not run with this environment, or None.
 
-    Both folders it writes must be named by the environment and be inside a
-    folder called omacar-demo, by the name given and by where it really leads,
-    so neither a path that climbs out of it nor a link into the live app's
-    folders gets by."""
-    for var in ("OMACAR_VIDEOS", "XDG_RUNTIME_DIR"):
+    The three folders it writes or reads must be named by the environment and
+    be inside a folder called omacar-demo, by the name given and by where it
+    really leads, so neither a path that climbs out of it nor a link into the
+    live app's folders gets by. OMACAR_VIDEOS is where the clips go,
+    XDG_RUNTIME_DIR where the live pictures and status go (unset, it is the
+    live recorder's own), OMACAR_STATE where the demo world's live.json is
+    (unset, the live app's)."""
+    for var in ("OMACAR_VIDEOS", "XDG_RUNTIME_DIR", "OMACAR_STATE"):
         val = os.environ.get(var)
         if not val:
-            return (f"{var} is not set; the demo writes only under a folder called {DEMO_MARK}, "
+            return (f"{var} is not set; the demo works only in a folder called {DEMO_MARK}, "
                     f"which the demo's own launcher sets")
-        if DEMO_MARK not in val or DEMO_MARK not in os.path.realpath(os.path.expanduser(val)):
+        if not _in_demo(val):
             return (f"{var}={val} is not inside a folder called {DEMO_MARK}; run from there, the demo "
-                    f"would overwrite the live app's cameras")
+                    f"would touch the live app's files")
     return None
+
+
+def _die_with_parent():
+    """A preexec_fn for the demo's ffmpegs: SIGTERM them when this process
+    dies, however it dies (kill -9, the OOM killer). Without it they outlive
+    it: each loops its clip for ever. Linux only (PR_SET_PDEATHSIG); None
+    where there is no such thing. The C call is looked up here, before any
+    fork, so the child runs no import."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        import ctypes
+        prctl = ctypes.CDLL(None).prctl
+    except (ImportError, OSError, AttributeError):
+        return None
+    parent = os.getpid()
+
+    def preexec():
+        prctl(1, int(signal.SIGTERM), 0, 0, 0)      # PR_SET_PDEATHSIG
+        if os.getppid() != parent:                  # it went between fork and here
+            os._exit(1)
+    return preexec
 
 
 def probe_clip(path):
@@ -910,18 +946,18 @@ def demo_segment_args(src, pattern, secs, clip_secs=camstore.CLIP_SECS):
 
 
 def demo_live_path():
-    """The demo world's live.json, which says which scene it is in."""
-    base = os.environ.get("OMACAR_STATE") or os.path.join(
-        os.path.expanduser(os.environ.get("XDG_STATE_HOME") or "~/.local/state"), "omacar")
-    return os.path.join(base, "live.json")
+    """The demo world's live.json (which scene it is in, and what happened),
+    or None with OMACAR_STATE unset: the live app's own is never read."""
+    base = os.environ.get("OMACAR_STATE")
+    return os.path.join(base, "live.json") if base else None
 
 
 class DemoFeed:
     """One role's ffmpeg: a clip on a loop, cut into live pictures. Restarting
     it on another clip (the drowsy cabin) is stop and start."""
 
-    def __init__(self, role, src, popen):
-        self.role, self.src, self.popen = role, src, popen
+    def __init__(self, role, src, popen, preexec=None):
+        self.role, self.src, self.popen, self.preexec = role, src, popen, preexec
         self.proc = None
         self.started = None
         self.last_frame = None
@@ -938,7 +974,8 @@ class DemoFeed:
             except OSError:
                 pass
         self.proc = self.popen(demo_frame_args(self.src, live_path(self.role)), stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                               **({"preexec_fn": self.preexec} if self.preexec else {}))
         self.started = now
         self.last_line = None
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
@@ -983,6 +1020,10 @@ class DemoFeed:
                 self.proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 pass
+        try:
+            self.proc.stderr.close()        # the reader thread ends on it
+        except (AttributeError, OSError, ValueError):
+            pass
 
     def kill(self):
         if self.alive():
@@ -1045,6 +1086,8 @@ class DemoRecorder:
         self._building = None
         self._seeder = None
         self._next_slow = 0.0
+        self._braked = {}                   # event times already marked
+        self._preexec = _die_with_parent()
 
     # -- the guard
     def _guard(self):
@@ -1083,7 +1126,8 @@ class DemoRecorder:
             secs = int(self.minutes * camstore.CLIP_SECS * factor) + 30
             self._building = subprocess.Popen(
                 demo_segment_args(src, os.path.join(pool, "seg%04d.mp4"), secs),
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                **({"preexec_fn": self._preexec} if self._preexec else {}))
             _, err = self._building.communicate()
             code, self._building = self._building.returncode, None
             if self.stopping.is_set():
@@ -1186,12 +1230,16 @@ class DemoRecorder:
         os.makedirs(run_dir(), exist_ok=True)
         for role, src in self.sources.items():
             self.modes[role] = probe_clip(src)
-            feed = DemoFeed(role, src, self.popen)
+            feed = DemoFeed(role, src, self.popen, self._preexec)
             feed.start(now)
             self.feeds[role] = feed
 
-    def _scene(self, now):
+    def _world(self, now):
+        """live.json as the demo world last wrote it, or None: missing,
+        unreadable, or older than DEMO_SCENE_FRESH (a world that has stopped)."""
         path = demo_live_path()
+        if not path:
+            return None
         try:
             if now - os.stat(path).st_mtime > DEMO_SCENE_FRESH:
                 return None
@@ -1199,19 +1247,40 @@ class DemoRecorder:
                 doc = json.load(f)
         except (OSError, ValueError):
             return None
-        demo = doc.get("demo") if isinstance(doc, dict) else None
-        return demo.get("scene") if isinstance(demo, dict) else None
+        return doc if isinstance(doc, dict) else None
 
-    def _follow_scene(self, now):
+    @staticmethod
+    def _demo_of(world):
+        demo = world.get("demo") if world else None
+        return demo if isinstance(demo, dict) else {}
+
+    def _follow_scene(self, world, now):
         """The cabin shows the drowsy clip while the world's scene is
         'drowsy', and its own again after. Only that one ffmpeg restarts."""
         feed = self.feeds.get("cabin")
         if feed is None or self.drowsy_src is None:
             return
-        want = self._scene(now) == "drowsy"
+        want = self._demo_of(world).get("scene") == "drowsy"
         if want != self.drowsy:
             self.drowsy = want
             feed.switch(self.drowsy_src if want else self.sources["cabin"], now)
+
+    def _follow_events(self, world):
+        """A hard brake in the world is marked 'hard-braking' at its own time,
+        once, as the live recorder marks one (Recorder.watch_braking): the
+        clips 30 s either side are locked, and the timeline says Hard braking."""
+        ev = self._demo_of(world).get("event")
+        if not isinstance(ev, dict) or ev.get("kind") != "hard_brake":
+            return
+        at = ev.get("at")
+        if isinstance(at, bool) or not isinstance(at, (int, float)) or at in self._braked:
+            return
+        kph = (world.get("values") or {}).get("SPEED") if isinstance(world.get("values"), dict) else None
+        camstore.mark("hard-braking", t=at,
+                      speed_kph=kph if isinstance(kph, (int, float)) and not isinstance(kph, bool) else None)
+        self._braked[at] = True
+        while len(self._braked) > 64:
+            del self._braked[next(iter(self._braked))]
 
     def write_status(self, now=None):
         doc = {"pid": os.getpid(), "t": time.time() if now is None else now, "sim": False, "demo": True,
@@ -1237,19 +1306,26 @@ class DemoRecorder:
             self.problems["demo"] = f"{what} failed: {type(e).__name__}: {e}"[:300]
             self._note()
 
+    def _mind(self, feed, now):
+        feed.poll_frame()
+        if feed.stalled(now):
+            feed.kill()
+            feed.retry_at = 0.0
+        if not feed.alive() and now >= feed.retry_at:
+            feed.retry_at = now + DEMO_RETRY_SECS
+            feed.start(now)
+
     def tick(self, now=None):
-        """One pass: follow the scene, mind every feed, and once a second lock
-        what an event asked for, lay down the minute's clip and write the status."""
+        """One pass: follow the world (its scene, its hard brakes), mind every
+        feed, and once a second lock what an event asked for, lay down the
+        minute's clip and write the status. Nothing in it may end the loop: a
+        pass that fails says so in the status and the next one tries again."""
         now = time.time() if now is None else now
-        self._safely("the scene", lambda: self._follow_scene(now))
+        world = self._world(now)
+        self._safely("the scene", lambda: self._follow_scene(world, now))
+        self._safely("the hard-braking mark", lambda: self._follow_events(world))
         for feed in list(self.feeds.values()):
-            feed.poll_frame()
-            if feed.stalled(now):
-                feed.kill()
-                feed.retry_at = 0.0
-            if not feed.alive() and now >= feed.retry_at:
-                feed.retry_at = now + DEMO_RETRY_SECS
-                self._safely("a feed", lambda f=feed: f.start(now))
+            self._safely("a feed", lambda f=feed: self._mind(f, now))
         if now >= self._next_slow:
             self._next_slow = now + 1
             self._safely("locking", lambda: camstore.settle(now=now))
@@ -1258,7 +1334,8 @@ class DemoRecorder:
 
     def stop(self):
         """Every ffmpeg ends, the pieces the loop was made from go, and so does
-        the status file. The clips stay: the tab plays them."""
+        the status file. The clips stay: the tab plays them. Each step is its
+        own, so one that fails leaves none of the others undone."""
         self.stopping.set()
         building = self._building
         if building is not None:
@@ -1269,9 +1346,15 @@ class DemoRecorder:
         if self._seeder is not None:
             self._seeder.join(timeout=10)
         for feed in self.feeds.values():
-            feed.terminate()
+            try:
+                feed.terminate()
+            except OSError:
+                pass
         for feed in self.feeds.values():
-            feed.reap()
+            try:
+                feed.reap()
+            except OSError:
+                pass
         shutil.rmtree(os.path.join(camstore.videos(), ".pool"), ignore_errors=True)
         try:
             os.remove(status_path())
@@ -1286,18 +1369,34 @@ class DemoRecorder:
             self._note()
 
     def run(self):
+        """Until SIGTERM, SIGINT or SIGHUP. Whatever ends it, the ffmpegs end
+        with it: the finally is the only way out of the loop."""
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(sig, lambda *_: self.stopping.set())
-        self.start()
-        # The pictures are live from the first second; the clips follow as
-        # they are cut, and the status says so meanwhile.
-        self.note = f"laying out the last {self.minutes} minutes of clips"
-        self._seeder = threading.Thread(target=self._seed_quietly, daemon=True)
-        self._seeder.start()
-        self.write_status()
-        while not self.stopping.wait(0.25):
-            self.tick()
-        self.stop()
+        try:
+            self.start()
+            # The pictures are live from the first second; the clips follow as
+            # they are cut, and the status says so meanwhile.
+            self.note = f"laying out the last {self.minutes} minutes of clips"
+            self._seeder = threading.Thread(target=self._seed_quietly, daemon=True)
+            self._seeder.start()
+            self.write_status()
+            while not self.stopping.wait(0.25):
+                self.tick()
+        finally:
+            self.stop()
+
+
+DEMO_USAGE = """usage: cams.py demo [--from DIR]
+
+  Plays footage on a loop in place of live cameras (the meetup demo): the last
+  50 minutes of one-minute clips, a live picture per camera, and the recorder's
+  status. DIR holds front.mp4, rear.mp4 and cabin.mp4 and, for the drowsy
+  moment, cabin-drowsy.mp4 (default: share/assets/private/demo/clips).
+
+  It runs only with OMACAR_VIDEOS, XDG_RUNTIME_DIR and OMACAR_STATE all set,
+  each inside a folder called omacar-demo. SIGTERM ends it and its ffmpegs.
+"""
 
 
 def demo_main(args):
@@ -1305,13 +1404,15 @@ def demo_main(args):
     rest = list(args)
     while rest:
         a = rest.pop(0)
+        if a in ("-h", "--help"):
+            print(DEMO_USAGE, end="")
+            return 0
         if a == "--from" and rest:
             src = rest.pop(0)
         elif a.startswith("--from="):
             src = a[len("--from="):]
         else:
-            print("usage: cams.py demo [--from DIR]   (DIR holds front.mp4, rear.mp4, cabin.mp4 "
-                  "and, for the drowsy moment, cabin-drowsy.mp4)", file=sys.stderr)
+            print(DEMO_USAGE, end="", file=sys.stderr)
             return 2
     why = demo_refusal()
     if why:
