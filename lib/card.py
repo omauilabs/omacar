@@ -65,13 +65,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import concerns  # noqa: E402
 import records   # noqa: E402
 
-# Hardcoded under ~ rather than under XDG_STATE_HOME, and deliberately: the
-# two readers of this file — plugin/Panel.qml and the dock card — both build
-# the path from $HOME themselves, so honouring an XDG override here would only
-# mean writing somewhere nothing is looking. OmaCar's own state still follows
-# XDG through records.STATE; this one file lives where Omarchy keeps the
-# desktop's caches, because that is what it is.
-CACHE = os.path.expanduser("~/.local/state/omarchy/liquid-glass-car.json")
+# Under XDG_STATE_HOME, which on a desktop that leaves it unset is exactly the
+# ~/.local/state/omarchy path the two readers -- plugin/Panel.qml and the dock
+# card -- build from $HOME themselves.
+#
+# IT WAS HARDCODED UNDER ~, AND SO `omacar demo cache` WROTE THE REAL ONE. That
+# command runs this inside the demo's environment, to rebuild the rollup the
+# panel reads from the demo's state while the demo is on
+# (~/.local/state/omacar-demo/state/omarchy/). With the path fixed to ~, it
+# rebuilt the real car's rollup from the demo's data instead: the one file a
+# demo could overwrite outside its own folder (doc/design/2026-09-30-meetup-
+# demo.md, §2.4).
+CACHE = os.path.join(os.path.expanduser(os.environ.get("XDG_STATE_HOME") or "~/.local/state"),
+                     "omarchy", "liquid-glass-car.json")
 
 # How much of the recent past the `history` block carries. Fourteen days is
 # what the dock card's sparkline draws, and long enough that a week-on-week

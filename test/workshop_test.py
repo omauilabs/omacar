@@ -1188,6 +1188,44 @@ for _v in ("OMACAR_STATE", "SIM_PID", "DAEMON_PID", "WATCH_PID"):
        f'{_v}="$OMACAR_STATE' in _demo_env or f'{_v}="$XDG_STATE_HOME' in _demo_env)
 ok("trashing refuses anything that is not the demo directory",
    "*/omacar-demo)" in _cli and "refusing to delete" in _cli)
+# The meetup demo closed the three holes the two homes left open
+# (doc/design/2026-09-30-meetup-demo.md §1): the clips, the adapter and the
+# runtime folder all hung off something else.
+ok("demo keeps its own clips, not ~/Videos/OmaCar",
+   'export OMACAR_VIDEOS="$DEMO_ROOT/videos"' in _demo_env)
+ok("demo can never find the adapter: OMACAR_PORT names a path that is never made",
+   'export OMACAR_PORT="$DEMO_ROOT/no-adapter"' in _demo_env
+   and "no-adapter" not in _cli.replace('OMACAR_PORT="$DEMO_ROOT/no-adapter"', ""))
+# Its server and camera feed get the demo's XDG_RUNTIME_DIR on their own command
+# lines; the window needs the real one to find Wayland, so it is never exported.
+ok("demo never exports a runtime folder of its own",
+   "XDG_RUNTIME_DIR" not in _demo_env
+   and 'env XDG_RUNTIME_DIR="$DEMO_RUN"' in _cli)
+# Chromium's disk cache follows XDG_CACHE_HOME, so the demo window gets the
+# demo's, the same way: on its own command line, never exported.
+ok("the demo window's cache is the demo's, on its command line only",
+   "XDG_CACHE_HOME" not in _demo_env
+   and 'env XDG_CACHE_HOME="$DEMO_ROOT/cache" chromium' in _cli)
+# The bar widget's button says `demo start` and `demo stop` (plugin/Panel.qml),
+# so the old names stay as the new verbs.
+ok("start and stop still work, as on and off",
+   "on | start) demo_on" in _cli and "off | stop) demo_off" in _cli)
+ok("the demo window is its own profile, outside the live kiosk's",
+   '--user-data-dir="$DEMO_ROOT/browser"' in _cli
+   and "omacar-demo/browser" not in (_root / "lib" / "hotplug.py").read_text(encoding="utf-8"))
+# The live units never pass the demo's modes (spec §2.5): a unit that did would
+# put the demo's server, world or feed on the car.
+_units = "".join(p.read_text(encoding="utf-8")
+                 for p in sorted((_root / "share" / "systemd").glob("*.service")))
+ok("no live unit runs the demo's server, world, guard or camera feed",
+   not any(w in _units for w in ("--demo", "demoworld", "demoguard", "cams.py demo")))
+_kiosk = _cli.split("kiosk() {", 1)[-1].split("\n}", 1)[0]
+ok("and the live kiosk opens app.html, never the demo page",
+   "demo" not in _kiosk)
+ok("the panel rollup follows XDG_STATE_HOME in card.py too, so `demo cache` "
+   "writes the demo's",
+   "expanduser(\"~/.local/state/omarchy" not in
+   (_root / "lib" / "card.py").read_text(encoding="utf-8"))
 # The rollup the bar widget reads is state, so it must move with the demo too.
 # It was the last hardcoded path, and a demo would have written it over yours.
 ok("the panel rollup follows XDG_STATE_HOME",
