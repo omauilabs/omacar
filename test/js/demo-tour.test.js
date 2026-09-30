@@ -7,7 +7,7 @@
 // every module action. Nothing here reaches a server, the radio or a speaker.
 import { eq, ok } from "./assert.js";
 import { createTour, createReset, createCaptions, fitSize, CAP_MIN_PX, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS,
-         RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS, CLOSING_SECS } from "../demo/js/tour.js";
+         RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS, RESYNC_SETTLE_S, CLOSING_SECS } from "../demo/js/tour.js";
 import { createBar, LONG_PRESS_MS, LOGO } from "../demo/js/bar.js";
 import { createMenu, createCues, BACKUP_TEXT, EXIT_TEXT } from "../demo/js/menu.js";
 import { createScan, MODULES, SCAN_SECS, DONE_TEXT } from "../demo/js/views/scan.js";
@@ -37,7 +37,8 @@ function clock() {
 async function rig(over = {}) {
   const steps = over.steps || await loadSteps();
   const c = clock();
-  // `world` is the page's store.live.demo: { t, loop_secs }, or null when the page has none.
+  // `world` is the page's store.sample.demo (store.live.demo while a screen polls fast, the snapshot's
+  // copy otherwise): { t, loop_secs }, or null when the page has none.
   const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false,
               world: null, screens: [] };
   const at = () => c.now / 1000;
@@ -397,6 +398,106 @@ export default [
       r.c.advance(40);
       eq(r.hash, "#androidauto", "and on to the next step");
     } finally { console.warn = warn; }
+  }],
+
+  // Fix round 1: a Resume wait that ends under an open menu, and the menu's own Resume tour.
+  ["a Resume wait that ends under an open menu, then the menu's Resume tour: one restart, and Resume works after", async () => {
+    const r = await rig();
+    r.world = { t: 100, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.c.advance(400);                       // paused for more than 5 minutes
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    const restarts = () => r.log.filter((l) => l[2] === "restart").length;
+    eq(r.tour.resume(), true, "Resume starts a wait for the drive");
+    menu.open();                            // the presenter opens the menu during it
+    r.c.advance(RESYNC_WAIT_MS / 1000 + 0.3);
+    eq([r.tour.state, r.c.timers.length], ["paused", 0], "the wait ran out under the menu: the step has not started");
+    const gos = r.gos().length;
+    [...host.querySelectorAll(".dm-item")].find((b) => b.querySelector(".dm-t").textContent === "Resume tour").click();
+    eq(menu.isOpen(), false, "the menu closed");
+    eq(restarts(), 1, "the menu's Resume tour did not send a second restart");
+    eq([r.tour.state, r.tour.index], ["running", 1], "the held re-entry ran: the same step, running");
+    eq(r.gos().length, gos + 1, "from its top, once");
+    r.c.advance(5);
+    r.tour.touch();
+    eq(r.tour.state, "paused", "a touch pauses it");
+    eq(r.tour.resume(), true, "and Resume is still taken: nothing is stuck waiting");
+    eq(r.tour.state, "running", "running");
+  }],
+
+  ["Resume is refused while a held re-entry is waiting for the menu, and taken again once it has run", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.c.advance(400);
+    r.tour.resume();
+    r.tour.hold();
+    r.c.advance(RESYNC_WAIT_MS / 1000 + 0.3);
+    eq(r.tour.resume(), false, "refused: the re-entry is already pending");
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "one restart");
+    r.tour.release();
+    eq(r.tour.state, "running", "the release ran it");
+    r.tour.touch();
+    eq(r.tour.resume(), true, "and Resume is taken");
+  }],
+
+  // Fix round 1: the clock a slow screen reads can be 20 s old.
+  ["for 25 s after a restart the drive clock is not believed: a stale snapshot does not restart it twice", async () => {
+    eq(RESYNC_SETTLE_S, 25, "20 s of snapshot, and some");
+    const r = await rig();
+    r.world = { t: 100, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.world = { t: 700, loop_secs: 900 };
+    r.tour.resume();                        // near the closing stop: restart
+    const restarts = () => r.log.filter((l) => l[2] === "restart").length;
+    eq(restarts(), 1, "the first");
+    r.world = { t: 1, loop_secs: 900 };
+    r.c.advance(0.25);
+    eq([r.tour.state, r.tour.index], ["running", 1], "started over");
+    r.c.advance(5);
+    r.tour.touch();
+    r.world = { t: 700, loop_secs: 900 };   // the snapshot, from before the restart
+    r.tour.resume();
+    eq([restarts(), r.tour.state], [1, "running"], "5 s on: the stale clock is not believed");
+    r.c.advance(RESYNC_SETTLE_S - 5 - 0.5);
+    r.tour.touch();
+    r.tour.resume();
+    eq(restarts(), 1, "24.5 s on: still not");
+    r.c.advance(1);
+    r.tour.touch();
+    r.tour.resume();
+    eq(restarts(), 2, "after 25 s it is believed again");
+  }],
+
+  ["the drive clock is not believed for 25 s after a tour from the top, either (its reset cued restart)", async () => {
+    const r = await rig();
+    r.world = { t: 700, loop_secs: 900 };   // the snapshot from before the reset
+    await r.tour.start();
+    r.c.advance(10);
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 0, "no restart 10 s in");
+    eq(r.tour.state, "running", "running");
+    r.c.advance(RESYNC_SETTLE_S);
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "believed after that");
+  }],
+
+  ["a pause of more than 5 minutes still restarts, whatever was sent 25 s before", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(5);
+    r.tour.touch();
+    r.c.advance(RESYNC_PAUSE_S + 1);
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "the long pause is not the clock's to excuse");
   }],
 
   ["a key the tour does not own pauses it and is left to the page; modifiers alone do nothing", async () => {

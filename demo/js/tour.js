@@ -22,7 +22,9 @@
 // near the loop's closing stop (within RESYNC_NEAR_S of it), or after a pause
 // of more than RESYNC_PAUSE_S, starts the drive over (the `restart` cue) and the
 // step with it, from its top, its actions again. The demo is not reset: Home,
-// Work and the radio stay as they are.
+// Work and the radio stay as they are. For RESYNC_SETTLE_S after a restart (its
+// own, or a fresh start's reset) the world's clock is not believed, since a
+// screen that does not poll fast reads a snapshot up to 20 s old.
 //
 // THE MENU HOLDS THE TOUR'S START. A tour from the top resets the demo first, for
 // up to RESET_WAIT_MS; a menu opened in that window has no step to pause, and
@@ -39,7 +41,7 @@
 //   clock  { later(fn, ms) -> id, cancel(id), now() -> ms }
 //   go(hash), here() -> hash           where the page is, and moving it
 //   cue(name), act(name, arg)          the world, and the modules
-//   demo() -> { t, loop_secs } | null  the world's clock, the page's store.live.demo
+//   demo() -> { t, loop_secs } | null  the world's clock, the page's store.sample.demo
 //   screen(id) -> boolean              a projection's own screen ("" is its first), projection.js openScreen
 //   caption(text | null), notice(text, ms)
 //   reset() -> Promise                 the demo back to its start, before step 1
@@ -60,6 +62,9 @@ export const RESYNC_NEAR_S = 180;
 export const RESYNC_PAUSE_S = 300;
 export const RESYNC_WAIT_MS = 3000;
 export const RESYNC_BELOW_S = 30;
+// After a restart, the world's clock is not believed for RESYNC_SETTLE_S: a screen that does
+// not poll fast reads the snapshot's copy, up to 20 s old, which still says the old drive.
+export const RESYNC_SETTLE_S = 25;
 const RESYNC_LOOK_MS = 200;       // the world ticks at 5 Hz
 
 export function loadSteps(url = new URL("../data/tour.json", import.meta.url)) {
@@ -100,6 +105,7 @@ export function createTour(deps = {}) {
   let wentTo = null;          // the address the tour itself last set
   let epoch = 0;              // bumped by every start and stop: a late reset starts nothing
   let pausedAt = 0;           // clock ms at which the tour was last paused
+  let restartedAt = -Infinity; // clock ms at which the tour last had the drive restarted
   let resyncing = false;      // Resume has sent restart and is waiting for the drive
   let held = false;           // the menu is open: no step starts under it
   let waiting = null;         // the start that is waiting for the menu to close
@@ -122,6 +128,7 @@ export function createTour(deps = {}) {
       cancelAll();
       if (!fresh) { enter(clampIndex(at)); return Promise.resolve(); }
       set("running", -1);
+      restartedAt = d.clock.now();      // the reset cues restart
       let guard = null;
       const waited = new Promise((done) => { guard = d.clock.later(done, RESET_WAIT_MS); });
       let reset;
@@ -146,7 +153,7 @@ export function createTour(deps = {}) {
     },
 
     resume() {
-      if (tour.state !== "paused" || resyncing) return false;
+      if (tour.state !== "paused" || resyncing || waiting) return false;
       if (driveMovedOn()) { resync(); return true; }
       startedAt = d.clock.now() - offset * 1000;
       set("running");
@@ -242,6 +249,7 @@ export function createTour(deps = {}) {
   // long that the story is cold.
   function driveMovedOn() {
     if ((d.clock.now() - pausedAt) / 1000 > RESYNC_PAUSE_S) return true;
+    if ((d.clock.now() - restartedAt) / 1000 < RESYNC_SETTLE_S) return false;   // the clock still says the old drive
     const w = worldClock();
     return !!w && w.t >= w.loop_secs - CLOSING_SECS - RESYNC_NEAR_S;
   }
@@ -254,6 +262,7 @@ export function createTour(deps = {}) {
     resyncing = true;
     const mine = epoch;
     const began = d.clock.now();
+    restartedAt = began;
     try { d.cue("restart"); } catch (e) { console.warn("demo tour: the restart cue:", e); }
     const look = () => {
       if (mine !== epoch) return;
@@ -294,6 +303,7 @@ export function createTour(deps = {}) {
 
   function enter(i) {
     cancelAll();
+    resyncing = false;          // a wait whose timer was just cancelled is over, however it came to be
     const s = steps[i];
     fired = new Set();
     offset = 0;
