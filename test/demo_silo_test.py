@@ -711,6 +711,38 @@ try:
     check("and demo off takes it down", (rc, ours_running()), (0, []))
     open(SHIM_LOG, "w").close()
 
+    head("a server that hangs does not hold up the car")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    hung = pid_in("server")
+    try:
+        if hung:
+            os.kill(hung, signal.SIGSTOP)
+    except OSError:
+        pass
+    time.sleep(2.5)                     # the guard is in a look that waits 2 s on it
+    said_before = guard_says()
+    moved = time.time()
+    write_live(42)
+    went = None
+    for _ in range(60):
+        went = window_told_to_go()
+        if went and went >= moved:
+            break
+        time.sleep(0.1)
+    gap = round(went - moved, 2) if went and went >= moved else None
+    check(f"the car moving while the guard waits on a hung server: the window goes within "
+          f"2.5 s ({gap} s)", gap is not None and gap <= 2.5, True)
+    cue = cue_now()
+    check("with no quiet cue",
+          (bool(cue) and cue[0] == "quiet" and (cue[1] or 0) >= moved,
+           "asked the demo page for quiet" in guard_says()[len(said_before):]), (False, False))
+    left, took = gone_within(15)
+    check(f"and the whole demo goes, the stopped server too (took {took} s)", left, [])
+    write_live(0)
+    open(SHIM_LOG, "w").close()
+
     head("the guard closes the demo when the real car moves, and goes with it")
     write_live(0)
     os.makedirs(DEMO_ROOT, exist_ok=True)
@@ -921,6 +953,49 @@ try:
                                      mend_rc=lambda t, name: Starting(20) if t == 10 else 0)
     check("while one start is under way nothing else is started",
           [t for t, _ in mends][:2], [10, 20])
+
+    def broken_at_4(t):
+        if t == 4:
+            raise RuntimeError("the look itself broke")
+        return dict(ALL_UP, world=t < 10)
+    got, mends, offs, said = dog_run(30, broken_at_4)
+    check("a look at the parts that raises is written down, and the guard watches on",
+          (got, "the watchdog's look failed (RuntimeError: the look itself broke)" in said,
+           mends[:1]), ("gone", True, [(10, "world")]))
+
+    # A LOOK THAT TAKES 1.5 s (a server that hangs holds it for 2): the car is
+    # asked again straight after it, and the guard sleeps only what is left of
+    # its 2 s. The car starts moving during the look that ends at t=7.5.
+    slow = [1000.0]
+    slow_sleeps, slow_offs = [], []
+
+    def slow_live():
+        with open(wlive, "w", encoding="utf-8") as f:
+            json.dump({"t": slow[0], "values": {"SPEED": 60 if slow[0] - 1000 >= 7 else 0}}, f)
+
+    def slow_probe():
+        slow[0] += 1.5
+        slow_live()
+        return dict(ALL_UP)
+
+    def slow_sleep(secs):
+        slow_sleeps.append(round(secs, 2))
+        slow[0] += secs
+        slow_live()
+
+    open(wactive, "w").close()
+    slow_live()
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        got = demoguard.watch(wlive, wroot, every=2, clock=lambda: slow[0], sleep=slow_sleep,
+                              off=lambda r: slow_offs.append(round(slow[0] - 1000, 2)) or 0,
+                              parts=demoguard.Watchdog(wroot, probe=slow_probe,
+                                                       mend=lambda n: 0))
+    check("a slow look does not hold up the car: demo off the moment it ends, and each "
+          "sleep is only what is left of 2 s",
+          (got, slow_offs, slow_sleeps), ("moving", [7.5], [0.5, 0.5, 0.5]))
+    if os.path.exists(wactive):
+        os.remove(wactive)
 
     head("demo off stops only what is the demo's")
     # Look-alikes in the demo's pid files, each started with the demo's own

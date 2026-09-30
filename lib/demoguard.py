@@ -281,6 +281,7 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
         return os.path.exists(active) and state(live_json, clock()) != "moving"
 
     while True:
+        began = clock()
         if not os.path.exists(active):
             # THE MARKER WENT, BUT DID THE DEMO? `demo off` removes it first and
             # stops this guard straight after, so then this changes nothing.
@@ -314,8 +315,20 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
         elif not moving:
             failed, next_try = 0, 0.0
             if parts is not None:
-                parts.tick(now, may)
-        sleep(every)
+                # THE WATCHDOG NEVER ENDS THE GUARD. Whatever goes wrong in a
+                # look at the parts is written down, and the car is watched on.
+                try:
+                    parts.tick(now, may)
+                except Exception as e:                         # noqa: BLE001
+                    _log(f"the watchdog's look failed ({type(e).__name__}: {e}); "
+                         "watching the car regardless")
+                # THE CAR AGAIN, AT ONCE. A look at the parts can take seconds
+                # (a server that hangs holds it for 2), and a car that started
+                # moving meanwhile is not left until the next look.
+                if state(live_json, clock()) == "moving":
+                    continue
+        # A look every `every` seconds, however long this one took.
+        sleep(max(0.0, every - (clock() - began)))
 
 
 def main(argv):
