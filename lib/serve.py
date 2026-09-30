@@ -203,8 +203,9 @@ DEMO_ROUTES = {
     "/api/phone/*": REFUSE,
 }
 
-# The cues the demo world acts on (lib/demoworld.py).
-DEMO_CUES = ("park", "drive", "drowsy", "hard_brake", "restart")
+# The cues the demo world acts on (lib/demoworld.py). `quiet` is `demo off`'s:
+# the world says when, and the page fades its music out.
+DEMO_CUES = ("park", "drive", "drowsy", "hard_brake", "restart", "quiet")
 
 # What /demo-media/ serves, by extension.
 DEMO_MEDIA_TYPES = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".mp4": "video/mp4",

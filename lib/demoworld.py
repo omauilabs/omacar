@@ -5,7 +5,8 @@ There is no car in the room, so the demo's car is this. It plays one drive,
 built by tools/demo_route.py from a real route, a second at a time; writes the
 same live.json the daemon and the simulator write, so the app reads it without
 knowing the difference; and takes cues from the presenter -- park, drive, get
-drowsy, brake hard, start over.
+drowsy, brake hard, start over -- and from `omacar demo off`, whose `quiet` it
+only passes on to the page (demo.quiet_at), which fades its music out.
 
     python3 lib/demoworld.py run [--drive PATH]
     python3 lib/demoworld.py tidy        the seeded car, all systems normal
@@ -66,6 +67,7 @@ PARK_BRAKE = 2.5           # m/s^2, the park cue
 HARD_BRAKE = 8.0           # m/s^2, for HARD_BRAKE_SECS
 HARD_BRAKE_SECS = 2.0
 EVENT_SECS = 10.0          # how long `demo.event` stays up
+QUIET_SECS = 10.0          # how long `demo.quiet_at` stays up
 DROWSY_SECS = 45.0
 RECOVER_ACCEL = 2.0        # pulling away, and getting back to the drive's speed
 RECOVER_BRAKE = 2.0
@@ -267,6 +269,7 @@ def state_at(drive, t, cue_state=None):
         hold         the world is holding the car at a stop
         drowsy       the drowsy moment is on
         event        {"kind", "at"}: a hard brake in progress
+        quiet_at     epoch: when `demo off` asked the page for quiet
         soc          the pack, %                        (58)
         odo_m        metres driven so far this run      (how far along the route)
         run_time     seconds the world has been running (the loop's time)
@@ -364,6 +367,7 @@ def state_at(drive, t, cue_state=None):
             "next": _next_maneuver(drive, route_m),
             "parked": scene == "parked", "scene": scene,
             "event": dict(cue["event"]) if cue.get("event") else None,
+            "quiet_at": cue.get("quiet_at"),
             "ima": {"state": ima, "kw": round(kw, 1)},
         },
     }
@@ -411,13 +415,16 @@ class DemoWorld:
         self.drowsy_until = 0.0
         self.event = None
         self.event_until = 0.0
+        self.quiet_at = None
+        self.quiet_until = 0.0
         self.soc = SOC_START
         self.odo_m = 0.0
 
     # -- cues
 
-    def cue(self, kind):
-        """Act on a cue now. False for one it does not know."""
+    def cue(self, kind, at=None):
+        """Act on a cue now: `at` is when it was asked for (the cue file's).
+        False for one it does not know."""
         if kind == "park":
             self._own()
             self.holding = True
@@ -438,6 +445,10 @@ class DemoWorld:
             self.event_until = self.clock() + EVENT_SECS
         elif kind == "restart":
             self._restart()
+        elif kind == "quiet":
+            # Only said: the page fades its music on seeing it. The car goes on.
+            self.quiet_at = self.wall() if at is None else at
+            self.quiet_until = self.clock() + QUIET_SECS
         else:
             return False
         return True
@@ -453,7 +464,7 @@ class DemoWorld:
             return
         if at > self.honoured:
             self.honoured = at
-            self.cue(kind)
+            self.cue(kind, at)
 
     def _own(self):
         """Take the car off the drive, at its place and speed now."""
@@ -563,7 +574,8 @@ class DemoWorld:
             self.event = None
         cue = {"now": self.wall(), "soc": self.soc, "odo_m": self.odo_m,
                "run_time": int(now - self.started), "hold": self.holding,
-               "drowsy": now < self.drowsy_until, "event": self.event}
+               "drowsy": now < self.drowsy_until, "event": self.event,
+               "quiet_at": self.quiet_at if now < self.quiet_until else None}
         if self.own:
             cue["kph"], cue["accel"] = self.v * 3.6, self.a
         p = state_at(self.drive, self.tau, cue)

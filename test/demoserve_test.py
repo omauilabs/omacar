@@ -438,6 +438,16 @@ try:
     check("and written for the demo world, in the demo's own state",
           (cue.get("cue"), t0 - 1 <= (cue.get("at") or 0) <= time.time() + 1),
           ("park", True))
+    # Hardening B: `demo off` sends `quiet` first, so the page fades its music.
+    st, _, body = req(PORT, "POST", "/api/demo/cue", body='{"cue": "quiet"}')
+    try:
+        with open(CUE, encoding="utf-8") as f:
+            cue = json.load(f)
+    except (OSError, ValueError):
+        cue = {}
+    check("a quiet cue is taken, and written for the world like the others",
+          (st, as_json(body), cue.get("cue"), time.time() - 5 <= (cue.get("at") or 0) <= time.time() + 1),
+          (200, {"ok": True}, "quiet", True))
     for c in ("drive", "drowsy", "hard_brake", "restart"):
         st, _, _ = req(PORT, "POST", "/api/demo/cue", body=json.dumps({"cue": c}))
         if st != 200:

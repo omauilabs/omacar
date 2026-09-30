@@ -620,9 +620,9 @@ export default [
       document.removeEventListener("omacar-demo:say", onSay);
     }
   }],
-  // The demo's lines go straight to the output, past the stage's limiter, so
-  // they sit where the alert player's quietest voice does (Level 1: -7), not
-  // where Level 2 and 3's do (-3).
+  // The demo's lines sit where the alert player's quietest voice does (Level
+  // 1: -7), not where Level 2 and 3's do (-3): chosen when they went straight
+  // to the output, and kept now that they go through the stage's limiter.
   ["a line plays at the alert player's Level 1 voice level, -7 dB", async () => {
     const realFetch = voiceIO.fetch, realSchedule = voiceIO.schedule, realLevel = voiceIO.levelAt;
     const ctx = audioContext();

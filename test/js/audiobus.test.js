@@ -6,6 +6,8 @@ import {
 import { auxLine } from "../js/audiostate.js";
 import { levelAt } from "../js/audiobus.js";
 import { rampPlan } from "../js/ramps.js";
+import { voiceIn } from "../js/audiobus.js";
+import { offlineStage, rendered, flatInto, peakOf } from "./offline-stage.js";
 
 export default [
   ["music sits 12 dB below full scale", () => eq(MUSIC_DB, -12)],
@@ -64,5 +66,27 @@ export default [
        "held where the swell was, ducked, and the settle cancelled");
     ok(schedule("music", rampPlan(0, levelAt("music", t0 + 7), MUSIC_DB).points, t0 + 7), "and back");
     eq(+levelAt("music", t0 + 20).toFixed(6), MUSIC_DB);
+  }],
+
+  // ---- hardening B: the demo's voice joins the stage ---------------------------------
+  // voiceIn() is the demo's (demo/js/voice.js). The live app never calls it,
+  // and the page's stage is built exactly as before: the tests above hold that.
+  ["voiceIn() is one gain node for the page, at unity", () => {
+    const v = voiceIn();
+    ok(v === voiceIn(), "the same node every time");
+    eq(v.gain.value, 1, "unity: a line plays at its own level");
+    ok(v.context === audioContext(), "on the page's own context");
+  }],
+  ["a line into voiceIn() reaches the output through the limiter, at its own level", async () => {
+    const { stage, ctx, rate } = await offlineStage(1.2);
+    // -20 dBFS is far under the threshold: it comes out at its own level, plus
+    // the +0.57 dB makeup gain Chromium's compressor adds to everything
+    // (demo-sound.test.js). 0 dBFS is over it: the limiter takes it down.
+    flatInto(ctx, stage.voiceIn(), -20, 0.1, 0.6);
+    flatInto(ctx, stage.voiceIn(), 0, 0.6);
+    const out = await rendered(ctx);
+    const quiet = peakOf(out, rate, 0.3, 0.6), loud = peakOf(out, rate, 0.9, 1.2);
+    ok(Math.abs(quiet - -20) < 1, `-20 dBFS in, ${quiet.toFixed(2)} dBFS out: connected, at unity`);
+    ok(loud < -0.2, `0 dBFS in, ${loud.toFixed(2)} dBFS out: limited`);
   }],
 ];

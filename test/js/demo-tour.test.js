@@ -914,7 +914,7 @@ export default [
     ok(host.textContent.includes("Run omacar-demo video on the tablet."), "in a sentence");
     click("Exit demo");
     ok(host.textContent.includes(EXIT_TEXT), "how to leave");
-    eq(EXIT_TEXT, "Run omacar-demo off, or press Super+W", "its words");
+    eq(EXIT_TEXT, "Run omacar-demo off", "its words: Super+W would close the window without the fade");
     ok(!/omacar demo/.test(host.textContent), "and neither row names the tablet's own omacar");
     click("Restart the drive");
     eq(restarts, 1, "restart");

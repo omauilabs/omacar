@@ -21,7 +21,7 @@ import { h, icon } from "../../js/core.js";
 // On the tablet `omacar` on the PATH is the live app's, an older checkout; the
 // demo is run through its own wrapper, `omacar-demo`.
 export const BACKUP_TEXT = "omacar-demo video";
-export const EXIT_TEXT = "Run omacar-demo off, or press Super+W";
+export const EXIT_TEXT = "Run omacar-demo off";
 
 // How long the menu believes its own Park or Drive over what the world last
 // said: the screens that do not poll fast see the world every 20 s.
@@ -123,7 +123,7 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
                    run: () => ["Run ", h("code", BACKUP_TEXT), " on the tablet."] }));
     out.push(row({ id: "exit", g: G.exit, t: "Exit demo", keepOpen: true,
                    s: "The live app is underneath",
-                   run: () => ["Run ", h("code", "omacar-demo off"), ", or press ", h("kbd", "Super+W")] }));
+                   run: () => ["Run ", h("code", "omacar-demo off")] }));
     return out;
   }
 
