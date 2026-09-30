@@ -66,47 +66,61 @@ export async function say(id) {
   document.dispatchEvent(new CustomEvent("omacar-demo:say", { detail: { id, text: LINES[id] || "" } }));
   const buf = await load(id);
   if (!buf) return;
+  let ctx;
+  try { ctx = audioContext(); } catch { return; }   // no audio here at all: the caption was the line
+  // Not awaited: a context that has not been allowed to start yet may never
+  // settle this, and the line must still resolve (see play()'s timer).
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  const now = ctx.currentTime;
+  const prev = speaking;
+  const from = voiceIO.levelAt("music", now);
+  const base = prev ? prev.base : from;
+  const low = base - DUCK_DB;
+  // THIS LINE OWNS THE DUCK FROM HERE. The one before hands it over without
+  // bringing the music back; and however this one ends -- played, cut short,
+  // or failing to build or start at all -- the finally brings it back, unless
+  // a newer line has taken it on by then.
+  const me = { base, cut: () => {} };
+  speaking = me;
+  if (prev) prev.cut();
+  voiceIO.schedule("music", glidePlan(from, low, DOWN_SECS).points, now);
   try {
-    const ctx = audioContext();
-    // Not awaited: a context that has not been allowed to start yet may never
-    // settle this, and the line must still resolve (see the timer below).
-    if (ctx.state === "suspended") ctx.resume().catch(() => {});
-    const now = ctx.currentTime;
-    const prev = speaking;
-    const from = voiceIO.levelAt("music", now);
-    const base = prev ? prev.base : from;
-    const low = base - DUCK_DB;
-    if (prev) { speaking = null; prev.cut(); }
-    voiceIO.schedule("music", glidePlan(from, low, DOWN_SECS).points, now);
+    await play(ctx, buf, now + DOWN_SECS, me);
+  } catch { /* the line could not play: its caption was the line */ }
+  finally {
+    if (speaking === me) {
+      speaking = null;
+      voiceIO.schedule("music", glidePlan(low, base, UP_SECS).points, ctx.currentTime);
+    }
+  }
+}
 
-    const gain = ctx.createGain();
-    gain.gain.value = dbToGain(VOICE_DB);
-    gain.connect(ctx.destination);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(gain);
-    src.start(now + DOWN_SECS);
-
-    await new Promise((resolve) => {
-      let over = false, timer = null;
-      const me = { base, cut: () => { finish(false); try { src.stop(); } catch { /* not started */ } } };
-      function finish(restore) {
-        if (over) return;
-        over = true;
-        clearTimeout(timer);
-        src.onended = null;
-        try { src.disconnect(); gain.disconnect(); } catch { /* already */ }
-        if (restore && speaking === me) {
-          speaking = null;
-          voiceIO.schedule("music", glidePlan(low, base, UP_SECS).points, ctx.currentTime);
-        }
-        resolve();
-      }
-      src.onended = () => finish(true);
-      // A context that is not running never ends a source, so the line also
-      // ends on the clock, and the music comes back all the same.
-      timer = setTimeout(() => finish(true), (DOWN_SECS + buf.duration + 0.5) * 1000);
-      speaking = me;
-    });
-  } catch { /* no audio here at all: the caption was the line */ }
+// One decoded line, from `at`. Settles when it ends, when the next line cuts
+// it short (me.cut), or on the clock, because a context that is not running
+// never ends a source. Rejects if the graph cannot be built or started, and
+// leaves nothing connected either way.
+function play(ctx, buf, at, me) {
+  return new Promise((resolve, reject) => {
+    let gain = null, src = null, over = false, timer = null;
+    const done = (err) => {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      if (src) src.onended = null;
+      for (const n of [src, gain]) { try { if (n) n.disconnect(); } catch { /* already */ } }
+      if (err) reject(err); else resolve();
+    };
+    try {
+      gain = ctx.createGain();
+      gain.gain.value = dbToGain(VOICE_DB);
+      gain.connect(ctx.destination);
+      src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(gain);
+      me.cut = () => { try { src.stop(); } catch { /* not started */ } done(); };
+      src.onended = () => done();
+      timer = setTimeout(() => done(), (DOWN_SECS + buf.duration + 0.5) * 1000);
+      src.start(at);
+    } catch (e) { done(e); }
+  });
 }

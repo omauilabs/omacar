@@ -14,7 +14,7 @@
 
 import { h, icon, store, api as coreApi, toast, temp, pct, U } from "../../../js/core.js";
 import { ICONS } from "../../../js/icons.js";
-import { applyLook as coreApplyLook, lookById } from "../../../js/looks.js";
+import { applyLook as coreApplyLook, lookById, savedLook } from "../../../js/looks.js";
 import { say as coreSay, LINES, linesReady } from "../voice.js";
 
 // The pace of a reply: thinking for 700-1200 ms, then about 45 characters a
@@ -200,10 +200,16 @@ export async function applyNightLayout(io = {}) {
 }
 
 // The demo's restart: Home and the look as they were before the first Apply.
+// After a reload nothing is kept, and the night layout may still be on the
+// server, so Home goes back to its default (homelayout.py's reset) and the
+// look to the one this page boots with.
 export async function restoreHome(io = {}) {
   const x = withIO(io);
-  if (kept) { const k = kept; kept = null; await x.api.saveHome(k); }
-  if (keptLook !== null) { const l = keptLook; keptLook = null; x.applyLook(l); }
+  const k = kept, l = keptLook;
+  kept = null;
+  keptLook = null;
+  await x.api.saveHome(k || { action: "reset" });
+  x.applyLook(l !== null ? l : savedLook());
 }
 
 // ------------------------------------------------------------------ the preview
@@ -442,7 +448,8 @@ export function agentView(deps = {}) {
       const pictured = nightPicture({ radio, mountMap: deps.mountMap, big: true });
       pictures.add(pictured);
       const btn = applyButton(".ag-ov-apply");
-      const entry = { btn, why: null };
+      const why = h("div.ag-why", { hidden: true }, icon(GLYPH.info, 15), h("span", PARK_REASON));
+      const entry = { btn, why };
       applyBtns.add(entry);
       const close = () => closePreview();
       overlay = h("div.ag-overlay", { role: "dialog", "aria-modal": "true", "aria-label": "Night drive preview",
@@ -452,7 +459,8 @@ export function agentView(deps = {}) {
             h("div", h("div.ag-pv-t", "Night drive"), h("div.ag-pv-s", "Preview · as Home will look")),
             h("div.ag-ov-btns", btn,
               h("button.ag-btn.ag-close", { type: "button", onclick: close }, icon(ICONS.x, 18), h("span", "Close")))),
-          pictured.node));
+          pictured.node,
+          why));
       overlay._done = () => { pictures.delete(pictured); pictured.destroy(); applyBtns.delete(entry); };
       document.body.appendChild(overlay);
       paintApply();

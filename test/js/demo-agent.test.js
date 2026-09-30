@@ -6,13 +6,16 @@
 // and the runner's Chromium is --mute-audio besides.
 import { eq, ok } from "./assert.js";
 import { store } from "../js/core.js";
-import { MUSIC_DB } from "../js/audiobus.js";
+import { MUSIC_DB, audioContext } from "../js/audiobus.js";
+import { savedLook } from "../js/looks.js";
 import { say, LINES, linesReady, voiceIO } from "../demo/js/voice.js";
 import agentView, {
   loadScript, matchScript, stream, pace, nightLayout, NIGHT, NIGHT_LOOK, PARK_REASON,
   FALLBACK, applyNightLayout, restoreHome, agentActions, register as registerAgent,
 } from "../demo/js/views/agent.js";
-import workView, { tick, loadWork, register as registerWork, workActions } from "../demo/js/views/work.js";
+import workView, {
+  tick, loadWork, resetWork, workClock, register as registerWork, workActions,
+} from "../demo/js/views/work.js";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const FAST = { think: [4, 8], cps: 4000, listen: 20, typeCps: 4000 };
@@ -228,6 +231,19 @@ export default [
       eq((await applyNightLayout({ api: {}, applyLook() {}, say() {} })).ok, false, "never while moving");
     } finally { m.done(); }
   }],
+  // Fix round 1: the full-size preview has its own Apply, so its own reason.
+  ["the full-size preview says why Apply waits, too", async () => {
+    const m = mountAgent({ parked: false, speed: 60 });
+    try {
+      await agentActions.ask("night");
+      agentActions.preview();
+      const btn = document.querySelector(".ag-overlay .ag-apply");
+      const why = document.querySelector(".ag-overlay .ag-why");
+      eq([btn.disabled, !!why && why.hidden, text(why)], [true, false, PARK_REASON]);
+      live({ SPEED: 0 }, { parked: true });
+      eq([btn.disabled, why.hidden], [false, true]);
+    } finally { m.done(); }
+  }],
   ["the night arrangement puts nav, dial, phone and three tiles first, and keeps the rest", () => {
     const body = nightLayout(DEFAULT_HOME);
     for (const o of ["landscape", "portrait"]) {
@@ -256,6 +272,14 @@ export default [
     calls.length = 0;
     await restoreHome(io);
     eq(calls, [["POST", "dial"], ["look", "normal"]], "the layout from before the first Apply, and the look");
+  }],
+  // Fix round 1: a restart after a reload has nothing kept, and still resets.
+  ["with nothing kept (a reload since), restart resets Home and puts the saved look back", async () => {
+    const calls = [];
+    const io = { api: { saveHome: async (b) => { calls.push(["POST", b]); return b; } },
+                 applyLook: (id) => calls.push(["look", id]) };
+    await restoreHome(io);
+    eq(calls, [["POST", { action: "reset" }], ["look", savedLook()]]);
   }],
 
   // ---------------------------------------------------------------- the radio
@@ -290,6 +314,9 @@ export default [
         ok(t.includes(want), `says "${want}"`);
       }
       eq(m.root.querySelectorAll(".wk-acct .wk-ring").length, 4, "four usage rings");
+      // Fix round 1: neutral glyphs in the app's colours, never a company's mark.
+      eq([m.root.querySelectorAll(".wk-ring .g.mono").length, m.root.querySelectorAll(".wk-ring .g.codex").length,
+          m.root.querySelectorAll(".wk-ring .claude").length], [3, 1, 0], "a monogram for Claude, a prompt for Codex");
       eq(m.root.querySelectorAll(".wk-sess").length, 4, "four sessions");
       for (const b of ["Speak", "Pause session", "Open review"]) {
         ok([...m.root.querySelectorAll("button")].some((x) => text(x) === b), `a ${b} button`);
@@ -336,6 +363,51 @@ export default [
     tick(s, s.next, () => 0.5);
     eq(s.done, 0, "and round again");
   }],
+  // Fix round 1: a second tour starts where the first did.
+  ["resetWork puts every session back: after a send and some steps, 2/1/1 again", async () => {
+    const doc = await fetch("/demo/data/work.json", { cache: "no-store" }).then((r) => r.json());
+    const shape = (list) => list.map((x) => [x.id, x.status, x.summary, x.done, !!x.paused]);
+    const m = await mountWork({ speed: 50 });
+    try {
+      const w = await loadWork();
+      const d = m.root.querySelector(".wk-drive");
+      eq(await workActions.send(), true, "sent");
+      eq([...d.querySelectorAll(".wk-count b")].map(text), ["3", "1", "0"], "OmaSaber running after the send");
+      for (const x of w.sessions) { x.next = 1; tick(x, 1, () => 0); }
+      w.sessions[0].paused = true;
+      ok(JSON.stringify(shape(w.sessions)) !== JSON.stringify(shape(doc.sessions)), "the sessions moved on");
+      resetWork();
+      eq(shape(w.sessions), shape(doc.sessions), "every session as work.json starts it");
+      eq(w.sessions.map((x) => x.next), [0, 0, 0, 0], "with its clock unscheduled");
+      eq([...d.querySelectorAll(".wk-count b")].map(text), ["2", "1", "1"], "2/1/1 on the screen");
+      eq(d.querySelector(".wk-dacts").hidden, false, "and the instruction a draft again");
+    } finally { m.done(); }
+  }],
+  ["Work's step clock stops when the screen goes", async () => {
+    const real = Object.assign({}, workClock);
+    const timers = new Map();
+    let n = 0, t = 1e12;
+    Object.assign(workClock, { now: () => t, every: (fn) => { timers.set(++n, fn); return n; },
+                               stop: (id) => { timers.delete(id); } });
+    const fire = () => [...timers.values()].forEach((f) => f());
+    try {
+      const w = await loadWork();
+      resetWork();
+      const m = await mountWork({ speed: 0 });
+      const start = w.sessions.map((x) => x.done);
+      eq(timers.size, 1, "one clock while the screen is up");
+      fire();
+      t += 60000;
+      fire();
+      const moved = w.sessions.map((x) => x.done);
+      ok(JSON.stringify(moved) !== JSON.stringify(start), "and it moves the steps");
+      m.done();
+      eq(timers.size, 0, "none once the screen has gone");
+      t += 600000;
+      fire();
+      eq(w.sessions.map((x) => x.done), moved, "so nothing ticks after");
+    } finally { Object.assign(workClock, real); resetWork(); }
+  }],
 
   // ---------------------------------------------------------------- the voice
   ["the lines other screens speak, word for word", async () => {
@@ -361,6 +433,43 @@ export default [
       voiceIO.fetch = async () => new Response("", { status: 404 });
       eq(await Promise.race([say("nope").then(() => "done"), wait(400).then(() => "hung")]), "done");
     } finally { voiceIO.fetch = real; }
+  }],
+  // Fix round 1: the duck is laid before the line is built, so the music must
+  // come back however building or starting it fails.
+  ["a line whose playback throws still brings the music back", async () => {
+    const realFetch = voiceIO.fetch, realSchedule = voiceIO.schedule, realLevel = voiceIO.levelAt;
+    const ctx = audioContext();
+    const proto = Object.getPrototypeOf(ctx);
+    const breaks = {
+      createGain: () => { ctx.createGain = () => { throw new Error("no gain"); }; },
+      start: () => {
+        ctx.createBufferSource = () => {
+          const src = proto.createBufferSource.call(ctx);
+          src.start = () => { throw new Error("no start"); };
+          return src;
+        };
+      },
+    };
+    try {
+      voiceIO.fetch = async () => new Response(silentWav(0.05));
+      voiceIO.levelAt = () => MUSIC_DB;
+      // Decoded (and cached) first, with nothing broken. The page runs on
+      // virtual time and decoding is real work it does not wait for, so a race
+      // against the clock is only fair once there is nothing left to decode.
+      voiceIO.schedule = () => true;
+      await say("drowsy-l2");
+      for (const [what, breakIt] of Object.entries(breaks)) {
+        const plans = [];
+        voiceIO.schedule = (bus, points) => { plans.push([bus, points]); return true; };
+        breakIt();
+        try {
+          eq(await Promise.race([say("drowsy-l2").then(() => "done"), wait(3000).then(() => "hung")]), "done",
+             `${what} throwing still resolves`);
+        } finally { delete ctx.createGain; delete ctx.createBufferSource; }
+        eq(plans.map(([bus, p]) => [bus, p.at(-1)[1]]), [["music", MUSIC_DB - 12], ["music", MUSIC_DB]],
+           `${what} throwing: ducked, then the music bus back at MUSIC_DB`);
+      }
+    } finally { voiceIO.fetch = realFetch; voiceIO.schedule = realSchedule; voiceIO.levelAt = realLevel; }
   }],
   ["say ducks the music 12 dB over 0.4 s, and brings it back over 0.8 s", async () => {
     const realFetch = voiceIO.fetch, realSchedule = voiceIO.schedule, realLevel = voiceIO.levelAt;

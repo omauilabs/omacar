@@ -43,9 +43,25 @@ export function tick(s, now, rnd = Math.random) {
   return true;
 }
 
+// The clock the steps tick on, so a test can hold it.
+export const workClock = {
+  now: () => Date.now(),
+  every: (fn, ms) => setInterval(fn, ms),
+  stop: (id) => clearInterval(id),
+};
+
 // The sessions, once per page: leaving the screen and coming back finds them
-// where they were.
-let world = null, loading = null;
+// where they were. `initial` is work.json's own copy, for resetWork().
+let world = null, loading = null, initial = null;
+
+// A session as work.json starts it: its finished steps spread over the half
+// hour before now, and its clock not yet scheduled.
+function fresh(s, now) {
+  return Object.assign(JSON.parse(JSON.stringify(s)), {
+    at: Array.from({ length: s.done }, (_, i) => now - (s.done - i) * 6 * 60000),
+    since: now - 2 * 60000, next: 0, paused: false,
+  });
+}
 
 export function loadWork() {
   if (world) return Promise.resolve(world);
@@ -53,18 +69,30 @@ export function loadWork() {
     loading = fetch(new URL("../../data/work.json", import.meta.url), { cache: "no-store" })
       .then((r) => { if (!r.ok) throw new Error(`work.json: ${r.status}`); return r.json(); })
       .then((doc) => {
-        const now = Date.now();
-        world = Object.assign({}, doc, {
-          sessions: doc.sessions.map((s) => Object.assign({}, s, {
-            at: Array.from({ length: s.done }, (_, i) => now - (s.done - i) * 6 * 60000),
-            since: now - 2 * 60000, next: 0, paused: false,
-          })),
-        });
+        const now = workClock.now();
+        initial = JSON.parse(JSON.stringify(doc.sessions));
+        world = Object.assign({}, doc, { sessions: initial.map((s) => fresh(s, now)) });
         return world;
       })
       .catch((e) => { loading = null; throw e; });
   }
   return loading;
+}
+
+// EVERY SESSION BACK AS work.json STARTS IT, for the demo's restart (Task 8
+// calls this beside the agent's restoreHome()). Without it the second tour
+// opens on OmaSaber already running, 3/1/0, while "work-update" still says it
+// needs your input. In place, so a screen that is up keeps its references,
+// and that screen goes back to its first state too.
+export function resetWork() {
+  if (!world || !initial) return false;
+  const now = workClock.now();
+  world.sessions.forEach((s, i) => {
+    for (const k of Object.keys(s)) delete s[k];
+    Object.assign(s, fresh(initial[i], now));
+  });
+  if (active) active.reset();
+  return true;
 }
 
 const statusOf = (s) => STATUS[s.paused ? "paused" : s.status] || STATUS.running;
@@ -76,8 +104,9 @@ function counts(w) {
           live.filter((s) => s.status === "input").length];
 }
 
-// A usage ring around a neutral glyph for the kind of account: an asterisk
-// for Claude, a prompt for Codex. Not either company's mark.
+// A usage ring around a neutral glyph for the kind of account: a rounded "C"
+// for Claude, a prompt for Codex, both in the app's own colours. Never either
+// company's mark or its colour, the same rule as CarPlay and Android Auto.
 function ring(a) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
@@ -87,8 +116,7 @@ function ring(a) {
   const used = Math.round(Math.max(0, Math.min(1, a.usage || 0)) * 100);
   const glyph = a.kind === "codex"
     ? `<path class="g codex" d="M17 18l6 6-6 6M25 30h7"/>`
-    : `<g class="g claude">${[0, 30, 60, 90, 120, 150].map((d) =>
-        `<path d="M24 14.5v19" transform="rotate(${d} 24 24)"/>`).join("")}</g>`;
+    : `<path class="g mono" d="M29.5 18.6a7.8 7.8 0 1 0 0 10.8"/>`;
   svg.innerHTML = `<circle class="track" cx="24" cy="24" r="21"/>
     <circle class="used" cx="24" cy="24" r="21" pathLength="100" stroke-dasharray="${used} 100"
             transform="rotate(-90 24 24)"/>${glyph}`;
@@ -122,13 +150,13 @@ export function workView(deps = {}) {
       park = parkedView(w);
       drive = drivingView(w);
       paint();
-      const timer = setInterval(() => {
-        const now = Date.now();
+      const timer = workClock.every(() => {
+        const now = workClock.now();
         let moved = false;
         for (const s of w.sessions) if (!s.paused && tick(s, now)) moved = true;
         if (moved) { park.paint(); drive.paint(); }
       }, 1000);
-      cleanups.push(() => clearInterval(timer));
+      cleanups.push(() => workClock.stop(timer));
     }
     // At once when the sessions are in hand, so coming back to the screen
     // never draws an empty frame first.
@@ -278,7 +306,14 @@ export function workView(deps = {}) {
         wave.set("idle");
       }
 
-      return { node, paint, askUpdate };
+      function reset() {
+        log.replaceChildren(h("div.wk-hint", "Tap Speak and ask: “Give me an update.”"));
+        heard.textContent = "";
+        wave.set("idle");
+        paint();
+      }
+
+      return { node, paint, askUpdate, reset };
     }
 
     // ---------------------------------------------------------------- driving
@@ -367,8 +402,10 @@ export function workView(deps = {}) {
         paint();
       }
 
+      function reset() { mode = "draft"; said.textContent = ""; paint(); }
+
       paint();
-      return { node, paint, send, readUpdates };
+      return { node, paint, send, readUpdates, reset };
     }
 
     // ---------------------------------------------------------------- review
@@ -404,7 +441,16 @@ export function workView(deps = {}) {
       return busy;
     }
 
-    const ctl = { update, send: () => (drive && driving ? drive.send() : Promise.resolve(false)) };
+    const ctl = {
+      update,
+      send: () => (drive && driving ? drive.send() : Promise.resolve(false)),
+      reset() {
+        selected = "omacar";
+        closeReview();
+        if (park) park.reset();
+        if (drive) drive.reset();
+      },
+    };
     active = ctl;
 
     return () => {

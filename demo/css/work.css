@@ -60,7 +60,7 @@
 .wk-ring .track, .wk-ring .used { fill: none; stroke-width: 2.6; }
 .wk-ring .track { stroke: var(--track); }
 .wk-ring .used { stroke: var(--accent); stroke-linecap: round; }
-.wk-ring .g.claude path { stroke: #D97757; stroke-width: 2.4; stroke-linecap: round; }
+.wk-ring .g.mono { fill: none; stroke: var(--ai); stroke-width: 2.8; stroke-linecap: round; }
 .wk-ring .g.codex { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 
 .wk-cols { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
