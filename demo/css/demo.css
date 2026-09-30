@@ -63,7 +63,6 @@
    projection (CarPlay, Android Auto) the app's bars are gone and the band is
    the bottom of the screen. */
 .app { --dt-band: 80px; }
-@media (max-width: 1000px) { .app { --dt-band: 108px; } }
 body.dt-touring .app {
   grid-template-rows: var(--vbar) auto 1fr var(--dt-band) var(--nav);
   grid-template-areas: "vbar" "segbar" "stage" "dtband" "navbar";
@@ -107,11 +106,13 @@ body.proj-on :is(.dt-cap, .dt-note) { bottom: calc(var(--dt-band) / 2); }
   content: ""; flex: none; width: 4px; height: 24px; border-radius: 2px;
   background: var(--accent); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
 }
-.dt-cap-t { overflow: hidden; text-overflow: ellipsis; }
+.dt-cap-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dt-cap.on, .dt-note.on { opacity: 1; transform: translateY(50%); }
-/* Too narrow for the line (portrait): two, balanced, rather than cut. */
+/* ONE LINE AT EVERY WIDTH, never wrapped. Portrait starts a little smaller, and
+   demo/js/tour.js shrinks the text from there to the largest size that fits,
+   down to 16 px; what still does not fit is cut with the ellipsis above. */
 @media (max-width: 1000px) {
-  .dt-cap { white-space: normal; text-wrap: balance; border-radius: 22px; font-size: 20px; }
+  .dt-cap { font-size: 20px; }
 }
 
 .dt-note {

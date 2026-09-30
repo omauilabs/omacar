@@ -6,7 +6,7 @@
 // moves, the page's location is a string, a cue is a line in a log and so is
 // every module action. Nothing here reaches a server, the radio or a speaker.
 import { eq, ok } from "./assert.js";
-import { createTour, createReset, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS,
+import { createTour, createReset, createCaptions, fitSize, CAP_MIN_PX, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS,
          RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS, CLOSING_SECS } from "../demo/js/tour.js";
 import { createBar, LONG_PRESS_MS, LOGO } from "../demo/js/bar.js";
 import { createMenu, createCues, BACKUP_TEXT, EXIT_TEXT } from "../demo/js/menu.js";
@@ -68,6 +68,38 @@ async function rig(over = {}) {
 }
 
 const TOTAL = (steps) => steps.reduce((s, x) => s + x.secs, 0);
+
+const SENTENCE = "Oma Agent knows this car, and changes the dashboard for you. ";
+
+// A caption element in the page with demo.css applied, and what a test asks of it.
+// `later` is held: show() lets the fade's swap run at once.
+async function styled() {
+  const css = await (await fetch("../demo/css/demo.css")).text();
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const pending = [];
+  const caps = createCaptions({ host, later: (fn) => { pending.push(fn); return pending.length; }, cancel: () => {} });
+  const cap = host.querySelector(".dt-cap");
+  const words = cap.querySelector(".dt-cap-t");
+  const textW = () => {
+    const g = document.createRange();
+    g.selectNodeContents(words);
+    return g.getBoundingClientRect().width;
+  };
+  const size = () => parseFloat(getComputedStyle(cap).fontSize);
+  return {
+    cap, words, size,
+    show(text) { caps.caption(text); while (pending.length) pending.shift()(); },
+    fits: () => textW() <= words.getBoundingClientRect().width + 0.05,
+    // The row is the taller of the line (1.3 of the size) and the accent bar (24 px);
+    // the padding and border are 26 px more. A second line would add 1.3 of the size.
+    oneLine: () => cap.getBoundingClientRect().height <= Math.max(size() * 1.3, 24) + 27,
+    done() { caps.destroy(); host.remove(); style.remove(); },
+  };
+}
 
 export default [
   // ---- the steps -------------------------------------------------------------
@@ -587,6 +619,112 @@ export default [
     menu.close();
     menu.close();
     eq(calls, ["hold", "release"], "and let go once");
+  }],
+
+  // ---- the captions: one line, shrunk to fit ---------------------------------------------------
+  //
+  // In portrait the caption used to wrap onto two balanced lines (and the band
+  // was 108 px to hold them). It is one line at every width now: the text
+  // shrinks to fit, down to CAP_MIN_PX, and what still does not fit is cut with
+  // an ellipsis rather than wrapped. These run against demo.css itself.
+  ["fitSize: the largest size that fits, never under 16 px, and the top size when it all fits", () => {
+    eq(CAP_MIN_PX, 16, "the floor");
+    eq(fitSize((px) => px <= 18, 20), 18, "18 is the largest that fits");
+    eq(fitSize(() => true, 20), 20, "all of it fits: the size it had");
+    eq(fitSize(() => false, 20), 16, "none fits: the floor");
+    eq(fitSize((px) => px <= 10, 20), 16, "and never under it");
+    eq(fitSize(() => false, 14), 14, "a style that starts under the floor is not raised to it");
+    const asked = [];
+    fitSize((px) => { asked.push(px); return false; }, 22);
+    eq(asked, [22, 21, 20, 19, 18, 17], "from the top, a pixel at a time");
+  }],
+
+  ["a caption that fits keeps the stylesheet's size, and never wraps", async () => {
+    const t = await styled();
+    try {
+      t.show("Turn-by-turn on the tablet, working offline.");
+      ok([20, 22].includes(t.size()), `the stylesheet's size: ${t.size()}`);
+      eq(t.cap.style.fontSize, "", "no size of its own");
+      ok(t.fits(), "and it fits");
+      eq(getComputedStyle(t.cap).whiteSpace, "nowrap", "nowrap");
+    } finally { t.done(); }
+  }],
+
+  ["longer captions take the largest size that fits on one line, never under 16 px", async () => {
+    const t = await styled();
+    try {
+      t.show("x");
+      const base = t.size();
+      let before = base;
+      for (const n of [1, 2, 3, 4, 6]) {
+        t.show(SENTENCE.repeat(n).trim());
+        const px = t.size();
+        ok(t.oneLine(), `${n} sentences: one line, not ${Math.round(t.cap.getBoundingClientRect().height)} px tall`);
+        ok(px >= CAP_MIN_PX && px <= base, `${n} sentences: ${px} px is between 16 and ${base}`);
+        ok(px <= before, `${n} sentences: no bigger than fewer were (${px} after ${before})`);
+        before = px;
+        if (px > CAP_MIN_PX) {
+          ok(t.fits(), `${n} sentences fit at ${px} px`);
+        }
+        if (px < base && px > CAP_MIN_PX) {
+          t.cap.style.fontSize = `${px + 1}px`;
+          ok(!t.fits(), `${n} sentences: ${px + 1} px would not have fitted, so ${px} is the largest`);
+          t.cap.style.fontSize = `${px}px`;
+        }
+      }
+      ok(before < base, `the longest was shrunk (${before} of ${base})`);
+    } finally { t.done(); }
+  }],
+
+  ["too long even at 16 px: still one line at 16 px, cut with an ellipsis, never wrapped", async () => {
+    const t = await styled();
+    try {
+      t.show(SENTENCE.repeat(40).trim());
+      eq(t.size(), CAP_MIN_PX, "the floor");
+      ok(t.oneLine(), "one line");
+      ok(!t.fits(), "and it does not fit: it is cut");
+      eq(getComputedStyle(t.words).textOverflow, "ellipsis", "with an ellipsis");
+    } finally { t.done(); }
+  }],
+
+  ["the next caption starts from the stylesheet's size, not the last one's", async () => {
+    const t = await styled();
+    try {
+      t.show("x");
+      const base = t.size();
+      t.show(SENTENCE.repeat(6).trim());
+      ok(t.size() < base, "the long one shrank");
+      t.show("Short.");
+      eq(t.size(), base, "the short one did not inherit it");
+      eq(t.cap.style.fontSize, "", "no size of its own");
+    } finally { t.done(); }
+  }],
+
+  ["every one of the tour's captions is one line", async () => {
+    const t = await styled();
+    try {
+      for (const step of await loadSteps()) {
+        if (!step.caption) continue;
+        t.show(step.caption);
+        ok(t.oneLine(), `${step.id}: one line`);
+        ok(t.size() >= CAP_MIN_PX, `${step.id}: ${t.size()} px`);
+      }
+    } finally { t.done(); }
+  }],
+
+  ["a turned screen refits the caption on its window's resize", async () => {
+    const t = await styled();
+    try {
+      t.show(SENTENCE.trim());
+      const wide = t.size();
+      t.cap.style.maxWidth = "330px";            // a narrower window, as the viewport's would make it
+      window.dispatchEvent(new Event("resize"));
+      ok(t.size() < wide, `narrower: ${t.size()} px, from ${wide}`);
+      ok(t.oneLine(), "and still one line");
+      t.cap.style.maxWidth = "";
+      window.dispatchEvent(new Event("resize"));
+      eq(t.size(), wide, "wide again");
+    } finally { t.done(); }
   }],
 
   // ---- the top bar -----------------------------------------------------------------

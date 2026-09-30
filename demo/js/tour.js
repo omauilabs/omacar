@@ -377,9 +377,23 @@ export function createReset({ radio, cue, resetWork, restoreHome,
 // agent's preview, a Level 2 alert), fading out and in between steps. The pause
 // notice takes the same place, and is itself a Resume button.
 //
+// ONE LINE AT EVERY WIDTH, AND NEVER WRAPPED. The stylesheet sets the size (22 px,
+// 20 in portrait) and the text shrinks from there, a pixel at a time, to the
+// largest that fits, down to CAP_MIN_PX. What does not fit even then is cut with
+// an ellipsis (demo.css), not wrapped onto a second line.
+//
 //   createCaptions({ host, onResume }) -> { caption(text | null), notice(text, ms), destroy() }
 
 export const FADE_MS = 280;
+export const CAP_MIN_PX = 16;
+
+// The largest whole size from `max` down to `min` at which `fits(px)` is true;
+// `min` when none is, and `max` itself when it is already under `min`.
+export function fitSize(fits, max, min = CAP_MIN_PX) {
+  const top = Math.round(max);
+  for (let px = top; px > min; px--) if (fits(px)) return px;
+  return Math.min(top, min);
+}
 
 export function createCaptions({ host = document.body, onResume = () => {},
                                  later = (fn, ms) => setTimeout(fn, ms), cancel = (id) => clearTimeout(id) } = {}) {
@@ -400,6 +414,26 @@ export function createCaptions({ host = document.body, onResume = () => {},
 
   let shown = null, swap = null, noteTimer = null;
 
+  // Does the text, at the size it has, fit the line? Sub-pixel: a box that is
+  // at its maximum width clips a text that is 0.3 px wider, with an ellipsis
+  // that scrollWidth (which rounds) would never report.
+  function fits() {
+    const r = document.createRange();
+    r.selectNodeContents(words);
+    return r.getBoundingClientRect().width <= words.getBoundingClientRect().width + 0.05;
+  }
+
+  function fit() {
+    cap.style.fontSize = "";                     // the stylesheet's: 22 px, 20 in portrait
+    const max = parseFloat(getComputedStyle(cap).fontSize) || 20;
+    const px = fitSize((p) => { cap.style.fontSize = `${p}px`; return fits(); }, max);
+    cap.style.fontSize = px === Math.round(max) ? "" : `${px}px`;
+  }
+
+  // A turned screen changes the width, and the stylesheet's size with it.
+  const onResize = () => { if (shown && words.textContent) fit(); };
+  window.addEventListener("resize", onResize);
+
   function hideNote() {
     if (noteTimer !== null) { cancel(noteTimer); noteTimer = null; }
     note.classList.remove("on");
@@ -416,6 +450,7 @@ export function createCaptions({ host = document.body, onResume = () => {},
         swap = null;
         if (!shown) return;
         words.textContent = shown;
+        fit();
         cap.classList.add("on");
       };
       if (cap.classList.contains("on")) {
@@ -441,6 +476,12 @@ export function createCaptions({ host = document.body, onResume = () => {},
       noteTimer = later(hideNote, ms);
     },
     hideNote,
-    destroy() { hideNote(); if (swap !== null) cancel(swap); cap.remove(); note.remove(); },
+    destroy() {
+      hideNote();
+      if (swap !== null) cancel(swap);
+      window.removeEventListener("resize", onResize);
+      cap.remove();
+      note.remove();
+    },
   };
 }
