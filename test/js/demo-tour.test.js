@@ -435,6 +435,93 @@ export default [
     } finally { console.warn = warn; }
   }],
 
+  // ---- the menu, opened while the tour is still resetting ----------------------------------
+  //
+  // A tour from the top resets the demo first (up to 3 s). A presenter who
+  // opens the menu in that window has not been paused (there is no step to
+  // pause), and step 1 used to start under the open menu, with its caption.
+  ["opening the menu while the tour is resetting holds its start until the menu closes", async () => {
+    let done;
+    const r = await rig({ deps: { reset: () => new Promise((d) => { done = d; }) } });
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    r.tour.start();
+    menu.open();
+    done();
+    await tick();
+    eq(r.gos(), [], "the reset is over and step 1 has not started under the menu");
+    eq(r.captions, [], "no caption either");
+    eq([r.tour.state, r.tour.index], ["running", -1], "the tour is waiting");
+    r.c.advance(30);
+    eq(r.gos(), [], "however long the menu is open");
+    menu.close();
+    eq(r.gos(), ["#home"], "the menu closed: step 1");
+    eq([r.tour.state, r.tour.index, r.captions.length], ["running", 0, 1], "from its top, with its caption");
+    r.c.advance(25);
+    eq(r.last().slice(1), ["do", "radio.play"], "its actions on its own clock, from the close");
+  }],
+
+  ["a menu opened and closed inside the reset holds nothing, and one open past the 3 s cap holds step 1 too", async () => {
+    let done;
+    const r = await rig({ deps: { reset: () => new Promise((d) => { done = d; }) } });
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    const started = r.tour.start();
+    menu.open();
+    menu.close();
+    done();
+    await started;
+    eq(r.gos(), ["#home"], "closed in time: step 1 as ever");
+    r.tour.stop();
+    const again = r.tour.start();          // a reset that never answers
+    menu.open();
+    r.c.advance(RESET_WAIT_MS / 1000 + 1);
+    await again;
+    eq(r.gos(), ["#home"], "open past the cap: still only the first");
+    menu.close();
+    eq(r.gos(), ["#home", "#home"], "until it closes");
+  }],
+
+  ["Start tour from the menu during the wait, or stopping, lets the held start go", async () => {
+    const dones = [];
+    const r = await rig({ deps: { reset: () => new Promise((d) => { dones.push(d); }) } });
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    r.tour.start();
+    menu.open();
+    dones[0]();
+    await tick();
+    [...host.querySelectorAll(".dm-item")].find((b) => b.querySelector(".dm-t").textContent === "Start tour").click();
+    eq(menu.isOpen(), false, "the menu closed");
+    eq(r.gos(), [], "the held start was dropped, and the new one is resetting");
+    dones[1]();
+    await tick();
+    eq(r.gos(), ["#home"], "one step 1, not two");
+    // Stopping (Restart the drive does) drops a held start for good.
+    r.tour.stop();
+    r.tour.start();
+    menu.open();
+    dones[2]();
+    await tick();
+    r.tour.stop();
+    menu.close();
+    eq([r.tour.state, r.gos().length], ["idle", 1], "nothing starts after a stop");
+  }],
+
+  ["menu: opening it holds the tour's start and closing lets go, even with no tour to pause", () => {
+    const calls = [];
+    const fake = { state: "idle", index: -1, steps: [], hold: () => calls.push("hold"), release: () => calls.push("release"),
+                   subscribe() { return () => {}; } };
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: fake, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host });
+    menu.open();
+    menu.open();
+    eq(calls, ["hold"], "once, however often it is opened");
+    menu.close();
+    menu.close();
+    eq(calls, ["hold", "release"], "and let go once");
+  }],
+
   // ---- the top bar -----------------------------------------------------------------
   ["bar: the word becomes the logo, a DEMO pill sits before the buttons, and twice is once", () => {
     const vbar = document.createElement("header");

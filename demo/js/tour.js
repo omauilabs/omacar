@@ -22,6 +22,12 @@
 // step with it, from its top, its actions again. The demo is not reset: Home,
 // Work and the radio stay as they are.
 //
+// THE MENU HOLDS THE TOUR'S START. A tour from the top resets the demo first, for
+// up to RESET_WAIT_MS; a menu opened in that window has no step to pause, and
+// step 1 used to begin under it. The menu calls hold() as it opens and
+// release() as it closes, and a start that finishes its reset in between
+// waits for the release.
+//
 // Its keys (the Type Cover's): 1-9 jump to that step (and 0 to the tenth),
 // D drowsy, B hard braking, P park or drive, Space pause and resume, Esc the
 // menu. They are the tour's, so they do not pause it; anything else does.
@@ -88,6 +94,8 @@ export function createTour(deps = {}) {
   let epoch = 0;              // bumped by every start and stop: a late reset starts nothing
   let pausedAt = 0;           // clock ms at which the tour was last paused
   let resyncing = false;      // Resume has sent restart and is waiting for the drive
+  let held = false;           // the menu is open: no step starts under it
+  let waiting = null;         // the start that is waiting for the menu to close
 
   const tour = {
     steps,
@@ -103,6 +111,7 @@ export function createTour(deps = {}) {
       if (!steps.length) { console.warn("demo tour: no steps (tour.json has not loaded)"); return Promise.resolve(); }
       const mine = ++epoch;
       resyncing = false;
+      waiting = null;
       cancelAll();
       if (!fresh) { enter(clampIndex(at)); return Promise.resolve(); }
       set("running", -1);
@@ -113,7 +122,7 @@ export function createTour(deps = {}) {
       reset = reset.catch((e) => console.warn("demo tour: the reset failed:", e));
       return Promise.race([reset, waited]).then(() => {
         d.clock.cancel(guard);
-        if (mine === epoch) enter(clampIndex(at));
+        if (mine === epoch) whenFree(() => enter(clampIndex(at)));
       });
     },
     jump(i) { return tour.start({ at: i, fresh: false }); },
@@ -146,9 +155,19 @@ export function createTour(deps = {}) {
       return tour.start();
     },
 
+    // The presenter's menu is open (hold) or has closed (release).
+    hold() { held = true; },
+    release() {
+      held = false;
+      const go = waiting;
+      waiting = null;
+      if (go) go();
+    },
+
     stop() {
       epoch++;
       resyncing = false;
+      waiting = null;
       cancelAll();
       set("idle", -1);
       d.caption(null);
@@ -233,12 +252,18 @@ export function createTour(deps = {}) {
       const w = worldClock();
       if ((w && w.t < RESYNC_BELOW_S) || d.clock.now() - began >= RESYNC_WAIT_MS) {
         resyncing = false;
-        enter(tour.index);
+        whenFree(() => enter(tour.index));
         return;
       }
       timers.push(d.clock.later(look, RESYNC_LOOK_MS));
     };
     timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+  }
+
+  // What has to wait for the menu, waits.
+  function whenFree(go) {
+    if (held) waiting = go;
+    else go();
   }
 
   function nav(hash) {
