@@ -147,13 +147,22 @@ export function createTour(deps = {}) {
         case "b": d.cue("hard_brake"); return own();
         case "p": d.cue(d.parked() ? "drive" : "park"); return own();
         case " ": case "spacebar": tour.toggle(); return own();
-        case "escape": case "esc": d.menu(); return own();
+        case "escape": case "esc":
+          // The Agent's preview or Work's review sheet is open: Esc is its,
+          // and closes it (their own listeners), not the presenter's menu.
+          if (overlayOpen()) { tour.touch(); return false; }
+          d.menu();
+          return own();
         default:
           tour.touch();
           return false;
       }
     },
   };
+
+  function overlayOpen() {
+    return typeof document !== "undefined" && !!document.querySelector("[data-demo-overlay]");
+  }
 
   function clampIndex(i) { return Math.max(0, Math.min(steps.length - 1, Number(i) || 0)); }
 
@@ -222,6 +231,35 @@ export function createTour(deps = {}) {
   }
 
   return tour;
+}
+
+// ---- the demo back to its start ----------------------------------------------------
+//
+// What a tour from the top and the menu's "Restart the drive" both do first:
+// the radio quiet, the world's `restart` cue (the drive from Marina), Work's
+// sessions as work.json starts them, and Home and its look as they were before
+// the agent's Apply. Each step's failure is logged and the rest go on. Home
+// goes through the server (/api/home), so the wait for it is capped at
+// RESET_WAIT_MS: a server that does not answer never holds a restart.
+//
+//   createReset({ radio, cue, resetWork, restoreHome, later, cancel }) -> () => Promise
+
+export function createReset({ radio, cue, resetWork, restoreHome,
+                              later = (fn, ms) => setTimeout(fn, ms), cancel = (id) => clearTimeout(id) } = {}) {
+  const step = (what, fn) => {
+    try { return fn(); } catch (e) { console.warn(`demo reset: ${what}:`, e); return undefined; }
+  };
+  return async function reset() {
+    step("the radio", () => radio && radio.pause());
+    Promise.resolve(step("the restart cue", () => cue && cue("restart"))).catch(() => {});
+    step("Work", () => resetWork && resetWork());
+    let guard = null;
+    const waited = new Promise((done) => { guard = later(done, RESET_WAIT_MS); });
+    const home = Promise.resolve(step("Home", () => restoreHome && restoreHome()))
+      .catch((e) => console.warn("demo reset: Home:", e));
+    await Promise.race([home, waited]);
+    cancel(guard);
+  };
 }
 
 // ---- the words on the screen -------------------------------------------------------

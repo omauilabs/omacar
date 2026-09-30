@@ -8,6 +8,7 @@ import { eq, ok } from "./assert.js";
 import { store } from "../js/core.js";
 import { MUSIC_DB, audioContext } from "../js/audiobus.js";
 import { savedLook } from "../js/looks.js";
+import { orientation, loadCatalogue, spanOf } from "../js/homecards.js";
 import { say, LINES, linesReady, voiceIO } from "../demo/js/voice.js";
 import agentView, {
   loadScript, matchScript, stream, pace, nightLayout, NIGHT, NIGHT_LOOK, PARK_REASON,
@@ -208,13 +209,46 @@ export default [
       const card = m.root.querySelector(".ag-preview");
       ok(card, "a preview card");
       ok(text(card).includes("Night drive") && text(card).includes("Landscape + portrait"), "titled");
-      for (const tile of ["nav", "dial", "music", "tiles"]) ok(card.querySelector(`.nl-${tile}`), `draws ${tile}`);
-      eq(card.querySelectorAll(".nl-tile").length, 3, "three tiles");
       ok(card.querySelector(".ag-previewbtn") && card.querySelector(".ag-apply"), "both buttons");
       card.querySelector(".ag-previewbtn").click();
       ok(document.querySelector(".ag-overlay .nl"), "Preview opens it full size");
+      ok(document.querySelector(".ag-overlay").hasAttribute("data-demo-overlay"),
+         "marked as the demo's overlay, so Esc is its and not the presenter's menu's");
       document.querySelector(".ag-overlay .ag-close").click();
       ok(!document.querySelector(".ag-overlay"), "and closes");
+    } finally { m.done(); }
+  }],
+  // Polish: the preview is the Home that Apply posts, card for card.
+  ["the preview, small and full size, draws NIGHT's cards in NIGHT's order and sizes", async () => {
+    const m = mountAgent();
+    try {
+      await agentActions.ask("night");
+      agentActions.preview();
+      const cat = await loadCatalogue();
+      await wait(0);
+      const o = orientation();
+      for (const [where, box] of [["the card", m.root.querySelector(".ag-preview")],
+                                  ["the full size", document.querySelector(".ag-overlay")]]) {
+        const pieces = [...box.querySelectorAll(".nl [data-card]")];
+        eq(pieces.map((n) => [n.dataset.card, n.dataset.size]), NIGHT[o], `${where}: NIGHT's cards`);
+        eq(pieces.map((n) => [n.style.gridColumn, n.style.gridRow]),
+           NIGHT[o].map(([id, size]) => spanOf(cat, id, size, o).map((k) => `span ${k}`)), `${where}: Home's spans`);
+        eq(box.querySelector(".nl").style.gridTemplateColumns, `repeat(${o === "portrait" ? 6 : 12}, minmax(0px, 1fr))`,
+           `${where}: Home's columns`);
+      }
+    } finally { m.done(); }
+  }],
+  ["Work's review sheet is marked as the demo's overlay, too", async () => {
+    const m = await mountWork({ speed: 0 });
+    try {
+      await wait(20);
+      const btn = [...m.root.querySelectorAll("button")].find((b) => /Open review|Review changes/.test(b.textContent));
+      ok(btn, "a review button");
+      btn.click();
+      const ov = document.querySelector(".wk-overlay");
+      ok(ov && ov.hasAttribute("data-demo-overlay"), "marked");
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      ok(!document.querySelector(".wk-overlay"), "and Esc closes it");
     } finally { m.done(); }
   }],
   ["Apply is disabled, with the reason, until the car is parked", async () => {

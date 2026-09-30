@@ -78,7 +78,8 @@ def build(private):
         with open(os.path.join(demo, "clips", role + ".mp4"), "wb") as f:
             f.write(b"\0\0\0\x18ftypmp42" + b"\0" * 100)
     png = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
-    for p in (os.path.join(private, "omacar-logo.png"), os.path.join(demo, "crz-home.png")):
+    for p in (os.path.join(private, "omacar-logo.png"), os.path.join(demo, "crz-home.png"),
+              os.path.join(private, "crz-xray.png")):
         with open(p, "wb") as f:
             f.write(png)
     return pins
@@ -205,14 +206,17 @@ def main():
             with open(os.path.join(private, "demo", "clips", role + ".mp4"), "wb") as f:
                 f.write(b"\0" * 64)
 
-        # The voice, the map, the car picture.
+        # The voice, the map, the car picture, Vehicle's X-ray.
         os.remove(os.path.join(private, "demo", "voice", "drowsy-l2.wav"))
         os.remove(os.path.join(private, "demo", "crz-home.png"))
+        os.remove(os.path.join(private, "crz-xray.png"))
         with open(os.path.join(private, "demo", "map.json"), "w", encoding="utf-8") as f:
             f.write('{"version": 1, "layers": ')
         r, lines = run(work, private)
-        check("a voice line, a broken map and the car picture: each named",
-              lines[-1] == "not ready: map, voice, car picture", r.stdout)
+        check("a voice line, a broken map, the car picture and the X-ray: each named",
+              lines[-1] == "not ready: map, voice, car picture, vehicle picture", r.stdout)
+        check("the X-ray says how it reaches the tablet",
+              any("crz-xray.png" in ln and "omacar assets push" in ln for ln in lines), r.stdout)
         check("the voice line by name", any("drowsy-l2" in ln for ln in lines), r.stdout)
         build_again = os.path.join(work, "private2")
         build(build_again)
@@ -233,6 +237,15 @@ def main():
         # No live kiosk.
         r, lines = run(work, private, kiosk=False)
         check("no live kiosk: not ready: kiosk", lines[-1] == "not ready: kiosk", r.stdout)
+
+        # XDG_DATA_HOME moves the kiosk's profile, as it does in bin/omacar.
+        data = os.path.join(work, "data-home")
+        open(os.path.join(work, "bin", "pgrep.log"), "w").close()
+        run(work, private, extra={"XDG_DATA_HOME": data})
+        with open(os.path.join(work, "bin", "pgrep.log"), encoding="utf-8") as f:
+            asked = f.read()
+        check("with XDG_DATA_HOME, the kiosk's profile is under it",
+              "--user-data-dir=" + os.path.join(data, "omacar", "kiosk-profile").replace(".", "\\.") in asked, asked)
 
         # The real pgrep, against stand-ins: a test's fake kiosk under /tmp (the
         # box had one left running, and it passed for the live kiosk) and a

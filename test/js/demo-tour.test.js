@@ -6,7 +6,7 @@
 // moves, the page's location is a string, a cue is a line in a log and so is
 // every module action. Nothing here reaches a server, the radio or a speaker.
 import { eq, ok } from "./assert.js";
-import { createTour, loadSteps, PAUSED, PAUSED_MS } from "../demo/js/tour.js";
+import { createTour, createReset, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS } from "../demo/js/tour.js";
 import { createBar, LONG_PRESS_MS, LOGO } from "../demo/js/bar.js";
 import { createMenu, createCues, BACKUP_TEXT, EXIT_TEXT } from "../demo/js/menu.js";
 import { createScan, MODULES, SCAN_SECS, DONE_TEXT } from "../demo/js/views/scan.js";
@@ -225,6 +225,19 @@ export default [
     eq(r.tour.state, "running", "none of them paused it");
   }],
 
+  // Polish: Esc with the Agent's or Work's overlay open is the overlay's.
+  ["Esc with a demo overlay open is left to the overlay, and opens no menu", async () => {
+    const r = await rig();
+    const ov = document.createElement("div");
+    ov.setAttribute("data-demo-overlay", "");
+    document.body.appendChild(ov);
+    try {
+      const k = r.key("Escape");
+      eq([k.used, k.prevented, r.menus], [false, false, 0], "not the menu's");
+    } finally { ov.remove(); }
+    eq(r.key("Escape").used, true, "with none open, Esc is the menu again");
+    eq(r.menus, 1, "opened");
+  }],
   ["an action that throws is logged and the tour goes on", async () => {
     const r = await rig({ deps: { act: () => { throw new Error("no radio"); } } });
     const warn = console.warn;
@@ -245,6 +258,44 @@ export default [
     await started;
     eq(r.gos(), ["#home"], "going anyway after 3 s");
     done();
+  }],
+
+  // ---- the reset: tour start and Restart the drive ------------------------------------
+  ["the reset pauses the radio, cues restart, and calls resetWork() and restoreHome()", async () => {
+    const c = clock();
+    const did = [];
+    const reset = createReset({
+      radio: { pause: () => did.push("radio.pause") },
+      cue: (name) => { did.push(`cue:${name}`); return Promise.resolve(); },
+      resetWork: () => { did.push("resetWork"); return true; },
+      restoreHome: () => { did.push("restoreHome"); return Promise.resolve(); },
+      later: c.later, cancel: c.cancel,
+    });
+    await reset();
+    eq(did, ["radio.pause", "cue:restart", "resetWork", "restoreHome"], "all four, in order");
+    eq(c.timers.length, 0, "no timer left behind");
+  }],
+  ["Restart the drive waits for Home at most 3 s, as the tour's start does, and a failure is only logged", async () => {
+    const c = clock();
+    let homeBack = false;
+    const reset = createReset({
+      radio: { pause() { throw new Error("no radio"); } },
+      cue: () => Promise.reject(new Error("no server")),
+      resetWork: () => { throw new Error("no work"); },
+      restoreHome: () => new Promise(() => {}),        // a server that never answers
+      later: c.later, cancel: c.cancel,
+    });
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const done = reset().then(() => { homeBack = true; });
+      await tick();
+      eq(homeBack, false, "waiting for Home");
+      c.advance(RESET_WAIT_MS / 1000);
+      await done;
+      eq(homeBack, true, "and on after 3 s");
+      eq(RESET_WAIT_MS, 3000, "3 s");
+    } finally { console.warn = warn; }
   }],
 
   // ---- the top bar -----------------------------------------------------------------
