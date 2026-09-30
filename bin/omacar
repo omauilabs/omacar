@@ -513,22 +513,79 @@ demo_answers() {
   [[ "$(curl -fsS --max-time 2 "http://127.0.0.1:$DEMO_PORT/.mark" 2>/dev/null)" == *"$MARK"* ]]
 }
 
+# Whether the REAL car is parked, by lib/demoguard.py's rule (see
+# demo_parked_or_exit). An answer that is neither is not parked.
+demo_parked() {
+  [[ "$("$(serve_py)" "$ROOT/lib/demoguard.py" --state "$REAL_STATE/live.json" \
+         2>/dev/null || true)" == parked ]]
+}
+
+# How long PID has been running, in whole seconds: its start time in
+# /proc/PID/stat (field 22, clock ticks since boot) against /proc/uptime.
+demo_age() {
+  local stat up ticks
+  local -a field
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  read -r -a field <<<"${stat##*) }"        # from field 3 on: field 22 is field[19]
+  [[ "${field[19]:-}" =~ ^[0-9]+$ ]] || return 1
+  up=$(cut -d' ' -f1 /proc/uptime 2>/dev/null) || return 1
+  ticks=$(getconf CLK_TCK 2>/dev/null || echo 100)
+  echo $(( ${up%%.*} - field[19] / ticks ))
+}
+
+# A SILENT SERVER, STOPPED: the demo's own server at PID, up for at least
+# DEMO_SILENT_AFTER seconds and not answering /.mark within 2 s. Younger than
+# that it may simply not be listening yet (another start has just launched it),
+# and is never taken for a hung one. Its identity is asked again just before
+# the TERM. True when it was silent and is gone now; false when it answered,
+# is too young, or would not go.
+DEMO_SILENT_AFTER=10
+demo_stop_silent() {
+  local pid="$1" age
+  age=$(demo_age "$pid") || return 1
+  (( age >= DEMO_SILENT_AFTER )) || return 1
+  demo_answers && return 1
+  if demo_still server "$pid"; then
+    echo "  $(demo_what server) (pid $pid, up ${age} s) has not answered in 2 s; stopping it"
+    # CONT after TERM: a stopped process does not act on a TERM until it runs.
+    kill "$pid" 2>/dev/null || true
+    kill -CONT "$pid" 2>/dev/null || true
+    demo_wait server "$pid"
+  fi
+  [[ "$(demo_holder server)" == none ]]
+}
+
 # ONE OF THE DEMO'S PARTS, STARTED THE ONE WAY. `demo on` starts each through
-# this and so does `demo mend`, so a part the guard starts again is started
-# exactly as it was the first time: the same command, and demo_env's
-# environment, with the demo's own runtime folder on the server's and the
-# feed's command lines. After demo_env. Under the start lock (demo_lock), from
-# the last look to the part being up:
+# this (the guard too) and so does `demo mend`, so a part the guard starts
+# again is started exactly as it was the first time: the same command, and
+# demo_env's environment, with the demo's own runtime folder on the server's
+# and the feed's command lines. After demo_env.
+#
+# EVERY LOOK IS TAKEN UNDER THE START LOCK (demo_lock), and held to the part
+# being up: that the demo is on, that the real car is parked, whether the part
+# is already running (by demo_holder, from any checkout: so never a second
+# guard, or a second anything), and, for a server, that nothing else holds its
+# port. With `mend`, a server of the demo's that is running but silent
+# (demo_stop_silent) is stopped here, under the same lock, and replaced.
 #   0  it is up
 #   1  it did not come up (its log says why), or the lock could not be had
 #   2  cams only: this build has no camera feed
-#   3  it was already running: somebody else started it meanwhile
+#   3  it is running: somebody else started it, or (server) it answers or is
+#      too young to be called silent
 #   4  the demo is not on (no ACTIVE), so nothing was started
+#   5  the real car is moving, or could not be read, so nothing was started
+#   6  server only: its port is held by something that is not the demo's server
 demo_start() {
-  local name="$1" rc=0
+  local name="$1" how="${2:-}" rc=0 h pid
   demo_lock || { demo_unlock; return 1; }
+  h=$(demo_holder "$name")
+  pid=${h#* }; pid=${pid%% *}
   if [[ ! -f "$DEMO_ROOT/ACTIVE" ]]; then rc=4
-  elif [[ "$(demo_holder "$name")" != none ]]; then rc=3
+  elif ! demo_parked; then rc=5
+  elif [[ "$h" != none ]] \
+       && ! [[ "$name" == server && "$how" == mend ]]; then rc=3
+  elif [[ "$h" != none ]] && ! demo_stop_silent "$pid"; then rc=3
+  elif [[ "$name" == server ]] && port_taken "$DEMO_PORT"; then rc=6
   else demo_start_now "$name" || rc=$?
   fi
   demo_unlock
@@ -562,6 +619,11 @@ demo_start_now() {
         ours "$DEMO_PORT" && return 0
       done
       return 1 ;;
+    # The guard, on the REAL live.json (lib/demoguard.py): it closes the demo
+    # when the car moves, and it is the demo's watchdog. One only.
+    guard)
+      demo_spawn guard "$py" "$ROOT/lib/demoguard.py" "$REAL_STATE/live.json" "$DEMO_ROOT"
+      demo_up guard ;;
     *) return 1 ;;
   esac
 }
@@ -679,27 +741,33 @@ os.replace(tmp, out)
   : > "$DEMO_ROOT/ACTIVE"
 
   local started=() i url="http://127.0.0.1:$DEMO_PORT/demo.html" cams_note="" part rc
-  # The world, the camera feed and the server, each the way `demo mend` starts
-  # it again (demo_start).
-  for part in world cams server; do
+  # The world, the camera feed, the server and the guard, each the way `demo
+  # mend` starts a part again (demo_start), under the start lock. The guard
+  # last, on the REAL live.json: a demo without it would stay on the screen of
+  # a car that starts moving, so no guard is no demo.
+  for part in world cams server guard; do
     demo_ident "$part" >/dev/null && continue
-    if [[ "$part" == server ]] && port_taken "$DEMO_PORT"; then
-      echo "omacar: port $DEMO_PORT is held by something that is not this demo's server" \
-           "(another demo? \`omacar demo off\` from where it was started)" >&2
-      demo_off --now >/dev/null 2>&1 || true
-      exit 1
-    fi
     rc=0
     demo_start "$part" || rc=$?
     case "$rc" in
       0) started+=("$(demo_what "$part")") ;;
-      # No camera feed in this build, or started meanwhile by the guard.
+      # No camera feed in this build, or started meanwhile by somebody else.
       2 | 3) ;;
       # ACTIVE went while this was starting (see below): nothing more is started.
       4)
         demo_off --now >/dev/null 2>&1 || true
         echo "omacar: the demo was stopped while it was starting;" \
              "nothing of it is left running" >&2
+        exit 1 ;;
+      5)
+        demo_off --now >/dev/null 2>&1 || true
+        echo "omacar: the car started moving (or could not be read) while the demo was" \
+             "starting; nothing of it is left running" >&2
+        exit 1 ;;
+      6)
+        echo "omacar: port $DEMO_PORT is held by something that is not this demo's server" \
+             "(another demo? \`omacar demo off\` from where it was started)" >&2
+        demo_off --now >/dev/null 2>&1 || true
         exit 1 ;;
       *)
         # The feed is not a reason to stop the demo (it runs without footage,
@@ -708,23 +776,16 @@ os.replace(tmp, out)
           cams_note="the camera feed did not start; see $OMACAR_STATE/demo-cams.log"
           continue
         fi
-        echo "omacar: $(demo_what "$part") did not start; see $OMACAR_STATE/demo-$part.log" >&2
+        if [[ "$part" == guard ]]; then
+          echo "omacar: the guard did not start, and the demo does not run without it;" \
+               "see $OMACAR_STATE/demo-guard.log" >&2
+        else
+          echo "omacar: $(demo_what "$part") did not start; see $OMACAR_STATE/demo-$part.log" >&2
+        fi
         demo_off --now >/dev/null 2>&1 || true
         exit 1 ;;
     esac
   done
-  # The guard, on the REAL live.json. A demo without it would stay on the
-  # screen of a car that starts moving, so no guard is no demo.
-  if ! demo_ident guard >/dev/null; then
-    demo_spawn guard "$py" "$ROOT/lib/demoguard.py" "$REAL_STATE/live.json" "$DEMO_ROOT"
-    if ! demo_up guard; then
-      echo "omacar: the guard did not start, and the demo does not run without it;" \
-           "see $OMACAR_STATE/demo-guard.log" >&2
-      demo_off --now >/dev/null 2>&1 || true
-      exit 1
-    fi
-    started+=("the guard")
-  fi
   if [[ -z "$(demo_window_pids)" ]]; then
     demo_window "$url" && started+=("the demo window")
   fi
@@ -807,6 +868,14 @@ demo_window() {
     >/dev/null 2>&1 </dev/null
 }
 
+# Sleep until the EPOCHREALTIME (in microseconds, no point) given; not at all
+# if that has passed.
+demo_sleep_until() {
+  local d=$(( $1 - ${EPOCHREALTIME//[.,]/} ))
+  (( d > 0 )) || return 0
+  sleep "$(( d / 1000000 )).$(printf '%06d' $(( d % 1000000 )))"
+}
+
 # The demo window, closed: each pid pgrep found is checked again, by its exact
 # profile argument, before it is signalled. False when there was none.
 demo_close_window() {
@@ -862,14 +931,29 @@ demo_off() {
   # after the ask. Asked of the demo's own server only, found by what it is,
   # never of whatever holds the port; and only waited for when it answered at
   # all: a server that is gone, or says nothing within 1 s, is not waited on.
-  local code="" quiet=""
+  #
+  # AND NEVER ON A MOVING CAR. The guard is stopped by now, so this asks the
+  # real car itself (demo_parked): before the ask, and every 0.25 s of the
+  # wait. A car that is moving, or cannot be read, closes the window at once.
+  local code="" quiet="" cut="" end tick
+  if [[ -z "$now" ]] && ! demo_parked; then
+    now=1; cut="before"
+    if demo_close_window; then stopped+=("the demo window"); fi
+  fi
   if [[ -z "$now" && "$(demo_holder server)" != none ]]; then
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 1 \
              -H 'Content-Type: application/json' -d '{"cue": "quiet"}' \
              "http://127.0.0.1:$DEMO_PORT/api/demo/cue" 2>/dev/null || true)
     if [[ "$code" =~ ^[1-5][0-9][0-9]$ ]]; then
       quiet=1
-      sleep 2.5
+      tick=${EPOCHREALTIME//[.,]/}
+      end=$(( tick + 2500000 ))
+      while (( ${EPOCHREALTIME//[.,]/} < end )); do
+        demo_parked || { cut="during"; break; }
+        tick=$(( tick + 250000 ))
+        (( tick < end )) || tick=$end
+        demo_sleep_until "$tick"
+      done
     fi
   fi
   if [[ -z "$now" ]] && demo_close_window; then stopped+=("the demo window"); fi
@@ -902,6 +986,10 @@ demo_off() {
   done
   demo_unlock
   [[ -z "$quiet" ]] || echo "  asked the demo page for quiet, and gave its music 2.5 s to fade"
+  case "$cut" in
+    before) echo "  the real car is moving: the window went at once, with no fade" ;;
+    during) echo "  the real car started moving: the window went at once, before the fade was done" ;;
+  esac
   if (( ${#stopped[@]} )); then
     for name in "${stopped[@]}"; do echo "  stopped $name"; done
   else
@@ -917,17 +1005,19 @@ demo_off() {
 # again, exactly as `demo on` started it (demo_start). The guard runs it when
 # one has died (lib/demoguard.py: its watchdog, with the backoff). It starts
 # that part and nothing else, and only:
-#   while the real car is parked, asked first, as `demo on` asks it;
-#   while the demo is on (ACTIVE), asked again under the start lock;
+#   while the real car is parked, asked first, as `demo on` asks it, and
+#     again under the start lock;
+#   while the demo is on (ACTIVE), asked first and again under the lock;
 #   when the part is not running, by the demo's own identity checks
 #     (demo_holder), whichever checkout started the rest;
 #   and not beside a demo another checkout is running.
-# A server of the demo's that is running and does not answer /.mark within
-# 2 s counts as down, as the guard counts it: it is stopped, by the same
-# checks, and started again. If the demo goes while this is starting a part
-# (`demo off`, the guard), the part it started goes too.
+# A server of the demo's that has been up 10 s and does not answer /.mark
+# within 2 s counts as down, as the guard counts it: it is stopped, by the
+# same checks and under the same lock, and started again (demo_stop_silent).
+# If the demo goes while this is starting a part (`demo off`, the guard), the
+# part it started goes too.
 demo_mend() {
-  local name="${1:-}" h pid rc=0 elsewhere
+  local name="${1:-}" h rc=0 elsewhere
   case "$name" in
     server | world | cams) ;;
     *) echo "usage: omacar demo mend server|world|cams" >&2; exit 2 ;;
@@ -944,33 +1034,25 @@ demo_mend() {
     exit 1
   fi
   demo_env
-  h=$(demo_holder "$name")
-  if [[ "$h" == "ours "* ]]; then
-    pid=${h#ours }
-    if [[ "$name" != server ]] || demo_answers; then
-      echo "omacar: $(demo_what "$name") is running (pid $pid), so there is nothing to mend" >&2
-      exit 1
-    fi
-    echo "  $(demo_what server) (pid $pid) has not answered in 2 s; stopping it"
-    # CONT after TERM: a stopped process does not act on a TERM until it runs.
-    kill "$pid" 2>/dev/null || true
-    kill -CONT "$pid" 2>/dev/null || true
-    demo_wait server "$pid"
-    if [[ "$(demo_holder server)" != none ]]; then
-      echo "omacar: $(demo_what server) (pid $pid) would not stop" >&2
-      exit 1
-    fi
-  fi
-  if [[ "$name" == server ]] && port_taken "$DEMO_PORT"; then
-    echo "omacar: port $DEMO_PORT is held by something that is not this demo's server" >&2
-    exit 1
-  fi
-  demo_start "$name" || rc=$?
+  demo_start "$name" mend || rc=$?
   case "$rc" in
     0) ;;
     2) echo "omacar: this build has no camera feed to start" >&2; exit 1 ;;
-    3) echo "omacar: $(demo_what "$name") is running: something else started it" >&2; exit 1 ;;
+    3)
+      h=$(demo_holder "$name"); h=${h#* }; h=${h%% *}
+      if [[ "$name" == server ]]; then
+        echo "omacar: $(demo_what "$name") is running (pid $h), and answers or has been up" \
+             "less than ${DEMO_SILENT_AFTER} s, so there is nothing to mend" >&2
+      else
+        echo "omacar: $(demo_what "$name") is running (pid $h), so there is nothing to mend" >&2
+      fi
+      exit 1 ;;
     4) echo "omacar: the demo is not on, so $(demo_what "$name") is not being started again" >&2
+       exit 1 ;;
+    5) echo "omacar: the car is moving (or could not be read), so $(demo_what "$name")" \
+            "is not being started again" >&2
+       exit 1 ;;
+    6) echo "omacar: port $DEMO_PORT is held by something that is not this demo's server" >&2
        exit 1 ;;
     *) echo "omacar: $(demo_what "$name") did not start; see $OMACAR_STATE/demo-$name.log" >&2
        exit 1 ;;
