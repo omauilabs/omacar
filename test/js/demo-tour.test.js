@@ -39,7 +39,7 @@ async function rig(over = {}) {
   const c = clock();
   // `world` is the page's store.live.demo: { t, loop_secs }, or null when the page has none.
   const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false,
-              world: null };
+              world: null, screens: [] };
   const at = () => c.now / 1000;
   r.tour = createTour({
     steps,
@@ -54,6 +54,7 @@ async function rig(over = {}) {
     parked: () => r.parked,
     menu: () => { r.menus++; },
     demo: () => r.world,
+    screen: (id) => { r.screens.push(id); return true; },
     ...over.deps,
   });
   r.key = (key, mods = {}) => {
@@ -298,6 +299,72 @@ export default [
     const n = r.log.length;
     r.c.advance(10);
     eq([r.tour.state, r.log.length, r.c.timers.length], ["idle", n, 0], "idle and silent");
+  }],
+
+  // ---- Resume inside CarPlay or Android Auto ---------------------------------------------
+  //
+  // A projection's screens are its own: the page's address says `#carplay`
+  // whichever of them is up, so "the page is where the tour left it" was true
+  // even with the presenter three taps deep in Settings.
+  ["Resume in CarPlay puts the projection back on the step's own screen, by openScreen", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(300 + 5);                  // CarPlay, 5 s in: still on its home screen
+    r.tour.touch();
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#carplay", [""]], "its first screen (an empty id is the projection's own)");
+    r.c.advance(12 - 5 + 3);               // Maps opened at 12 s
+    r.tour.touch();
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#carplay", ["", "maps"]], "Maps, the screen the step last showed");
+    r.c.advance(24 - 15 + 2);              // Now Playing at 24 s
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.screens, ["", "maps", "nowplaying"], "Now Playing");
+    eq(r.tour.state, "running", "running again");
+    eq(r.gos().filter((h) => h === "#carplay").length, 1, "and the page itself never went anywhere");
+  }],
+
+  ["Resume in Android Auto puts it back on its first screen; one outside a projection touches none", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(335 + 12);                 // Android Auto, 12 s in
+    r.tour.touch();
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#androidauto", [""]], "Android Auto's own first screen");
+    r.key("2");                            // Navigation
+    r.c.advance(10);
+    r.tour.touch();
+    r.tour.resume();
+    r.key("8");                            // Work
+    r.tour.touch();
+    r.tour.resume();
+    eq(r.screens, [""], "no other screen is a projection's");
+  }],
+
+  ["the page having left a projection is the address's to put right, not openScreen's as well", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(300 + 15);                 // CarPlay, after Maps
+    r.tour.touch();
+    r.hash = "#home";                      // the OmaCar tile
+    r.tour.resume();
+    eq([r.hash, r.screens], ["#carplay/maps", []], "the address takes it straight to Maps");
+  }],
+
+  ["a projection that is not there, or that throws, does not stop Resume", async () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const r = await rig({ deps: { screen: () => { throw new Error("no projection"); } } });
+      await r.tour.start();
+      r.c.advance(300 + 5);
+      r.tour.touch();
+      eq(r.tour.resume(), true, "taken");
+      eq(r.tour.state, "running", "running");
+      r.c.advance(40);
+      eq(r.hash, "#androidauto", "and on to the next step");
+    } finally { console.warn = warn; }
   }],
 
   ["a key the tour does not own pauses it and is left to the page; modifiers alone do nothing", async () => {

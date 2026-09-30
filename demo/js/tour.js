@@ -13,7 +13,9 @@
 // caption goes, "Tour paused · tap Resume" shows for 3 s, and nothing moves
 // until Resume (the menu, Space, or the notice itself). Resume carries on from
 // the same second of the same step; what had already been done is not done
-// again, and if the touch went to another screen the page goes back first.
+// again, and if the touch went to another screen the page goes back first. In
+// CarPlay or Android Auto, whose screens the page's address does not show, it
+// is the projection that goes back: to the screen the step last showed.
 //
 // THE DRIVE DOES NOT STOP FOR A PRESENTER. Its loop ends in a parked car, and a
 // step that shows speed, a turn or a brake is about a moving one. So a Resume
@@ -38,6 +40,7 @@
 //   go(hash), here() -> hash           where the page is, and moving it
 //   cue(name), act(name, arg)          the world, and the modules
 //   demo() -> { t, loop_secs } | null  the world's clock, the page's store.live.demo
+//   screen(id) -> boolean              a projection's own screen ("" is its first), projection.js openScreen
 //   caption(text | null), notice(text, ms)
 //   reset() -> Promise                 the demo back to its start, before step 1
 //   parked() -> boolean, menu()        for P, and for Esc
@@ -68,6 +71,9 @@ export function loadSteps(url = new URL("../data/tour.json", import.meta.url)) {
     });
 }
 
+// The two screens that hold screens of their own: #carplay, #carplay/maps.
+const PROJECTION = /^#(?:carplay|androidauto)(?:\/([^/?#]*))?$/;
+
 const MODIFIERS = new Set(["Shift", "Control", "Alt", "Meta", "OS", "Super", "Hyper", "CapsLock", "Fn"]);
 
 export function createTour(deps = {}) {
@@ -77,6 +83,7 @@ export function createTour(deps = {}) {
     here: () => location.hash,
     cue: () => {}, act: () => {},
     demo: () => null,
+    screen: () => false,
     caption: () => {}, notice: () => {},
     reset: () => Promise.resolve(),
     parked: () => false,
@@ -144,6 +151,7 @@ export function createTour(deps = {}) {
       startedAt = d.clock.now() - offset * 1000;
       set("running");
       if (d.here() !== wentTo) nav(where);
+      else backToProjection();
       d.caption(steps[tour.index].caption || null);
       schedule();
       return true;
@@ -258,6 +266,18 @@ export function createTour(deps = {}) {
       timers.push(d.clock.later(look, RESYNC_LOOK_MS));
     };
     timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+  }
+
+  // A projection's screens are its own and the address says only `#carplay`,
+  // so a presenter who tapped around inside it left the page "where the tour
+  // put it". Put it on the screen the step last showed (`where` is that, with
+  // the screen after the slash once a step has opened one); "" is its first.
+  // When the page itself has gone elsewhere, nav(where) remounts it on that
+  // address and this is not needed.
+  function backToProjection() {
+    const m = PROJECTION.exec(where || "");
+    if (!m) return;
+    try { d.screen(m[1] || ""); } catch (e) { console.warn("demo tour: back to the projection's screen:", e); }
   }
 
   // What has to wait for the menu, waits.

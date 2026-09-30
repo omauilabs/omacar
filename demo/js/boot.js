@@ -141,6 +141,8 @@ const tour = createTour({
   // screen polls it and the snapshot's copy (at most 20 s old) on one that
   // does not, which a 180 s margin does not mind.
   demo: () => (store.sample && store.sample.demo) || null,
+  // CarPlay's and Android Auto's own screens, for Resume ("" is the first).
+  screen: (id) => openScreen(id),
   caption: captions.caption,
   notice: captions.notice,
   reset: resetDemo,
