@@ -6,7 +6,8 @@
 // moves, the page's location is a string, a cue is a line in a log and so is
 // every module action. Nothing here reaches a server, the radio or a speaker.
 import { eq, ok } from "./assert.js";
-import { createTour, createReset, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS } from "../demo/js/tour.js";
+import { createTour, createReset, loadSteps, PAUSED, PAUSED_MS, RESET_WAIT_MS,
+         RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS, CLOSING_SECS } from "../demo/js/tour.js";
 import { createBar, LONG_PRESS_MS, LOGO } from "../demo/js/bar.js";
 import { createMenu, createCues, BACKUP_TEXT, EXIT_TEXT } from "../demo/js/menu.js";
 import { createScan, MODULES, SCAN_SECS, DONE_TEXT } from "../demo/js/views/scan.js";
@@ -36,7 +37,9 @@ function clock() {
 async function rig(over = {}) {
   const steps = over.steps || await loadSteps();
   const c = clock();
-  const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false };
+  // `world` is the page's store.live.demo: { t, loop_secs }, or null when the page has none.
+  const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false,
+              world: null };
   const at = () => c.now / 1000;
   r.tour = createTour({
     steps,
@@ -50,6 +53,7 @@ async function rig(over = {}) {
     reset: () => { r.resets++; r.log.push([at(), "reset"]); return Promise.resolve(); },
     parked: () => r.parked,
     menu: () => { r.menus++; },
+    demo: () => r.world,
     ...over.deps,
   });
   r.key = (key, mods = {}) => {
@@ -161,6 +165,139 @@ export default [
     r.hash = "#home";
     r.tour.resume();
     eq(r.hash, "#carplay/maps", "moved: back to CarPlay's Maps");
+  }],
+
+  // ---- Resume, and the drive that kept going while the tour was paused ---------------------
+  //
+  // The tour and the drive share a story (Home's speed, Navigation's turn, the
+  // Cameras' brake), and the drive does not stop for a presenter: its loop ends
+  // in a parked car. Near that end, or after a long talk, Resume starts the
+  // drive over and the step from its top.
+  ["the drive's loop is 900 s, its closing stop the last 120, and Resume looks 180 s ahead of that", () => {
+    eq([CLOSING_SECS, RESYNC_NEAR_S, RESYNC_PAUSE_S, RESYNC_WAIT_MS], [120, 180, 300, 3000], "the numbers");
+  }],
+
+  ["Resume within 180 s of the closing stop sends restart, waits for the drive, and re-enters the step from its top", async () => {
+    const r = await rig();
+    r.world = { t: 100, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(95 + 8);                    // Cameras, 8 s in: the brake at 5 s has gone
+    r.tour.touch();
+    r.c.advance(20);                        // the presenter talks for 20 s
+    r.world = { t: 600, loop_secs: 900 };   // 900 - 120 - 180: exactly the threshold
+    r.hash = "#vehicle";
+    const before = r.log.length;
+    eq(r.tour.resume(), true, "Resume is taken");
+    eq(r.log.slice(before), [[123, "cue", "restart"]], "restart is cued, and nothing else yet");
+    eq(r.tour.state, "paused", "still waiting for the drive to start over");
+    r.c.advance(1);
+    eq(r.log.length, before + 1, "and still waiting a second on");
+    r.world = { t: 1.2, loop_secs: 900 };   // the world has restarted
+    r.c.advance(0.25);
+    eq(r.tour.state, "running", "then running");
+    eq(r.tour.index, 3, "the same step");
+    eq(r.log.slice(before + 1).map((l) => l.slice(1)), [["go", "#cameras"], ["cue", "drive"]], "from its top: its screen and its first cue");
+    eq(r.captions[r.captions.length - 1][1], r.steps[3].caption, "its caption back");
+    eq(r.tour.elapsed() < 1, true, "and its clock from zero");
+    r.c.advance(5);
+    eq(r.log.filter((l) => l[2] === "hard_brake").length, 2, "its brake runs again, 5 s in");
+    eq(r.resets, 1, "the demo is not reset: Home, Work and the radio stay as they are");
+    r.c.advance(30);
+    eq(r.hash, "#home", "and the tour goes on to step 5 after its whole 35 s");
+    eq(r.tour.index, 4, "step 5");
+  }],
+
+  ["Resume at 599.9 s of the loop carries on as it always did, with no restart", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.world = { t: 599.9, loop_secs: 900 };
+    const before = r.log.length;
+    r.tour.resume();
+    eq(r.tour.state, "running", "running at once");
+    eq(r.log.length, before, "no cue, no screen");
+    eq(r.tour.elapsed(), 10, "from the same second");
+  }],
+
+  ["a pause of more than 5 minutes restarts the drive however early in the loop; 5 minutes exactly does not", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.world = { t: 40, loop_secs: 900 };
+    r.tour.touch();
+    r.c.advance(RESYNC_PAUSE_S);            // 300 s: not more than
+    r.tour.resume();
+    ok(!r.log.some((l) => l[2] === "restart"), "5 minutes is not more");
+    eq(r.tour.state, "running", "running");
+    r.tour.touch();
+    r.c.advance(RESYNC_PAUSE_S + 0.5);
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "300.5 s is");
+    r.world = { t: 0.6, loop_secs: 900 };
+    r.c.advance(0.25);
+    eq([r.tour.state, r.tour.index], ["running", 1], "the same step, running");
+    eq(r.last().slice(1), ["go", "#navigation"], "started over");
+  }],
+
+  ["a drive that does not answer is waited for 3 s, never more, and the step starts over anyway", async () => {
+    const r = await rig();
+    r.world = { t: 700, loop_secs: 900 };   // and it never comes back under 30
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.tour.resume();
+    r.c.advance(RESYNC_WAIT_MS / 1000 - 0.3);
+    eq(r.tour.state, "paused", "2.7 s in: waiting");
+    r.c.advance(0.4);
+    eq([r.tour.state, r.tour.index], ["running", 1], "3 s in: on");
+    eq(r.last().slice(1), ["go", "#navigation"], "the step from its top");
+    eq(r.c.timers.length, r.steps[1].at.length + 1, "only the step's own timers are left: its actions and its end");
+  }],
+
+  ["a page with no drive clock (a screen that polls slowly, the server down) waits out the 3 s after a long pause", async () => {
+    const r = await rig();
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.c.advance(400);
+    r.tour.resume();
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "restart is cued");
+    r.c.advance(2.9);
+    eq(r.tour.state, "paused", "no number to watch, so the whole wait");
+    r.c.advance(0.2);
+    eq(r.tour.state, "running", "then on");
+  }],
+
+  ["while it waits for the drive a second Resume does nothing, and a jump key wins", async () => {
+    const r = await rig();
+    r.world = { t: 800, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    eq(r.tour.resume(), true, "the first");
+    eq(r.tour.resume(), false, "the second is refused");
+    eq(r.key(" ").used, true, "Space is the tour's");
+    eq(r.log.filter((l) => l[2] === "restart").length, 1, "one restart, not three");
+    r.key("3");                             // a jump while waiting
+    eq([r.tour.state, r.tour.index, r.hash], ["running", 2, "#roadcams"], "the jump took it");
+    r.c.advance(10);
+    eq([r.tour.index, r.hash], [2, "#roadcams"], "and the late Resume does not drag it back to step 2");
+    r.c.advance(5);
+    eq(r.tour.index, 3, "it goes on from step 3");
+  }],
+
+  ["stop() while it waits for the drive ends the wait, and nothing starts afterwards", async () => {
+    const r = await rig();
+    r.world = { t: 800, loop_secs: 900 };
+    await r.tour.start();
+    r.c.advance(50);
+    r.tour.touch();
+    r.tour.resume();
+    r.tour.stop();
+    const n = r.log.length;
+    r.c.advance(10);
+    eq([r.tour.state, r.log.length, r.c.timers.length], ["idle", n, 0], "idle and silent");
   }],
 
   ["a key the tour does not own pauses it and is left to the page; modifiers alone do nothing", async () => {

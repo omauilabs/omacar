@@ -15,6 +15,13 @@
 // the same second of the same step; what had already been done is not done
 // again, and if the touch went to another screen the page goes back first.
 //
+// THE DRIVE DOES NOT STOP FOR A PRESENTER. Its loop ends in a parked car, and a
+// step that shows speed, a turn or a brake is about a moving one. So a Resume
+// near the loop's closing stop (within RESYNC_NEAR_S of it), or after a pause
+// of more than RESYNC_PAUSE_S, starts the drive over (the `restart` cue) and the
+// step with it, from its top, its actions again. The demo is not reset: Home,
+// Work and the radio stay as they are.
+//
 // Its keys (the Type Cover's): 1-9 jump to that step (and 0 to the tenth),
 // D drowsy, B hard braking, P park or drive, Space pause and resume, Esc the
 // menu. They are the tour's, so they do not pause it; anything else does.
@@ -24,6 +31,7 @@
 //   clock  { later(fn, ms) -> id, cancel(id), now() -> ms }
 //   go(hash), here() -> hash           where the page is, and moving it
 //   cue(name), act(name, arg)          the world, and the modules
+//   demo() -> { t, loop_secs } | null  the world's clock, the page's store.live.demo
 //   caption(text | null), notice(text, ms)
 //   reset() -> Promise                 the demo back to its start, before step 1
 //   parked() -> boolean, menu()        for P, and for Esc
@@ -32,6 +40,18 @@ export const PAUSED = "Tour paused · tap Resume";
 export const PAUSED_MS = 3000;
 // A reset that hangs (a server that does not answer) must not hold the tour.
 export const RESET_WAIT_MS = 3000;
+
+// The loop's last CLOSING_SECS are the car parked at the venue (drive.json's
+// closing scene). Resume starts the drive over when the loop is within
+// RESYNC_NEAR_S of that, or the tour was paused for more than RESYNC_PAUSE_S,
+// and then waits up to RESYNC_WAIT_MS for the world's clock to fall under
+// RESYNC_BELOW_S before it begins the step again.
+export const CLOSING_SECS = 120;
+export const RESYNC_NEAR_S = 180;
+export const RESYNC_PAUSE_S = 300;
+export const RESYNC_WAIT_MS = 3000;
+export const RESYNC_BELOW_S = 30;
+const RESYNC_LOOK_MS = 200;       // the world ticks at 5 Hz
 
 export function loadSteps(url = new URL("../data/tour.json", import.meta.url)) {
   return fetch(url, { cache: "no-store" })
@@ -50,6 +70,7 @@ export function createTour(deps = {}) {
     go: (hash) => { location.hash = hash; },
     here: () => location.hash,
     cue: () => {}, act: () => {},
+    demo: () => null,
     caption: () => {}, notice: () => {},
     reset: () => Promise.resolve(),
     parked: () => false,
@@ -65,6 +86,8 @@ export function createTour(deps = {}) {
   let where = null;           // where Resume takes the page: the step's latest screen
   let wentTo = null;          // the address the tour itself last set
   let epoch = 0;              // bumped by every start and stop: a late reset starts nothing
+  let pausedAt = 0;           // clock ms at which the tour was last paused
+  let resyncing = false;      // Resume has sent restart and is waiting for the drive
 
   const tour = {
     steps,
@@ -79,6 +102,7 @@ export function createTour(deps = {}) {
     start({ at = 0, fresh = at === 0 } = {}) {
       if (!steps.length) { console.warn("demo tour: no steps (tour.json has not loaded)"); return Promise.resolve(); }
       const mine = ++epoch;
+      resyncing = false;
       cancelAll();
       if (!fresh) { enter(clampIndex(at)); return Promise.resolve(); }
       set("running", -1);
@@ -97,6 +121,7 @@ export function createTour(deps = {}) {
     pause() {
       if (tour.state !== "running" || tour.index < 0) return false;
       offset = Math.max(0, (d.clock.now() - startedAt) / 1000);
+      pausedAt = d.clock.now();
       cancelAll();
       set("paused");
       d.caption(null);
@@ -105,7 +130,8 @@ export function createTour(deps = {}) {
     },
 
     resume() {
-      if (tour.state !== "paused") return false;
+      if (tour.state !== "paused" || resyncing) return false;
+      if (driveMovedOn()) { resync(); return true; }
       startedAt = d.clock.now() - offset * 1000;
       set("running");
       if (d.here() !== wentTo) nav(where);
@@ -122,6 +148,7 @@ export function createTour(deps = {}) {
 
     stop() {
       epoch++;
+      resyncing = false;
       cancelAll();
       set("idle", -1);
       d.caption(null);
@@ -175,6 +202,43 @@ export function createTour(deps = {}) {
   function cancelAll() {
     for (const id of timers) d.clock.cancel(id);
     timers = [];
+  }
+
+  // The world's clock, or null when the page has none to read.
+  function worldClock() {
+    let w = null;
+    try { w = d.demo(); } catch (e) { console.warn("demo tour: the drive's clock:", e); }
+    return w && Number.isFinite(w.t) && Number.isFinite(w.loop_secs) ? w : null;
+  }
+
+  // Has the drive left the tour behind? Near its closing stop, or paused so
+  // long that the story is cold.
+  function driveMovedOn() {
+    if ((d.clock.now() - pausedAt) / 1000 > RESYNC_PAUSE_S) return true;
+    const w = worldClock();
+    return !!w && w.t >= w.loop_secs - CLOSING_SECS - RESYNC_NEAR_S;
+  }
+
+  // The drive over, then the step over. The tour stays "paused" until the
+  // world's clock has fallen back (so the step's own cues land on the new
+  // drive, not the old one), but for RESYNC_WAIT_MS at most. A jump, a stop or
+  // a new start in the meantime (epoch) ends the wait: it was overtaken.
+  function resync() {
+    resyncing = true;
+    const mine = epoch;
+    const began = d.clock.now();
+    try { d.cue("restart"); } catch (e) { console.warn("demo tour: the restart cue:", e); }
+    const look = () => {
+      if (mine !== epoch) return;
+      const w = worldClock();
+      if ((w && w.t < RESYNC_BELOW_S) || d.clock.now() - began >= RESYNC_WAIT_MS) {
+        resyncing = false;
+        enter(tour.index);
+        return;
+      }
+      timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+    };
+    timers.push(d.clock.later(look, RESYNC_LOOK_MS));
   }
 
   function nav(hash) {
