@@ -515,8 +515,13 @@ demo_on() {
   # codes (keeping them as history), makes the last scan an all-clear one from
   # earlier today and leaves nothing due; the trips stay. Every time, so a demo
   # seeded before this existed is tidied too; a second run changes nothing.
-  "$py" "$ROOT/lib/demoworld.py" tidy 2>/dev/null \
-    || echo "  (the demo car could not be tidied: \`python3 lib/demoworld.py tidy\` says why)"
+  # Quiet when it works; when it does not, its own words, since the car would
+  # then say "4 systems need attention" in front of the room.
+  local tidy_err
+  if ! tidy_err=$("$py" "$ROOT/lib/demoworld.py" tidy 2>&1 >/dev/null); then
+    echo "  the demo car could not be tidied, so it may show trouble codes:"
+    printf '    %s\n' "${tidy_err:-demoworld.py tidy failed and said nothing}"
+  fi
   # The rollup the bar widget reads, built inside the demo's own state.
   "$py" -c "
 import sys, os, json, tempfile
