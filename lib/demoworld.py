@@ -26,6 +26,10 @@ It replaces the simulator in the demo, and differs from it on purpose:
   * CLOSED. It never opens the adapter, a camera, a service or the sound
     system. There is no code here that could, and test/demoworld_test.py
     reads this file's source to keep it so.
+  * KEPT AWAY FROM THE REAL CAR. `run` refuses (exit 2) unless its state
+    folder is inside an `omacar-demo` folder, and whenever the real daemon is
+    running in it, because they write the same live.json.
+    OMACAR_DEMO_ALLOW_ANY lifts the first, for the tests' scratch folders.
 
 The drive is a loop of `loop_secs`. While nothing is cued the car simply is
 where the drive says it is at the loop's time: state_at(drive, t) is that,
@@ -94,20 +98,77 @@ SUPPORTED = ["RPM", "SPEED", "ENGINE_LOAD", "THROTTLE_POS", "MAF",
 
 # ---- the drive -----------------------------------------------------------------
 
+def _number(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def drive_problem(drive):
+    """The first thing wrong with a drive as the world will use it, in words, or
+    None. The world indexes into these lists a hundred times a second, so a
+    drive that is wrong is refused at the door and not deep in the loop."""
+    if not isinstance(drive, dict):
+        return "not a drive: it should be a JSON object"
+    missing = [k for k in ("points", "loop_secs", "route_total_m", "maneuvers",
+                           "destination") if k not in drive]
+    if missing:
+        return "not a drive: it has no " + ", ".join(f"`{k}`" for k in missing)
+    loop, pts = drive["loop_secs"], drive["points"]
+    if not isinstance(loop, int) or isinstance(loop, bool) or loop < 1:
+        return "`loop_secs` should be a whole number of seconds"
+    if not _number(drive["route_total_m"]) or drive["route_total_m"] <= 0:
+        return "`route_total_m` should be a length in metres"
+    if not isinstance(pts, list) or len(pts) != loop + 1:
+        return f"`points` should be one a second, {loop + 1} of them for a {loop} s loop"
+    for i, row in enumerate(pts):
+        if not (isinstance(row, list) and len(row) == 7 and all(_number(x) for x in row)):
+            return f"`points` row {i} should be [t, lat, lon, kph, heading, route_m, remaining_s]"
+        if row[0] != i:
+            return f"`points` row {i} is at t={row[0]}: they should be one a second from 0"
+        if i and row[5] < pts[i - 1][5]:
+            return f"`points` row {i} goes backwards along the route"
+    moves = drive["maneuvers"]
+    if not isinstance(moves, list):
+        return "`maneuvers` should be a list"
+    for i, m in enumerate(moves):
+        if not (isinstance(m, dict) and _number(m.get("route_m"))
+                and all(isinstance(m.get(k), str) for k in ("type", "street", "instruction"))):
+            return f"`maneuvers` item {i} needs route_m, type, street and instruction"
+        if i and m["route_m"] < moves[i - 1]["route_m"]:
+            return f"`maneuvers` item {i} is out of order"
+    dest = drive["destination"]
+    if not (isinstance(dest, dict) and isinstance(dest.get("label"), str)
+            and _number(dest.get("lat")) and _number(dest.get("lon"))):
+        return "`destination` needs a label, lat and lon"
+    for key, shape in (("streets", lambda x: isinstance(x, list) and len(x) == 2
+                        and _number(x[0]) and isinstance(x[1], str)),
+                       ("scenes", lambda x: isinstance(x, dict) and _number(x.get("t"))
+                        and _number(x.get("secs")) and isinstance(x.get("kind"), str)),
+                       ("events", lambda x: isinstance(x, dict) and _number(x.get("t"))
+                        and isinstance(x.get("kind"), str))):
+        items = drive.get(key)
+        if items is not None and not (isinstance(items, list) and all(shape(x) for x in items)):
+            return f"`{key}` is not in the shape the world reads"
+        if key == "streets" and items and any(b[0] < a[0] for a, b in zip(items, items[1:])):
+            return "`streets` are out of order"
+    return None
+
+
 def load_drive(path):
+    """The drive in `path`, or a ValueError that says what is wrong with it."""
     with open(path, encoding="utf-8") as f:
         drive = json.load(f)
-    if not isinstance(drive.get("points"), list) or len(drive["points"]) < 2 \
-            or not drive.get("loop_secs"):
-        raise ValueError("not a drive: it needs `points` and `loop_secs`")
+    problem = drive_problem(drive)
+    if problem:
+        raise ValueError(problem)
     return drive
 
 
-def resolve_drive(path=None, root=ROOT):
+def resolve_drive(path=None, root=None):
     """(path, warning). The real drive is built on this machine and private, so
     without it the demo still runs, on the short fixture, and says so."""
     if path:
         return path, None
+    root = root or ROOT
     built = os.path.join(root, "share", "assets", "private", "demo", "drive.json")
     if os.path.exists(built):
         return built, None
@@ -308,12 +369,13 @@ def state_at(drive, t, cue_state=None):
 
 # ---- the world -----------------------------------------------------------------
 
-def _crossed(t_event, before, after):
-    """Did the loop's clock pass t_event going from `before` to `after`, the
-    clock wrapping at the loop's end if `after` is the smaller?"""
-    if after >= before:
-        return before < t_event <= after
-    return t_event > before or t_event <= after
+def _crossed(t_event, before, after, wrapped):
+    """Did the loop's clock pass t_event going from `before` to `after`? The
+    clock only goes backwards by wrapping at the loop's end, and `wrapped` says
+    whether it did: a smaller `after` on its own is not a wrap."""
+    if wrapped:
+        return t_event > before or t_event <= after
+    return before < t_event <= after
 
 
 class DemoWorld:
@@ -323,8 +385,8 @@ class DemoWorld:
     Two ways the car can be. Following, it is where the drive has it at
     `tau`, the loop's time, which runs at the clock's pace. Driving itself
     (own), after a cue, it keeps its own place `s` on the route and its own
-    speed `v`, and `tau` is where on the loop that place is; it goes back to
-    following when its speed is the drive's again.
+    speed `v`, and `tau` is where on the loop that place is, never less than it
+    was; it goes back to following when its speed is the drive's again.
     """
 
     def __init__(self, drive, clock=time.monotonic, wall=time.time, cue_path=None):
@@ -403,12 +465,20 @@ class DemoWorld:
         self.recovering = 0.0
 
     def _restart(self):
-        """Back to the start of the loop, and the pack with it."""
+        """Back to the start of the loop, and everything that counts with it."""
         self.tau = 0.0
         self.own = False
         self.holding = False
         self.brake_left = 0.0
+        self._start_over()
+
+    def _start_over(self):
+        """What a loop begins with. Left to run, the pack gains a few per cent
+        a loop and an evening of loops would pin it at the top, where it could
+        never be seen charging; the fuel and the odometer would wander off as
+        far, and the demo would not be the same on the tenth loop as the first."""
         self.soc = SOC_START
+        self.odo_m = 0.0
 
     # -- time
 
@@ -422,22 +492,20 @@ class DemoWorld:
         return self.payload()
 
     def _tick(self, h):
-        before = self.tau
+        before, wrapped = self.tau, False
         if self.own:
             self._drive_self(h)
             v, a = self.v, self.a
         else:
             self.tau += h
             if self.tau >= self.loop:
-                # The loop starts over, and so does the pack. Left to itself it
-                # gains a few per cent a loop, and an evening of loops would pin
-                # it at the top, where it could never be seen charging.
                 self.tau %= self.loop
-                self.soc = SOC_START
+                wrapped = True
+                self._start_over()
             v = sample(self.drive, self.tau)["kph"] / 3.6
             a = base_accel(self.drive, self.tau)
         for e in self.drive.get("events") or []:
-            if _crossed(e["t"], before, self.tau):
+            if _crossed(e["t"], before, self.tau, wrapped):
                 self.cue(e["kind"])
 
         if v < 0.05 / 3.6:
@@ -460,19 +528,30 @@ class DemoWorld:
         elif self.holding:
             accel = -PARK_BRAKE if self.v > 0 else 0.0
         else:
-            target = kph_at_s(drive, self.s) / 3.6
-            accel = max(-RECOVER_BRAKE, min(RECOVER_ACCEL, (target - self.v) / h))
+            accel = max(-RECOVER_BRAKE, min(RECOVER_ACCEL, (self._target() - self.v) / h))
             self.recovering += h
         v_new = max(0.0, self.v + accel * h)
         self.a = (v_new - self.v) / h
         self.s = min(self.route_end, self.s + (self.v + v_new) / 2 * h)
         self.v = v_new
-        self.tau = t_of_s(drive, self.s)
+        # The loop clock is where on the loop the car has got to, and it never
+        # goes back. Where the drive stands still, t_of_s is when the stop began,
+        # and a car cued part way through it has already had that much of it.
+        self.tau = max(self.tau, t_of_s(drive, self.s))
 
         if not self.holding and self.brake_left == 0:
-            target = kph_at_s(drive, self.s) / 3.6
-            if self.v >= target - REJOIN_MPS or self.recovering > RECOVER_LIMIT:
+            if self.v >= self._target() - REJOIN_MPS or self.recovering > RECOVER_LIMIT:
                 self.own = False
+
+    def _target(self):
+        """How fast the drive is going where the car is, m/s. If the drive has
+        this place at the loop's time now, that is its speed now: where it
+        stands still, the first time it was here was the moment it was still
+        rolling in, and the car would be sent off with that."""
+        here = sample(self.drive, self.tau)
+        if abs(here["route_m"] - self.s) < 0.05:
+            return here["kph"] / 3.6
+        return kph_at_s(self.drive, self.s) / 3.6
 
     # -- what it says
 
@@ -497,9 +576,47 @@ def state_dir():
     return os.environ.get("OMACAR_STATE") or sim.STATE
 
 
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True                     # it is there, and it is not ours
+    except OSError:
+        return False
+    return True
+
+
+def refusal(state):
+    """Why the world may not run against this state folder, or None.
+
+    The demo's car writes live.json and the vehicle pointer, and the real
+    daemon writes the same files, so two things stop it from ever doing that
+    to the real car: it only runs in a folder of the demo's, and never beside
+    a daemon that is running. OMACAR_DEMO_ALLOW_ANY lifts the first, for the
+    tests' scratch folders."""
+    if not os.environ.get("OMACAR_DEMO_ALLOW_ANY") \
+            and "omacar-demo" not in os.path.abspath(state).split(os.sep):
+        return (f"{state} is not inside an omacar-demo folder, so it may be the "
+                "real car's; `omacar demo on` sets the state folder up")
+    pid_file = os.path.join(state, "daemon.pid")
+    try:
+        with open(pid_file, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+    if pid > 0 and _alive(pid):
+        return (f"the daemon is running (pid {pid}, from {pid_file}) and would be "
+                "writing the same live.json")
+    return None
+
+
 def run(drive):
-    """Publish live.json at 5 Hz until told to stop."""
+    """Publish live.json at 5 Hz until told to stop. 2 if it may not."""
     state = state_dir()
+    why = refusal(state)
+    if why:
+        print(f"demoworld: not running: {why}", file=sys.stderr)
+        return 2
     os.makedirs(state, exist_ok=True)
     # sim.publish writes to sim's own paths. In the demo they are the same
     # folder as OMACAR_STATE; if somebody made them differ, this goes where it

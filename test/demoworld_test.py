@@ -50,6 +50,9 @@ os.environ["HOME"] = TMP
 os.environ["XDG_STATE_HOME"] = os.path.join(TMP, "state")
 os.environ["XDG_CONFIG_HOME"] = os.path.join(TMP, "config")
 os.environ["OMACAR_STATE"] = STATE
+# The world only runs in a folder of the demo's. These are scratch folders, so
+# this lifts that, and the tests of the refusal take it away again.
+os.environ["OMACAR_DEMO_ALLOW_ANY"] = "1"
 os.makedirs(STATE, exist_ok=True)
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 
@@ -679,26 +682,42 @@ ok(f"and stays within 40 to 78 over two whole loops at 0.2 s "
 ok("it falls under assist and rises under regen and cruising",
    min(packs) < 58.0 and max(packs) > 58.0)
 
-# Each loop starts over with the pack where it began, so it never walks off.
+# Each loop starts over with the pack, the fuel and the odometer where they
+# began, so none of them walks off.
+def dials(p):
+    return (p["values"]["HYBRID_BATTERY_REMAINING"], p["values"]["FUEL_LEVEL"],
+            p["odometer_km"])
+
+
 w, c = make()
-pack = w.step()["values"]["HYBRID_BATTERY_REMAINING"]
-starts, swing, top, last_t = [pack], [], 0.0, 0.0
+p = w.step()
+starts, swing, burnt, top, last_t = [dials(p)], [], [], 0.0, 0.0
 while len(starts) < 10 and c.t < 5000.0 + 20 * LOOP:
     c.t += 0.2
     p = w.step()
-    pack = p["values"]["HYBRID_BATTERY_REMAINING"]
     if loop_t(p) < last_t:                       # the loop wrapped
-        starts.append(pack)
+        burnt.append(starts[0][1] - low)
+        starts.append(dials(p))
         swing.append(top)
         top = 0.0
-    top = max(top, abs(pack - starts[0]))
+        low = 100.0
+    if len(starts) == 1 and not burnt and last_t == 0.0:
+        low = 100.0
+    low = min(low, p["values"]["FUEL_LEVEL"])
+    top = max(top, abs(dials(p)[0] - starts[0][0]))
     last_t = loop_t(p)
 ok(f"ten loops: the pack at the start of the tenth is where it was at the first "
-   f"({starts[9]} vs {starts[0]})", len(starts) == 10 and starts[9] == starts[0] == 58.0)
+   f"({starts[9][0]} vs {starts[0][0]})",
+   len(starts) == 10 and starts[9][0] == starts[0][0] == 58.0)
 ok("and at the start of each one in between",
-   all(x == 58.0 for x in starts))
+   all(x[0] == 58.0 for x in starts))
 ok(f"having moved within each loop, so this is not the pack standing still "
    f"(by up to {min(swing):.2f} to {max(swing):.2f} %)", min(swing) > 0.3)
+ok(f"the fuel and the odometer too: {starts[0][1]} % and {starts[0][2]} km at the "
+   f"start of every loop", all(x[1:] == starts[0][1:] for x in starts)
+   and starts[0][1:] == (62.0, 137842.0))
+ok(f"having been spent within each loop ({min(burnt):.2f} % at the least)",
+   len(burnt) == 9 and min(burnt) > 0.2)
 
 w, c = make(QUIET)
 w.step()
@@ -873,9 +892,61 @@ for _ in range(int(2 * LOOP / 0.2)):
     was = now_flag
 ok("and again on the next loop, once each time", fired == 2)
 
+# The loop clock only goes back by wrapping.
+ok("a clock that went back is a wrap only if the loop wrapped",
+   demoworld._crossed(295, 290.0, 10.0, True) and demoworld._crossed(5, 290.0, 10.0, True)
+   and not demoworld._crossed(100, 290.0, 10.0, True)
+   and not demoworld._crossed(100, 195.0, 180.0, False)
+   and not demoworld._crossed(100, 58.0, 45.0, False)
+   and demoworld._crossed(100, 99.0, 101.0, False)
+   and not demoworld._crossed(100, 101.0, 102.0, False))
+
+# A cue at rest. Where the drive stands still, the loop time it was at is the
+# moment the stop began, and a car cued part way through the stop must not be
+# put back to it: the loop clock would go back, and read as the loop starting
+# over, and fire the scripted hard brake.
+light = stop_i + 12                       # in the middle of the 25 s light
+AT_REST = {"at 1.5 s, before it has pulled away": 1.5,
+           "in the middle of the light": float(light),
+           "in the closing hold": 200.0}
+for where, when in AT_REST.items():
+    for cue_name in ("park", "hard_brake"):
+        w, c, p = at_loop_time(MINI, when)
+        t_cued, wall_cued = loop_t(p), c.wall()
+        w.cue(cue_name)
+        trail = go(w, c, 30.0, dt=0.2, keep=True)
+        clocks = [t_cued] + [loop_t(x) for x in trail]
+        flags = [x["demo"]["event"] for x in trail]
+        rising = sum(1 for a, b in zip([None] + flags, flags) if b and not a)
+        ok(f"{cue_name} {where}: the loop clock never goes back "
+           f"({t_cued:.1f} to {clocks[-1]:.1f})",
+           all(b >= a for a, b in zip(clocks, clocks[1:])))
+        if cue_name == "park":
+            ok(f"park {where}: no event fires", all(e is None for e in flags))
+        else:
+            ok(f"hard_brake {where}: one event, the one cued, for 10 s and no more",
+               rising == 1 and flags[0]["at"] == wall_cued
+               and all(e for e in flags[:49]) and all(e is None for e in flags[52:]))
+
+# ... and a car parked at a light, driving on, has the rest of the light to wait.
+light_go = next(i for i in range(stop_i, len(pts)) if pts[i][3] > 0) - 1   # last second at rest
+for where, when, hold_secs in (("at a light", light, 10.0), ("at the start", 1.5, 6.0)):
+    w, c, p = at_loop_time(MINI, when)
+    left = (light_go if when == light else 3) - loop_t(p)
+    w.cue("park")
+    go(w, c, hold_secs)
+    w.cue("drive")
+    waited = 0.0
+    while speed(go(w, c, 0.2)) == 0 and waited < 40.0:
+        waited += 0.2
+    ok(f"parked {where} with {left:.1f} s of it left, and driven on after {hold_secs:.0f} s: "
+       f"it goes after {waited:.1f} s, not after a fresh wait",
+       left - 1.0 <= waited <= left + 1.0)
+
 # Restart.
 w, c, p = at_loop_time(QUIET, CRUISE)
 pack_before = p["values"]["HYBRID_BATTERY_REMAINING"]
+dials_before = dials(p)
 w.cue("restart")
 c.t += 0.2
 p = w.step()
@@ -883,6 +954,9 @@ ok("restart: the loop clock is back at the start, and so is the car",
    loop_t(p) < 0.5 and p["demo"]["route_m"] < 5.0)
 ok(f"and the pack is back to 58 ({pack_before} before)",
    pack_before != 58.0 and p["values"]["HYBRID_BATTERY_REMAINING"] == 58.0)
+ok("and the fuel and the odometer are back to where they began",
+   p["values"]["FUEL_LEVEL"] == 62.0 and p["odometer_km"] == 137842.0
+   and dials_before[1:] != (62.0, 137842.0))
 w.cue("park")
 go(w, c, 1.0)
 w.cue("restart")
@@ -964,6 +1038,95 @@ path, warn = demoworld.resolve_drive("/some/where.json", root=fake_root)
 ok("a drive named on the command line is used as it is",
    path == "/some/where.json" and warn is None)
 
+# A drive is checked at the door.
+def drive_file(doc, name="d.json"):
+    path = os.path.join(TMP, name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(doc if isinstance(doc, str) else json.dumps(doc))
+    return path
+
+
+def refused(doc):
+    """What load_drive says about a drive, or None if it loads."""
+    try:
+        demoworld.load_drive(drive_file(doc))
+    except ValueError as e:
+        return str(e)
+    return None
+
+
+def without(key, **changes):
+    d = json.loads(json.dumps(MINI))
+    d.pop(key, None)
+    d.update(changes)
+    return d
+
+
+ok("the drives it will play load: the fixture, and the real one where there is one",
+   refused(MINI) is None
+   and all(refused(json.load(open(x))) is None for x in
+           [os.path.join(ROOT, "share", "assets", "private", "demo", "drive.json")]
+           if os.path.exists(x)))
+for key in ("points", "loop_secs", "route_total_m", "maneuvers", "destination"):
+    ok(f"a drive with no `{key}` is refused, by name, at load",
+       f"`{key}`" in (refused(without(key)) or ""))
+ok("and one that is not JSON, or not an object",
+   "" != (refused("{ nope") or "") and "object" in (refused("[1, 2]") or ""))
+short = json.loads(json.dumps(MINI))
+short["points"] = short["points"][:-1]
+gappy = json.loads(json.dumps(MINI))
+del gappy["points"][40]
+late = json.loads(json.dumps(MINI))
+late["points"][5][0] = 5.5
+back = json.loads(json.dumps(MINI))
+back["points"][50][5] = back["points"][49][5] - 1
+narrow = json.loads(json.dumps(MINI))
+narrow["points"][7] = narrow["points"][7][:6]
+ok("points that are not one a second are refused: too few, a gap, off the beat",
+   all(x and "points" in x for x in (refused(short), refused(gappy), refused(late))))
+ok("and rows that are the wrong shape, or that go backwards",
+   "row 7" in (refused(narrow) or "") and "backwards" in (refused(back) or ""))
+ok("a loop length that is not a whole number of seconds is refused",
+   "loop_secs" in (refused(without("loop_secs", loop_secs=300.5)) or "")
+   and "loop_secs" in (refused(without("loop_secs", loop_secs=0)) or ""))
+ok("manoeuvres it would fall over on are refused: no words, out of order",
+   "maneuvers" in (refused(without("maneuvers", maneuvers=[{"route_m": 5}])) or "")
+   and "out of order" in (refused(without(
+       "maneuvers", maneuvers=list(reversed(MINI["maneuvers"])))) or ""))
+ok("and a destination with no place, scenes with no length",
+   "destination" in (refused(without("destination", destination={"label": "x"})) or "")
+   and "scenes" in (refused(without("scenes", scenes=[{"t": 3}])) or ""))
+ok("a drive without streets, scenes or events is fine: the world does without",
+   refused(without("streets")) is None and refused(without("scenes")) is None
+   and refused(without("events")) is None)
+
+# Through main(): no drive named, nothing built here.
+import contextlib  # noqa: E402
+import io  # noqa: E402
+
+played = []
+kept_root, kept_run = demoworld.ROOT, demoworld.run
+demoworld.ROOT = os.path.join(TMP, "root-no-private")
+os.makedirs(os.path.join(demoworld.ROOT, "test", "fixtures", "demo"))
+shutil.copy(os.path.join(FIXTURES, "drive-mini.json"),
+            os.path.join(demoworld.ROOT, "test", "fixtures", "demo", "drive-mini.json"))
+demoworld.run = lambda d: played.append(d) or 0
+try:
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        code = demoworld.main(["run"])
+    with contextlib.redirect_stderr(io.StringIO()) as bad_err:
+        bad_code = demoworld.main(["run", "--drive", drive_file(without("points"))])
+finally:
+    demoworld.ROOT, demoworld.run = kept_root, kept_run
+ok("main() with no drive named and none built plays the fixture",
+   code == 0 and len(played) == 1 and played[0]["loop_secs"] == 300)
+ok("and says so on stderr, once, naming what it is playing instead",
+   err.getvalue().count("no drive at") == 1 and "drive-mini.json" in err.getvalue()
+   and "tools/demo_route.py" in err.getvalue())
+ok("a drive that will not load is exit 2 with the reason, and nothing is played",
+   bad_code == 2 and "`points`" in bad_err.getvalue() and len(played) == 1)
+
 # ---- the process --------------------------------------------------------------
 head("demoworld.py run: the process")
 
@@ -1031,6 +1194,72 @@ nope = subprocess.run(
 ok("a drive that is not there is an error, said plainly",
    nope.returncode == 2 and "nope.json" in nope.stderr
    and "Traceback" not in nope.stderr)
+
+# It will not run beside the real daemon, or outside a folder of the demo's.
+def try_run(state, extra_env=None, drop=(), secs=1.5):
+    """demoworld.py run against a state folder; (exit code or None, stderr, live.json or None)."""
+    e = dict(os.environ)
+    e["OMACAR_STATE"] = state
+    e["XDG_STATE_HOME"] = os.path.dirname(state)
+    e.update(extra_env or {})
+    for k in drop:
+        e.pop(k, None)
+    os.makedirs(state, exist_ok=True)
+    pr = subprocess.Popen(
+        [sys.executable, os.path.join(ROOT, "lib", "demoworld.py"), "run",
+         "--drive", os.path.join(FIXTURES, "drive-mini.json")],
+        env=e, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + secs
+    while pr.poll() is None and time.time() < deadline:
+        time.sleep(0.1)
+    code = pr.poll()
+    if code is None:
+        pr.send_signal(signal.SIGTERM)
+    _, err = pr.communicate(timeout=10)
+    return code, err, os.path.join(state, "sim.pid")
+
+
+sleeper = subprocess.Popen(["sleep", "60"])
+gone = subprocess.Popen(["true"])
+gone.wait()
+try:
+    state = os.path.join(TMP, "with-a-daemon", "omacar-demo", "state", "omacar")
+    os.makedirs(state)
+    with open(os.path.join(state, "daemon.pid"), "w") as f:
+        f.write(str(sleeper.pid))
+    code, err, pidf = try_run(state)
+    ok("a live daemon.pid in the state folder: exit 2, and it says why",
+       code == 2 and "daemon" in err and str(sleeper.pid) in err
+       and "Traceback" not in err)
+    ok("and it wrote nothing: no sim.pid, no live.json",
+       not os.path.exists(pidf) and not os.path.exists(os.path.join(state, "live.json")))
+    with open(os.path.join(state, "daemon.pid"), "w") as f:
+        f.write(str(gone.pid))
+    code, err, pidf = try_run(state)
+    ok("a daemon.pid left behind by a daemon that has gone does not stop it",
+       code is None and os.path.exists(os.path.join(state, "live.json")))
+    with open(os.path.join(state, "daemon.pid"), "w") as f:
+        f.write("not a pid")
+    code, err, pidf = try_run(state)
+    ok("nor does one that is not a pid", code is None)
+finally:
+    sleeper.kill()
+    sleeper.wait()
+
+plain = os.path.join(TMP, "the-real-car", "state", "omacar")
+code, err, pidf = try_run(plain, drop=("OMACAR_DEMO_ALLOW_ANY",))
+ok("a state folder that is not inside an omacar-demo folder: exit 2, and it says why",
+   code == 2 and "omacar-demo" in err and "Traceback" not in err)
+ok("and it wrote nothing: no sim.pid, no live.json",
+   not os.path.exists(pidf) and not os.path.exists(os.path.join(plain, "live.json")))
+code, err, pidf = try_run(os.path.join(TMP, "the-demo", "omacar-demo", "state", "omacar"),
+                          drop=("OMACAR_DEMO_ALLOW_ANY",))
+ok("inside one it runs, with nothing lifted", code is None)
+code, err, pidf = try_run(os.path.join(TMP, "not-omacar-demo-either", "state", "omacar"),
+                          drop=("OMACAR_DEMO_ALLOW_ANY",))
+ok("a folder only named something like it is not enough", code == 2)
+code, err, pidf = try_run(plain)
+ok("OMACAR_DEMO_ALLOW_ANY lifts the folder rule, for scratch folders", code is None)
 
 # ---- the silo -----------------------------------------------------------------
 head("the silo: the module has no way to reach the car")
