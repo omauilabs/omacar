@@ -406,6 +406,10 @@ try:
            if w not in out], [])
     check("ACTIVE is there for the bar widget",
           os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE")), True)
+    rc, out = omacar("demo", "status",
+                     env=dict(ENV, XDG_STATE_HOME=os.path.join(HOME, ".local", "state") + "//"))
+    check("an XDG_STATE_HOME spelled with a trailing // names the same demo",
+          ("demo world     running" in out, "demo server    http" in out), (True, True))
     check("the road cameras' saved list and pins were copied in, for no signal",
           (os.path.exists(os.path.join(DEMO_ROOT, "state", "omacar", "roadcams", "list.json")),
            os.path.exists(os.path.join(DEMO_ROOT, "config", "omarchy", "omacar-roadcams.json"))),
@@ -450,6 +454,8 @@ try:
     check("and says the stills could not be copied",
           "the saved stills could not be copied" in out, True)
     state_dir = os.path.join(DEMO_ROOT, "state", "omacar")
+    check("the pins are copied all the same",
+          os.path.exists(os.path.join(DEMO_ROOT, "config", "omarchy", "omacar-roadcams.json")), True)
     check("with no half copy left behind, under either name",
           (os.path.exists(os.path.join(state_dir, "roadcams")),
            [n for n in os.listdir(state_dir) if n.startswith(".roadcams.copy")]), (False, []))
@@ -460,6 +466,57 @@ try:
            "could not be copied" in out), (0, True, False))
     rc, _ = omacar("demo", "off", timeout=120)
     check("and goes cleanly", (rc, ours_running(), listening(PORT)), (0, [], False))
+    open(SHIM_LOG, "w").close()
+
+    def still_up():
+        """What is left of the demo: its processes, its window, its ffmpegs
+        (ours_running), and ACTIVE."""
+        up = [p[1][:60] for p in ours_running()]
+        if os.path.exists(os.path.join(DEMO_ROOT, "ACTIVE")):
+            up.append("ACTIVE")
+        return up
+
+    def gone_within(secs):
+        t0 = time.time()
+        while time.time() - t0 < secs and still_up():
+            time.sleep(0.2)
+        return still_up(), round(time.time() - t0, 1)
+
+    head("the real car moves: the guard takes the whole demo down")
+    write_live(0)
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    try:
+        with open(os.path.join(DEMO_ROOT, "pids", "guard.pid"), encoding="utf-8") as f:
+            guard_pid = int(f.read().strip())
+    except (OSError, ValueError):
+        guard_pid = None
+    check("the guard is running, from guard.pid",
+          bool(guard_pid) and cmdline(guard_pid) is not None
+          and os.path.join(ROOT, "lib", "demoguard.py") in cmdline(guard_pid), True)
+    check("with the window, world, server and camera feed up",
+          all(any(w in p[1] for p in ours_running())
+              for w in ("demoworld.py", "serve.py", "cams.py", "--user-data-dir=")), True)
+    write_live(42)                      # the real car, fresh, at 42 km/h
+    left, took = gone_within(10)
+    check(f"within 10 s the window, world, server, camera feed, guard and ACTIVE are all gone "
+          f"(took {took} s)", left, [])
+    check("and nothing holds the demo's port", listening(PORT), False)
+    write_live(0)
+
+    head("the marker removed by something else: the guard takes the rest down")
+    # The old bar widget's "Demo Off" removes ACTIVE and knows nothing of the
+    # window, the feed or the guard. The guard sees the marker go, and runs
+    # `demo off` once before it leaves.
+    rc, out = omacar("demo", "on", timeout=180)
+    check("demo on", rc, 0)
+    os.remove(os.path.join(DEMO_ROOT, "ACTIVE"))
+    left, took = gone_within(10)
+    check(f"within 10 s the window, world, server, camera feed and guard are all gone "
+          f"(took {took} s)", left, [])
+    check("and nothing holds the demo's port", listening(PORT), False)
+    check("no systemctl, wpctl or pactl", [c for c in shim_calls()
+                                           if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
     open(SHIM_LOG, "w").close()
 
     head("the guard closes the demo when the real car moves, and goes with it")
@@ -484,7 +541,7 @@ try:
         g.wait(timeout=10)
     except subprocess.TimeoutExpired:
         g.kill()
-    check("the demo gone (no ACTIVE): it goes too, having stopped nothing",
+    check("the demo gone (no ACTIVE): it runs demo off once and goes, stopping nothing",
           (g.returncode, shim_calls()), (0, []))
     with open(ACTIVE, "w", encoding="utf-8"):
         pass
@@ -560,10 +617,18 @@ try:
                               clock=lambda: clock[0], sleep=a_tick)
     check("it never gives up and leaves while the demo stands: it goes when ACTIVE does",
           (got, ticks[0]), ("gone", 40))
-    check("five tries two seconds apart, then one every 30 s",
-          [round(t - 1000) for t in calls], [0, 2, 4, 6, 8, 38, 68])
+    check("five tries two seconds apart, then one every 30 s, and one more as it goes",
+          [round(t - 1000) for t in calls], [0, 2, 4, 6, 8, 38, 68, 80])
     check("and it says it is still watching",
           "still up after 5 tries" in err.getvalue(), True)
+
+    calls.clear()
+    open(gactive, "w").close()
+    os.remove(gactive)
+    got = demoguard.watch(glive, groot, every=2, off=lambda r: calls.append(r) or 0,
+                          clock=lambda: clock[0], sleep=lambda s: None)
+    check("ACTIVE gone some other way: it runs demo off once, then goes",
+          (got, calls), ("gone", [groot]))
 
     head("demo off stops only what is the demo's")
     # Look-alikes in the demo's pid files, each started with the demo's own
@@ -654,6 +719,11 @@ try:
     for n in ("demoworld.py", "serve.py"):
         with open(os.path.join(other, "lib", n), "w", encoding="utf-8") as f:
             f.write("import time\ntime.sleep(600)\n")
+    # Its world shrugs off SIGTERM, so only the SIGKILL after five seconds ends
+    # it: the "stopped" must be true of another checkout's process too.
+    with open(os.path.join(other, "lib", "demoworld.py"), "w", encoding="utf-8") as f:
+        f.write("import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "time.sleep(600)\n")
     OTHER = {
         "world": spawn_decoy(PY, os.path.join(other, "lib", "demoworld.py"), "run",
                              env=DEMO_STATE_ENV),
@@ -681,7 +751,8 @@ try:
     rc, out = omacar("demo", "on")
     check("demo on will not start a second demo beside it, and says where it runs",
           (rc != 0, "another checkout" in out, f"from {other}" in out), (True, True, True))
-    check("and how to stop it: demo off, from here or there", "omacar demo off" in out, True)
+    check("and how to stop it: this checkout's own demo off, by its full path",
+          f"stop it first:  {ROOT}/bin/omacar demo off" in out, True)
     check("it started nothing: no second window, no systemctl, wpctl or pactl",
           [c for c in shim_calls() if not c.startswith("chromium --user-data-dir=")], [])
     check("no demo process of this checkout's is running",
@@ -698,8 +769,8 @@ try:
         window.wait(timeout=10)
     except subprocess.TimeoutExpired:
         pass
-    check("demo off stops it", (rc, [p.poll() is not None for p in OTHER.values()]),
-          (0, [True, True]))
+    check("demo off stops it, its world (which ignores SIGTERM) with a SIGKILL",
+          (rc, [p.poll() for p in OTHER.values()]), (0, [-9, -15]))
     check("and names the checkout it was started from",
           (f"stopped the demo world, run from {other}" in out,
            f"stopped the demo server, run from {other}" in out,
@@ -710,6 +781,10 @@ try:
     check("its dead pid files are cleared", sorted(os.listdir(os.path.join(DEMO_ROOT, "pids"))), [])
     check("no systemctl, wpctl or pactl throughout",
           [c for c in shim_calls() if c.split()[0] in ("systemctl", "wpctl", "pactl")], [])
+    for d in DECOYS:                   # whatever demo off failed to stop
+        if d.poll() is None:
+            d.kill()
+            d.wait()
     DECOYS.clear()
 
     head("demo cache writes the demo's own panel rollup, never the real one")

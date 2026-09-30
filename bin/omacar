@@ -247,6 +247,10 @@ serve_note() {
 # the demo looks like this desktop; the real live.json, to know whether the car
 # is moving; and, once, the saved road-camera stills and pins.
 DEMO_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/omacar-demo"
+# ONE SPELLING OF IT. Every demo process is recognised by the exact state
+# folder in its environment (demo_env_is), so an XDG_STATE_HOME with a trailing
+# `/` or a `//` in it must name the same demo, not a demo nobody is running.
+DEMO_ROOT="$(realpath -m -- "$DEMO_ROOT")"
 # OMACAR_DEMO_PORT is for the tests, which must never meet a real demo on 7580
 # or another run of themselves. Everything else uses 7580.
 DEMO_PORT="${OMACAR_DEMO_PORT:-7580}"
@@ -395,13 +399,12 @@ demo_elsewhere() {
 
 # Say which checkout holds the demo, and the command that stops it there.
 demo_say_elsewhere() {
-  local root what first=""
+  local root what
   while IFS=$'\t' read -r root what; do
     [[ -n "$root" ]] || continue
     echo "  $what, from $root" >&2
-    first=${first:-$root}
   done <<<"$1"
-  echo "  stop it first:  omacar demo off   (from this checkout or that one)" >&2
+  echo "  stop it first:  $ROOT/bin/omacar demo off" >&2
 }
 
 demo_what() {
@@ -431,7 +434,8 @@ demo_still() {
     done
     return 1
   fi
-  [[ "$(demo_holder "$name")" == "ours $pid" ]]
+  local h; h=$(demo_holder "$name")
+  [[ "$h" == "ours $pid" || "$h" == "other $pid "* ]]
 }
 
 # Wait for NAME's pids to go after a SIGTERM. Five seconds is far longer than
@@ -710,9 +714,29 @@ demo_window() {
 demo_off() {
   demo_env
   local stopped=() h pid pids p name rest root from=()
-  # The window first, so the page is not left asking a server that has gone.
-  # Each pid pgrep found is checked again, by its exact profile argument,
-  # before it is signalled.
+  # ACTIVE FIRST. A `demo on` still starting checks it again once its window
+  # is open, and takes the window down if it has gone; removed last, a window
+  # opened while this was running would be left up. The bar widget is back on
+  # your car within a second of this.
+  rm -f "$DEMO_ROOT/ACTIVE"
+  # Then the guard, which runs `demo off` itself when ACTIVE goes; stopped
+  # here straight away, it rarely gets the chance to run a second one.
+  # Then the window, so the page is not left asking a server that has gone:
+  # each pid pgrep found is checked again, by its exact profile argument,
+  # before it is signalled. Then the rest.
+  h=$(demo_holder guard)
+  case "$h" in
+    "ours "*) pid=${h#ours }; root="" ;;
+    "other "*) rest=${h#other }; pid=${rest%% *}; root=${rest#* } ;;
+    *) pid="" ;;
+  esac
+  if [[ -n "$pid" ]]; then
+    kill "$pid" 2>/dev/null || true
+    demo_wait guard "$pid"
+    stopped+=("the guard${root:+, run from $root}")
+    [[ -z "$root" ]] || from+=("$root")
+  fi
+  if [[ "$(demo_holder guard)" == none ]]; then rm -f "$DEMO_PIDS/guard.pid"; fi
   pids=()
   for p in $(demo_window_pids); do
     demo_still window "$p" && pids+=("$p")
@@ -725,7 +749,7 @@ demo_off() {
   # THIS DEMO'S PROCESSES, WHICHEVER CHECKOUT STARTED THEM (demo_holder): the
   # guard runs this from its own checkout and must never be vetoed by a demo
   # started from another, and on the tablet the one on PATH is the live one.
-  for name in guard server cams world oldsim; do
+  for name in server cams world oldsim; do
     h=$(demo_holder "$name")
     case "$h" in
       "ours "*) pid=${h#ours }; root="" ;;
@@ -745,9 +769,6 @@ demo_off() {
       rm -f "$DEMO_PIDS/$name.pid"
     fi
   done
-  # The bar widget is back on your car within a second of this, and the guard
-  # goes with it.
-  rm -f "$DEMO_ROOT/ACTIVE"
   if (( ${#stopped[@]} )); then
     for name in "${stopped[@]}"; do echo "  stopped $name"; done
   else

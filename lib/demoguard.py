@@ -9,8 +9,8 @@ environment moves OMACAR_STATE) and the demo's folder. Every 2 s it reads that
 file, read-only. While the demo is on (DEMO_ROOT/ACTIVE exists) and the real
 car is moving, it runs `omacar demo off`, and exits once that has worked; one
 that fails is tried again (TRIES, LATER), and the guard never leaves while
-the demo is still up. It also exits the moment ACTIVE is gone, however the
-demo ended.
+the demo is still up. When ACTIVE goes, however that happened, it runs
+`omacar demo off` once more and exits.
 
 MOVING MEANS A FRESH SAMPLE ABOVE 3 KM/H. Fresh is `t` within 5 s of now: the
 daemon rewrites live.json several times a second while it is talking to the
@@ -94,6 +94,17 @@ def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
     failed, next_try = 0, 0.0
     while True:
         if not os.path.exists(active):
+            # THE MARKER WENT, BUT DID THE DEMO? `demo off` removes it first and
+            # stops this guard straight after, so then this changes nothing.
+            # But something else may have removed it on its own -- the old bar
+            # widget's "Demo Off" does exactly that, and leaves the window up
+            # -- so once, before leaving, the demo is taken down properly.
+            try:
+                rc = off(root)
+            except Exception as e:                             # noqa: BLE001
+                rc = f"{type(e).__name__}: {e}"
+            if rc != 0:
+                _log(f"the demo's marker went, and `omacar demo off` failed ({rc})")
             return "gone"
         now = clock()
         if state(live_json, now) == "moving" and now >= next_try:
