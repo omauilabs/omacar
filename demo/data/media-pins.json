@@ -1,0 +1,12 @@
+{
+  "_comment": "The sizes, in bytes, of the demo's private media, which is never committed (share/assets/private/, git-ignored). `omacar demo check` (lib/democheck.py) holds the files to these, so a song cut short by a copy that stopped half way is caught before the show and not in the middle of it. The songs are Omarchy Radio's, as checked against github.com/omacom/radio.omarchy.org at 023a8f5c62ab.",
+  "radio": {
+    "ryan-r-hughes-downstream-from-motivation.mp3": 7988294,
+    "ryan-r-hughes-dotfiles-to-distro.mp3": 8186598,
+    "ryan-r-hughes-omakase-machine.mp3": 7354683,
+    "ryan-r-hughes-we-can-fix-everything.mp3": 6710577,
+    "ryan-r-hughes-hyprland-after-dark.mp3": 6964255,
+    "ryan-r-hughes-write-the-missing-plugin.mp3": 7286628,
+    "ryan-r-hughes-omarchy-quattro.mp3": 5765187
+  }
+}

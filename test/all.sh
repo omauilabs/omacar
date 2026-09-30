@@ -170,5 +170,12 @@ python3 "$ROOT/test/demo_map_test.py" || fails=$((fails + 1))
 # by js_test.py above.
 python3 "$ROOT/test/demo_voice_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 6 --------------------------------------------------
+# ---- meetup demo: running the show (Task 8) -----------------------------------
+# lib/democheck.py (`omacar demo check`) against a scratch tree, a scratch HOME
+# and a stand-in pgrep: ready, and each thing that makes it not ready, named.
+# The tour, its menu and keys, the top bar and the scripted scan are
+# test/js/demo-tour.test.js, run by js_test.py above.
+python3 "$ROOT/test/democheck_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: Task 8 --------------------------------------------------
 
 exit $((fails > 0))
