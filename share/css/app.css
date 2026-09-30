@@ -356,8 +356,12 @@ button { font: inherit; color: inherit; }
 
 .tab[aria-current="page"] { color: var(--accent); }
 .tab[aria-current="page"] .tab-in { background: transparent; }
+/* width and transform are reset here: the rule above sizes the mark to 34px
+   and pulls it back by half its width from left:50%, and inherited under
+   left:32% that put every tab's underline 17px left of its label. */
 .tab[aria-current="page"]::before {
   top: auto; bottom: 6px; left: 32%; right: 32%; height: 3px; border-radius: 3px;
+  width: auto; transform: none;
   background: var(--accent);
   box-shadow: 0 0 12px 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
