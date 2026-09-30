@@ -38,9 +38,21 @@ PRIVATE = os.path.join(ROOT, "share", "assets", "private")
 PINS = os.path.join(ROOT, "demo", "data", "media-pins.json")
 VOICE = os.path.join(ROOT, "demo", "data", "voice.json")
 CLIP_ROLES = ("front", "rear", "cabin", "cabin-drowsy")
-# The live kiosk's Chromium, by its profile (bin/omacar's KIOSK_PROFILE). The
-# demo's window has its own profile, under the demo's folder, and does not match.
-KIOSK = "user-data-dir=.*/omacar/kiosk-profile"
+# The live kiosk's Chromium, by its profile (bin/omacar's KIOSK_PROFILE), exactly:
+# `--user-data-dir=$HOME/.local/share/omacar/kiosk-profile`, and the argument
+# ends there. A looser `user-data-dir=.*/omacar/kiosk-profile` took a test's
+# stand-in kiosk left running under /tmp for the live one. The demo's window
+# has its own profile, under the demo's folder, and does not match either.
+KIOSK_PROFILE = os.path.join("~", ".local", "share", "omacar", "kiosk-profile")
+
+
+def _ere(text):
+    """`text` as a literal in pgrep's extended regular expressions."""
+    return "".join("\\" + c if c in ".[]()*+?{}|^$\\" else c for c in text)
+
+
+def kiosk_pattern():
+    return "--user-data-dir=" + _ere(os.path.expanduser(KIOSK_PROFILE)) + "( |$)"
 DEMO_MARK = "omacar-demo"
 
 
@@ -162,7 +174,8 @@ def volume_pin():
 
 def kiosk():
     try:
-        r = subprocess.run(["pgrep", "-f", KIOSK], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["pgrep", "-f", "--", kiosk_pattern()],
+                           capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as e:
         return False, f"could not ask pgrep: {e}"
     if r.returncode == 0 and r.stdout.strip():
