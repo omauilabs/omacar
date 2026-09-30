@@ -1312,11 +1312,12 @@ if sys.platform.startswith("linux"):
     open(_tab, "w").close()
     _rc, _out, _played = _play()
     ok("an empty tablet recording is passed over", (_rc, _played) == (0, f"--fs -- {_box}"))
-    # OMACAR_DEMO_MUTE=1, the nights' switch, plays it muted.
+    # OMACAR_DEMO_MUTE=1, the nights' switch: no audio output, so no stream.
     _venv["OMACAR_DEMO_MUTE"] = "1"
     _rc, _out, _played = _play()
     del _venv["OMACAR_DEMO_MUTE"]
-    ok("OMACAR_DEMO_MUTE=1 plays it muted", (_rc, _played) == (0, f"--fs --mute=yes -- {_box}"))
+    ok("OMACAR_DEMO_MUTE=1 plays it with no audio output at all",
+       (_rc, _played) == (0, f"--fs --ao=null -- {_box}"))
     # NOT WHILE THE CAR IS MOVING: the real live.json, fresh and over 3 km/h,
     # as demo on refuses it.
     _live = os.path.join(_vh, ".local", "state", "omacar", "live.json")

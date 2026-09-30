@@ -821,7 +821,9 @@ demo_tour() {
 # recorded, full-screen. The tablet's own recording first (tools/demo_record.sh:
 # its real screen and sound), else the box's (tools/demo_record_headless.py).
 # It plays out loud through the default output at whatever level is set; it
-# changes neither. OMACAR_DEMO_MUTE=1 (the nights, the tests) plays it muted.
+# changes neither. OMACAR_DEMO_MUTE=1 (the nights, the tests) plays it with
+# no audio output at all (--ao=null): not a muted stream, no stream, so there
+# is nothing to be heard and nothing for WirePlumber to remember.
 # Not while the car is moving, as for `demo on`. q ends it, and the demo is
 # still underneath.
 DEMO_VIDEOS=("$HOME/Videos/omacar-demo-backup-tablet.mp4" "$HOME/Videos/omacar-demo-backup.mp4")
@@ -850,7 +852,7 @@ demo_video() {
     done
   fi
   local mute=()
-  [[ "${OMACAR_DEMO_MUTE:-}" == 1 ]] && mute=(--mute=yes)
+  [[ "${OMACAR_DEMO_MUTE:-}" == 1 ]] && mute=(--ao=null)
   echo "  playing $f  (q to stop)"
   exec mpv --fs "${mute[@]}" -- "$f"
 }
