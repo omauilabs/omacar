@@ -10,9 +10,13 @@ stopped, and nothing is played.
     songs        Omarchy Radio's seven songs, each the size demo/data/media-pins.json
                  pins, as the station's playlist.json names them
     drive, map   demo/drive.json and demo/map.json, whole
+    map fits drive   the map's origin is the drive's first point, to 1e-5 degrees:
+                 a map built from another route draws the car in the wrong place
     voice        a wav for every line in demo/data/voice.json
     clips        the cameras' footage: front, rear, cabin and cabin-drowsy, in
                  demo/clips or where OMACAR_DEMO_CLIPS says, as the camera feed reads
+    road cameras saved stills (roadcams/img/*.jpg) in the demo's state or the real
+                 one, for a venue with no internet (`omacar-demo on` copies them)
     logo         omacar-logo.png, the top bar's
     car picture  demo/crz-home.png, Home's (tools/demo_carpic.py makes it)
     vehicle picture  crz-xray.png, Vehicle's X-ray (without it, a placeholder)
@@ -27,6 +31,7 @@ inside `omacar demo`'s environment XDG_CONFIG_HOME points at the demo's own.
 """
 
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -163,6 +168,47 @@ def real_config():
     return os.path.expanduser("~/.config")
 
 
+def real_state():
+    """The machine's own state folder, even from inside the demo's environment,
+    whose XDG_STATE_HOME is the demo's."""
+    x = os.environ.get("XDG_STATE_HOME")
+    if x and DEMO_MARK not in os.path.abspath(os.path.expanduser(x)).split(os.sep):
+        return os.path.expanduser(x)
+    return os.path.expanduser("~/.local/state")
+
+
+def roadcams():
+    """Saved road-camera stills, in the demo's own state or the real one: with
+    no internet at the venue they are all the Road cameras screen has, and
+    `omacar-demo on` copies the real ones into the demo's the first time."""
+    for state in (os.path.join(demo_root(), "state"), real_state()):
+        stills = glob.glob(os.path.join(state, "omacar", "roadcams", "img", "*.jpg"))
+        if stills:
+            return True, f"{len(stills)} saved stills in {os.path.dirname(stills[0])}"
+    return False, "no saved road-camera stills: run omacar-demo on once while online"
+
+
+def map_fits_drive(private):
+    """The car is drawn on the map from the drive's own coordinates, so the map
+    must have been built from that drive: its origin is the drive's first point.
+    None when either file cannot be read: `drive` and `map` say so."""
+    try:
+        drive = _read_json(os.path.join(private, "demo", "drive.json"))
+        mp = _read_json(os.path.join(private, "demo", "map.json"))
+    except (OSError, ValueError):
+        return None, "not compared: drive.json or map.json cannot be read (see above)"
+    try:
+        lat, lon = drive["points"][0][1:3]
+        lat0, lon0 = mp["origin"]
+        fits = abs(lat0 - lat) <= 1e-5 and abs(lon0 - lon) <= 1e-5
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False, ("map.json has no origin, or drive.json no first point: "
+                       "rebuild with tools/demo_map.py")
+    if not fits:
+        return False, "map.json was built from another drive: rebuild with tools/demo_map.py"
+    return True, "origin is the drive's first point"
+
+
 def volume_pin():
     path = os.path.join(real_config(), "omarchy", "omacar-audio.json")
     try:
@@ -224,12 +270,14 @@ def run(private):
         ("songs", *songs(private, pins)),
         ("drive", *whole(private, os.path.join("demo", "drive.json"))),
         ("map", *whole(private, os.path.join("demo", "map.json"))),
+        ("map fits drive", *map_fits_drive(private)),
         ("voice", *voice(private)),
         ("clips", *clips(private)),
         ("logo", *picture(private, "omacar-logo.png")),
         ("car picture", *picture(private, os.path.join("demo", "crz-home.png"),
                                  " (tools/demo_carpic.py makes it)")),
         ("vehicle picture", *picture(private, "crz-xray.png", " (omacar assets push copies it to the tablet)")),
+        ("road cameras", *roadcams()),
         ("volume pin", *volume_pin()),
         ("kiosk", *kiosk()),
     ]

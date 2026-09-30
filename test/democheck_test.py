@@ -10,7 +10,9 @@ own. Nothing here reads the real machine's files or plays anything.
 
 Checks that everything present is "ready"; that a truncated song, missing
 clips, the volume pin, no kiosk and a demo whose server does not answer are
-each named on the last line; and that the check writes nothing.
+each named on the last line; that the road cameras have saved stills (in the
+demo's state or the real one) and the map was built from the drive; and that
+the check writes nothing.
 """
 
 import http.server
@@ -69,7 +71,7 @@ def build(private):
     with open(os.path.join(demo, "drive.json"), "w", encoding="utf-8") as f:
         json.dump({"version": 1, "points": [[0, 36.7, -121.8, 0, 0, 0, 0]]}, f)
     with open(os.path.join(demo, "map.json"), "w", encoding="utf-8") as f:
-        json.dump({"version": 1, "layers": {}}, f)
+        json.dump({"version": 1, "origin": [36.7, -121.8], "layers": {}}, f)
     with open(VOICE, encoding="utf-8") as f:
         for line in json.load(f):
             with open(os.path.join(demo, "voice", line["id"] + ".wav"), "wb") as w:
@@ -153,6 +155,12 @@ def main():
         build(private)
         home = os.path.join(work, "home")
         os.makedirs(os.path.join(home, ".config", "omarchy"))
+        # A road camera's saved still (beside its .json) in the REAL state.
+        real_img = os.path.join(home, ".local", "state", "omacar", "roadcams", "img")
+        os.makedirs(real_img)
+        for name in ("d5-a.jpg", "d5-a.json"):
+            with open(os.path.join(real_img, name), "wb") as f:
+                f.write(b"\xff\xd8\xff\xe0" + b"\0" * 64)
         before = listing(work)
 
         r, lines = run(work, private)
@@ -167,6 +175,73 @@ def main():
               "--user-data-dir=" + profile.replace(".", "\\.") + "( |$)" in asked, asked)
         check("the demo off: its server is not asked for", any("off" in ln for ln in lines if "server" in ln),
               "\n".join(lines))
+        check("road cameras: the real state's saved still is found",
+              any(ln.split()[:3] == ["ok", "road", "cameras"] for ln in lines), "\n".join(lines))
+        check("map fits drive: the map's origin is the drive's first point",
+              any(ln.split()[:4] == ["ok", "map", "fits", "drive"] for ln in lines), "\n".join(lines))
+
+        # Road cameras: the saved stills, in the demo's own state (where `demo
+        # on` copied them) or in the real one. The real folder is put aside
+        # whole and back, so the files keep their times.
+        aside = real_img + ".aside"
+        os.rename(real_img, aside)
+        try:
+            r, lines = run(work, private)
+            check("no saved road-camera stills: not ready: road cameras",
+                  r.returncode == 1 and lines[-1] == "not ready: road cameras", r.stdout + r.stderr)
+            check("and it says what to do",
+                  any("no saved road-camera stills: run omacar-demo on once while online" in ln
+                      for ln in lines), r.stdout)
+            demo_state = os.path.join(home, ".local", "state", "omacar-demo", "state")
+            demo_img = os.path.join(demo_state, "omacar", "roadcams", "img")
+            os.makedirs(demo_img)
+            with open(os.path.join(demo_img, "d5-b.json"), "wb") as f:
+                f.write(b"{}")
+            r, lines = run(work, private)
+            check("a camera's .json is not a still: not ready: road cameras",
+                  lines[-1] == "not ready: road cameras", r.stdout)
+            with open(os.path.join(demo_img, "d5-b.jpg"), "wb") as f:
+                f.write(b"\xff\xd8\xff\xe0" + b"\0" * 64)
+            r, lines = run(work, private)
+            check("a still in the demo's own state: ready", lines[-1] == "ready", r.stdout)
+            # From inside the demo's environment, where XDG_STATE_HOME is the demo's.
+            r, lines = run(work, private, extra={"XDG_STATE_HOME": demo_state})
+            check("and it is found from inside the demo's environment too",
+                  lines[-1] == "ready", r.stdout)
+            os.remove(os.path.join(demo_img, "d5-b.jpg"))
+            os.rename(aside, real_img)
+            aside = None
+            r, lines = run(work, private, extra={"XDG_STATE_HOME": demo_state})
+            check("from there the real state's still counts, not the demo's folder as the real one",
+                  lines[-1] == "ready", r.stdout)
+        finally:
+            if aside:
+                os.rename(aside, real_img)
+            shutil.rmtree(os.path.join(home, ".local", "state", "omacar-demo"), ignore_errors=True)
+
+        # Map fits drive: the map's origin is the drive's first point, within 1e-5.
+        map_path = os.path.join(private, "demo", "map.json")
+
+        def with_origin(origin):
+            with open(map_path, "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "origin": origin, "layers": {}}, f)
+            return run(work, private)
+
+        r, lines = with_origin([36.700004, -121.800004])
+        check("an origin 4e-6 off the drive's first point: ready", lines[-1] == "ready", r.stdout)
+        for what, origin in (("latitude", [36.7001, -121.8]), ("longitude", [36.7, -121.8001])):
+            r, lines = with_origin(origin)
+            check(f"a map from another drive ({what} 1e-4 off): not ready: map fits drive",
+                  r.returncode == 1 and lines[-1] == "not ready: map fits drive", r.stdout)
+            check("and it says how to rebuild it",
+                  any("map.json was built from another drive: rebuild with tools/demo_map.py" in ln
+                      for ln in lines), r.stdout)
+        with open(map_path, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "layers": {}}, f)
+        r, lines = run(work, private)
+        check("a map with no origin at all: not ready: map fits drive",
+              lines[-1] == "not ready: map fits drive", r.stdout)
+        with_origin([36.7, -121.8])
 
         # A song cut short.
         song = sorted(pins["radio"])[0]
@@ -215,6 +290,8 @@ def main():
         r, lines = run(work, private)
         check("a voice line, a broken map, the car picture and the X-ray: each named",
               lines[-1] == "not ready: map, voice, car picture, vehicle picture", r.stdout)
+        check("a broken map is `map`'s to name: the comparison is skipped, not failed",
+              any(ln.split()[:4] == ["--", "map", "fits", "drive"] for ln in lines), r.stdout)
         check("the X-ray says how it reaches the tablet",
               any("crz-xray.png" in ln and "omacar assets push" in ln for ln in lines), r.stdout)
         check("the voice line by name", any("drowsy-l2" in ln for ln in lines), r.stdout)
