@@ -51,6 +51,10 @@ python3 "$ROOT/test/app_test.py" || fails=$((fails + 1))
 # box or the tablet, and there is no build step to hang one off.
 python3 "$ROOT/test/js_test.py" || fails=$((fails + 1))
 
+# The runner above, held to what it promises: its WebSocket frames, its DevTools
+# client, its wait on the real clock, and that it leaves no Chromium behind.
+python3 "$ROOT/test/js_runner_test.py" || fails=$((fails + 1))
+
 # The palette clears WCAG AA against itself, read out of app.css.
 python3 "$ROOT/test/design_test.py" || fails=$((fails + 1))
 
