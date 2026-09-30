@@ -194,14 +194,17 @@ def step(kind, modifier=None, name="", ref=None, bearing=0, exit_n=None, dest=No
 
 
 label = demo_route.road_label
-ok("a highway's ref has no direction from OSRM, so it is north or south by the bearing after",
-   [label(step("merge", ref="CA 1", bearing=b)) for b in (0, 23, 90, 91, 187, 269, 270, 350, 359.9)]
-   == ["CA-1 N", "CA-1 N", "CA-1 N", "CA-1 S", "CA-1 S", "CA-1 S", "CA-1 N", "CA-1 N", "CA-1 N"])
+ok("a highway is named by its number, with the direction it is signed",
+   label(step("merge", ref="CA 1"), "N") == "CA-1 N"
+   and label(step("merge", ref="CA 1"), "S") == "CA-1 S"
+   and label(step("merge", ref="CA 92"), "E") == "CA-92 E"
+   and label(step("merge", ref="CA 1")) == "CA-1")
 ok("a ref that names a direction keeps it",
-   label(step("merge", ref="CA 1 North", bearing=187)) == "CA-1 N")
+   label(step("merge", ref="CA 1 North"), "S") == "CA-1 N")
 ok("the first of several refs is the one used, and the numbers keep their letters",
-   label(step("merge", ref="I 280; CA 35", bearing=326)) == "I-280 N"
-   and label(step("off ramp", ref="US 101", bearing=201)) == "US-101 S")
+   label(step("merge", ref="I 280; CA 35"), "N") == "I-280 N"
+   and label(step("off ramp", ref="US 101"), "S") == "US-101 S"
+   and label(step("merge", ref="CA 1A"), "N") == "CA-1A N")
 ok("a county road's code is not its name",
    label(step("depart", name="Reservation Road", ref="CR G17")) == "Reservation Rd"
    and label(step("depart", name="Reservation Road", ref="CR 12")) == "Reservation Rd"
@@ -238,6 +241,129 @@ ok("the rest of the vocabulary",
        "Keep left to stay on CA-1 N", "Take the ramp on the right",
        "Take the exit toward Imjin Pkwy", "Continue onto Cabrillo Hwy",
        "Arrive at X"])
+
+# Which way a highway is signed, from where the route goes.
+LAT0, LON0 = 36.6960, -121.8060
+M_LAT, M_LON = 110540.0, 111320.0 * math.cos(math.radians(LAT0))
+
+
+def route_of(*legs):
+    """A demo_route.Line through legs of (metres east, metres north), each in
+    100 m pieces, from a start in Marina."""
+    coords, x, y = [(LAT0, LON0)], 0.0, 0.0
+    for dx, dy in legs:
+        n = max(1, int(round(math.hypot(dx, dy) / 100.0)))
+        for _ in range(n):
+            x, y = x + dx / n, y + dy / n
+            coords.append((LAT0 + y / M_LAT, LON0 + x / M_LON))
+    return demo_route.Line(coords)
+
+
+side = demo_route.travel_side
+ok("north-south: north if the latitude goes up, south if not",
+   side(route_of((0, 3000)), 0, "CA", "1") == "N"
+   and side(route_of((0, -3000)), 0, "CA", "1") == "S"
+   and side(route_of((0, 3000)), 0, "US", "101") == "N")
+ok("a highway running west whose latitude goes up over the 5 km is north",
+   side(route_of((-750, -270), (1500, 4200)), 0, "CA", "1") == "N"
+   and side(route_of((-4000, 800)), 0, "CA", "1") == "N"
+   and side(route_of((-4000, -800)), 0, "CA", "1") == "S")
+ok("and I 280, which is north-south however it bends, is not made east-west",
+   side(route_of((-3000, 200)), 0, "I", "280") == "N")
+ok("east-west, in the known set: east if the longitude goes up, west if not",
+   side(route_of((3000, 200)), 0, "CA", "92") == "E"
+   and side(route_of((-3000, 200)), 0, "CA", "92") == "W"
+   and all(side(route_of((-3000, 900)), 0, pre, num) == "W"
+           for pre, num in (("CA", "152"), ("CA", "156"), ("CA", "17"), ("CA", "84"),
+                            ("CA", "4"), ("CA", "24"), ("I", "580"), ("I", "80"),
+                            ("I", "380"))))
+# The 5 km, or the route's end if that is nearer.
+far = route_of((0, 2000), (0, -6000))
+ok("it looks 5 km ahead, and no further",
+   side(far, 0, "CA", "1") == "S" and side(route_of((0, 2000), (0, 4000)), 0, "CA", "1") == "N"
+   and side(route_of((0, -6000), (0, 9000)), 0, "CA", "1") == "S")
+ok("or to the end of the route if that is nearer",
+   side(route_of((0, 3000)), 1000, "CA", "1") == "N"
+   and side(route_of((0, 3000), (0, -1000)), 2500, "CA", "1") == "S")
+north_end, south_end = route_of((0, 3000)), route_of((0, -3000))
+ok("a step at the very end is judged by the way it came",
+   side(north_end, north_end.total, "US", "101") == "N"
+   and side(south_end, south_end.total, "US", "101") == "S"
+   and side(north_end, north_end.total - 20, "US", "101") == "N")
+ok("no change in latitude is not an increase, and none in longitude is not either",
+   side(route_of((3000, 0)), 0, "CA", "1") == "S"
+   and side(route_of((0, 3000)), 0, "CA", "92") == "W")
+
+
+def osrm_of(segments, steps):
+    """A one-leg OSRM route through segments of (east m, north m, speed m/s),
+    with steps given as (kind, modifier, name, ref, bearing_after, the segment
+    it starts, or None for the end)."""
+    line = [[LON0, LAT0]]
+    starts, ann, x, y = [], {"distance": [], "duration": [], "speed": []}, 0.0, 0.0
+    for dx, dy, speed in segments:
+        starts.append(len(line) - 1)
+        n = max(1, int(round(math.hypot(dx, dy) / 100.0)))
+        for _ in range(n):
+            x, y = x + dx / n, y + dy / n
+            line.append([round(LON0 + x / M_LON, 6), round(LAT0 + y / M_LAT, 6)])
+            d = math.hypot(dx, dy) / n
+            ann["distance"].append(round(d, 1))
+            ann["duration"].append(round(d / speed, 1))
+            ann["speed"].append(speed)
+    out = []
+    for kind, modifier, name, ref, bearing, seg in steps:
+        m = {"type": kind, "bearing_after": bearing,
+             "location": line[-1 if seg is None else starts[seg]]}
+        if modifier:
+            m["modifier"] = modifier
+        st = {"maneuver": m, "name": name, "mode": "driving", "distance": 0, "duration": 0}
+        if ref:
+            st["ref"] = ref
+        out.append(st)
+    total = sum(ann["duration"])
+    return {"code": "Ok", "routes": [{
+        "geometry": {"type": "LineString", "coordinates": line}, "duration": total,
+        "distance": sum(ann["distance"]),
+        "legs": [{"steps": out, "annotation": ann, "duration": total,
+                  "distance": sum(ann["distance"])}]}]}
+
+
+# CA 1 runs west-south-west for a kilometre (bearing 250, and south of where it
+# joined), then north: the way it does through Santa Cruz on its way to the city.
+dip = osrm_of(
+    [(0, -400, 11), (-1000, -360, 25), (0, 3500, 25)],
+    [("depart", "right", "Reservation Road", "CR G17", 180, 0),
+     ("merge", "slight left", "Cabrillo Highway", "CA 1", 250, 1),
+     ("arrive", None, "Cabrillo Highway", "CA 1", 0, None)])
+dm = demo_route.build(dip, 300)["maneuvers"]
+ok("CA 1 heading west, whose latitude still rises over the 5 km, reads north",
+   dip["routes"][0]["legs"][0]["steps"][1]["maneuver"]["bearing_after"] == 250
+   and dm[0]["instruction"] == "Merge onto CA-1 N" and dm[0]["street"] == "CA-1 N"
+   and dm[1]["street"] == "CA-1 N")
+ok("and the streets say so too",
+   [x[1] for x in demo_route.build(dip, 300)["streets"]] == ["Reservation Rd", "CA-1 N"])
+
+# It is signed where it is joined, and keeps it while the route stays on it, even
+# where it turns away: north for 1.5 km, then west-south-west and downhill.
+turns_away = osrm_of(
+    [(0, -400, 11), (0, 1500, 25), (-3000, -1200, 25)],
+    [("depart", "right", "Reservation Road", "CR G17", 180, 0),
+     ("merge", "slight left", "Cabrillo Highway", "CA 1", 0, 1),
+     ("fork", "slight left", "Cabrillo Highway", "CA 1", 248, 2),
+     ("arrive", None, "Cabrillo Highway", "CA 1", 0, None)])
+line_of = demo_route.Line([(lat, lon) for lon, lat in
+                           turns_away["routes"][0]["geometry"]["coordinates"]])
+tm = demo_route.build(turns_away, 300)["maneuvers"]
+ok("a step that stays on the highway keeps the way it was signed on joining it",
+   [m["instruction"] for m in tm] == [
+       "Merge onto CA-1 N", "Keep left to stay on CA-1 N", "Arrive at Omarchy Meetup"]
+   and side(line_of, 1900, "CA", "1") == "S")
+changed = json.loads(json.dumps(turns_away))
+changed["routes"][0]["legs"][0]["steps"][2]["ref"] = "US 101"
+ok("but a different highway is signed by where it goes",
+   demo_route.build(changed, 300)["maneuvers"][1]["instruction"]
+   == "Keep left to stay on US-101 S")
 
 # Headings and positions, from the route.
 ok("it faces south to start, on a road that runs south",

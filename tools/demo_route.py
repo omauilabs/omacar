@@ -175,21 +175,51 @@ def short_name(name):
 # road, so those are known by their name.
 HIGHWAY_REF = re.compile(r"^([A-Z]{1,3})[ -](\d+[A-Z]?)(?:\s+(North|South|East|West|N|S|E|W))?$")
 
+# The California highways that are signed east-west. Every other is signed
+# north-south, which is what an unlisted one is taken to be: CA 1, US 101, I 5
+# and I 280 among them.
+EAST_WEST = {("CA", "4"), ("CA", "17"), ("CA", "24"), ("CA", "84"), ("CA", "92"),
+             ("CA", "152"), ("CA", "156"), ("I", "80"), ("I", "380"), ("I", "580")}
+LOOKAHEAD_M = 5000.0
 
-def road_label(step):
-    """A step's road as a person says it: 'CA-1 N' for a numbered highway, else
-    its name.
 
-    OSRM's ref has no direction ("CA 1"), so it is taken from the way the car
-    is heading after the step: north if that bearing is 0-90 or 270-360, south
-    if it is 90-270. (An east-west highway is therefore labelled by which side
-    of due east and west it heads, which is a label nobody sees on this drive:
-    the loop stays on CA-1.) If the ref does carry a direction, that is used."""
+def highway(step):
+    """(prefix, number, direction) for a step on a numbered highway, with the
+    direction only if the ref carries one; None on any other road."""
     ref = HIGHWAY_REF.match((step.get("ref") or "").split(";")[0].strip())
-    if ref and ref.group(1) != "CR":
-        bearing_after = step["maneuver"].get("bearing_after", 0) % 360
-        side = ref.group(3) or ("N" if bearing_after <= 90 or bearing_after >= 270 else "S")
-        return f"{ref.group(1)}-{ref.group(2)} {side[0]}"
+    if not ref or ref.group(1) == "CR":
+        return None
+    return ref.group(1), ref.group(2), (ref.group(3) or "")[:1] or None
+
+
+def travel_side(line, s, prefix, number):
+    """Which way a highway is signed at route_m s, by where the route goes.
+
+    OSRM's ref has no direction ("CA 1"), so it is read off the route: where it
+    is at s and where it is 5 km further on, or at its end if that is nearer.
+    A north-south highway is N if the latitude increases and S if not; an
+    east-west one is E if the longitude increases and W if not. Bearing would be
+    the wrong test: CA 1 runs west for miles through Santa Cruz on its way north.
+
+    A step at the very end has nowhere further to go, so it is judged by the
+    5 km that led to it."""
+    a, b = s, min(s + LOOKAHEAD_M, line.total)
+    if b - a < 50.0:
+        a, b = max(0.0, s - LOOKAHEAD_M), s
+    (lat_a, lon_a), (lat_b, lon_b) = line.at(a), line.at(b)
+    if (prefix, number) in EAST_WEST:
+        return "E" if lon_b > lon_a else "W"
+    return "N" if lat_b > lat_a else "S"
+
+
+def road_label(step, side=None):
+    """A step's road as a person says it: 'CA-1 N' for a numbered highway, else
+    its name. `side` is the direction the highway is signed, from travel_side();
+    a ref that carries its own is used as it is."""
+    hw = highway(step)
+    if hw:
+        direction = hw[2] or side
+        return f"{hw[0]}-{hw[1]}" + (f" {direction}" if direction else "")
     return short_name((step.get("name") or "").strip())
 
 
@@ -406,10 +436,28 @@ def build(osrm, loop_secs=900):
     places = place_steps(line, raw)
     last = len(raw) - 1
 
+    # Which way each highway step is signed. It is worked out where the highway
+    # is joined, and a step that stays on it ("keep left to stay on CA-1") says
+    # the same: the signs do, and the road can turn away for a few km, as CA 1
+    # does through Santa Cruz, without the way it is signed changing.
+    sides, joined = [], None
+    for st, s in zip(raw, places):
+        hw = highway(st)
+        if hw is None:
+            side = None
+        elif hw[2]:
+            side = hw[2]
+        elif joined and joined[:2] == hw[:2]:
+            side = joined[2]
+        else:
+            side = travel_side(line, s, hw[0], hw[1])
+        sides.append(side)
+        joined = (hw[0], hw[1], side) if hw else None
+
     maneuvers, streets = [], []
     for i, (st, s) in enumerate(zip(raw, places)):
         kind = st["maneuver"]["type"]
-        street = road_label(st)
+        street = road_label(st, sides[i])
         if kind == "depart" and not street:
             street = destination_label(st)
         if kind != "arrive" and street and (not streets or streets[-1][1] != street):
@@ -422,8 +470,8 @@ def build(osrm, loop_secs=900):
             continue
         maneuvers.append({
             "route_m": round(s, 1), "type": kind,
-            "modifier": st["maneuver"].get("modifier"), "street": road_label(st),
-            "instruction": instruction(st, road_label(st), dest_name)})
+            "modifier": st["maneuver"].get("modifier"), "street": road_label(st, sides[i]),
+            "instruction": instruction(st, road_label(st, sides[i]), dest_name)})
 
     caps = [(s, cap) for st, s in zip(raw, places)
             if (cap := turn_cap_kph(st)) is not None]
