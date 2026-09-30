@@ -34,13 +34,17 @@ export const demoOf = () => (store.sample && store.sample.demo) || null;
 const wrap = (a) => ((a % 360) + 540) % 360 - 180;
 
 // A compass needle that turns the short way round: the angle it is given is
-// unwrapped against the last one, so 359 -> 1 is two degrees, not 358.
+// unwrapped against the last one, so 359 -> 1 is two degrees, not 358. The N
+// on it (its <b>) is turned back by as much, so it stays upright as the needle
+// swings round it, as mockup 3 draws it.
 export function compassTurner(el) {
   let shown = null;
   return (heading) => {
     const want = -(Number(heading) || 0);
     shown = shown === null ? want : shown + wrap(want - shown);
     el.style.transform = `rotate(${shown.toFixed(1)}deg)`;
+    const n = el.querySelector("b");
+    if (n) n.style.transform = `rotate(${(-shown).toFixed(1)}deg)`;
   };
 }
 
@@ -64,7 +68,7 @@ export function mountMap(el, { style = "omacar", follow = true, mpp = null } = {
     background: `radial-gradient(circle farthest-corner at ${ax}% ${ay}%, transparent 25%, rgba(0, 0, 0, ${dark}) 100%)` } });
   el.appendChild(canvas);
   el.appendChild(shade);
-  let alive = true, map = null, data = null, raf = 0, last = 0, dirty = true;
+  let alive = true, map = null, data = null, raf = 0, last = 0, dirty = true, missing = null;
   const cam = { x: 0, y: 0, heading: 0, carHeading: 0, mpp: mpp || 3, set: false };
   const seen = { key: "", at: 0, x: 0, y: 0, heading: 0, v: 0, route_m: NaN };
   const cost = { frames: 0, ms: 0, worst: 0 };
@@ -84,7 +88,10 @@ export function mountMap(el, { style = "omacar", follow = true, mpp = null } = {
     dirty = true;
   }).catch((e) => {
     if (!alive) return;
+    // Said quietly in the map's place, never a blank canvas that looks broken.
     el.dataset.missing = "1";
+    missing = h("div.dmap-missing", "Map unavailable");
+    el.appendChild(missing);
     console.warn("The demo map could not load:", (e && e.message) || e);
   });
 
@@ -154,6 +161,7 @@ export function mountMap(el, { style = "omacar", follow = true, mpp = null } = {
       if (map) map.destroy();
       canvas.remove();
       shade.remove();
+      if (missing) missing.remove();
     },
   };
 }
@@ -168,7 +176,7 @@ export default function navigationView(root) {
   const onto = h("div.dnav-street");
   const banner = h("div.dnav-banner", { role: "status", "aria-live": "polite" },
     turnIcon, h("div.dnav-words", dist, h("div.dnav-line", what, onto)));
-  const needle = h("span.dnav-needle", h("i"), "N");
+  const needle = h("span.dnav-needle", h("i"), h("b", "N"));
   const compass = h("div.dnav-compass", { title: "North" }, needle);
   const turn = compassTurner(needle);
   const cams = h("a.dnav-chip", { href: "#roadcams" }, icon(ICONS.camera || ICONS.nav, 18), "Road cameras");

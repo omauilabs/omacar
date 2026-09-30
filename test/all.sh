@@ -184,5 +184,17 @@ python3 "$ROOT/test/demoworld_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/demoserve_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/demo_silo_test.py" || fails=$((fails + 1))
 # ---- end demo/meetup: the silo ------------------------------------------------
+# ---- meetup demo: running the show (Task 8) -----------------------------------
+# lib/democheck.py (`omacar demo check`) against a scratch tree, a scratch HOME
+# and a stand-in pgrep: ready, and each thing that makes it not ready, named.
+# The tour, its menu and keys, the top bar and the scripted scan are
+# test/js/demo-tour.test.js, run by js_test.py above.
+python3 "$ROOT/test/democheck_test.py" || fails=$((fails + 1))
+# demoworld.py tidy: the seeded demo car with no active code, an all-clear last
+# scan, readiness complete and nothing due, its history kept; and, in headless
+# Chromium, Vehicle's "All systems normal", no tab badge, and Home's tyres not
+# "Check". A scratch HOME inside an omacar-demo folder.
+python3 "$ROOT/test/demotidy_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: Task 8 --------------------------------------------------
 
 exit $((fails > 0))

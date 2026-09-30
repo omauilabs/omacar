@@ -53,11 +53,10 @@ export function phoneCard({ onCarPlay = () => go("carplay"), onAndroidAuto = () 
   const by = h("span.pc-radio-by");
   const play = h("button.pc-radio-play", { type: "button", "aria-label": "Play",
     onclick: tap(() => radio.toggle()) }, glyph("play", 20));
-  const radioRow = h("div.hc-row.pc-row.pc-radio", { onclick: tap(() => go("nowplaying")) },
-    h("button.pc-radio-open", { type: "button", "aria-label": "Open Now Playing" },
-      h("span.pc-or", { "aria-hidden": "true" }, "OR"),
-      h("span.pc-radio-text", name, by)),
-    play);
+  const openBtn = h("button.pc-radio-open", { type: "button", "aria-label": "Open Now Playing" },
+    h("span.pc-or", { "aria-hidden": "true" }, "OR"),
+    h("span.pc-radio-text", name, by));
+  const radioRow = h("div.hc-row.pc-row.pc-radio", { onclick: tap(() => go("nowplaying")) }, openBtn, play);
 
   const node = h("div.card.hc.hc-phone.pc",
     h("div.hc-title", icon(ICONS.phone, 18), "Phone integration"),
@@ -70,7 +69,13 @@ export function phoneCard({ onCarPlay = () => go("carplay"), onAndroidAuto = () 
     const s = snapshot(radio);
     const title = s.title || "Omarchy Radio";
     const artist = s.artist ? " · " + s.artist : "";
-    if (seen.title !== title) { seen.title = title; name.textContent = title; }
+    if (seen.title !== title) {
+      seen.title = title;
+      name.textContent = title;
+      // The song, and not only where the button goes: its label is what a
+      // screen reader says in place of the words inside it.
+      openBtn.setAttribute("aria-label", `Open Now Playing: ${title}`);
+    }
     if (seen.artist !== artist) { seen.artist = artist; by.textContent = artist; }
     if (seen.playing !== s.playing) {
       seen.playing = s.playing;

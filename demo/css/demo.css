@@ -1,1 +1,270 @@
-/* The meetup demo's own look (doc/design/2026-09-30-meetup-demo.md). */
+/* The meetup demo's own look (doc/design/2026-09-30-meetup-demo.md): what the
+   demo page adds to the live app's, and nothing the live app loads.
+
+   The top bar: the logo, the DEMO pill, no provenance badge (demo/js/bar.js).
+   The captions and the pause notice (demo/js/tour.js), the presenter's menu
+   (demo/js/menu.js), Home's car picture (demo/js/boot.js) and the scripted
+   Scan vehicle (demo/js/views/scan.js).
+
+   Only the app's tokens (share/css/app.css). The layers, bottom to top:
+   the projections 50, the agent's preview 60, toasts 100, dialogs 200, a
+   drowsy alert 300, the captions 350, the menu 400. */
+
+/* ---- the top bar ------------------------------------------------------------- */
+
+.tb-mark.has-logo {
+  display: flex; align-items: center; cursor: pointer;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation;
+}
+.tb-logo {
+  display: block; height: 28px; width: auto;
+  /* The chrome of the mark lifts off the bar, as the mockups' wordmark does. */
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .55));
+  pointer-events: none;
+}
+@media (orientation: portrait) {
+  .tb-logo { height: 24px; }
+}
+
+/* The live provenance badge (SIMULATED, STARTING, LIVE · OBD-II) says what
+   DEMO says, on this page, and never on the live one. */
+.vbar .tb-src { display: none !important; }
+
+/* Portrait has room for the logo, the page, the clock, the drowsy chip, DEMO
+   and the buttons, as mockup 3's portrait bar does, and not the car's name as
+   well (it is Home's title already): it was cut to "2015 Honda C…" and the
+   chip wrapped to two lines. */
+@media (max-width: 1000px) {
+  .vbar .tb-car { display: none; }
+  .vbar .tb-drowsy { white-space: nowrap; }
+}
+
+/* Where the mockups write "CONCEPT · DEMO DATA": quiet, and there on every screen. */
+.demo-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px 5px 10px; border-radius: 999px;
+  font-size: .7rem; font-weight: 600; letter-spacing: .16em; line-height: 1;
+  color: var(--accent); background: var(--accent-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  white-space: nowrap;
+}
+.demo-pill::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent);
+}
+
+/* ---- the captions -------------------------------------------------------------- */
+
+/* WHILE THE TOUR IS ON IT HAS A BAND OF ITS OWN, between the screen and the
+   navigation, and the caption sits in it: laid over the screen it covered
+   Navigation's ETA bar, the agent's input and every other screen's bottom
+   row. The band is there from Start to the end, paused or not, so the screens
+   are laid out once for the tour and not again at every caption. In a
+   projection (CarPlay, Android Auto) the app's bars are gone and the band is
+   the bottom of the screen. */
+.app { --dt-band: 80px; }
+@media (max-width: 1000px) { .app { --dt-band: 108px; } }
+body.dt-touring .app {
+  grid-template-rows: var(--vbar) auto 1fr var(--dt-band) var(--nav);
+  grid-template-areas: "vbar" "segbar" "stage" "dtband" "navbar";
+}
+body.dt-touring .proj { bottom: var(--dt-band); }
+body.dt-touring.proj-on, body.dt-touring.proj-on .app { background: #000; }
+/* The tour moves from tab to tab by address, so main.js offers a way back
+   ("← Cameras") and keeps Home's chip row for it, at the cost of a row of
+   Home. The tour needs no way back: on Home the row goes, as it does after a
+   tap on the tab. */
+body.dt-touring .app:has(> .stage > .wrap[data-view="home"]) { --nav: calc(var(--tabbar) + var(--safe-b)); }
+body.dt-touring .app:has(> .stage > .wrap[data-view="home"]) .subbar { display: none; }
+/* A Level 1 drowsy card stands above the band, "I'm awake" and all. */
+body.dt-touring .dz-layer[data-level="1"] { padding-bottom: calc(var(--nav) + var(--dt-band) + 12px); }
+/* Home's rows stop at 96 px (home.css), so the band's 80 px come out of its
+   footer (the provenance line and Customize layout, neither a tour's) and the
+   stage's bottom padding, rather than the grid running over them. */
+body.dt-touring .home-foot { display: none; }
+body.dt-touring .stage:has(> .wrap > .home) { padding-bottom: 16px; }
+
+/* Centred by auto margins between 16 px insets, not left: 50%, which would
+   leave a fit-content box half the screen to wrap in. */
+.dt-cap, .dt-note {
+  position: fixed; left: 16px; right: 16px; margin-inline: auto; width: fit-content; z-index: 350;
+  bottom: calc(var(--nav) + var(--dt-band) / 2); transform: translateY(calc(50% + 8px));
+  max-width: min(1180px, calc(100vw - 32px)); opacity: 0;
+  transition: opacity .28s ease, transform .28s ease;
+  font-size: 22px; line-height: 1.3; color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--edge-2);
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+}
+body.proj-on :is(.dt-cap, .dt-note) { bottom: calc(var(--dt-band) / 2); }
+.dt-cap {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 30px 12px 22px;
+  pointer-events: none; white-space: nowrap;
+}
+.dt-cap::before {
+  content: ""; flex: none; width: 4px; height: 24px; border-radius: 2px;
+  background: var(--accent); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.dt-cap-t { overflow: hidden; text-overflow: ellipsis; }
+.dt-cap.on, .dt-note.on { opacity: 1; transform: translateY(50%); }
+/* Too narrow for the line (portrait): two, balanced, rather than cut. */
+@media (max-width: 1000px) {
+  .dt-cap { white-space: normal; text-wrap: balance; border-radius: 22px; font-size: 20px; }
+}
+
+.dt-note {
+  padding: 12px 26px; cursor: pointer; font-family: inherit;
+  color: var(--ink-2); pointer-events: auto;
+}
+.dt-note b { color: var(--accent); font-weight: 600; }
+.dt-note[hidden] { display: none; }
+
+/* The toasts stand above the band. */
+body.dt-touring .toasts { bottom: calc(var(--nav) + var(--dt-band) + 14px); }
+body.dt-touring.proj-on .toasts { bottom: calc(var(--dt-band) + 14px); }
+
+/* The screen `omacar demo tour` opens, for the moment before Home. */
+.dt-starting {
+  display: grid; place-items: center; min-height: 40vh;
+  color: var(--faint); font-size: 1rem; letter-spacing: .04em;
+}
+
+/* ---- the menu ---------------------------------------------------------------------- */
+
+.dm-sheet {
+  position: fixed; inset: 0; z-index: 400;
+  display: grid; place-items: center; padding: 20px;
+  background: color-mix(in srgb, var(--ground) 62%, transparent);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: dm-in .18s ease-out;
+}
+@keyframes dm-in { from { opacity: 0; } }
+.dm-card {
+  width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto;
+  padding: 18px 16px 14px;
+  background: var(--panel); border: 1px solid var(--edge-2); border-radius: var(--r-lg);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, .6), inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
+  animation: dm-rise .2s ease-out;
+}
+@keyframes dm-rise { from { transform: translateY(12px) scale(.985); } }
+.dm-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 6px 12px; }
+.dm-title { font-family: var(--display); font-size: 1.3rem; font-weight: 600; color: var(--ink); }
+.dm-sub { margin-top: 2px; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.dm-close {
+  flex: none; width: var(--tap); height: var(--tap); border-radius: 50%;
+  display: grid; place-items: center; color: var(--ink-2);
+  background: transparent; border: 1px solid var(--edge-2); cursor: pointer;
+}
+.dm-close:active { background: var(--raise); }
+.dm-list { display: grid; gap: 6px; }
+.dm-row { display: grid; gap: 4px; }
+.dm-item {
+  display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 14px;
+  width: 100%; min-height: 64px; padding: 8px 16px 8px 10px;
+  text-align: left; font: inherit; color: var(--ink); cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--edge); border-radius: var(--r);
+  transition: background .15s ease, border-color .15s ease, transform .1s ease;
+}
+.dm-item:active { transform: scale(.99); background: var(--raise); }
+.dm-item:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+@media (hover: hover) { .dm-item:hover { background: var(--raise); border-color: var(--edge-2); } }
+.dm-i {
+  width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+  color: var(--accent); background: var(--accent-bg);
+}
+.dm-w { display: grid; gap: 2px; min-width: 0; }
+.dm-t { font-size: 1.05rem; font-weight: 600; }
+.dm-s { font-size: .82rem; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dm-k {
+  min-width: 30px; padding: 3px 8px; text-align: center;
+  font-family: var(--mono); font-size: .72rem; color: var(--dim);
+  border: 1px solid var(--edge-2); border-bottom-width: 2px; border-radius: 7px;
+}
+.dm-item.primary {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.dm-item.primary .dm-i { color: var(--on-accent); background: var(--accent); }
+.dm-item[data-item="exit"] .dm-i, .dm-item[data-item="video"] .dm-i { color: var(--ink-2); background: var(--track); }
+.dm-note {
+  margin: 0 4px 6px 68px; padding: 10px 14px; border-radius: 10px;
+  font-size: .92rem; color: var(--ink-2); background: var(--ground); border: 1px solid var(--edge);
+}
+.dm-note[hidden] { display: none; }
+.dm-note code, .dm-note kbd {
+  font-family: var(--mono); font-size: .86rem; color: var(--accent);
+  padding: 1px 6px; border-radius: 5px; background: var(--accent-bg);
+}
+
+/* ---- Home's car -------------------------------------------------------------------- */
+
+/* The picture is cut from mockup 3 with a soft oval edge, so the card's own
+   glow is what it stands in; a shade under the wheels grounds it. */
+.dm-car .car-img { inset: 3% 2% 8%; width: 96%; height: 89%; }
+.dm-car .car-stage::before {
+  content: ""; position: absolute; left: 18%; right: 18%; bottom: 9%; height: 9%;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, .45), transparent 70%);
+  pointer-events: none;
+}
+
+/* ---- Home's Oma Agent card (demo/js/cards/agentcard.js), as mockup 3 ------------- */
+
+.dac { display: flex; flex-direction: column; cursor: pointer; }
+.dac-title { font-size: 1.05rem; }
+.dac .dac-wave { height: 22px; gap: 2.5px; flex: none; }
+.dac .dac-wave i { width: 2.5px; box-shadow: none; }
+.dac-chat { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; min-height: 0; }
+.dac-q {
+  align-self: flex-end; max-width: 88%; padding: 10px 16px; border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 8%, var(--panel-2)); border: 1px solid var(--edge-2);
+  font-size: .98rem; color: var(--ink);
+}
+.dac-row { display: flex; align-items: center; gap: 14px; }
+.dac-ring {
+  flex: none; width: 30px; height: 30px; margin: 0 2px; border-radius: 50%;
+  box-shadow: inset 0 0 0 3px var(--accent), 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.dac-a {
+  padding: 10px 16px; border-radius: 12px; font-size: .98rem; color: var(--ink-2);
+  background: color-mix(in srgb, var(--ink) 4%, var(--panel-2)); border: 1px solid var(--edge);
+}
+
+/* ---- Scan vehicle (the demo's) -------------------------------------------------------- */
+
+.ds .sect + .sect { margin-top: 16px; }
+.ds-pill { gap: 6px; }
+.ds-card { padding-bottom: 6px; }
+.ds-top { align-items: baseline; }
+.ds-count { font-variant-numeric: tabular-nums; }
+.ds-bar { height: 4px; margin: 12px 0 6px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.ds-bar > i {
+  display: block; height: 100%; width: 0; border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent-fill), var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
+  transition: width .6s ease;
+}
+.ds .ds-line { padding: 12px 0; }
+.ds-line .mname { gap: 12px; }
+.ds-name { font-weight: 600; font-size: 1.02rem; color: var(--ink); min-width: 5.2em; }
+.ds-what { color: var(--faint); font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-st { font-size: .9rem; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ds-line .dot { background: var(--ghost); }
+.ds-line[data-state="scan"] .ds-st { color: var(--info); }
+.ds-line[data-state="scan"] .dot { background: var(--info); box-shadow: 0 0 8px var(--info); animation: ds-pulse 1s ease-in-out infinite; }
+.ds-line[data-state="done"] .ds-st { color: var(--ok); }
+.ds-line[data-state="done"] .dot { background: var(--ok); }
+.ds-line .scan-prog > i { transition-property: width; transition-timing-function: linear; }
+.ds-line[data-state="done"] .scan-prog > i { background: var(--ok); }
+@keyframes ds-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .ds-line .dot { animation: none !important; } }
+
+.ds-done { display: flex; align-items: center; gap: 16px; padding: 18px 22px; animation: rise .3s ease-out; }
+.ds-done[hidden] { display: none; }
+.ds-ok {
+  flex: none; width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--ok); border: 2px solid var(--ok); box-shadow: 0 0 18px color-mix(in srgb, var(--ok) 35%, transparent);
+}
+.ds-done-t { font-family: var(--display); font-size: 1.45rem; font-weight: 600; color: var(--ink); }
+.ds-done-s { margin-top: 3px; }

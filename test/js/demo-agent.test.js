@@ -244,14 +244,51 @@ export default [
       eq([btn.disabled, why.hidden], [false, true]);
     } finally { m.done(); }
   }],
-  ["the night arrangement puts nav, dial, phone and three tiles first, and keeps the rest", () => {
+  // Task 8's fix: the first arrangement (nav 4x3, dial 4x3, phone 4x2, three
+  // 3x1 tiles, then the rest where they were) left holes in Home's grid and ran
+  // past the screen. This one tiles it, in both orientations.
+  ["the night arrangement is nav, dial and car, the four tiles, then phone, dashcam and agent", () => {
     const body = nightLayout(DEFAULT_HOME);
+    const ids = ["nav", "dial", "car", "charge", "coolant", "fuel", "volts", "phone", "dashcam", "agent"];
+    eq(NIGHT.landscape, [["nav", "m"], ["dial", "m"], ["car", "l"], ["charge", "s"], ["coolant", "s"],
+                         ["fuel", "s"], ["volts", "s"], ["phone", "m"], ["dashcam", "m"], ["agent", "m"]], "landscape");
     for (const o of ["landscape", "portrait"]) {
-      eq(body[o].cards.slice(0, 6).map(([c]) => c), ["nav", "dial", "phone", "charge", "coolant", "fuel"], o);
-      eq(body[o].cards.slice(0, 6), NIGHT[o], `${o} sizes`);
-      const ids = body[o].cards.map(([c]) => c);
-      eq(ids.length, new Set(ids).size, `${o} holds each card once`);
+      eq(body[o].cards.map(([c]) => c), ids, o);
+      eq(body[o].cards.slice(0, NIGHT[o].length), NIGHT[o], `${o} sizes`);
       eq([...ids].sort(), DEFAULT_HOME[o].cards.map(([c]) => c).sort(), `${o} keeps every card`);
+    }
+  }],
+  ["the night arrangement fills Home's grid with no hole, in as many rows as the default", async () => {
+    const cat = await (await fetch("../data/home-cards.json")).json();
+    // CSS grid's row-dense auto-flow (home.css): each card at the first place,
+    // row by row, where it fits.
+    const place = (cards, orient, width) => {
+      const grid = [];
+      const free = (r, c, w, hh) => {
+        for (let y = r; y < r + hh; y++) for (let x = c; x < c + w; x++) if (grid[y] && grid[y][x]) return false;
+        return c + w <= width;
+      };
+      for (const [id, size] of cards) {
+        const [w, hh] = cat.cards[id].sizes[size][orient];
+        let r = 0, c = 0;
+        for (;;) {
+          if (free(r, c, w, hh)) break;
+          c++;
+          if (c + w > width) { c = 0; r++; }
+        }
+        for (let y = r; y < r + hh; y++) {
+          grid[y] = grid[y] || Array(width).fill(null);
+          for (let x = c; x < c + w; x++) grid[y][x] = id;
+        }
+      }
+      return grid;
+    };
+    const body = nightLayout(DEFAULT_HOME);
+    for (const [o, orient, width] of [["landscape", "land", 12], ["portrait", "port", 6]]) {
+      const night = place(body[o].cards, orient, width);
+      const holes = night.flatMap((row, y) => row.map((v, x) => (v ? null : `${y},${x}`))).filter(Boolean);
+      eq(holes, [], `${o}: no hole`);
+      eq(night.length, place(DEFAULT_HOME[o].cards, orient, width).length, `${o}: the default's rows`);
     }
   }],
   ["Apply keeps the Home layout, posts the night one, dims, and says so; restart puts it back", async () => {
