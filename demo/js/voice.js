@@ -10,9 +10,19 @@
 // the music back over 0.8 s: the audio stage's own ramps (ramps.js), so no
 // step is ever audible. A line whose file is missing resolves at once, and its
 // caption still goes out: a demo that has lost a wav reads, rather than stops.
+//
+// WHEN THE MUSIC IS ALREADY DUCKED, say() leaves it alone. A drowsy alert at
+// Level 2 has taken the music down to MUSIC_DB + the alert player's DUCK_DB
+// (-24) and will bring it back itself when it fades; a line said over that
+// would duck 12 dB more (-36) and glide back to a level it had merely found
+// there, cancelling the player's own fade with a step. The alert has made room,
+// so say() plays the line and touches nothing. stop() cuts the line now
+// (drowsy.js calls it on "I'm awake") and restores the music only if say()
+// was what ducked it.
 
-import { audioContext, schedule, levelAt, dbToGain } from "../../js/audiobus.js";
+import { audioContext, schedule, levelAt, dbToGain, MUSIC_DB } from "../../js/audiobus.js";
 import { glidePlan } from "../../js/ramps.js";
+import { DUCK_DB as ALERT_DUCK_DB } from "../../js/alertplayer.js";
 
 export const DUCK_DB = 12;
 export const DOWN_SECS = 0.4;
@@ -21,12 +31,16 @@ export const UP_SECS = 0.8;
 // limiter, and Piper normalises its lines to peak near 0 dBFS.
 const VOICE_DB = -3;
 const BASE = "/demo-media/voice/";
+// Music at or below this (the alert player's duck, plus a little for rounding)
+// has already been made room for.
+export const ROOM_DB = MUSIC_DB + ALERT_DUCK_DB + 0.5;
 
 // What say() reaches outside itself, so a test can stand in for each.
 export const voiceIO = {
   fetch: (url) => fetch(url),
   schedule: (bus, points, at) => schedule(bus, points, at),
   levelAt: (bus, t) => levelAt(bus, t),
+  now: () => audioContext().currentTime,
 };
 
 // { id: "text" }, filled from voice.json as soon as it arrives. Not a
@@ -60,37 +74,62 @@ function load(id) {
 // The line speaking now, if any. A new line replaces it rather than talking
 // over it, and the music stays down between the two.
 let speaking = null;
+// Moved by stop(): a line still being fetched or decoded when it moves is
+// never played.
+let epoch = 0;
+
+// Cut the line speaking now, if any, and let the music go back if this module
+// ducked it. Nothing speaking: nothing happens.
+export function stop() {
+  epoch++;
+  if (speaking) {
+    speaking.cutAt = voiceIO.now();
+    speaking.cut();
+  }
+}
 
 export async function say(id) {
+  const asked = epoch;
   await linesReady;
   document.dispatchEvent(new CustomEvent("omacar-demo:say", { detail: { id, text: LINES[id] || "" } }));
   const buf = await load(id);
-  if (!buf) return;
+  if (!buf || asked !== epoch) return;
   let ctx;
   try { ctx = audioContext(); } catch { return; }   // no audio here at all: the caption was the line
   // Not awaited: a context that has not been allowed to start yet may never
   // settle this, and the line must still resolve (see play()'s timer).
   if (ctx.state === "suspended") ctx.resume().catch(() => {});
-  const now = ctx.currentTime;
+  const now = voiceIO.now();
   const prev = speaking;
   const from = voiceIO.levelAt("music", now);
   const base = prev ? prev.base : from;
+  // Ducked by a line before this one (which hands the duck on), or by nothing
+  // yet and now by this one, or not at all: the music is already down.
+  const ducked = prev ? prev.ducked : from > ROOM_DB;
   const low = base - DUCK_DB;
   // THIS LINE OWNS THE DUCK FROM HERE. The one before hands it over without
   // bringing the music back; and however this one ends -- played, cut short,
   // or failing to build or start at all -- the finally brings it back, unless
   // a newer line has taken it on by then.
-  const me = { base, cut: () => {} };
+  const me = { base, ducked, cutAt: null, cut: () => {} };
   speaking = me;
   if (prev) prev.cut();
-  voiceIO.schedule("music", glidePlan(from, low, DOWN_SECS).points, now);
+  if (ducked) voiceIO.schedule("music", glidePlan(from, low, DOWN_SECS).points, now);
   try {
     await play(ctx, buf, now + DOWN_SECS, me);
   } catch { /* the line could not play: its caption was the line */ }
   finally {
     if (speaking === me) {
       speaking = null;
-      voiceIO.schedule("music", glidePlan(low, base, UP_SECS).points, ctx.currentTime);
+      if (ducked) {
+        // A line that played out finds the music at the bottom of its duck. One
+        // that stop() cut inside the duck's first 0.4 s finds it halfway down,
+        // and the music comes back from there, not from a level it never reached.
+        const t = me.cutAt ?? voiceIO.now();
+        const early = me.cutAt !== null && me.cutAt < now + DOWN_SECS;
+        const from0 = early ? Math.max(low, voiceIO.levelAt("music", t)) : low;
+        voiceIO.schedule("music", glidePlan(from0, base, UP_SECS).points, t);
+      }
     }
   }
 }

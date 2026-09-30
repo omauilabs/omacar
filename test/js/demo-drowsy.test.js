@@ -1,28 +1,33 @@
 // The demo's drowsy moment (demo/js/drowsy.js): the chip in the top bar, the
 // Level 1 and Level 2 alerts when the scene turns 'drowsy', and the hard-braking
-// mark. The demo page does not load the live engine (js/alertness.js), so this
+// toast (the mark itself is the camera feed's: lib/cams.py). The demo page does not load the live engine (js/alertness.js), so this
 // controller is the only drowsy logic on it.
 //
 // EVERYTHING OUTSIDE IT IS A FAKE: the clock is a list of timers this file moves,
-// the alert player and the voice are recorders, the mark is a counter and the
+// the alert player and the voice are recorders (and the last section runs the
+// real voice.js against a music bus that is only a list of points) and the
 // page's elements are scratch ones. No test here can make a sound or reach a
 // server.
 import { eq, ok } from "./assert.js";
 import {
-  createDemoDrowsy, makeSay, register, chipAfterBar,
+  createDemoDrowsy, makeVoice, makeSay, register, chipAfterBar,
   L1_CUES, L2_CUES, L1_REASON, L2_AT, END_AT, SAY_AFTER, SAY_ID, BRAKE_TOAST, POLL_STALE_SECS,
   CHIP_WATCHING, CHIP_PARKED,
 } from "../demo/js/drowsy.js";
 import { createDrowsy } from "../js/drowsyrun.js";
 import { TRIGGER, TONE } from "../js/drowsyui.js";
+import { createAlertPlayer, DUCK_DB as ALERT_DUCK_DB } from "../js/alertplayer.js";
+import { MUSIC_DB } from "../js/audiobus.js";
+import { planOnto, dbAt, worstStep } from "../js/ramps.js";
+import { say as realSay, stop as realStop, voiceIO } from "../demo/js/voice.js";
 
 const kind = (c) => (c.clip ? `${c.kind}:${c.clip}` : c.kind);
 const tick = () => new Promise((done) => setTimeout(done, 0));
 
 // ---- the rig ---------------------------------------------------------------
 function rig(over = {}) {
-  const r = { now: 0, nextId: 1, timers: [], played: [], said: [], marks: [], toasts: [],
-              sayFails: false, markFails: false };
+  const r = { now: 0, nextId: 1, timers: [], played: [], said: [], stops: [], order: [], toasts: [],
+              sayFails: false };
   const later = (fn, ms) => { const id = r.nextId++; r.timers.push({ id, at: r.now + ms, fn }); return id; };
   const cancel = (id) => { r.timers = r.timers.filter((t) => t.id !== id); };
   // Move the clock, running every timer that falls due on the way, in order.
@@ -38,7 +43,11 @@ function rig(over = {}) {
     r.now = end;
   };
   r.secs = () => r.now / 1000;
-  r.player = { play(cues, out) { r.played.push([r.secs(), cues.map(kind), out.level]); return Promise.resolve(); } };
+  r.player = { play(cues, out) {
+    r.played.push([r.secs(), cues.map(kind), out.level]);
+    r.order.push(cues.map(kind).join("+"));
+    return Promise.resolve();
+  } };
   r.app = document.createElement("div");
   r.bar = document.createElement("header");
   r.right = document.createElement("div");
@@ -49,7 +58,7 @@ function rig(over = {}) {
   r.ctl = createDemoDrowsy({
     later, cancel, player: () => r.player,
     say: (id) => { r.said.push([r.secs(), id]); return r.sayFails ? Promise.reject(new Error("no voice")) : Promise.resolve(); },
-    mark: () => { r.marks.push(r.secs()); return r.markFails ? Promise.reject(new Error("403")) : Promise.resolve({}); },
+    stopVoice: () => { r.stops.push(r.secs()); r.order.push("stop"); },
     toast: (m, tone) => r.toasts.push([m, tone || ""]),
     ...over,
   });
@@ -74,7 +83,7 @@ function rig(over = {}) {
 // fires by hand.
 function page(over = {}) {
   const p = { now: 100, asks: 0, sample: { demo: { scene: "drive", event: null } }, polls: [], listeners: {},
-              marks: 0, toasts: [] };
+              toasts: [] };
   p.app = document.createElement("div");
   p.bar = document.createElement("header");
   const right = document.createElement("div");
@@ -88,7 +97,7 @@ function page(over = {}) {
     every: (fn) => { p.polls.push(fn); return 1; }, clock: () => p.now,
     els: { app: p.app, bar: p.bar, host: p.host, dz: null },
     later: () => 0, cancel: () => {}, player: () => ({ play: () => Promise.resolve() }), say: async () => {},
-    mark: async () => { p.marks++; return {}; }, toast: (...a) => p.toasts.push(a),
+    stopVoice: () => {}, toast: (...a) => p.toasts.push(a),
   });
   return p;
 }
@@ -297,62 +306,52 @@ export default [
     eq(r.card(), NONE);
   }],
 
-  // ---- hard braking
-  ["a hard_brake event marks once, however many paints see it", async () => {
+  // ---- hard braking: the toast is the page's; the mark is the camera feed's
+  ["a hard_brake event toasts once, however many paints see it, and sends nothing to the server", async () => {
     const r = rig();
-    r.drive();
-    r.ctl.feed({ scene: "drive", event: null });
-    const ev = { kind: "hard_brake", at: 1759280000.5 };
-    for (let i = 0; i < 5; i++) { r.ctl.feed({ scene: "drive", event: ev }); r.advance(0.25); }
-    await tick();
-    eq(r.marks.length, 1, "one POST to /api/cams/mark");
+    const realFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = (...a) => { calls.push(a[0]); return realFetch(...a); };
+    try {
+      r.drive();
+      r.ctl.feed({ scene: "drive", event: null });
+      const ev = { kind: "hard_brake", at: 1759280000.5 };
+      for (let i = 0; i < 5; i++) { r.ctl.feed({ scene: "drive", event: ev }); r.advance(0.25); }
+      await tick();
+    } finally { globalThis.fetch = realFetch; }
     eq(r.toasts, [["Hard braking. The clip is saved.", ""]], "one toast");
+    eq(calls, [], "and no request: lib/cams.py marks it, as the live recorder does");
     eq(BRAKE_TOAST, "Hard braking. The clip is saved.");
   }],
-  ["and a second event, at another time, marks again", async () => {
+  ["and a second event, at another time, toasts again", () => {
     const r = rig();
     r.drive();
     for (const at of [100, 100, 100, 400, 400]) r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at } });
-    await tick();
-    eq(r.marks.length, 2);
     eq(r.toasts.length, 2);
   }],
-  ["other events, and none, mark nothing", async () => {
+  ["other events, and none, toast nothing", () => {
     const r = rig();
     r.drive();
     r.ctl.feed({ scene: "drive", event: { kind: "pothole", at: 5 } });
     r.ctl.feed({ scene: "drive", event: null });
-    await tick();
-    eq([r.marks.length, r.toasts.length], [0, 0]);
+    eq(r.toasts.length, 0);
   }],
-  ["an event already in the first sample the page sees is not marked again", async () => {
+  ["an event already in the first sample the page sees is not announced again", () => {
     const r = rig();
     r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 77 } });
     r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 77 } });
-    await tick();
-    eq(r.marks.length, 0);
+    eq(r.toasts.length, 0);
   }],
-  ["a mark that fails says so, and does not claim the clip is saved", async () => {
-    const r = rig();
-    r.markFails = true;
-    r.drive();
-    for (let i = 0; i < 3; i++) r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 9 } });
-    await tick();
-    eq(r.marks.length, 1, "and it is not retried on every paint");
-    eq(r.toasts.length, 1);
-    ok(/could not be saved/.test(r.toasts[0][0]) && r.toasts[0][1] === "bad", r.toasts[0].join("|"));
-  }],
-  ["a hard brake in the middle of a drowsy alert marks it too", async () => {
+  ["a hard brake in the middle of a drowsy alert toasts too, and the alert goes on", () => {
     const r = rig();
     r.drive();
     r.drowsy();
     r.ctl.feed({ scene: "drowsy", event: { kind: "hard_brake", at: 3 } });
-    await tick();
-    eq([r.marks.length, r.card().level], [1, "1"]);
+    eq([r.toasts.length, r.card().level], [1, "1"]);
   }],
 
   // ---- the say that may not be there
-  ["the voice line is imported only when needed, and its absence is no error", async () => {
+  ["the voice is imported only when needed, and its absence is no error", async () => {
     let asked = 0;
     const gone = makeSay(async () => { asked++; throw new Error("404"); });
     eq(await gone("drowsy-l2"), undefined);
@@ -363,6 +362,55 @@ export default [
     const here = makeSay(async () => ({ say: (id) => { said.push(id); return Promise.resolve("done"); } }));
     eq([await here("drowsy-l2"), said], ["done", ["drowsy-l2"]]);
     ok(asked >= 1, "the loader was asked");
+  }],
+  ["stop() reaches voice.js's stop once it is loaded, and is nothing before, or without one", async () => {
+    const calls = [];
+    const v = makeVoice(async () => ({ say: async () => {}, stop: () => calls.push("stop") }));
+    v.stop();
+    eq(calls, [], "nothing is loaded, so nothing can be speaking");
+    await v.say("drowsy-l2");
+    v.stop();
+    eq(calls, ["stop"]);
+    const bare = makeVoice(async () => ({ say: async () => {} }));
+    await bare.say("x");
+    bare.stop();
+    const gone = makeVoice(async () => { throw new Error("404"); });
+    await gone.say("x");
+    gone.stop();
+  }],
+  ["a line still being fetched when 'I'm awake' comes is never said", async () => {
+    let release;
+    const said = [];
+    const v = makeVoice(() => new Promise((res) => { release = () => res({ say: (id) => said.push(id), stop() {} }); }));
+    const pending = v.say("drowsy-l2");
+    await tick();
+    v.stop();
+    release();
+    await pending;
+    eq(said, []);
+    await v.say("drowsy-l2");
+    eq(said, ["drowsy-l2"], "and the next one, after it, is");
+  }],
+  ["'I'm awake' stops the voice first, then fades the player", () => {
+    const r = rig();
+    r.drive();
+    r.drowsy();
+    r.advance(4);
+    r.tap();
+    eq(r.order, ["chime+voice:l1", "stop", "fade"]);
+    r.drowsy();
+    r.drive();
+    r.drowsy();
+    r.advance(30);
+    eq(r.stops.length, 2, "and the 30 s end does the same");
+    eq(r.order.slice(-2), ["stop", "fade"]);
+  }],
+  ["a voice that throws on stop changes nothing else", () => {
+    const r = rig({ stopVoice: () => { throw new Error("gone"); } });
+    r.drive();
+    r.drowsy();
+    r.tap();
+    eq([r.card(), r.played[r.played.length - 1]], [NONE, [0, ["fade"], 0]]);
   }],
 
   // ---- the page: afterBar, and where the sample comes from
@@ -376,7 +424,7 @@ export default [
     const host = document.createElement("div");
     const ctl = register(D, { store, api: { live: async () => ({}) }, every: () => 0, clock: () => 0,
       els: { app, bar, host }, later: () => 0, cancel: () => {}, player: () => r.player, say: async () => {},
-      mark: async () => ({}), toast: () => {} });
+      stopVoice: () => {}, toast: () => {} });
     await tick();
     ok(ctl && typeof D.afterBar === "function", "afterBar is set");
     D.afterBar(bar);
@@ -407,7 +455,7 @@ export default [
     const host = document.createElement("div");
     register({}, { store: { live: null, on() { return () => {}; } }, api: { live: async () => ({}) },
       every: () => 0, clock: () => 0, els: { app, bar, host }, later: () => 0, cancel: () => {},
-      player: () => r.player, say: async () => {}, mark: async () => ({}), toast: () => {} });
+      player: () => r.player, say: async () => {}, stopVoice: () => {}, toast: () => {} });
     await tick();
     eq(app.querySelector(".dz-layer"), null, "nothing is drawn while the boot screen is up");
     app.dataset.booting = "0";
@@ -435,12 +483,12 @@ export default [
     await tick();
     eq(p.asks, 1, "it asks once the store has been quiet for a while");
     eq(p.chip(), "Watching", "and what it hears reaches the chip");
-    eq([p.marks, p.toasts], [1, [["Hard braking. The clip is saved."]]], "and a hard brake seen there is marked, once");
+    eq(p.toasts, [["Hard braking. The clip is saved."]], "and a hard brake seen there is announced, once");
     p.polls[0]();
     await tick();
     p.polls[0]();
     await tick();
-    eq(p.marks, 1, "still once, however often it asks");
+    eq(p.toasts.length, 1, "still once, however often it asks");
   }],
   ["a poll that fails is ignored, and only one is out at a time", async () => {
     let out = 0, peak = 0, fail = true;
@@ -458,4 +506,157 @@ export default [
     await new Promise((done) => setTimeout(done, 30));
     eq([out, p.chip()], [0, "Paused · stopped"], "and the next answer is used");
   }],
+
+  // ---- the voice and the alert player on one music bus ---------------------
+  //
+  // Level 2 ducks the music to MUSIC_DB + DUCK_DB (-24) and holds it there.
+  // voice.js's say() used to duck 12 dB more (-36) and, when the line ended or
+  // was cut, glide back to the -24 it had captured: after "I'm awake" the music
+  // was left at -24, and the glide cancelled the player's own fade with a step.
+  // Here the real say() and the real alert player share one bus that is a list
+  // of points, kept as audiobus.js keeps it, and one clock.
+  ["Level 2, then its voice line, then 'I'm awake': the music ends at MUSIC_DB, in steps of no more than 3 dB per 100 ms", async () => {
+    const s = studio();
+    await prime();
+    let r;
+    r = rig({ player: () => s.player, say: realSay, stopVoice: realStop });
+    s.secs = () => r.secs();
+    const restore = s.install(() => r.secs());
+    try {
+      r.drive();
+      r.drowsy();
+      r.advance(L2_AT);
+      ok(Math.abs(dbAt(s.music, r.secs() + 2) - (MUSIC_DB + ALERT_DUCK_DB)) < 1e-6, "Level 2 ducked the music to -24");
+      r.advance(SAY_AFTER);
+      await tick();
+      const before = s.calls.length;
+      ok(Math.abs(dbAt(s.music, r.secs()) - (MUSIC_DB + ALERT_DUCK_DB)) < 1e-6, "still -24 while the line is said");
+      r.tap();
+      await tick();
+      await tick();
+      eq(s.calls.slice(before).filter((c) => c.who === "voice"), [], "the voice touched the bus no more once the alert had made room");
+      ok(Math.abs(dbAt(s.music, r.secs() + 30) - MUSIC_DB) < 1e-6, `the music ends at MUSIC_DB (${dbAt(s.music, r.secs() + 30)})`);
+      const worst = worstStep(s.music);
+      ok(worst <= 3 + 1e-6, `no step over 3 dB per 100 ms (worst ${worst.toFixed(2)})`);
+      eq(s.calls.filter((c) => c.who === "voice"), [], "and the voice never moved the music at all");
+    } finally { restore(); }
+  }],
+  ["the same, with the line running to its end before 'I'm awake'", async () => {
+    const s = studio();
+    await prime();
+    let r;
+    r = rig({ player: () => s.player, say: realSay, stopVoice: realStop });
+    const restore = s.install(() => r.secs());
+    try {
+      r.drive();
+      r.drowsy();
+      r.advance(L2_AT + SAY_AFTER);
+      await tick();
+      await settle(1500);
+      r.advance(5);
+      r.tap();
+      await tick();
+      ok(Math.abs(dbAt(s.music, r.secs() + 30) - MUSIC_DB) < 1e-6, "ends at MUSIC_DB");
+      ok(worstStep(s.music) <= 3 + 1e-6, "in steps of no more than 3 dB per 100 ms");
+    } finally { restore(); }
+  }],
+  ["say() on its own still ducks the music 12 dB and brings it back", async () => {
+    const s = studio();
+    await prime();
+    const restore = s.install(() => (s.t += 1.5));
+    try {
+      s.t = 20;
+      await realSay("drowsy-l2");
+      const voice = s.calls.filter((c) => c.who === "voice");
+      eq(voice.length, 2, "one duck and one restore");
+      eq([voice[0].points.at(-1)[1], voice[1].points.at(-1)[1]], [MUSIC_DB - 12, MUSIC_DB]);
+      ok(Math.abs(dbAt(s.music, s.t + 5) - MUSIC_DB) < 1e-6, "and the music is back at MUSIC_DB");
+      ok(worstStep(s.music) <= 3 + 1e-6, `in steps of no more than 3 dB per 100 ms (${worstStep(s.music).toFixed(2)})`);
+    } finally { restore(); }
+  }],
+  ["stop() cuts a line say() ducked for, and restores the music smoothly, even from mid-duck", async () => {
+    for (const cutAfter of [0.2, 1.0]) {
+      const s = studio();
+      await prime();
+      const restore = s.install(() => s.t);
+      try {
+        s.t = 20;
+        const p = realSay("drowsy-l2");
+        await tick();
+        s.t = 20 + cutAfter;
+        realStop();
+        await p;
+        await tick();
+        ok(Math.abs(dbAt(s.music, s.t + 5) - MUSIC_DB) < 1e-6, `cut after ${cutAfter} s: back at MUSIC_DB (${dbAt(s.music, s.t + 5)})`);
+        ok(worstStep(s.music) <= 3 + 1e-6, `cut after ${cutAfter} s: no step over 3 dB per 100 ms (${worstStep(s.music).toFixed(2)})`);
+      } finally { restore(); }
+    }
+  }],
+  ["stop() with no line speaking does nothing, and a line asked for before it is never played", async () => {
+    const s = studio();
+    await prime();
+    const restore = s.install(() => 50);
+    const realFetch = voiceIO.fetch;
+    try {
+      realStop();
+      eq(s.calls, []);
+      let release;
+      voiceIO.fetch = () => new Promise((res) => { release = () => res(new Response(silentWav(0.05))); });
+      const p = realSay("unloaded-line");
+      await tick();
+      realStop();
+      release();
+      await p;
+      eq(s.calls, [], "the line asked for before stop() left the music alone");
+    } finally { voiceIO.fetch = realFetch; restore(); }
+  }],
 ];
+
+// A music bus and an alert player on it: one list of points, kept as
+// audiobus.js keeps its own (planOnto/dbAt), and the log of who moved it.
+function studio() {
+  const s = { music: [[0, MUSIC_DB]], calls: [], t: 0, secs: () => 0 };
+  const put = (who) => (points, at, append = false) => {
+    s.calls.push({ who, points, at, append });
+    s.music = planOnto(s.music, at, points, append);
+    return true;
+  };
+  s.player = createAlertPlayer({
+    now: () => s.secs(), running: () => true, resume: async () => "running", whenRunning: () => Promise.resolve(),
+    music: put("player"), musicAt: (t) => dbAt(s.music, t), gate() {}, render() { return { release() {} }; },
+    clip: async () => null,
+  });
+  // voice.js reaches the bus, the clock and the network through voiceIO.
+  s.install = (now) => {
+    const was = { ...voiceIO };
+    voiceIO.schedule = (bus, points, at) => (bus === "music" ? put("voice")(points, at) : true);
+    voiceIO.levelAt = (bus, t) => dbAt(s.music, t);
+    voiceIO.now = now;
+    voiceIO.fetch = async () => new Response(silentWav(0.05));
+    return () => Object.assign(voiceIO, was);
+  };
+  return s;
+}
+
+// Decode and cache the line once, on a bus nobody looks at, so the scenarios
+// do not wait on a decode the page runs on virtual time does not wait for.
+async function prime() {
+  const was = { ...voiceIO };
+  voiceIO.fetch = async () => new Response(silentWav(0.05));
+  voiceIO.schedule = () => true;
+  voiceIO.levelAt = () => MUSIC_DB;
+  voiceIO.now = () => 5;
+  try { await realSay("drowsy-l2"); } finally { Object.assign(voiceIO, was); }
+}
+const settle = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// A mono 16-bit wav of silence, as Piper writes them.
+function silentWav(secs, rate = 22050) {
+  const n = Math.round(secs * rate), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n * 2, true);
+  return buf;
+}

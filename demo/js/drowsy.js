@@ -1,5 +1,5 @@
 // The demo's drowsy moment: the chip in the top bar, the two alerts, and the
-// hard-braking mark (doc/design/2026-09-30-meetup-demo.md, section 4).
+// hard-braking toast (doc/design/2026-09-30-meetup-demo.md, section 4).
 //
 // THE DEMO PAGE DOES NOT LOAD js/alertness.js, the live drowsy engine, so this
 // controller is the only drowsy logic on it. It watches the demo world's scene
@@ -10,14 +10,21 @@
 //           drowsyui's Level 1 card, "You seem tired. Plan a break soon."
 //     9 s   Level 2: the duck and bark cues it plays, drowsyui's full-screen
 //           "Are you with me?", and then the voice line 'drowsy-l2'
-//     "I'm awake" (a tap) at any moment: the player fades everything, which
-//           it does over 3 s, and the alert is over
+//     "I'm awake" (a tap) at any moment: the voice is cut (voice.js stop()),
+//           the player fades everything, which it does over 3 s, and the
+//           alert is over
 //     30 s  the same, if nobody tapped
 //
 // THE CHIP AND THE CARDS ARE DROWSYUI'S. This object is shaped like the live
 // engine (state, on(), tap()) and handed to mountDrowsyUI, so the chip, the
 // Level 1 and Level 2 cards and their "I'm awake" buttons are the live app's
 // own code, looking as it looks. Only the state is the demo's.
+//
+// A HARD BRAKE (demo.event.kind == "hard_brake") gets its toast here, once per
+// event. The mark that locks the clips and puts "Hard braking" on the Cameras
+// timeline is lib/cams.py demo's, off the same live.json, as the live
+// recorder marks its own: kind "hard-braking", which POST /api/cams/mark
+// cannot write.
 //
 // WHERE THE SAMPLE COMES FROM. The store's live sample, on a screen with the
 // fast clock running. The Cameras tab has none (main.js polls /api/live only
@@ -30,7 +37,6 @@
 // caller composing its own afterBar (demo/js/boot.js): it is idempotent.
 
 import { store, api, toast } from "../../js/core.js";
-import { postJSON } from "../../js/camapi.js";
 import { mountDrowsyUI, TRIGGER } from "../../js/drowsyui.js";
 import { alertPlayer } from "../../js/alertplayer.js";
 
@@ -58,25 +64,36 @@ export const CHIP_PARKED = "Paused · stopped";
 export const POLL_STALE_SECS = 1.2;
 const POLL_EVERY_MS = 500;
 
-// The voice line is Task 6's (demo/js/voice.js), and may not be there: a
-// dynamic import that is asked for only when there is a line to say, and
-// whose absence is no error. A failed import is not remembered.
-export function makeSay(load) {
-  return async (id) => {
-    let mod = null;
-    try { mod = await Promise.resolve().then(load); } catch { mod = null; }
-    return mod && typeof mod.say === "function" ? mod.say(id) : undefined;
+// The voice is Task 6's (demo/js/voice.js), and may not be there: a dynamic
+// import, made only when there is a line to say, whose absence is no error. A
+// failed import is not remembered. stop() reaches voice.js's stop() once the
+// module is loaded (before that nothing can be speaking), and a line still
+// waiting on the import when it is called is never said.
+export function makeVoice(load) {
+  let mod = null, epoch = 0;
+  return {
+    async say(id) {
+      const asked = epoch;
+      if (!mod) { try { mod = await Promise.resolve().then(load); } catch { mod = null; } }
+      if (asked !== epoch) return undefined;
+      return mod && typeof mod.say === "function" ? mod.say(id) : undefined;
+    },
+    stop() {
+      epoch++;
+      if (mod && typeof mod.stop === "function") mod.stop();
+    },
   };
 }
-const defaultSay = makeSay(() => import("./voice.js"));
+export const makeSay = (load) => makeVoice(load).say;
+const voice = makeVoice(() => import("./voice.js"));
 
 let active = null;                          // the controller register() made last
 
 export function createDemoDrowsy(opts = {}) {
   const d = {
     player: () => alertPlayer(),            // the page's one alert player
-    say: defaultSay,
-    mark: () => postJSON("/api/cams/mark", {}),
+    say: voice.say,
+    stopVoice: voice.stop,
     toast,
     later: (fn, ms) => setTimeout(fn, ms),
     cancel: (id) => clearTimeout(id),
@@ -95,7 +112,7 @@ export function createDemoDrowsy(opts = {}) {
     gate: { connected: true, simulated: false, kph: 60, moving: true, active: true, parked: false },
   };
   let ui = null, ep = null, lastScene = null, seen = false;
-  const marked = new Set();
+  const announced = new Set();
 
   function publish() {
     for (const fn of listeners) { try { fn(st); } catch (e) { console.error(e); } }
@@ -140,25 +157,16 @@ export function createDemoDrowsy(opts = {}) {
   }
 
   // "I'm awake", the car parking, or the end of the 30 s: every timer stops,
-  // so a line still to come is never said, and the player is asked to fade
-  // everything, which it does over 3 s.
+  // so a line still to come is never said; a line being said is cut (and
+  // voice.js gives the music back only if it was voice.js that ducked it); and
+  // the player is asked to fade everything, which it does over 3 s.
   function end() {
     if (!ep) return;
     for (const id of ep.timers) d.cancel(id);
     ep = null;
     level(0, null);
+    try { d.stopVoice(); } catch (e) { console.warn("demo drowsy voice:", e); }
     play([{ kind: "fade" }], 0);
-  }
-
-  function brake() {
-    let marking;
-    try { marking = Promise.resolve(d.mark()); } catch (e) { marking = Promise.reject(e); }
-    marking.then(
-      () => d.toast(BRAKE_TOAST),
-      (e) => {
-        console.warn("demo: the hard-braking mark failed:", e);
-        d.toast("Hard braking. The clip could not be saved.", "bad");
-      });
   }
 
   const evKey = (ev) => `${ev.kind}@${ev.at ?? ""}`;
@@ -179,15 +187,15 @@ export function createDemoDrowsy(opts = {}) {
     // scene that simply goes on after the alert has ended.
     if (scene === "drowsy" && lastScene !== null && lastScene !== "drowsy" && !ep) begin();
     if (scene !== null) lastScene = scene;
-    // A hard brake is marked once, however many samples carry it. One already
-    // in the first sample is from before this page: it was marked then.
+    // A hard brake is announced once, however many samples carry it. One
+    // already in the first sample is from before this page.
     const ev = demo.event;
     if (ev && typeof ev === "object" && ev.kind) {
       const key = evKey(ev);
-      if (!marked.has(key)) {
-        marked.add(key);
-        if (marked.size > 64) marked.delete(marked.values().next().value);
-        if (!first && ev.kind === "hard_brake") brake();
+      if (!announced.has(key)) {
+        announced.add(key);
+        if (announced.size > 64) announced.delete(announced.values().next().value);
+        if (!first && ev.kind === "hard_brake") d.toast(BRAKE_TOAST);
       }
     }
   }
@@ -266,7 +274,7 @@ function follow(ctl, { store: s = store, api: a = api, every, clock }) {
 
 export function chipAfterBar(vbar) { if (active) active.afterBar(vbar); }
 
-// `deps` is for the tests: the controller's own (player, say, mark, toast,
+// `deps` is for the tests: the controller's own (player, say, stopVoice, toast,
 // later, cancel) and { store, api, every, clock, els }.
 export function register(D, deps = {}) {
   const ctl = createDemoDrowsy(deps);
