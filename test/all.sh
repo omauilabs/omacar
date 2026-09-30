@@ -170,6 +170,20 @@ python3 "$ROOT/test/demo_map_test.py" || fails=$((fails + 1))
 # by js_test.py above.
 python3 "$ROOT/test/demo_voice_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 6 --------------------------------------------------
+# ---- demo/meetup --------------------------------------------------------------
+# The demo's car: the drive built from a route, the world that plays it in real
+# time, its cues, and that the module has no way to reach the adapter, the
+# cameras or the sound. Scratch folders and held clocks only.
+python3 "$ROOT/test/demoworld_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup ----------------------------------------------------------
+# ---- demo/meetup: the silo ----------------------------------------------------
+# The demo server's allowlist and its folders, then `omacar demo` itself in a
+# scratch HOME with a fake real state, where systemctl, wpctl, pactl, hyprctl
+# and chromium are shims that write down every call. Scratch ports only: never
+# 7580, so a real demo on this machine is never met.
+python3 "$ROOT/test/demoserve_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/demo_silo_test.py" || fails=$((fails + 1))
+# ---- end demo/meetup: the silo ------------------------------------------------
 # ---- meetup demo: running the show (Task 8) -----------------------------------
 # lib/democheck.py (`omacar demo check`) against a scratch tree, a scratch HOME
 # and a stand-in pgrep: ready, and each thing that makes it not ready, named.

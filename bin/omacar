@@ -66,9 +66,10 @@
 #                             every command as a picture, for the wallpaper
 #   omacar board [stop]       the same commands, behind your windows, tappable
 #   omacar state              key=value status for the bar widget
-#   omacar demo start|stop|status|trash
-#                             a throwaway OmaCar with its own data, for showing
-#                             somebody. Cannot touch your real car.
+#   omacar demo on|off|check|tour|trash
+#                             the demo: a drive, its own data and its own window,
+#                             for showing somebody. Cannot touch your car, its
+#                             data or the live app, and will not start while moving.
 #   omacar server status|stop|watch PORT
 #                             the loopback server the app is served from; `watch`
 #                             restarts it on PORT if it dies, and the kiosk runs it
@@ -221,24 +222,43 @@ serve_note() {
 
 # --- demo mode --------------------------------------------------------------
 #
-# A second OmaCar with its own everything, for showing somebody the tool
-# without their fingerprints landing on the car you actually drive.
+# The meetup demo (doc/design/2026-09-30-meetup-demo.md): a second OmaCar with
+# its own drive, data, server and window, for showing somebody the tool without
+# a car in the room.
 #
-# THE ISOLATION IS TWO ENVIRONMENT VARIABLES, AND THAT IS THE POINT.
+# The owner's constraint, verbatim: "the demo mode should not in any way shape
+# or form affect the live running app when in the car, or affect the real
+# data. The demo must be siloed data". So:
 #
-# Every byte this app reads or writes hangs off XDG_STATE_HOME (the garage,
-# live.json, the alert feed, the DTC logs, the port lease) or XDG_CONFIG_HOME
-# (the drive layout, your themes, the watchdog settings). Redirect both and the
-# demo is a different installation that happens to share a binary.
+#   everything it writes is under DEMO_ROOT: its state, config, clips, runtime
+#     folder, browser profile and pids;
+#   it has no adapter (OMACAR_PORT names a path that never exists) and no
+#     camera (its feed is decoded from files);
+#   its server answers only an allowlist of routes (lib/serve.py DEMO_ROUTES);
+#   it never starts, stops or restarts an omacar-* unit, and never runs wpctl
+#     or pactl;
+#   it will not start while the real car is moving, and a guard closes it the
+#     moment the real car starts to;
+#   and it stops only its own processes, each checked to be what it says.
 #
-# So there is no list of files to keep in sync as the app grows, nothing to
-# back up before starting, and nothing to restore after. `omacar demo trash`
-# deletes one directory and the demo has never existed.
+# `omacar demo trash` deletes one directory and the demo has never existed.
 #
-# The one thing it deliberately still reads from the real machine is the
-# desktop theme, so a demo looks like this desktop. That path is read-only.
+# What it still reads from the real machine, read-only: the desktop theme, so
+# the demo looks like this desktop; the real live.json, to know whether the car
+# is moving; and, once, the saved road-camera stills and pins.
 DEMO_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/omacar-demo"
-DEMO_PORT=7580
+# OMACAR_DEMO_PORT is for the tests, which must never meet a real demo on 7580
+# or another run of themselves. Everything else uses 7580.
+DEMO_PORT="${OMACAR_DEMO_PORT:-7580}"
+# The REAL state and settings, taken here, at load, before demo_env points
+# everything at the demo's.
+REAL_STATE="$OMACAR_STATE"
+REAL_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}"
+# The demo's pid files, and the folder that is its server's and camera feed's
+# XDG_RUNTIME_DIR. That one is passed on their command lines and never
+# exported: the demo's window needs the real one to find Wayland.
+DEMO_PIDS="$DEMO_ROOT/pids"
+DEMO_RUN="$DEMO_ROOT/run"
 
 demo_env() {
   export XDG_STATE_HOME="$DEMO_ROOT/state"
@@ -246,6 +266,12 @@ demo_env() {
   # env.sh derived this from the REAL XDG_STATE_HOME when the script started,
   # so it has to be recomputed or the shell half of the app writes home.
   export OMACAR_STATE="$XDG_STATE_HOME/omacar"
+  # NO ADAPTER, EVER. connect.resolve() takes OMACAR_PORT before it globs
+  # /dev/ttyUSB*, and this path never exists, so nothing in the demo --
+  # a route, a module, a stray import -- can find the real one.
+  export OMACAR_PORT="$DEMO_ROOT/no-adapter"
+  # The dashcams' clips: the demo's own copies, never ~/Videos/OmaCar.
+  export OMACAR_VIDEOS="$DEMO_ROOT/videos"
 
   # AND SO DO THE PID PATHS, WHICH IS THE DANGEROUS ONE.
   #
@@ -259,29 +285,229 @@ demo_env() {
   SIM_PID="$OMACAR_STATE/sim.pid"
   WATCH_PID="$OMACAR_STATE/watch.pid"
 
-  mkdir -p "$OMACAR_STATE" "$XDG_CONFIG_HOME/omarchy"
+  mkdir -p "$OMACAR_STATE" "$XDG_CONFIG_HOME/omarchy" "$OMACAR_VIDEOS" "$DEMO_PIDS"
+  mkdir -p -m 700 "$DEMO_RUN"
 }
 
-demo_server_pid() {
-  ss -lptn "sport = :$DEMO_PORT" 2>/dev/null | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2
+# ---- the demo's own processes ----------------------------------------------
+#
+# Each is started through demo_spawn, which writes the pid of the process that
+# becomes the command (bash's own, which exec keeps), and each is only ever
+# signalled while /proc says it is still that command. A pid alone is not
+# enough: pids are reused, and a stale pid file must never stop somebody
+# else's process. Nor is a port, which anything may hold; nor a bare process
+# name, which another checkout's demo, or a test's, shares.
+#
+# WHICHEVER CHECKOUT STARTED IT, THIS DEMO IS THIS DEMO. On the tablet the demo
+# is run from a worktree while the `omacar` on PATH is the live checkout, and
+# the guard runs `demo off` from its own. So `demo off` stops the demo's
+# processes whoever started them, and says which checkout that was: the demo's
+# is decided by what each process is and which state folder it was started
+# with, not by where its script lives. `demo on` still starts nothing beside a
+# demo that another checkout is running.
+
+demo_spawn() {
+  local name="$1" log="$OMACAR_STATE/demo-$1.log"
+  shift
+  log_trim "$log" || true
+  setsid -f bash -c 'echo $$ >"$0"; exec "$@"' "$DEMO_PIDS/$name.pid" "$@" \
+    >>"$log" 2>&1 </dev/null
 }
 
-demo_start() {
-  demo_env
-  omacar_need_env
-  local fresh=0
-  [[ -d "$OMACAR_STATE/vehicles" ]] || fresh=1
-  if (( fresh )); then
-    echo "  building a demo car…"
-    "$OMACAR_PY" "$ROOT/lib/sim.py" seed >/dev/null
+# PID's command line, one argument per element of DEMO_ARGV; false when there
+# is no such process (or nothing after its interpreter).
+demo_argv() {
+  DEMO_ARGV=()
+  [[ "$1" =~ ^[0-9]+$ ]] || return 1
+  mapfile -d '' -t DEMO_ARGV 2>/dev/null <"/proc/$1/cmdline" || return 1
+  (( ${#DEMO_ARGV[@]} > 1 ))
+}
+
+# Whether PID was started with THIS demo's state folder: its environment, as
+# /proc keeps it from exec, has OMACAR_STATE=$DEMO_ROOT/state/omacar. Every
+# demo process is started after demo_env, from whichever checkout, so this is
+# what makes a process this demo's rather than a look-alike's.
+demo_env_is() {
+  local -a env
+  local e
+  mapfile -d '' -t env 2>/dev/null <"/proc/$1/environ" || return 1
+  for e in "${env[@]}"; do
+    [[ "$e" == "OMACAR_STATE=$DEMO_ROOT/state/omacar" ]] && return 0
+  done
+  return 1
+}
+
+# Who is behind one of the demo's pid files, as one line:
+#   ours PID          this demo's script, alive, run from this checkout
+#   other PID ROOT    this demo's script, alive, run from the checkout at ROOT
+#   none              no file, a dead pid, or a process that is not the demo's
+# The demo's means all three: argv[1], the file its interpreter is running, is
+# .../lib/<script>; the demo's own words are among the arguments after it; and
+# it was started with this demo's state folder (demo_env_is).
+demo_holder() {
+  local name="$1" f="$DEMO_PIDS/$1.pid" script w a found pid
+  local -a words
+  case "$name" in
+    world)  script=demoworld.py; words=(run) ;;
+    cams)   script=cams.py;      words=(demo) ;;
+    server) script=serve.py;     words=(--demo) ;;
+    guard)  script=demoguard.py; words=("$DEMO_ROOT") ;;
+    # A demo from before this one had the simulator for its car, and only its
+    # own sim.pid in the demo's state to find it by. Named outright, never as
+    # $SIM_PID, which is the REAL one until demo_env has run.
+    oldsim) script=sim.py;       words=(run); f="$DEMO_ROOT/state/omacar/sim.pid" ;;
+    *) echo none; return 0 ;;
+  esac
+  pid=$(cat "$f" 2>/dev/null) || { echo none; return 0; }
+  demo_argv "$pid" || { echo none; return 0; }
+  [[ "${DEMO_ARGV[1]}" == */lib/"$script" ]] || { echo none; return 0; }
+  for w in "${words[@]}"; do
+    found=0
+    for a in "${DEMO_ARGV[@]:2}"; do [[ "$a" == "$w" ]] && { found=1; break; }; done
+    (( found )) || { echo none; return 0; }
+  done
+  demo_env_is "$pid" || { echo none; return 0; }
+  if [[ "${DEMO_ARGV[1]}" == "$ROOT/lib/$script" ]]; then
+    echo "ours $pid"
+  else
+    echo "other $pid ${DEMO_ARGV[1]%/lib/"$script"}"
   fi
-  if ! sim_pid >/dev/null; then
-    setsid -f "$OMACAR_PY" "$ROOT/lib/sim.py" run >"$OMACAR_STATE/sim.log" 2>&1
-    local i
-    for i in $(seq 1 40); do sleep 0.2; sim_pid >/dev/null && break; done
+}
+
+# The pid of one of this checkout's demo processes.
+demo_ident() {
+  local h; h=$(demo_holder "$1")
+  [[ "$h" == "ours "* ]] || return 1
+  echo "${h#ours }"
+}
+
+# The demo's processes that another checkout is running, one line each:
+# ROOT, a tab, and what it is.
+demo_elsewhere() {
+  local name h rest
+  for name in world cams server guard oldsim; do
+    h=$(demo_holder "$name")
+    [[ "$h" == "other "* ]] || continue
+    rest=${h#other }
+    printf '%s\t%s (pid %s)\n' "${rest#* }" "$(demo_what "$name")" "${rest%% *}"
+  done
+}
+
+# Say which checkout holds the demo, and the command that stops it there.
+demo_say_elsewhere() {
+  local root what first=""
+  while IFS=$'\t' read -r root what; do
+    [[ -n "$root" ]] || continue
+    echo "  $what, from $root" >&2
+    first=${first:-$root}
+  done <<<"$1"
+  echo "  stop it first:  omacar demo off   (from this checkout or that one)" >&2
+}
+
+demo_what() {
+  case "$1" in
+    world) echo "the demo world" ;; cams) echo "the camera feed" ;;
+    server) echo "the demo server" ;; guard) echo "the guard" ;;
+    oldsim) echo "the old demo's simulated car" ;; window) echo "the demo window" ;;
+  esac
+}
+
+# The demo window: Chromium on the demo's own profile, which is its identity
+# and nothing else's. The live kiosk's is ~/.local/share/omacar/kiosk*, and the
+# kiosk watchdog's prefix match (lib/hotplug.py) never sees this one.
+demo_window_pids() {
+  local re
+  re=$(printf '%s' "$DEMO_ROOT/browser" | sed 's/[][\.*^$+?(){}|]/\\&/g')
+  pgrep -f -- "--user-data-dir=$re( |\$)" || true
+}
+
+# Is PID still NAME, by the same test that found it?
+demo_still() {
+  local name="$1" pid="$2" a
+  if [[ "$name" == window ]]; then
+    demo_argv "$pid" || return 1
+    for a in "${DEMO_ARGV[@]}"; do
+      [[ "$a" == "--user-data-dir=$DEMO_ROOT/browser" ]] && return 0
+    done
+    return 1
+  fi
+  [[ "$(demo_holder "$name")" == "ours $pid" ]]
+}
+
+# Wait for NAME's pids to go after a SIGTERM. Five seconds is far longer than
+# any of them takes; one still there after that gets SIGKILL, and only once
+# /proc has said again that it is still NAME.
+demo_wait() {
+  local name="$1" i p left
+  shift
+  for i in $(seq 1 50); do
+    left=0
+    for p in "$@"; do kill -0 "$p" 2>/dev/null && left=1; done
+    (( left )) || return 0
+    sleep 0.1
+  done
+  for p in "$@"; do
+    if kill -0 "$p" 2>/dev/null && demo_still "$name" "$p"; then
+      kill -KILL "$p" 2>/dev/null || true
+    fi
+  done
+}
+
+# Wait for NAME to be up: its pid file written, /proc saying it is this
+# checkout's, and still so half a second later, so a script that dies on its
+# first lines is not taken for one that started.
+demo_up() {
+  local name="$1" i pid
+  for i in $(seq 1 40); do
+    if pid=$(demo_ident "$name"); then
+      sleep 0.5
+      [[ "$(demo_ident "$name" || true)" == "$pid" ]] && return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# ---- the verbs -------------------------------------------------------------
+
+demo_on() {
+  local py; py="$(serve_py)"
+
+  # NOT WHILE THE CAR IS MOVING. Asked of the REAL live.json, which REAL_STATE
+  # names from before demo_env, and before anything is started or even made.
+  # lib/demoguard.py holds the rule, for this and for the guard: a sample from
+  # the last 5 s at over 3 km/h. No fresh sample, as at the venue with no
+  # adapter, is parked. An answer that is neither is not a yes.
+  local now
+  now=$("$py" "$ROOT/lib/demoguard.py" --state "$REAL_STATE/live.json" 2>/dev/null || true)
+  if [[ "$now" != parked ]]; then
+    if [[ "$now" == moving ]]; then
+      echo "omacar: the car is moving (the live app reads over 3 km/h), so the demo is not starting" >&2
+    else
+      echo "omacar: could not tell whether the car is moving, so the demo is not starting" >&2
+    fi
+    exit 1
+  fi
+  # ONE DEMO, FROM ONE CHECKOUT. A second world, server and guard from here
+  # would fight the first for the port, the state and the screen.
+  local elsewhere; elsewhere=$(demo_elsewhere)
+  if [[ -n "$elsewhere" ]]; then
+    echo "omacar: the demo is already running from another checkout, so this one starts nothing:" >&2
+    demo_say_elsewhere "$elsewhere"
+    exit 1
+  fi
+  local need
+  for need in lib/demoworld.py lib/demoguard.py demo/demo.html; do
+    [[ -f "$ROOT/$need" ]] || { echo "omacar: this build has no $need, so it has no demo" >&2; exit 1; }
+  done
+
+  demo_env
+  if [[ ! -d "$OMACAR_STATE/vehicles" ]]; then
+    echo "  building a demo car…"
+    "$py" "$ROOT/lib/sim.py" seed >/dev/null
   fi
   # The rollup the bar widget reads, built inside the demo's own state.
-  "$OMACAR_PY" -c "
+  "$py" -c "
 import sys, os, json, tempfile
 sys.path.insert(0, '$ROOT/lib')
 import records
@@ -295,6 +521,36 @@ with os.fdopen(fd, 'w', encoding='utf-8') as f:
 os.replace(tmp, out)
 " 2>/dev/null || true
 
+  # ROAD CAMERAS WITH NO CONNECTION. The venue may have no internet, so a new
+  # demo starts from the real saved list and stills, and the real pinned
+  # commute. Copied once, with their times, so a still says its real age; after
+  # that the demo's cache is its own. Links are copied as what they point at,
+  # so nothing the demo writes later can land back in the real tree. Each is
+  # copied beside its place and renamed into it only whole, so a copy that
+  # fails half way leaves nothing to stop the next `demo on` trying again.
+  local roadcams_note=""
+  if [[ ! -d "$OMACAR_STATE/roadcams" ]]; then
+    if [[ -d "$REAL_STATE/roadcams" ]]; then
+      local tmp="$OMACAR_STATE/.roadcams.copy.$$"
+      rm -rf "$tmp"
+      if ! { cp -RL --preserve=mode,timestamps "$REAL_STATE/roadcams" "$tmp" 2>/dev/null \
+             && mv -T "$tmp" "$OMACAR_STATE/roadcams" 2>/dev/null; }; then
+        rm -rf "$tmp"
+        roadcams_note="the saved stills could not be copied; the next demo on tries again"
+      fi
+    fi
+  fi
+  # The pins on their own, so a failed copy of the stills does not hold them
+  # back, and a failed copy of them is tried again whatever the stills did.
+  local pins="$XDG_CONFIG_HOME/omarchy/omacar-roadcams.json"
+  if [[ -f "$REAL_CONFIG/omarchy/omacar-roadcams.json" && ! -e "$pins" ]]; then
+    if ! { cp -L --preserve=mode,timestamps "$REAL_CONFIG/omarchy/omacar-roadcams.json" \
+             "$pins.copy.$$" 2>/dev/null && mv -T "$pins.copy.$$" "$pins" 2>/dev/null; }; then
+      rm -f "$pins.copy.$$"
+      roadcams_note="${roadcams_note:+$roadcams_note; }the pinned cameras could not be copied"
+    fi
+  fi
+
   # THE MARKER THE BAR WIDGET WATCHES.
   #
   # The panel is QML running inside omarchy-shell, which has the desktop's
@@ -303,45 +559,257 @@ os.replace(tmp, out)
   # other plugin too. So instead of moving the panel's world, the panel is
   # told where to look: while this file exists it reads the demo's files and
   # wears a DEMO badge, and the moment it is gone it is back on your car. No
-  # restart either way, and not one real file is written at any point.
+  # restart either way, and not one real file is written at any point. The
+  # guard below watches it too, and goes when it goes.
   : > "$DEMO_ROOT/ACTIVE"
 
-  if [[ -z "$(demo_server_pid)" ]]; then
-    setsid -f "$OMACAR_PY" "$ROOT/lib/serve.py" "$DEMO_PORT" "$ROOT/share" \
-      >"$OMACAR_STATE/serve.log" 2>&1
-    for i in $(seq 1 30); do
-      sleep 0.2
-      [[ "$(curl -fsS --max-time 1 "http://127.0.0.1:$DEMO_PORT/.mark" 2>/dev/null)" == *"$MARK"* ]] && break
-    done
+  local started=() i url="http://127.0.0.1:$DEMO_PORT/demo.html" cams_note=""
+  # The demo world: the car, its drive and its cues (lib/demoworld.py).
+  if ! demo_ident world >/dev/null; then
+    demo_spawn world "$py" "$ROOT/lib/demoworld.py" run
+    if ! demo_up world; then
+      echo "omacar: the demo world did not start; see $OMACAR_STATE/demo-world.log" >&2
+      demo_off >/dev/null 2>&1 || true
+      exit 1
+    fi
+    started+=("the demo world")
   fi
+  # The camera feed, decoded from files, where this build has one. It never
+  # opens a device.
+  if ! demo_ident cams >/dev/null \
+     && timeout 20 env XDG_RUNTIME_DIR="$DEMO_RUN" "$py" "$ROOT/lib/cams.py" demo --help \
+          >/dev/null 2>&1; then
+    # OMACAR_DEMO_CLIPS names another folder of clips (the tests' scratch
+    # ones); otherwise the feed reads the private share/assets/private/demo/clips.
+    local from=()
+    [[ -n "${OMACAR_DEMO_CLIPS:-}" ]] && from=(--from "$OMACAR_DEMO_CLIPS")
+    demo_spawn cams env XDG_RUNTIME_DIR="$DEMO_RUN" "$py" "$ROOT/lib/cams.py" demo "${from[@]}"
+    # Not a reason to stop the demo (it runs without footage, and says so), but
+    # never claimed as started when it is not.
+    if demo_up cams; then
+      started+=("the camera feed")
+    else
+      cams_note="the camera feed did not start; see $OMACAR_STATE/demo-cams.log"
+    fi
+  fi
+  # The server, which refuses to start over anything but the demo's folders.
+  if ! demo_ident server >/dev/null; then
+    if port_taken "$DEMO_PORT"; then
+      echo "omacar: port $DEMO_PORT is held by something that is not this demo's server" \
+           "(another demo? \`omacar demo off\` from where it was started)" >&2
+      demo_off >/dev/null 2>&1 || true
+      exit 1
+    fi
+    demo_spawn server env XDG_RUNTIME_DIR="$DEMO_RUN" \
+      "$py" "$ROOT/lib/serve.py" "$DEMO_PORT" "$ROOT/share" --demo "$ROOT/demo"
+    for i in $(seq 1 40); do
+      sleep 0.2
+      ours "$DEMO_PORT" && break
+    done
+    if ! ours "$DEMO_PORT"; then
+      echo "omacar: the demo server did not start; see $OMACAR_STATE/demo-server.log" >&2
+      demo_off >/dev/null 2>&1 || true
+      exit 1
+    fi
+    started+=("the demo server")
+  fi
+  # The guard, on the REAL live.json. A demo without it would stay on the
+  # screen of a car that starts moving, so no guard is no demo.
+  if ! demo_ident guard >/dev/null; then
+    demo_spawn guard "$py" "$ROOT/lib/demoguard.py" "$REAL_STATE/live.json" "$DEMO_ROOT"
+    if ! demo_up guard; then
+      echo "omacar: the guard did not start, and the demo does not run without it;" \
+           "see $OMACAR_STATE/demo-guard.log" >&2
+      demo_off >/dev/null 2>&1 || true
+      exit 1
+    fi
+    started+=("the guard")
+  fi
+  if [[ -z "$(demo_window_pids)" ]]; then
+    demo_window "$url" && started+=("the demo window")
+  fi
+  # THE CAR MAY HAVE MOVED WHILE THIS WAS STARTING. The guard would then have
+  # run `demo off` (ACTIVE gone), perhaps before the window existed to close.
+  # A window with no demo and no guard under it is the one thing this must not
+  # leave on a moving car's screen, so it goes, and so does everything else.
+  if [[ ! -f "$DEMO_ROOT/ACTIVE" ]] || ! demo_ident guard >/dev/null; then
+    for i in $(seq 1 20); do
+      [[ -n "$(demo_window_pids)" ]] && break
+      sleep 0.1
+    done
+    demo_off >/dev/null 2>&1 || true
+    echo "omacar: the demo was stopped while it was starting (the guard, or the car moving);" \
+         "nothing of it is left running" >&2
+    exit 1
+  fi
+
   echo
-  echo "  demo running   http://127.0.0.1:$DEMO_PORT/app.html"
+  echo "  demo on        $url"
   echo "  its data       $DEMO_ROOT"
-  echo "  your car       untouched — different state, different settings"
+  echo "  your car       untouched: its own state, settings, clips and server, and no adapter"
+  if (( ${#started[@]} )); then
+    echo "  started        $(IFS=,; echo "${started[*]}" | sed 's/,/, /g')"
+  else
+    echo "  started        nothing: it was already on"
+  fi
+  [[ -z "$roadcams_note" ]] || echo "  road cameras   $roadcams_note"
+  [[ -z "$cams_note" ]] || echo "  cameras        $cams_note"
   echo
-  echo "  omacar demo trash   when you are done with it"
+  echo "  omacar demo off     to close it     omacar demo trash   to forget it"
   echo
-  open_url "http://127.0.0.1:$DEMO_PORT/app.html"
 }
 
-demo_stop() {
+# The demo window, the live kiosk's way (see kiosk()), on the demo's profile.
+demo_window() {
+  local url="$1" w
+  command -v chromium >/dev/null || {
+    echo "  (chromium is not installed: the demo is at $url)"; return 1; }
+  # A Wayland session to draw on, found when this was started from somewhere
+  # that has none, as `omacar board` finds it: an ssh shell carries no
+  # WAYLAND_DISPLAY, and the tablet is often administered over ssh.
+  : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+  export XDG_RUNTIME_DIR
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    for w in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+      [[ -S "$w" ]] || continue
+      WAYLAND_DISPLAY="$(basename "$w")"
+      export WAYLAND_DISPLAY
+      break
+    done
+  fi
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] || {
+    echo "  (no Wayland session to open the window on: the demo is at $url)"; return 1; }
+  # The live kiosk's flags, and two of the demo's own: --mute-audio when
+  # OMACAR_DEMO_MUTE=1 (the tests, and the night), and --deny-permission-prompts
+  # always, so no page and no tap on "Allow" can open the tablet's camera or
+  # microphone from the demo's window. Opening an IPU6 node has rebooted this
+  # tablet before (lib/cams.py), and nothing in the demo needs either.
+  #
+  # XDG_CACHE_HOME is the demo's, on this command line only, like the server's
+  # runtime folder: Chromium's disk cache stays inside the demo. (~/.pki, the
+  # certificate store every Chromium on the machine shares, is not moved.)
+  local extra=(--deny-permission-prompts)
+  [[ "${OMACAR_DEMO_MUTE:-}" == 1 ]] && extra+=(--mute-audio)
+  setsid -f env XDG_CACHE_HOME="$DEMO_ROOT/cache" chromium \
+    --user-data-dir="$DEMO_ROOT/browser" \
+    --app="$url" \
+    --kiosk \
+    --start-fullscreen \
+    --noerrdialogs \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-features=TranslateUI,Translate \
+    --no-first-run \
+    --password-store=basic \
+    --autoplay-policy=no-user-gesture-required \
+    --ozone-platform=wayland \
+    "${extra[@]}" \
+    >/dev/null 2>&1 </dev/null
+}
+
+demo_off() {
   demo_env
-  local pid n=0
-  if pid=$(sim_pid); then kill "$pid" 2>/dev/null && n=$((n + 1)); fi
-  pid=$(demo_server_pid)
-  [[ -n "$pid" ]] && kill "$pid" 2>/dev/null && n=$((n + 1))
-  # The bar widget is back on your car within a second of this.
+  local stopped=() h pid pids p name rest root from=()
+  # The window first, so the page is not left asking a server that has gone.
+  # Each pid pgrep found is checked again, by its exact profile argument,
+  # before it is signalled.
+  pids=()
+  for p in $(demo_window_pids); do
+    demo_still window "$p" && pids+=("$p")
+  done
+  if (( ${#pids[@]} )); then
+    kill "${pids[@]}" 2>/dev/null || true
+    demo_wait window "${pids[@]}"
+    stopped+=("the demo window")
+  fi
+  # THIS DEMO'S PROCESSES, WHICHEVER CHECKOUT STARTED THEM (demo_holder): the
+  # guard runs this from its own checkout and must never be vetoed by a demo
+  # started from another, and on the tablet the one on PATH is the live one.
+  for name in guard server cams world oldsim; do
+    h=$(demo_holder "$name")
+    case "$h" in
+      "ours "*) pid=${h#ours }; root="" ;;
+      "other "*) rest=${h#other }; pid=${rest%% *}; root=${rest#* } ;;
+      *) pid="" ;;
+    esac
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      demo_wait "$name" "$pid"
+      stopped+=("$(demo_what "$name")${root:+, run from $root}")
+      [[ -z "$root" ]] || from+=("$root")
+    fi
+    # A pid file goes only once it names nothing of the demo's: a dead pid, or
+    # a process that is not the demo's at all. (oldsim's is the demo world's
+    # own sim.pid, and is the world's to keep.)
+    if [[ "$name" != oldsim && "$(demo_holder "$name")" == none ]]; then
+      rm -f "$DEMO_PIDS/$name.pid"
+    fi
+  done
+  # The bar widget is back on your car within a second of this, and the guard
+  # goes with it.
   rm -f "$DEMO_ROOT/ACTIVE"
-  echo "  stopped $n demo process(es); its data is still in $DEMO_ROOT"
+  if (( ${#stopped[@]} )); then
+    for name in "${stopped[@]}"; do echo "  stopped $name"; done
+  else
+    echo "  nothing of the demo's was running"
+  fi
+  if (( ${#from[@]} )); then
+    echo "  (the demo was started from ${from[0]}, not from $ROOT)"
+  fi
+  echo "  its data is still in $DEMO_ROOT"
+}
+
+# The page asks /api/screen four times a minute, and honours an ask once. It
+# takes one only for a screen it has told the server it has, so this asks until
+# the page has booted far enough to have said so.
+demo_tour() {
+  demo_on
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS --max-time 2 -H "Content-Type: application/json" \
+         -d '{"view": "demo-tour", "who": "omacar demo tour"}' \
+         "http://127.0.0.1:$DEMO_PORT/api/screen" >/dev/null 2>&1; then
+      echo "  the tour starts the next time the page looks, within 15 s"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "omacar: the demo page has not said it has a tour; is its window open?" >&2
+  exit 1
+}
+
+# Everything the venue needs, checked read-only (lib/democheck.py).
+demo_check() {
+  if [[ -f "$ROOT/lib/democheck.py" ]]; then
+    exec "$(serve_py)" "$ROOT/lib/democheck.py" "$@"
+  fi
+  echo "  the check arrives with Task 8"
+}
+
+# One of the demo's processes, as status says it.
+demo_state_of() {
+  local h rest; h=$(demo_holder "$1")
+  case "$h" in
+    "ours "*) echo "running (pid ${h#ours })" ;;
+    "other "*) rest=${h#other }; echo "running from ${rest#* } (pid ${rest%% *})" ;;
+    *) echo "not running" ;;
+  esac
 }
 
 demo_status() {
-  local root="$DEMO_ROOT"
+  local root="$DEMO_ROOT" s
   demo_env
   echo
   echo "  demo data      $([[ -d "$root" ]] && du -sh "$root" 2>/dev/null | cut -f1 || echo "none yet")  $root"
-  echo "  demo car       $(sim_pid >/dev/null && echo "running (pid $(sim_pid))" || echo "not running")"
-  echo "  demo server    $([[ -n "$(demo_server_pid)" ]] && echo "http://127.0.0.1:$DEMO_PORT/app.html" || echo "not running")"
+  echo "  demo world     $(demo_state_of world)"
+  echo "  camera feed    $(demo_state_of cams)"
+  s=$(demo_state_of server)
+  [[ "$s" == "running (pid"* ]] && s="http://127.0.0.1:$DEMO_PORT/demo.html"
+  echo "  demo server    $s"
+  s=$(demo_state_of guard)
+  [[ "$s" == "running (pid"* ]] && s="watching $REAL_STATE/live.json"
+  echo "  guard          $s"
+  echo "  demo window    $([[ -n "$(demo_window_pids)" ]] && echo "open" || echo "closed")"
   echo
 }
 
@@ -354,7 +822,17 @@ demo_trash() {
     */omacar-demo) ;;
     *) echo "omacar: refusing to delete \"$root\" — that is not the demo directory" >&2; exit 1 ;;
   esac
-  demo_stop >/dev/null 2>&1 || true
+  demo_off >/dev/null 2>&1 || true
+  # Never from under a demo that is still running, whoever started it: its
+  # pid files are in here, and it would carry on writing into a folder that
+  # has gone.
+  local name
+  for name in guard server cams world oldsim; do
+    if [[ "$(demo_holder "$name")" != none ]]; then
+      echo "omacar: $(demo_what "$name") is still running; not trashing a demo that is" >&2
+      exit 1
+    fi
+  done
   if [[ -d "$root" ]]; then
     rm -rf "$root"
     echo "  demo trashed — $root is gone"
@@ -1065,11 +1543,14 @@ print()
     esac ;;
   demo)
     case "${2:-status}" in
-      start) demo_start ;;
+      # start and stop are the names the bar widget's button uses.
+      on | start) demo_on ;;
+      off | stop) demo_off ;;
+      tour) demo_tour ;;
+      check) shift 2; demo_check "$@" ;;
       # How the bar widget refreshes while the demo is on. It cannot set the
       # environment itself, so it asks us to do it.
       cache) demo_env; exec "$0" card --quiet ;;
-      stop) demo_stop ;;
       trash) demo_trash ;;
       *) demo_status ;;
     esac ;;
