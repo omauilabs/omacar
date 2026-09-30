@@ -403,10 +403,12 @@ class DemoWorld:
         self.recovering = 0.0
 
     def _restart(self):
+        """Back to the start of the loop, and the pack with it."""
         self.tau = 0.0
         self.own = False
         self.holding = False
         self.brake_left = 0.0
+        self.soc = SOC_START
 
     # -- time
 
@@ -426,7 +428,12 @@ class DemoWorld:
             v, a = self.v, self.a
         else:
             self.tau += h
-            self.tau %= self.loop
+            if self.tau >= self.loop:
+                # The loop starts over, and so does the pack. Left to itself it
+                # gains a few per cent a loop, and an evening of loops would pin
+                # it at the top, where it could never be seen charging.
+                self.tau %= self.loop
+                self.soc = SOC_START
             v = sample(self.drive, self.tau)["kph"] / 3.6
             a = base_accel(self.drive, self.tau)
         for e in self.drive.get("events") or []:

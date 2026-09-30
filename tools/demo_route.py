@@ -98,10 +98,6 @@ def bearing(a, b):
     return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
 
 
-def cardinal(deg):
-    return "NESW"[int(((deg % 360.0) + 45.0) // 90.0) % 4]
-
-
 def simplify(points, tolerance_m):
     """Douglas-Peucker on [lat, lon] pairs: what is left is within tolerance_m
     of the line it was taken from. Iterative, because a route has thousands of
@@ -174,12 +170,26 @@ def short_name(name):
     return " ".join(words)
 
 
+# A road's number as OSRM gives it: "CA 1", "I 280", "US 101", "CA 1 North".
+# A county road's ("CR G17") is an inventory code, not what anybody calls the
+# road, so those are known by their name.
+HIGHWAY_REF = re.compile(r"^([A-Z]{1,3})[ -](\d+[A-Z]?)(?:\s+(North|South|East|West|N|S|E|W))?$")
+
+
 def road_label(step):
-    """A step's road as a person says it: 'CA-1 N' for a numbered one, else its name."""
-    ref = (step.get("ref") or "").split(";")[0].strip()
-    if ref:
-        ref = re.sub(r"^([A-Za-z]+)\s+(\d+)", r"\1-\2", ref)
-        return f"{ref} {cardinal(step['maneuver'].get('bearing_after', 0))}"
+    """A step's road as a person says it: 'CA-1 N' for a numbered highway, else
+    its name.
+
+    OSRM's ref has no direction ("CA 1"), so it is taken from the way the car
+    is heading after the step: north if that bearing is 0-90 or 270-360, south
+    if it is 90-270. (An east-west highway is therefore labelled by which side
+    of due east and west it heads, which is a label nobody sees on this drive:
+    the loop stays on CA-1.) If the ref does carry a direction, that is used."""
+    ref = HIGHWAY_REF.match((step.get("ref") or "").split(";")[0].strip())
+    if ref and ref.group(1) != "CR":
+        bearing_after = step["maneuver"].get("bearing_after", 0) % 360
+        side = ref.group(3) or ("N" if bearing_after <= 90 or bearing_after >= 270 else "S")
+        return f"{ref.group(1)}-{ref.group(2)} {side[0]}"
     return short_name((step.get("name") or "").strip())
 
 
@@ -187,6 +197,11 @@ def destination_label(step):
     """Where a ramp or a fork says it goes: 'Imjin Parkway' -> 'Imjin Pkwy'."""
     text = (step.get("destinations") or "").split(":")[-1].split(",")[0].strip()
     return short_name(text)
+
+
+def ordinal(n):
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
 
 
 def side_of(modifier):
@@ -233,13 +248,13 @@ def instruction(step, street, destination):
             return f"{keep} to stay on {street}"
         return f"{keep} toward {toward}" if toward else keep
     if kind in ("roundabout", "rotary", "roundabout turn"):
-        if m.get("exit"):
-            return f"At the roundabout, take exit {m['exit']}{onto}"
+        exit_n = m.get("exit")
+        if exit_n:
+            which = "the exit" if exit_n == 1 else f"the {ordinal(exit_n)} exit"
+            return f"At the roundabout, take {which}{onto}"
         if kind == "roundabout turn" and mod:
             return f"At the roundabout, turn {mod}{onto}"
         return "Enter the roundabout"
-    if kind in ("exit roundabout", "exit rotary"):
-        return f"Exit the roundabout{onto}"
     return f"Continue{onto}"
 
 
@@ -399,9 +414,11 @@ def build(osrm, loop_secs=900):
             street = destination_label(st)
         if kind != "arrive" and street and (not streets or streets[-1][1] != street):
             streets.append([round(s, 1), street])
-        # A waypoint's arrive and the depart after it are not turns; the last
-        # arrive is the destination.
-        if kind == "depart" or (kind == "arrive" and i != last):
+        # Not manoeuvres: the start, a waypoint's arrive and the depart after it
+        # (the last arrive is the destination), and leaving a roundabout, which
+        # the step that entered it already said.
+        if kind in ("depart", "exit roundabout", "exit rotary") \
+                or (kind == "arrive" and i != last):
             continue
         maneuvers.append({
             "route_m": round(s, 1), "type": kind,

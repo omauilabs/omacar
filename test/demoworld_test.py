@@ -127,7 +127,7 @@ ok("it leaves from rest, and route_m never goes backwards",
 
 # The first traffic-light-like manoeuvre is a stop of 25 s, a stop line short
 # of the turn.
-turn_m = next(m["route_m"] for m in built["maneuvers"] if m["type"] == "turn")
+turn_m = next(m["route_m"] for m in built["maneuvers"] if m["type"] == "end of road")
 zero_runs, run = [], 0
 for p in pts[:DRIVING + 1]:
     if p[3] == 0:
@@ -149,19 +149,27 @@ ok("it eases in and out of that stop rather than dropping to it",
 
 # Manoeuvres.
 mv = built["maneuvers"]
-ok("depart is not a manoeuvre; the turn, the merge and the arrival are",
-   [m["type"] for m in mv] == ["turn", "merge", "arrive"])
+ok("neither the depart nor the exit from the roundabout is a manoeuvre",
+   [m["type"] for m in mv] == ["roundabout", "end of road", "merge", "arrive"])
+rotary = json.loads(json.dumps(OSRM))
+rotary["routes"][0]["legs"][0]["steps"][2]["maneuver"]["type"] = "exit rotary"
+ok("nor is an exit from a rotary",
+   [m["type"] for m in demo_route.build(rotary, 300)["maneuvers"]] == [m["type"] for m in mv])
 ok("the first manoeuvre has an instruction", mv[0]["instruction"].strip() != "")
-ok("a turn reads as a turn, with the street's short name",
-   mv[0]["instruction"] == "Turn left onto Imjin Pkwy"
-   and mv[0]["modifier"] == "left" and mv[0]["street"] == "Imjin Pkwy")
+ok("a roundabout is taken by its exit, on the road's name and not its county code",
+   mv[0]["instruction"] == "At the roundabout, take the exit onto Reservation Rd"
+   and mv[0]["street"] == "Reservation Rd" and mv[0]["modifier"] == "right")
+ok("the end of a road reads as a turn, with the street's short name",
+   mv[1]["instruction"] == "At the end of the road, turn left onto Imjin Pkwy"
+   and mv[1]["modifier"] == "left" and mv[1]["street"] == "Imjin Pkwy")
 ok("a merge onto a numbered road names it with a direction",
-   mv[1]["instruction"] == "Merge onto CA-1 N" and mv[1]["street"] == "CA-1 N")
+   mv[2]["instruction"] == "Merge onto CA-1 N" and mv[2]["street"] == "CA-1 N")
 ok("the last one arrives at the destination's name",
-   mv[2]["instruction"] == "Arrive at Omarchy Meetup"
-   and abs(mv[2]["route_m"] - built["route_total_m"]) < 1.0)
+   mv[3]["instruction"] == "Arrive at Omarchy Meetup"
+   and abs(mv[3]["route_m"] - built["route_total_m"]) < 1.0)
 ok("each manoeuvre is where its step is along the route",
-   abs(mv[0]["route_m"] - 402.3) < 2.0 and abs(mv[1]["route_m"] - 1304.0) < 3.0)
+   abs(mv[0]["route_m"] - 201.0) < 2.0 and abs(mv[1]["route_m"] - 402.3) < 2.0
+   and abs(mv[2]["route_m"] - 1304.0) < 3.0)
 ok("streets are where each road starts, the first from the depart's destination",
    built["streets"][0] == [0.0, "Reservation Rd"]
    and [s[1] for s in built["streets"]] == ["Reservation Rd", "Imjin Pkwy", "CA-1 N"])
@@ -169,6 +177,67 @@ ok("the route is the geometry simplified: the same ends, fewer points",
    built["route"][0] == [36.696, -121.806]
    and built["route"][-1] == [36.70776, -121.795917]
    and 2 < len(built["route"]) < 31)
+
+# The words, on their own.
+def step(kind, modifier=None, name="", ref=None, bearing=0, exit_n=None, dest=None):
+    m = {"type": kind, "bearing_after": bearing, "location": [0, 0]}
+    if modifier:
+        m["modifier"] = modifier
+    if exit_n:
+        m["exit"] = exit_n
+    out = {"maneuver": m, "name": name}
+    if ref:
+        out["ref"] = ref
+    if dest:
+        out["destinations"] = dest
+    return out
+
+
+label = demo_route.road_label
+ok("a highway's ref has no direction from OSRM, so it is north or south by the bearing after",
+   [label(step("merge", ref="CA 1", bearing=b)) for b in (0, 23, 90, 91, 187, 269, 270, 350, 359.9)]
+   == ["CA-1 N", "CA-1 N", "CA-1 N", "CA-1 S", "CA-1 S", "CA-1 S", "CA-1 N", "CA-1 N", "CA-1 N"])
+ok("a ref that names a direction keeps it",
+   label(step("merge", ref="CA 1 North", bearing=187)) == "CA-1 N")
+ok("the first of several refs is the one used, and the numbers keep their letters",
+   label(step("merge", ref="I 280; CA 35", bearing=326)) == "I-280 N"
+   and label(step("off ramp", ref="US 101", bearing=201)) == "US-101 S")
+ok("a county road's code is not its name",
+   label(step("depart", name="Reservation Road", ref="CR G17")) == "Reservation Rd"
+   and label(step("depart", name="Reservation Road", ref="CR 12")) == "Reservation Rd"
+   and label(step("depart", ref="CR G17")) == "")
+ok("streets are written short: Road, Avenue, Parkway, Boulevard, Highway",
+   [label(step("turn", name=n)) for n in ("Moss Landing Road", "1st Avenue",
+        "Imjin Parkway", "Skyline Boulevard", "Cabrillo Highway")]
+   == ["Moss Landing Rd", "1st Ave", "Imjin Pkwy", "Skyline Blvd", "Cabrillo Hwy"])
+
+words = demo_route.instruction
+ok("a roundabout: the first exit is 'the exit', the rest are counted",
+   [words(step("roundabout", "right", "Reservation Road", exit_n=n), "Reservation Rd", "X")
+    for n in (1, 2, 3, 4, 11)] == [
+       "At the roundabout, take the exit onto Reservation Rd",
+       "At the roundabout, take the 2nd exit onto Reservation Rd",
+       "At the roundabout, take the 3rd exit onto Reservation Rd",
+       "At the roundabout, take the 4th exit onto Reservation Rd",
+       "At the roundabout, take the 11th exit onto Reservation Rd"])
+ok("a rotary reads the same, and one with no exit number is entered",
+   words(step("rotary", "right", "King Street", exit_n=2), "King St", "X")
+   == "At the roundabout, take the 2nd exit onto King St"
+   and words(step("roundabout", "left"), "", "X") == "Enter the roundabout"
+   and words(step("roundabout turn", "left", "Main Street"), "Main St", "X")
+   == "At the roundabout, turn left onto Main St")
+ok("the rest of the vocabulary",
+   [words(*a, "X") for a in [
+       (step("turn", "right"), "1st Ave"), (step("turn", "slight left"), "1st Ave"),
+       (step("turn", "uturn"), "Bass Way"), (step("end of road", "left"), "CA-1 N"),
+       (step("merge", "slight left"), "CA-1 N"), (step("fork", "slight left"), "CA-1 N"),
+       (step("on ramp", "right"), ""), (step("off ramp", "slight right", dest="Imjin Parkway"), ""),
+       (step("new name", "straight"), "Cabrillo Hwy"), (step("arrive"), "")]]
+   == ["Turn right onto 1st Ave", "Bear left onto 1st Ave", "Make a U-turn onto Bass Way",
+       "At the end of the road, turn left onto CA-1 N", "Merge onto CA-1 N",
+       "Keep left to stay on CA-1 N", "Take the ramp on the right",
+       "Take the exit toward Imjin Pkwy", "Continue onto Cabrillo Hwy",
+       "Arrive at X"])
 
 # Headings and positions, from the route.
 ok("it faces south to start, on a road that runs south",
@@ -256,10 +325,10 @@ ok("it is a drive scene, not parked, on the depart's road",
    d0["scene"] == "drive" and d0["parked"] is False
    and d0["street"] == "Reservation Rd" and d0["event"] is None)
 ok("the next turn is the first manoeuvre ahead of it",
-   d0["next"]["instruction"] == "Turn left onto Imjin Pkwy"
-   and d0["next"]["type"] == "turn" and d0["next"]["modifier"] == "left"
-   and d0["next"]["street"] == "Imjin Pkwy"
-   and abs(d0["next"]["in_m"] - 402.3) < 2.0)
+   d0["next"]["instruction"] == "At the roundabout, take the exit onto Reservation Rd"
+   and d0["next"]["type"] == "roundabout" and d0["next"]["modifier"] == "right"
+   and d0["next"]["street"] == "Reservation Rd"
+   and abs(d0["next"]["in_m"] - 201.0) < 2.0)
 ok("its position is the route's start, facing south",
    abs(d0["lat"] - 36.696) < 1e-6 and abs(d0["lon"] + 121.806) < 1e-6
    and abs(d0["heading"] - 180.0) < 2.0 and d0["route_m"] == 0.0)
@@ -484,6 +553,27 @@ ok(f"and stays within 40 to 78 over two whole loops at 0.2 s "
 ok("it falls under assist and rises under regen and cruising",
    min(packs) < 58.0 and max(packs) > 58.0)
 
+# Each loop starts over with the pack where it began, so it never walks off.
+w, c = make()
+pack = w.step()["values"]["HYBRID_BATTERY_REMAINING"]
+starts, swing, top, last_t = [pack], [], 0.0, 0.0
+while len(starts) < 10 and c.t < 5000.0 + 20 * LOOP:
+    c.t += 0.2
+    p = w.step()
+    pack = p["values"]["HYBRID_BATTERY_REMAINING"]
+    if loop_t(p) < last_t:                       # the loop wrapped
+        starts.append(pack)
+        swing.append(top)
+        top = 0.0
+    top = max(top, abs(pack - starts[0]))
+    last_t = loop_t(p)
+ok(f"ten loops: the pack at the start of the tenth is where it was at the first "
+   f"({starts[9]} vs {starts[0]})", len(starts) == 10 and starts[9] == starts[0] == 58.0)
+ok("and at the start of each one in between",
+   all(x == 58.0 for x in starts))
+ok(f"having moved within each loop, so this is not the pack standing still "
+   f"(by up to {min(swing):.2f} to {max(swing):.2f} %)", min(swing) > 0.3)
+
 w, c = make(QUIET)
 w.step()
 seen = {}
@@ -659,11 +749,14 @@ ok("and again on the next loop, once each time", fired == 2)
 
 # Restart.
 w, c, p = at_loop_time(QUIET, CRUISE)
+pack_before = p["values"]["HYBRID_BATTERY_REMAINING"]
 w.cue("restart")
 c.t += 0.2
 p = w.step()
 ok("restart: the loop clock is back at the start, and so is the car",
    loop_t(p) < 0.5 and p["demo"]["route_m"] < 5.0)
+ok(f"and the pack is back to 58 ({pack_before} before)",
+   pack_before != 58.0 and p["values"]["HYBRID_BATTERY_REMAINING"] == 58.0)
 w.cue("park")
 go(w, c, 1.0)
 w.cue("restart")
