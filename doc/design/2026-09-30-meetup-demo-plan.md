@@ -94,7 +94,7 @@ Every task's requirements include these.
 | `/demo-media/radio/<file>` | `share/assets/private/omarchy-radio/<file>`, with HTTP Range |
 | `/demo-media/logo.png` | `share/assets/private/omacar-logo.png` |
 | `/demo-media/<path>` | `share/assets/private/demo/<path>`, with HTTP Range |
-| `POST /api/demo/cue` | body `{"cue": "park"\|"drive"\|"drowsy"\|"hard_brake"\|"restart"}` → writes `$OMACAR_STATE/demo-cue.json` as `{"cue": …, "at": <epoch float>}` and answers `{"ok": true}` |
+| `POST /api/demo/cue` | body `{"cue": "park"\|"drive"\|"drowsy"\|"hard_brake"\|"restart"\|"quiet"}` → writes `$OMACAR_STATE/demo-cue.json` as `{"cue": …, "at": <epoch float>}` and answers `{"ok": true}` |
 | everything else | the live app's `share/` and `/api/*`, filtered by the §2 allowlist |
 
 Every other server (`serve.py` without `--demo`) answers 404 for `/demo.html`, `/demo/*` and `/demo-media/*`.
@@ -667,7 +667,7 @@ The same payload `lib/sim.py run` publishes (`connected`, `simulated: true`, `va
    - Park / Drive (by state);
    - Restart the drive;
    - Play backup video, which POSTs a cue the server doesn't know. Instead, show the command `omacar demo video` as text. Task 9 adds that verb.
-   - Exit demo, which shows "Run `omacar demo off`, or press Super+W" (the page can't close its own kiosk window safely).
+   - Exit demo, which shows "Run `omacar-demo off`" (Super+W would skip the music's fade) (the page can't close its own kiosk window safely).
 
    Cues POST to `/api/demo/cue`.
 4. **The tour (`tour.js`, steps in `tour.json`):** about 6 minutes, following spec §6.

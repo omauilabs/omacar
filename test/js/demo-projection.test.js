@@ -295,6 +295,15 @@ export default [
     } finally { t.done(); }
     eq(openScreen("maps"), false);
   }],
+  // The tour's Resume (demo/js/tour.js) asks for "" when a step is on the projection's own first screen.
+  ...VIEWS.map(([name, view], i) => [`${name}: openScreen("") is its first screen, from wherever it is`, () => {
+    const t = mount(view, { arg: "settings" });
+    try {
+      eq(t.screen(), "settings");
+      eq(openScreen(""), true);
+      eq(t.screen(), ["home", "dashboard"][i]);
+    } finally { t.done(); }
+  }]),
   ["a view that fails to draw leaves no clock running and gives the bars back", () => {
     // A radio that refuses a subscriber makes Now Playing throw as it mounts.
     const radio = fakeRadio();

@@ -455,6 +455,58 @@ export default [
       eq(d.querySelector(".wk-dacts").hidden, false, "and the instruction a draft again");
     } finally { m.done(); }
   }],
+  // A session that is ready for review or waiting for you is not working: its
+  // checklist does not move while you look at it (mockup 8, and "2 running, 1
+  // ready, 1 needs you" stays true).
+  ["only Running sessions tick: Review and Needs-input ones hold their checklist", async () => {
+    const real = Object.assign({}, workClock);
+    const timers = new Map();
+    let n = 0, t = 1e12;
+    Object.assign(workClock, { now: () => t, every: (fn) => { timers.set(++n, fn); return n; },
+                               stop: (id) => { timers.delete(id); } });
+    const fire = () => [...timers.values()].forEach((f) => f());
+    try {
+      const w = await loadWork();
+      resetWork();
+      const m = await mountWork({ speed: 0 });
+      try {
+        const by = (id) => w.sessions.find((x) => x.id === id);
+        eq(w.sessions.map((x) => x.status), ["running", "review", "input", "running"], "work.json's states");
+        const held = ["bulletin", "omasaber"].map((id) => [id, by(id).done, (by(id).at || []).length]);
+        const ran = ["omacar", "mobile"].map((id) => by(id).done);
+        fire();                                      // the first call only schedules
+        for (let i = 0; i < 6; i++) { t += 45000; fire(); }   // and then 4½ minutes
+        eq(["bulletin", "omasaber"].map((id) => [id, by(id).done, (by(id).at || []).length]), held,
+           "Review and Needs input: the same steps, finished at the same times");
+        eq(["bulletin", "omasaber"].map((id) => by(id).next), [0, 0], "their clocks were never even set");
+        ok(["omacar", "mobile"].some((id, i) => by(id).done !== ran[i]), "while the running ones moved on");
+      } finally { m.done(); }
+    } finally { Object.assign(workClock, real); resetWork(); }
+  }],
+  ["a session that needs you starts ticking once you answer it (the driving instruction is sent)", async () => {
+    const real = Object.assign({}, workClock);
+    const timers = new Map();
+    let n = 0, t = 1e12;
+    Object.assign(workClock, { now: () => t, every: (fn) => { timers.set(++n, fn); return n; },
+                               stop: (id) => { timers.delete(id); } });
+    const fire = () => [...timers.values()].forEach((f) => f());
+    try {
+      const w = await loadWork();
+      resetWork();
+      const m = await mountWork({ speed: 50 });
+      try {
+        const saber = w.sessions.find((x) => x.id === "omasaber");
+        fire();
+        t += 45000; fire();
+        eq(saber.done, 2, "waiting for direction: its checklist holds");
+        eq(await workActions.send(), true, "the instruction is sent");
+        eq(saber.status, "running", "running now");
+        fire();                                      // schedules
+        t += 45000; fire();
+        eq(saber.done, 3, "and its next step lands");
+      } finally { m.done(); }
+    } finally { Object.assign(workClock, real); resetWork(); }
+  }],
   ["Work's step clock stops when the screen goes", async () => {
     const real = Object.assign({}, workClock);
     const timers = new Map();
@@ -568,9 +620,9 @@ export default [
       document.removeEventListener("omacar-demo:say", onSay);
     }
   }],
-  // The demo's lines go straight to the output, past the stage's limiter, so
-  // they sit where the alert player's quietest voice does (Level 1: -7), not
-  // where Level 2 and 3's do (-3).
+  // The demo's lines sit where the alert player's quietest voice does (Level
+  // 1: -7), not where Level 2 and 3's do (-3): chosen when they went straight
+  // to the output, and kept now that they go through the stage's limiter.
   ["a line plays at the alert player's Level 1 voice level, -7 dB", async () => {
     const realFetch = voiceIO.fetch, realSchedule = voiceIO.schedule, realLevel = voiceIO.levelAt;
     const ctx = audioContext();

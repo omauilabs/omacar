@@ -19,19 +19,29 @@
 // so say() plays the line and touches nothing. stop() cuts the line now
 // (drowsy.js calls it on "I'm awake") and restores the music only if say()
 // was what ducked it.
+//
+// A LINE PLAYS THROUGH THE STAGE (hardening B): into audiobus.js voiceIn(),
+// at unity into the same limiter as the music and the alerts, so a line said
+// over both is caught with them rather than added after the limiter.
+//
+//   line -> its gain (VOICE_DB) -> voiceIn() -> limiter -> out
+//
+// A QUIET FADE (quiet.js) begun while a line holds its duck has the music from
+// then on: the line leaves the bus alone when it ends.
 
-import { audioContext, schedule, levelAt, dbToGain, MUSIC_DB } from "../../js/audiobus.js";
+import { audioContext, schedule, levelAt, dbToGain, voiceIn, MUSIC_DB } from "../../js/audiobus.js";
 import { glidePlan } from "../../js/ramps.js";
 import { DUCK_DB as ALERT_DUCK_DB } from "../../js/alertplayer.js";
+import { quietsBegun } from "./quiet.js";
 
 export const DUCK_DB = 12;
 export const DOWN_SECS = 0.4;
 export const UP_SECS = 0.8;
-// Under full scale: the voice goes straight to the output, past the stage's
-// limiter, and Piper normalises its lines to peak near 0 dBFS. -7 is the alert
-// player's Level 1 voice (alertplayer.js VOICE_DB), the quietest of its three:
-// a line here has no limiter to catch it, so it sits low.
-const VOICE_DB = -7;
+// Under full scale: Piper normalises its lines to peak near 0 dBFS. -7 is the
+// alert player's Level 1 voice (alertplayer.js VOICE_DB), the quietest of its
+// three. It was chosen when a line went straight to the output with no
+// limiter to catch it; the limiter catches it now, and it stays where it was.
+export const VOICE_DB = -7;
 const BASE = "/demo-media/voice/";
 // Music at or below this (the alert player's duck, plus a little for rounding)
 // has already been made room for.
@@ -113,7 +123,9 @@ export async function say(id) {
   // bringing the music back; and however this one ends -- played, cut short,
   // or failing to build or start at all -- the finally brings it back, unless
   // a newer line has taken it on by then.
-  const me = { base, ducked, cutAt: null, cut: () => {} };
+  // `quiets`: the quiet fades begun on the page when the duck began (quiet.js).
+  const quiets = prev ? prev.quiets : quietsBegun();
+  const me = { base, ducked, quiets, cutAt: null, cut: () => {} };
   speaking = me;
   if (prev) prev.cut();
   if (ducked) voiceIO.schedule("music", glidePlan(from, low, DOWN_SECS).points, now);
@@ -123,7 +135,11 @@ export async function say(id) {
   finally {
     if (speaking === me) {
       speaking = null;
-      if (ducked) {
+      // A QUIET FADE BEGUN SINCE THE DUCK HAS THE MUSIC NOW (fix round 1): it
+      // takes the bus down to silence, pauses the radio and gives the bus back
+      // itself. A glide up from the duck in the middle of that fade was a step
+      // up, and a second fade after it.
+      if (ducked && quietsBegun() === quiets) {
         // A line that played out finds the music at the bottom of its duck. One
         // that stop() cut inside the duck's first 0.4 s finds it halfway down,
         // and the music comes back from there, not from a level it never reached.
@@ -154,7 +170,7 @@ function play(ctx, buf, at, me) {
     try {
       gain = ctx.createGain();
       gain.gain.value = dbToGain(VOICE_DB);
-      gain.connect(ctx.destination);
+      gain.connect(voiceIn());
       src = ctx.createBufferSource();
       src.buffer = buf;
       src.connect(gain);

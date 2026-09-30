@@ -8,6 +8,7 @@
 //
 //   radio <audio> -> its analyser -> music gain (-12 dB) --+
 //   chime, bark, alarm, voice ----> alert gate (closed) ---+-> limiter -> out
+//   the meetup demo's lines ------> voice gain (unity) ----+
 //
 // The music bus moves by ramps (linearRampToValueAtTime) shaped by ramps.js,
 // so no step is ever audible. The alert bus is a GATE, NEVER A FADER: every
@@ -57,8 +58,13 @@ function ensure() {
   node.limit.release.value = 0.25;
   node.meter = ctx.createAnalyser();
   node.meter.fftSize = 2048;
+  // The meetup demo's voice (demo/js/voice.js), at unity into the same
+  // limiter. THE LIVE APP DOES NOT USE IT: nothing the live app plays goes
+  // into it, so there it carries silence and changes nothing the stage does.
+  node.voice = ctx.createGain();
   node.music.connect(node.limit);
   node.alert.connect(node.limit);
+  node.voice.connect(node.limit);
   node.limit.connect(node.meter);
   node.meter.connect(ctx.destination);
 }
@@ -66,6 +72,7 @@ function ensure() {
 export function audioContext() { ensure(); return ctx; }
 export function musicIn() { ensure(); return node.music; }
 export function alertIn() { ensure(); return node.alert; }
+export function voiceIn() { ensure(); return node.voice; }
 
 // A context made without a tap starts suspended; the kiosk's autoplay flag
 // lets it run, and Begin's tap resumes it everywhere else.
