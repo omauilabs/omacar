@@ -4,7 +4,8 @@
 // Your coding sessions on your Omarchy machines, from the car: which is
 // running, which is ready for review, which needs you. A CONCEPT, and labelled
 // one: the sessions are demo/data/work.json, their steps tick along on a timer
-// (one every 20-40 s, looping), and nothing here reaches an agent.
+// (one every 20-40 s, looping, for the Running ones: a session in Review or
+// waiting for input holds its checklist), and nothing here reaches an agent.
 //
 // Parked, it is the full screen: the accounts, the sessions, one session's
 // checklist, a voice chat and the review waiting for you. Moving (SPEED over
@@ -42,6 +43,11 @@ export function tick(s, now, rnd = Math.random) {
   s.next = now + gap();
   return true;
 }
+
+// WHO TICKS: a session that is working. One ready for review or waiting for your
+// answer is not, and its checklist holds (its step clock is not even set) until
+// something changes its status; a paused one holds until resumed.
+export const ticks = (s) => s.status === "running" && !s.paused;
 
 // The clock the steps tick on, so a test can hold it.
 export const workClock = {
@@ -153,7 +159,7 @@ export function workView(deps = {}) {
       const timer = workClock.every(() => {
         const now = workClock.now();
         let moved = false;
-        for (const s of w.sessions) if (!s.paused && tick(s, now)) moved = true;
+        for (const s of w.sessions) if (ticks(s) && tick(s, now)) moved = true;
         if (moved) { park.paint(); drive.paint(); }
       }, 1000);
       cleanups.push(() => workClock.stop(timer));

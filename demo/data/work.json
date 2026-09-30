@@ -1,5 +1,5 @@
 {
-  "_comment": "The Work screen's demo sessions (demo/js/views/work.js), mockup 8. A concept: nothing here reaches a real agent. Each session's steps tick along on a timer and loop; `done` is how many are finished when the screen first opens.",
+  "_comment": "The Work screen's demo sessions (demo/js/views/work.js), mockup 8. A concept: nothing here reaches a real agent. The steps of a Running session tick along on a timer and loop; one in review or waiting for input holds its checklist. `done` is how many are finished when the screen first opens.",
   "accounts": [
     { "id": "claude-01", "name": "Claude 01", "plan": "Max 20x", "kind": "claude", "usage": 0.64 },
     { "id": "claude-02", "name": "Claude 02", "plan": "Max 20x", "kind": "claude", "usage": 0.41 },
