@@ -135,6 +135,25 @@ def write_live(speed, age=0.0):
                    "values": {"SPEED": speed, "RPM": 900}}, f)
 
 
+def window_told_to_go():
+    """When the shim window last had its SIGTERM, or None."""
+    try:
+        with open(CHROMIUM_TERMS, encoding="utf-8") as f:
+            return [float(ln) for ln in f if ln.strip()][-1]
+    except (OSError, ValueError, IndexError):
+        return None
+
+def cue_now():
+    """The demo's last cue, as the server wrote it: (cue, at), or None."""
+    try:
+        with open(os.path.join(DEMO_ROOT, "state", "omacar", "demo-cue.json"),
+                  encoding="utf-8") as f:
+            d = json.load(f)
+        return d.get("cue"), d.get("at")
+    except (OSError, ValueError):
+        return None
+
+
 def outside_demo():
     """sha256 of every file under HOME that is not in the demo's folder, and of
     every file in the real runtime folder (sockets aside: they have no bytes)."""
@@ -437,8 +456,18 @@ try:
         cue = None
     check("and waits for the world in the demo's state", cue, "park")
 
+    asked = time.time()
     rc, out = omacar("demo", "off", timeout=120)
     check("demo off", rc, 0)
+    # A PRESENTER'S demo off fades: the real server takes the quiet cue and
+    # writes it for the world, and the window goes 2.5 s after the answer.
+    cue, went = cue_now(), window_told_to_go()
+    gap = round(went - cue[1], 2) if cue and cue[1] and went else None
+    check("it asked for quiet through the real cue path: the server wrote the quiet cue",
+          (bool(cue) and cue[0] == "quiet" and (cue[1] or 0) >= asked,
+           "asked the demo page for quiet" in out), (True, True))
+    check(f"and the window was told to go 2.5 s after it, not much later (took {gap} s)",
+          gap is not None and 2.5 <= gap < 3.3, True)
     check("and says what it stopped",
           [w for w in ("the demo window", "the demo server", "the demo world", "the guard",
                        "the camera feed") if f"stopped {w}" not in out], [])
@@ -526,24 +555,6 @@ try:
                 return f.read()
         except OSError:
             return ""
-
-    def window_told_to_go():
-        """When the shim window last had its SIGTERM, or None."""
-        try:
-            with open(CHROMIUM_TERMS, encoding="utf-8") as f:
-                return [float(ln) for ln in f if ln.strip()][-1]
-        except (OSError, ValueError, IndexError):
-            return None
-
-    def cue_now():
-        """The demo's last cue, as the server wrote it: (cue, at), or None."""
-        try:
-            with open(os.path.join(DEMO_ROOT, "state", "omacar", "demo-cue.json"),
-                      encoding="utf-8") as f:
-                d = json.load(f)
-            return d.get("cue"), d.get("at")
-        except (OSError, ValueError):
-            return None
 
     head("the real car moves: the guard takes the whole demo down")
     write_live(0)
