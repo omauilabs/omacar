@@ -40,6 +40,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -176,11 +177,13 @@ def clips_play(private):
     are (never re-encoded) and the Cameras tab's <video> plays H.264 on any
     machine, HEVC on some. cams.py's demo_warnings asks ffprobe, exactly as
     `cams.py demo` does when it starts, and names each clip that is not, or
-    that ffprobe cannot read. None when there is nothing to read: `clips`
-    says so."""
+    that ffprobe cannot read. With no ffprobe at all that is said once, not
+    once per clip. None when there is nothing to read: `clips` says so."""
     _, found = clip_files(private)
     if not found:
         return None, "no clip to read (see clips)"
+    if not shutil.which("ffprobe"):
+        return False, "ffprobe is not installed, so no clip can be checked (it comes with ffmpeg)"
     try:
         import cams
     except ImportError as e:

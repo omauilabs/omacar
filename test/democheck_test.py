@@ -322,11 +322,13 @@ def main():
             f.write(good)
         bindir = os.path.join(work, "bin")
         r, lines = run(work, private, ffprobe=False, path=bindir)
-        check("no ffprobe on the machine: every clip is named, not ready: clips play",
-              lines[-1] == "not ready: clips play"
-              and sum("could not be read by ffprobe" in ln for ln in lines) == 1
-              and all(n + ".mp4 could not be read" in " ".join(lines) for n in ("front", "rear", "cabin", "cabin-drowsy")),
-              r.stdout)
+        check("no ffprobe on the machine: not ready: clips play",
+              lines[-1] == "not ready: clips play", r.stdout)
+        check("and it says so once, not once per clip",
+              sum("ffprobe is not installed" in ln for ln in lines) == 1
+              and not any("could not be read" in ln for ln in lines), r.stdout)
+        check("and what it is part of, so the fix is plain",
+              any("ffprobe is not installed" in ln and "ffmpeg" in ln for ln in lines), r.stdout)
         r, lines = run(work, private)
         check("the clip whole again: ready", lines[-1] == "ready", r.stdout)
 
