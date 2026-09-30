@@ -110,9 +110,10 @@ def wait_for_port(port, secs=20):
 # ---- a fake REAL state, beside the demo's, that nothing may touch ------------
 #
 # The files the ALLOW routes write, at the paths the modules would use if the
-# demo's environment ever fell through to the defaults (XDG unset, ~ = HOME),
-# and the live recorder's runtime folder. A write that escaped the demo's
-# folders would land on one of these.
+# demo's environment ever fell through to the defaults (XDG unset, ~ = HOME).
+# A write that escaped the demo's folders would land on one of these. (The
+# runtime folder is the silo test's: there the real one is handed to
+# bin/omacar, and the demo's server and camera feed must not use it.)
 NOW = time.time()
 REAL = {
     ".local/state/omacar/live.json": {"connected": True, "t": NOW, "values": {"SPEED": 0}},
@@ -133,13 +134,6 @@ for _rel, _body in REAL.items():
     os.makedirs(os.path.dirname(_p), exist_ok=True)
     with open(_p, "w", encoding="utf-8") as f:
         f.write(_body if isinstance(_body, str) else json.dumps(_body))
-REAL_RUN = os.path.join(SCRATCH, "real-run")
-for _rel, _body in (("omacar-cams/status.json", '{"t": 1, "roles": {}}'),
-                    ("omacar-cams/front.jpg", "the real front camera")):
-    _p = os.path.join(REAL_RUN, _rel)
-    os.makedirs(os.path.dirname(_p), exist_ok=True)
-    with open(_p, "w", encoding="utf-8") as f:
-        f.write(_body)
 
 # The demo's own copy of Caltrans' list, fresh, so saving pins (which checks a
 # new pin against the list) is answered from disk and never the network.
@@ -152,18 +146,16 @@ with open(os.path.join(ENV["OMACAR_STATE"], "roadcams", "d5-cctv.json"), "w",
 
 
 def real_files():
-    """sha256 of every file in the scratch HOME outside the demo's folder, and
-    in the fake real runtime folder."""
+    """sha256 of every file in the scratch HOME outside the demo's folder."""
     out = {}
-    for top, tag in ((HOME, "home"), (REAL_RUN, "run")):
-        for d, dirs, files in os.walk(top):
-            if os.path.realpath(d).startswith(os.path.realpath(DEMO_ROOT)):
-                dirs[:] = []
-                continue
-            for n in files:
-                p = os.path.join(d, n)
-                with open(p, "rb") as f:
-                    out[tag + ":" + os.path.relpath(p, top)] = hashlib.sha256(f.read()).hexdigest()
+    for d, dirs, files in os.walk(HOME):
+        if os.path.realpath(d).startswith(os.path.realpath(DEMO_ROOT)):
+            dirs[:] = []
+            continue
+        for n in files:
+            p = os.path.join(d, n)
+            with open(p, "rb") as f:
+                out[os.path.relpath(p, HOME)] = hashlib.sha256(f.read()).hexdigest()
     return out
 
 
@@ -375,8 +367,8 @@ try:
     drowsy_logs = os.path.join(ENV["OMACAR_STATE"], "drowsy")
     check("drowsy events and measures too",
           bool(os.path.isdir(drowsy_logs) and os.listdir(drowsy_logs)), True)
-    check("every real file, and the real runtime folder, is byte-identical after "
-          "the writes, the reads, the stubs and the refusals", real_files(), REAL_BEFORE)
+    check("every real file is byte-identical after the writes, the reads, the stubs "
+          "and the refusals", real_files(), REAL_BEFORE)
 
     head("the demo page, its code and its media")
     st, h, body = req(PORT, "GET", "/demo.html")

@@ -298,10 +298,13 @@ demo_env() {
 # else's process. Nor is a port, which anything may hold; nor a bare process
 # name, which another checkout's demo, or a test's, shares.
 #
-# WHICH CHECKOUT A DEMO RUNS FROM MATTERS. On the tablet the demo is run from
-# a worktree while the `omacar` on PATH is the live checkout. A pid file holding
-# the same script from another checkout is that checkout's demo, running: this
-# one neither stops it nor forgets it, and says where it is instead.
+# WHICHEVER CHECKOUT STARTED IT, THIS DEMO IS THIS DEMO. On the tablet the demo
+# is run from a worktree while the `omacar` on PATH is the live checkout, and
+# the guard runs `demo off` from its own. So `demo off` stops the demo's
+# processes whoever started them, and says which checkout that was: the demo's
+# is decided by what each process is and which state folder it was started
+# with, not by where its script lives. `demo on` still starts nothing beside a
+# demo that another checkout is running.
 
 demo_spawn() {
   local name="$1" log="$OMACAR_STATE/demo-$1.log"
@@ -320,12 +323,27 @@ demo_argv() {
   (( ${#DEMO_ARGV[@]} > 1 ))
 }
 
+# Whether PID was started with THIS demo's state folder: its environment, as
+# /proc keeps it from exec, has OMACAR_STATE=$DEMO_ROOT/state/omacar. Every
+# demo process is started after demo_env, from whichever checkout, so this is
+# what makes a process this demo's rather than a look-alike's.
+demo_env_is() {
+  local -a env
+  local e
+  mapfile -d '' -t env 2>/dev/null <"/proc/$1/environ" || return 1
+  for e in "${env[@]}"; do
+    [[ "$e" == "OMACAR_STATE=$DEMO_ROOT/state/omacar" ]] && return 0
+  done
+  return 1
+}
+
 # Who is behind one of the demo's pid files, as one line:
-#   ours PID          this checkout's script, alive
-#   other PID ROOT    the same script, alive, run from the checkout at ROOT
-#   none              no file, a dead pid, or a process that is not that script
-# "That script" is argv[1], the file its interpreter is running, which must be
-# .../lib/<script>, with the demo's own words among the arguments after it.
+#   ours PID          this demo's script, alive, run from this checkout
+#   other PID ROOT    this demo's script, alive, run from the checkout at ROOT
+#   none              no file, a dead pid, or a process that is not the demo's
+# The demo's means all three: argv[1], the file its interpreter is running, is
+# .../lib/<script>; the demo's own words are among the arguments after it; and
+# it was started with this demo's state folder (demo_env_is).
 demo_holder() {
   local name="$1" f="$DEMO_PIDS/$1.pid" script w a found pid
   local -a words
@@ -348,6 +366,7 @@ demo_holder() {
     for a in "${DEMO_ARGV[@]:2}"; do [[ "$a" == "$w" ]] && { found=1; break; }; done
     (( found )) || { echo none; return 0; }
   done
+  demo_env_is "$pid" || { echo none; return 0; }
   if [[ "${DEMO_ARGV[1]}" == "$ROOT/lib/$script" ]]; then
     echo "ours $pid"
   else
@@ -382,7 +401,7 @@ demo_say_elsewhere() {
     echo "  $what, from $root" >&2
     first=${first:-$root}
   done <<<"$1"
-  echo "  stop it there:  $first/bin/omacar demo off" >&2
+  echo "  stop it first:  omacar demo off   (from this checkout or that one)" >&2
 }
 
 demo_what() {
@@ -520,13 +539,15 @@ os.replace(tmp, out)
         roadcams_note="the saved stills could not be copied; the next demo on tries again"
       fi
     fi
-    local pins="$XDG_CONFIG_HOME/omarchy/omacar-roadcams.json"
-    if [[ -f "$REAL_CONFIG/omarchy/omacar-roadcams.json" && ! -e "$pins" ]]; then
-      if ! { cp -L --preserve=mode,timestamps "$REAL_CONFIG/omarchy/omacar-roadcams.json" \
-               "$pins.copy.$$" 2>/dev/null && mv -T "$pins.copy.$$" "$pins" 2>/dev/null; }; then
-        rm -f "$pins.copy.$$"
-        roadcams_note="${roadcams_note:+$roadcams_note; }the pinned cameras could not be copied"
-      fi
+  fi
+  # The pins on their own, so a failed copy of the stills does not hold them
+  # back, and a failed copy of them is tried again whatever the stills did.
+  local pins="$XDG_CONFIG_HOME/omarchy/omacar-roadcams.json"
+  if [[ -f "$REAL_CONFIG/omarchy/omacar-roadcams.json" && ! -e "$pins" ]]; then
+    if ! { cp -L --preserve=mode,timestamps "$REAL_CONFIG/omarchy/omacar-roadcams.json" \
+             "$pins.copy.$$" 2>/dev/null && mv -T "$pins.copy.$$" "$pins" 2>/dev/null; }; then
+      rm -f "$pins.copy.$$"
+      roadcams_note="${roadcams_note:+$roadcams_note; }the pinned cameras could not be copied"
     fi
   fi
 
@@ -542,7 +563,7 @@ os.replace(tmp, out)
   # guard below watches it too, and goes when it goes.
   : > "$DEMO_ROOT/ACTIVE"
 
-  local started=() i url="http://127.0.0.1:$DEMO_PORT/demo.html"
+  local started=() i url="http://127.0.0.1:$DEMO_PORT/demo.html" cams_note=""
   # The demo world: the car, its drive and its cues (lib/demoworld.py).
   if ! demo_ident world >/dev/null; then
     demo_spawn world "$py" "$ROOT/lib/demoworld.py" run
@@ -558,8 +579,18 @@ os.replace(tmp, out)
   if ! demo_ident cams >/dev/null \
      && timeout 20 env XDG_RUNTIME_DIR="$DEMO_RUN" "$py" "$ROOT/lib/cams.py" demo --help \
           >/dev/null 2>&1; then
-    demo_spawn cams env XDG_RUNTIME_DIR="$DEMO_RUN" "$py" "$ROOT/lib/cams.py" demo
-    started+=("the camera feed")
+    # OMACAR_DEMO_CLIPS names another folder of clips (the tests' scratch
+    # ones); otherwise the feed reads the private share/assets/private/demo/clips.
+    local from=()
+    [[ -n "${OMACAR_DEMO_CLIPS:-}" ]] && from=(--from "$OMACAR_DEMO_CLIPS")
+    demo_spawn cams env XDG_RUNTIME_DIR="$DEMO_RUN" "$py" "$ROOT/lib/cams.py" demo "${from[@]}"
+    # Not a reason to stop the demo (it runs without footage, and says so), but
+    # never claimed as started when it is not.
+    if demo_up cams; then
+      started+=("the camera feed")
+    else
+      cams_note="the camera feed did not start; see $OMACAR_STATE/demo-cams.log"
+    fi
   fi
   # The server, which refuses to start over anything but the demo's folders.
   if ! demo_ident server >/dev/null; then
@@ -597,6 +628,20 @@ os.replace(tmp, out)
   if [[ -z "$(demo_window_pids)" ]]; then
     demo_window "$url" && started+=("the demo window")
   fi
+  # THE CAR MAY HAVE MOVED WHILE THIS WAS STARTING. The guard would then have
+  # run `demo off` (ACTIVE gone), perhaps before the window existed to close.
+  # A window with no demo and no guard under it is the one thing this must not
+  # leave on a moving car's screen, so it goes, and so does everything else.
+  if [[ ! -f "$DEMO_ROOT/ACTIVE" ]] || ! demo_ident guard >/dev/null; then
+    for i in $(seq 1 20); do
+      [[ -n "$(demo_window_pids)" ]] && break
+      sleep 0.1
+    done
+    demo_off >/dev/null 2>&1 || true
+    echo "omacar: the demo was stopped while it was starting (the guard, or the car moving);" \
+         "nothing of it is left running" >&2
+    exit 1
+  fi
 
   echo
   echo "  demo on        $url"
@@ -608,6 +653,7 @@ os.replace(tmp, out)
     echo "  started        nothing: it was already on"
   fi
   [[ -z "$roadcams_note" ]] || echo "  road cameras   $roadcams_note"
+  [[ -z "$cams_note" ]] || echo "  cameras        $cams_note"
   echo
   echo "  omacar demo off     to close it     omacar demo trash   to forget it"
   echo
@@ -663,47 +709,52 @@ demo_window() {
 
 demo_off() {
   demo_env
-  local stopped=() h pid pids name elsewhere
-  # ANOTHER CHECKOUT'S DEMO IS NOT THIS ONE'S TO STOP, OR TO FORGET. Its pid
-  # files stay, so the checkout that started it can still find it, and nothing
-  # else is touched either: half a demo stopped from here would leave the rest
-  # running behind a closed window.
-  elsewhere=$(demo_elsewhere)
-  if [[ -n "$elsewhere" ]]; then
-    echo "omacar: the demo is running from another checkout, so this one stops nothing:" >&2
-    demo_say_elsewhere "$elsewhere"
-    return 1
-  fi
+  local stopped=() h pid pids p name rest root from=()
   # The window first, so the page is not left asking a server that has gone.
-  pids=$(demo_window_pids)
-  if [[ -n "$pids" ]]; then
-    # shellcheck disable=SC2086
-    kill $pids 2>/dev/null || true
-    # shellcheck disable=SC2086
-    demo_wait window $pids
+  # Each pid pgrep found is checked again, by its exact profile argument,
+  # before it is signalled.
+  pids=()
+  for p in $(demo_window_pids); do
+    demo_still window "$p" && pids+=("$p")
+  done
+  if (( ${#pids[@]} )); then
+    kill "${pids[@]}" 2>/dev/null || true
+    demo_wait window "${pids[@]}"
     stopped+=("the demo window")
   fi
+  # THIS DEMO'S PROCESSES, WHICHEVER CHECKOUT STARTED THEM (demo_holder): the
+  # guard runs this from its own checkout and must never be vetoed by a demo
+  # started from another, and on the tablet the one on PATH is the live one.
   for name in guard server cams world oldsim; do
     h=$(demo_holder "$name")
-    if [[ "$h" == "ours "* ]]; then
-      pid=${h#ours }
+    case "$h" in
+      "ours "*) pid=${h#ours }; root="" ;;
+      "other "*) rest=${h#other }; pid=${rest%% *}; root=${rest#* } ;;
+      *) pid="" ;;
+    esac
+    if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
       demo_wait "$name" "$pid"
-      stopped+=("$(demo_what "$name")")
+      stopped+=("$(demo_what "$name")${root:+, run from $root}")
+      [[ -z "$root" ]] || from+=("$root")
     fi
     # A pid file goes only once it names nothing of the demo's: a dead pid, or
-    # a process that is not the demo's script at all. (oldsim's is the demo
-    # world's own sim.pid, and is the world's to keep.)
+    # a process that is not the demo's at all. (oldsim's is the demo world's
+    # own sim.pid, and is the world's to keep.)
     if [[ "$name" != oldsim && "$(demo_holder "$name")" == none ]]; then
       rm -f "$DEMO_PIDS/$name.pid"
     fi
   done
-  # The bar widget is back on your car within a second of this.
+  # The bar widget is back on your car within a second of this, and the guard
+  # goes with it.
   rm -f "$DEMO_ROOT/ACTIVE"
   if (( ${#stopped[@]} )); then
     for name in "${stopped[@]}"; do echo "  stopped $name"; done
   else
     echo "  nothing of the demo's was running"
+  fi
+  if (( ${#from[@]} )); then
+    echo "  (the demo was started from ${from[0]}, not from $ROOT)"
   fi
   echo "  its data is still in $DEMO_ROOT"
 }
@@ -771,13 +822,17 @@ demo_trash() {
     */omacar-demo) ;;
     *) echo "omacar: refusing to delete \"$root\" — that is not the demo directory" >&2; exit 1 ;;
   esac
-  # Not from under another checkout's demo, whose pid files are in here.
-  if [[ -n "$(demo_elsewhere)" ]]; then
-    demo_off || true
-    echo "omacar: not trashing a demo that is still running" >&2
-    exit 1
-  fi
   demo_off >/dev/null 2>&1 || true
+  # Never from under a demo that is still running, whoever started it: its
+  # pid files are in here, and it would carry on writing into a folder that
+  # has gone.
+  local name
+  for name in guard server cams world oldsim; do
+    if [[ "$(demo_holder "$name")" != none ]]; then
+      echo "omacar: $(demo_what "$name") is still running; not trashing a demo that is" >&2
+      exit 1
+    fi
+  done
   if [[ -d "$root" ]]; then
     rm -rf "$root"
     echo "  demo trashed — $root is gone"

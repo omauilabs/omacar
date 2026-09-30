@@ -7,8 +7,10 @@
 `omacar demo on` starts it with the REAL live.json (read before the demo's
 environment moves OMACAR_STATE) and the demo's folder. Every 2 s it reads that
 file, read-only. While the demo is on (DEMO_ROOT/ACTIVE exists) and the real
-car is moving, it runs `omacar demo off` and exits. It also exits the moment
-ACTIVE is gone, however the demo ended.
+car is moving, it runs `omacar demo off`, and exits once that has worked; one
+that fails is tried again (TRIES, LATER), and the guard never leaves while
+the demo is still up. It also exits the moment ACTIVE is gone, however the
+demo ended.
 
 MOVING MEANS A FRESH SAMPLE ABOVE 3 KM/H. Fresh is `t` within 5 s of now: the
 daemon rewrites live.json several times a second while it is talking to the
@@ -68,19 +70,49 @@ def stop_demo(root):
                           env=env, stdin=subprocess.DEVNULL, timeout=120).returncode
 
 
+# A `demo off` that fails is tried again every EVERY seconds, TRIES times in
+# a row. After that the guard says so and keeps watching, trying again every
+# LATER seconds while the car is still moving. It never leaves while the demo
+# is still standing: a guard that gave up would leave a window on the screen
+# of a moving car with nothing watching it.
+TRIES = 5
+LATER = 30.0
+
+
+def _log(msg):
+    try:
+        print(f"{time.strftime('%F %T')} demoguard: {msg}", file=sys.stderr, flush=True)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
 def watch(live_json, root, every=EVERY, off=stop_demo, clock=time.time,
-          sleep=time.sleep):
+          sleep=time.sleep, tries=TRIES, later=LATER):
     """Until the demo is gone: "gone" when ACTIVE went, "moving" when the real
-    car moved and the demo was stopped for it."""
+    car moved and `demo off` stopped the demo for it. Returns only then."""
     active = os.path.join(root, "ACTIVE")
+    failed, next_try = 0, 0.0
     while True:
         if not os.path.exists(active):
             return "gone"
-        if state(live_json, clock()) == "moving":
-            print(f"{time.strftime('%F %T')} demoguard: the real car is moving "
-                  f"({live_json}); stopping the demo", file=sys.stderr, flush=True)
-            off(root)
-            return "moving"
+        now = clock()
+        if state(live_json, now) == "moving" and now >= next_try:
+            if not failed:
+                _log(f"the real car is moving ({live_json}); stopping the demo")
+            try:
+                rc = off(root)
+            except Exception as e:                             # noqa: BLE001
+                rc = f"{type(e).__name__}: {e}"
+            if rc == 0:
+                return "moving"
+            failed += 1
+            _log(f"`omacar demo off` failed ({rc}), try {failed}")
+            if failed >= tries:
+                _log(f"the demo is still up after {failed} tries; watching, and trying "
+                     f"again every {later:g} s while the car moves")
+                next_try = now + later
+        elif state(live_json, now) != "moving":
+            failed, next_try = 0, 0.0
         sleep(every)
 
 
