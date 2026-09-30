@@ -66,10 +66,11 @@
 #                             every command as a picture, for the wallpaper
 #   omacar board [stop]       the same commands, behind your windows, tappable
 #   omacar state              key=value status for the bar widget
-#   omacar demo on|off|check|tour|trash
+#   omacar demo on|off|check|tour|video|trash
 #                             the demo: a drive, its own data and its own window,
 #                             for showing somebody. Cannot touch your car, its
 #                             data or the live app, and will not start while moving.
+#                             `video` plays the tour's backup film full-screen.
 #   omacar server status|stop|watch PORT
 #                             the loopback server the app is served from; `watch`
 #                             restarts it on PORT if it dies, and the kiosk runs it
@@ -797,6 +798,39 @@ demo_tour() {
   done
   echo "omacar: the demo page has not said it has a tour; is its window open?" >&2
   exit 1
+}
+
+# THE BACKUP VIDEO, for when something fails on stage (spec §6): the tour as
+# recorded, full-screen. The tablet's own recording first (tools/demo_record.sh:
+# its real screen and sound), else the box's (tools/demo_record_headless.py).
+# It plays out loud through the default output at whatever level is set; it
+# changes neither. q ends it, and the demo is still underneath.
+DEMO_VIDEOS=("$HOME/Videos/omacar-demo-backup-tablet.mp4" "$HOME/Videos/omacar-demo-backup.mp4")
+demo_video() {
+  local f="" c w
+  for c in "${DEMO_VIDEOS[@]}"; do
+    [[ -s "$c" ]] && { f="$c"; break; }
+  done
+  if [[ -z "$f" ]]; then
+    echo "omacar: no backup video: neither ${DEMO_VIDEOS[0]} nor ${DEMO_VIDEOS[1]}" >&2
+    exit 1
+  fi
+  command -v mpv >/dev/null || {
+    echo "omacar: mpv is not installed, and it is what plays the backup video ($f)" >&2; exit 1; }
+  # A screen to play on, found as demo_window finds it: from ssh, or from a
+  # shell that has none.
+  : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+  export XDG_RUNTIME_DIR
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    for w in "$XDG_RUNTIME_DIR"/wayland-[0-9]*; do
+      [[ -S "$w" ]] || continue
+      WAYLAND_DISPLAY="$(basename "$w")"
+      export WAYLAND_DISPLAY
+      break
+    done
+  fi
+  echo "  playing $f  (q to stop)"
+  exec mpv --fs -- "$f"
 }
 
 # Everything the venue needs, checked read-only (lib/democheck.py).
@@ -1568,6 +1602,7 @@ print()
       on | start) demo_on ;;
       off | stop) demo_off ;;
       tour) demo_tour ;;
+      video) demo_video ;;
       check) shift 2; demo_check "$@" ;;
       # How the bar widget refreshes while the demo is on. It cannot set the
       # environment itself, so it asks us to do it.
