@@ -62,3 +62,13 @@ Its sources are the final whole-branch review's "should fix" list, the deferred 
 - The `omacar-demo` shortcut.
 - Updating the tablet's live checkout to `demo/meetup`. This brings the tab-underline fix and the `card.py` fix into the live app, and makes the bar widget's Demo button and `omacar` on PATH the new demo.
 - Opening the pull request once CI runs on the owner's runners (PR #6).
+
+## D. The demo with no footage (added 2026-09-30, afternoon)
+
+The owner's cameras wait for parts, and the footage waits for them. The owner will give the go-ahead when it's in, and no stock footage is downloaded until then. Until then the demo must look finished without footage, and switch back by itself once clips are present.
+
+1. **The tour** skips a step whose `needs` it can't meet. `tour.json`'s Cameras step gets `"needs": "clips"`, and the demo page learns whether clips exist from `GET /api/cams` (roles running), or a `demo.clips` flag the server adds. The tour's step numbers, keys and captions stay stable: a skipped step is jumped over, and its key does nothing, with a quiet toast "Cameras aren't connected in this demo".
+2. **Home's Dashcams card and the Cameras tab** show a composed empty state when no role is running: a camera glyph, "Front, rear and cabin cameras", and the line "Recorded in one-minute clips, and a hard stop saves the clip". It's styled like the card's normal look, not as an error ("No front camera", "Off"). The demo overrides both through the door (`D.cards.dashcam`, `D.views.cameras`); the live app's own states are unchanged. When roles are running, the live card and view render as today.
+3. **The drowsy moment** works with no cabin clip: the chip, both levels and "I'm awake", with no broken cabin tile.
+4. **democheck:** missing clips become a note (`--`, "no footage yet: the tour skips Cameras") rather than a FAIL, so `check` can say ready. A clip that is present but won't play stays a FAIL.
+5. **Tests** for each, plus an e2e run on the box with no clips: the tour passes with the Cameras step skipped, and no console errors.
