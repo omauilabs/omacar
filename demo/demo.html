@@ -141,11 +141,19 @@
 </noscript>
 
 <!-- THE MEETUP DEMO (doc/design/2026-09-30-meetup-demo.md). This page is
-     share/app.html with four changes, and only the demo server serves it:
-     demo/js/boot.js opens main.js's one door before main.js runs; the demo's
-     stylesheet; and neither js/awake.js (the live radio stream) nor
-     js/alertness.js (the live drowsy engine and the volume pin), whose parts
-     the demo plays itself. -->
+     share/app.html, served only by the demo server, with three differences:
+       - demo/js/boot.js runs before main.js and opens its one door
+         (globalThis.OMACAR_DEMO). Through it the demo puts in its own screens
+         (Navigation's map, Now Playing, CarPlay, Android Auto, Oma Agent,
+         Work, the scripted Scan vehicle and the `demo-tour` screen), dresses
+         Home's car, nav and phone cards, puts the logo, the DEMO pill and the
+         drowsy chip in the top bar, and adds the presenter's menu (a long
+         press on the logo, or Esc), the tour with its captions, and the cue
+         keys;
+       - the demo's stylesheets, below;
+       - neither js/awake.js (the live radio stream) nor js/alertness.js (the
+         live drowsy engine and the volume pin), whose parts the demo plays
+         itself. -->
 <link rel="stylesheet" href="demo/css/demo.css">
 <link rel="stylesheet" href="demo/css/drowsy-demo.css">
 <link rel="stylesheet" href="demo/css/radio.css">
