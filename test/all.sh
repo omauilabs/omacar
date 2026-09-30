@@ -191,5 +191,13 @@ python3 "$ROOT/test/demo_silo_test.py" || fails=$((fails + 1))
 # test/js/demo-tour.test.js, run by js_test.py above.
 python3 "$ROOT/test/democheck_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 8 --------------------------------------------------
+# ---- meetup demo: the backup video (Task 9) -----------------------------------
+# tools/demo_record.sh, the tablet's recorder, dry-run against a stand-in
+# gpu-screen-recorder and a stand-in demo: its flags, when it starts and stops,
+# and what it refuses. The real recorder is never called and nothing plays.
+# (`omacar demo video` is in workshop_test.py; tools/demo_e2e.py is a tool, run
+# by hand: a tour is six minutes of real time per size.)
+python3 "$ROOT/test/demo_record_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: Task 9 --------------------------------------------------
 
 exit $((fails > 0))
