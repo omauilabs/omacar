@@ -1,0 +1,58 @@
+/* The demo with no footage (hardening D): Home's Dashcams card
+   (demo/js/cards/dashcam.js) and the Cameras screen (demo/js/views/cameras.js)
+   while no camera is recording. The look is the card's and the screen's own, in
+   the app's tokens: a dark panel, the accent on the glyph and the cameras'
+   names. Not a fault's: nothing red, no REC, no "No camera" or "Off".
+
+   The live card is black and carries a picture (share/css/cameras.css
+   .hc-cam); .nf-card is the empty state's, over it. Both selectors name two
+   classes so they win whichever sheet loads last (cameras.css is the page's
+   last link). */
+
+.nf-glyph {
+  display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%;
+  width: 56px; height: 56px; color: var(--accent);
+  background: var(--accent-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  box-shadow: 0 0 28px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.nf-body {
+  flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px; text-align: center;
+}
+.nf-title { font-size: 1.02rem; font-weight: 600; color: var(--ink); }
+.nf-line { font-size: .86rem; line-height: 1.35; color: var(--dim); max-width: 36ch; text-wrap: balance; }
+
+/* Home's card: the header every Home card has (.hc-title), the body under it. */
+.hc-cam.nf-card {
+  padding: 16px; display: flex; flex-direction: column; cursor: pointer;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 3%, var(--panel)), var(--panel));
+}
+.hc-cam.nf-card .hc-title { flex: 0 0 auto; margin-bottom: 0; }
+.hc-cam.nf-card .nf-body { gap: 6px; }
+.hc-cam.nf-card .nf-glyph { width: 48px; height: 48px; }
+.hc-cam.nf-card .nf-title { font-size: .98rem; }
+.hc-cam.nf-card .nf-line { font-size: .8rem; }
+.hc-cam.nf-card:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+
+/* The screen: one panel across the stage, as Home fills it (home.css). */
+.wrap:has(> .nf-view) { max-width: none; display: block; height: 100%; }
+.stage:has(> .wrap > .nf-view) { padding-bottom: 18px; }
+.nf-view {
+  height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--hair); border-radius: var(--r-lg);
+  background:
+    radial-gradient(52% 46% at 50% 40%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 72%),
+    linear-gradient(180deg, color-mix(in srgb, var(--ink) 3%, var(--panel)), var(--panel));
+}
+.nf-view .nf-body { gap: 12px; padding: 24px; }
+.nf-view .nf-glyph { width: 88px; height: 88px; margin-bottom: 8px; }
+.nf-view .nf-title { font-family: var(--display); font-size: 1.7rem; letter-spacing: .005em; }
+.nf-view .nf-line { font-size: 1.08rem; max-width: 40ch; }
+.nf-roles { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 22px; }
+.nf-role {
+  display: inline-flex; align-items: center; gap: 10px; min-height: var(--tap); padding: 0 20px;
+  border: 1px solid var(--edge); border-radius: var(--r); background: var(--panel-2);
+  color: var(--ink-2); font-size: .95rem;
+}
+.nf-role svg { color: var(--accent); }

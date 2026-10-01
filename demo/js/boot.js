@@ -22,8 +22,11 @@
 //      keys, and the `demo-tour` screen `omacar demo tour` asks for.
 //   4. the quiet cue (hardening B): the music fades out when `demo off`
 //      asks, and before the tour's reset:                       register(D, { radio })
+//   5. no footage (hardening D): Home's Dashcams card and the Cameras screen draw an
+//      empty state while no camera is recording and are the live ones when one is,
+//      and the tour jumps over its Cameras step meanwhile:      register(D, { footage })
 
-import { h, store } from "../../js/core.js";
+import { h, store, toast } from "../../js/core.js";
 import { tyreState } from "../../js/systems.js";
 import { register as navigation, mountMap } from "./views/navigation.js";
 import { register as navCard } from "./cards/navcard.js";
@@ -42,6 +45,9 @@ import { createTour, createCaptions, createReset, loadSteps } from "./tour.js";
 import { createMenu, createCues } from "./menu.js";
 import { createBar } from "./bar.js";
 import { register as quiet, fadeOut } from "./quiet.js";
+import { getFootage, NEEDS_CLIPS } from "./footage.js";
+import { register as dashcam } from "./cards/dashcam.js";
+import { register as cameras } from "./views/cameras.js";
 
 const D = globalThis.OMACAR_DEMO = {
   views: {}, extraViews: [], tabRoots: {}, cards: {}, afterBar: null, onKey: null,
@@ -69,6 +75,12 @@ work(D, deps);
 scan(D);
 agentCard(D);
 quiet(D, { radio });
+
+// What the demo has, from GET /api/cams: one answer for the Dashcams card, the
+// Cameras screen and the tour, which skips a step that `needs` clips.
+const footage = getFootage();
+dashcam(D, { footage });
+cameras(D, { footage });
 
 // So Home's radio row and every Now Playing have the station's names from the
 // first paint. Loading plays nothing.
@@ -153,6 +165,12 @@ const tour = createTour({
   reset: resetDemo,
   parked: () => cues.parked(),
   menu: () => menu.toggle(),
+  // A step with `needs: "clips"` is jumped over while no camera is recording.
+  // null (not asked yet, or no answer) does not skip it: the screen has an
+  // empty state of its own.
+  has: (need) => (need === NEEDS_CLIPS ? footage.has() : true),
+  refresh: () => footage.check(),
+  toast: (text) => toast(text),
 });
 tour.subscribe((t) => {
   if (t.state !== "paused") captions.hideNote();
@@ -187,4 +205,4 @@ D.extraViews.push({
 });
 
 // For the venue check and the end-to-end walk (tools and CDP), never the page.
-globalThis.OMACAR_DEMO_TOUR = { tour, menu, ready };
+globalThis.OMACAR_DEMO_TOUR = { tour, menu, ready, footage };
