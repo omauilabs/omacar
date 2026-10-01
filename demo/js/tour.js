@@ -46,7 +46,10 @@
 // is wrongly skipped is gone. It is asked as each step opens, not once at the start,
 // so footage that arrives mid-tour is shown; `refresh()` makes the page look again
 // (GET /api/cams): at the start (waited for with the reset, for RESET_WAIT_MS at
-// most) and, in the background, as each step opens.
+// most), in the background as each step opens, and when the key of a skipped step
+// is pressed. Whether to look at all (does any step `need` anything?) is asked each
+// time and not once when the tour is made: the page hands the tour an empty list
+// of steps and fills it after tour.json has loaded (boot.js).
 //
 // Its keys (the Type Cover's): 1-9 jump to that step (and 0 to the tenth),
 // D drowsy, B hard braking, P park or drive, Space pause and resume, Esc the
@@ -116,8 +119,6 @@ export function createTour(deps = {}) {
     ...deps,
   };
   const steps = d.steps || [];
-  // Only a tour with a step that needs something ever asks what the demo has.
-  const needy = steps.some((s) => s.needs);
   const subs = new Set();
   let timers = [];
   let startedAt = 0;          // clock ms at which the current step's second 0 was
@@ -266,8 +267,11 @@ export function createTour(deps = {}) {
   }
 
   // The page looks again at what the demo has. Never rejects: what it knew stands.
+  // Only a tour with a step that needs something ever asks, and that is asked HERE,
+  // each time: the page hands the tour an empty `steps` and fills it once tour.json
+  // has loaded (boot.js), so it cannot be known when the tour is made.
   function look() {
-    if (!needy) return Promise.resolve();
+    if (!steps.some((s) => s.needs)) return Promise.resolve();
     try { return Promise.resolve(d.refresh()).catch((e) => console.warn("demo tour: looking at what the demo has:", e)); }
     catch (e) { console.warn("demo tour: looking at what the demo has:", e); return Promise.resolve(); }
   }
@@ -317,7 +321,7 @@ export function createTour(deps = {}) {
     const began = d.clock.now();
     restartedAt = began;
     try { d.cue("restart"); } catch (e) { console.warn("demo tour: the restart cue:", e); }
-    const look = () => {
+    const watchClock = () => {
       if (mine !== epoch) return;
       const w = worldClock();
       if ((w && w.t < RESYNC_BELOW_S) || d.clock.now() - began >= RESYNC_WAIT_MS) {
@@ -325,9 +329,9 @@ export function createTour(deps = {}) {
         whenFree(() => enter(tour.index));
         return;
       }
-      timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+      timers.push(d.clock.later(watchClock, RESYNC_LOOK_MS));
     };
-    timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+    timers.push(d.clock.later(watchClock, RESYNC_LOOK_MS));
   }
 
   // A projection's screens are its own and the address says only `#carplay`,

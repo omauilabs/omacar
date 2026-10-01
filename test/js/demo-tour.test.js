@@ -1109,6 +1109,38 @@ export default [
     ok(said.every((x) => x.startsWith("demo tour")), "its warnings are the tour's own: " + said.join("|"));
   }],
 
+  // boot.js hands the tour an EMPTY steps array and fills it once tour.json has loaded, so whether
+  // any step needs something is a question for the moment of asking, never for the tour's making.
+  ["a tour made with no steps and given them afterwards, as boot.js does, still looks: at its start, as each step opens, and on a skipped key", async () => {
+    const steps = [];
+    let looks = 0;
+    const r = await rig({ steps, deps: { has: (need) => need !== "clips", refresh: async () => { looks++; } } });
+    steps.push(...await loadSteps());                 // tour.json loaded after the tour was made
+    const started = r.tour.start();
+    eq(looks, 1, "the start's own look, with the reset");
+    await started;
+    eq(looks, 2, "and one as step 1 opened");
+    r.c.advance(40);
+    eq([r.tour.index, looks], [1, 3], "and one as Navigation opened");
+    r.key("4");
+    eq([r.toasts, looks], [["Cameras aren't connected in this demo"], 4], "the key of the skipped step looks again too");
+    r.c.advance(TOTAL(r.steps));
+    eq(looks, 4 + 8, "eight more as the other steps opened (Cameras jumped over)");
+  }],
+
+  ["and with footage, the look happens as the Cameras step itself opens", async () => {
+    const steps = [];
+    let looks = 0;
+    const r = await rig({ steps, deps: { has: () => true, refresh: async () => { looks++; } } });
+    steps.push(...await loadSteps());
+    await r.tour.start();
+    r.c.advance(94);
+    const before = looks;
+    eq(r.tour.index, 2, "still in the road cameras");
+    r.c.advance(2);
+    eq([r.tour.index, looks], [3, before + 1], "Cameras opened, and the page looked as it did");
+  }],
+
   ["a tour with no step that needs anything never looks", async () => {
     let looks = 0;
     const steps = [{ id: "a", go: "#a", secs: 5, at: [] }, { id: "b", go: "#b", secs: 5, at: [] }];
