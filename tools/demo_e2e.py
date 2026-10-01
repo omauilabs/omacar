@@ -5,6 +5,8 @@ tablet's two shapes and the projector's (doc/design/2026-09-30-meetup-demo.md
 
     python3 tools/demo_e2e.py                        a scratch HOME, all three sizes
     python3 tools/demo_e2e.py --sizes 1368x912       one size
+    python3 tools/demo_e2e.py --sizes 1368x912 --no-clips
+                                                     the demo with no footage: no clips
     python3 tools/demo_e2e.py --tablet --port 7580 --sizes 1368x912 --repeat 3
                                                      a demo that is already running
 
@@ -17,6 +19,13 @@ WHAT IT DOES, by default:
      its own, with test-pattern clips and a dead proxy: no window opens (there
      is no Wayland socket in the scratch runtime folder) and nothing reaches the
      internet;
+  (--no-clips hands the demo an empty folder of clips, as it is before the owner's
+  cameras are in: the camera feed never starts, the tour jumps over its Cameras
+  step, and Home and the Cameras tab show their empty state. The walk then expects
+  exactly that: the steps run as 1-3 and 5-11, the drowsy moment's two levels
+  show with no camera element anywhere on the page, and after the tour Home's card
+  and the Cameras tab (opened by tapping its tab) are the empty state, and the
+  key of the skipped step toasts and starts nothing.)
   3. for each size, opens /demo.html in a headless, muted Chromium over
      DevTools (test/js_test.py's pipe launcher; no port is opened), starts the
      tour from the top as `omacar demo tour` does, follows it to its end on
@@ -420,17 +429,159 @@ def shoot(cdp, path):
     return path
 
 
+# WHAT THE PAGE SHOWS OF THE CAMERAS AND OF THE DROWSY MOMENT, LOOKED AT FIVE TIMES A SECOND
+# FROM INSIDE IT (a screenshot every few seconds could miss a Level that lasts nine). The
+# drowsy levels and chip texts it saw, and the most camera pictures it ever saw at once:
+# a feed's <img> or a clip's <video>, which no page with no footage has any reason to hold.
+OBSERVE_JS = """(() => {
+  const seen = { levels: [], chips: [], cams: 0, broken: 0 };
+  globalThis.__e2e_seen = seen;
+  setInterval(() => {
+    const layer = document.querySelector(".dz-layer");
+    const level = layer && !layer.hidden ? layer.dataset.level : null;
+    if (level && !seen.levels.includes(level)) seen.levels.push(level);
+    const chip = document.querySelector(".tb-drowsy-t");
+    if (chip && !seen.chips.includes(chip.textContent)) seen.chips.push(chip.textContent);
+    seen.cams = Math.max(seen.cams, document.querySelectorAll("img.cam-img, img.dc-img, video.cam-video").length);
+    // The pictures of the cameras and of the drowsy cards, which are the ones in question.
+    for (const im of document.querySelectorAll(".hc-cam img, .cams img, .dz-layer img, .nf-card img, .nf-view img"))
+      if (im.getAttribute("src") && im.complete && im.naturalWidth === 0 && !im.closest("[hidden]")) seen.broken++;
+  }, 200);
+  return true;
+})()"""
+
+# Home's Dashcams card and the Cameras screen, with no footage: the brief's words.
+EMPTY_TITLE = "Front, rear and cabin cameras"
+EMPTY_LINE = "Recorded in one-minute clips, and a hard stop saves the clip"
+SKIPPED_TOAST = "Cameras aren't connected in this demo"
+# Words of a fault, which an empty state must not use.
+FAULT_WORDS = ("No front camera", "No camera", "Checking the front camera", "Recorder off", "REC", "SIMULATED")
+
+
+def footage_in(folder):
+    """Whether `folder` holds any clip (the camera feed reads front.mp4 and its kin)."""
+    try:
+        return any(n.endswith(".mp4") and os.path.getsize(os.path.join(folder, n)) > 0
+                   for n in os.listdir(folder))
+    except OSError:
+        return False
+
+
+def footage_up(port):
+    """What the demo's own server says (GET /api/cams): a camera is recording.
+    The page's rule (demo/js/footage.js hasFootage), for --tablet, where the
+    clips are the tablet's and not this run's."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/cams", timeout=5) as r:
+            ov = json.load(r)
+    except (OSError, ValueError):
+        return False
+    return bool(ov.get("running") and any((x or {}).get("recording") for x in (ov.get("roles") or {}).values()))
+
+
+def skipped_steps(steps, footage):
+    """The indexes of the steps the tour must jump over: those whose `needs` is clips,
+    when there is no footage."""
+    return {i for i, s in enumerate(steps) if s.get("needs") == "clips" and not footage}
+
+
+def tap(cdp, x, y):
+    """A touch on the page, as a finger would (a pointer down and up at x, y)."""
+    for kind in ("mousePressed", "mouseReleased"):
+        cdp.call("Input.dispatchMouseEvent", {"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1})
+
+
+def press(cdp, key):
+    cdp.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": key, "text": key})
+    cdp.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": key})
+
+
+def no_footage_checks(cdp, steps, skip, out):
+    """After a tour with no footage: what the demo shows on Home and on the Cameras
+    tab (reached by tapping it), and what the skipped step's key does. Returns
+    problems, and screenshots into `out`."""
+    problems = []
+    seen = cdp.value("globalThis.__e2e_seen") or {}
+    if seen.get("cams"):
+        problems.append(f"a camera picture was on the page ({seen['cams']} at once) with no footage")
+    if seen.get("broken"):
+        problems.append(f"a broken picture was seen on the page ({seen['broken']} looks)")
+    if not {"1", "2"} <= set(seen.get("levels") or []):
+        problems.append(f"the drowsy moment showed levels {seen.get('levels')}, not 1 and 2")
+    if "Watching" not in (seen.get("chips") or []):
+        problems.append(f"the drowsy chip said {seen.get('chips')}, never Watching")
+    if cdp.value("OMACAR_DEMO_TOUR.footage.has()") is not False:
+        problems.append(f"the page believes footage is {cdp.value('OMACAR_DEMO_TOUR.footage.has()')}, not false")
+
+    def words(js):
+        return cdp.value(f"(() => {{ const e = {js}; return e ? e.innerText : null; }})()")
+
+    def judge(what, text):
+        if text is None:
+            problems.append(f"{what}: not on the page")
+            return
+        for w in (EMPTY_TITLE, EMPTY_LINE):
+            if w not in text:
+                problems.append(f"{what} does not say {w!r}: {text!r}")
+        for w in FAULT_WORDS:
+            if w in text:
+                problems.append(f"{what} says {w!r}, the voice of a fault: {text!r}")
+
+    # Home, where the tour ended.
+    cdp.value("location.hash = '#home'")
+    time.sleep(1.5)
+    judge("Home's Dashcams card", words("document.querySelector('[data-card=dashcam]')"))
+    shoot(cdp, os.path.join(out, "90-home-no-clips.png"))
+    # The Cameras tab, by tapping it.
+    where = cdp.value("""(() => {
+      const b = [...document.querySelectorAll('#tabbar button.tab')].find((x) => /Cameras/.test(x.textContent));
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    })()""")
+    if not where:
+        problems.append("no Cameras tab to tap")
+        return problems
+    tap(cdp, *where)
+    time.sleep(2.0)
+    hsh = cdp.value("location.hash")
+    if hsh != "#cameras":
+        problems.append(f"tapping the Cameras tab opened {hsh}")
+    judge("the Cameras tab", words("document.querySelector('.stage')"))
+    if cdp.value("document.querySelectorAll('.cams, .cam-feed, .cam-img, video, img.dc-img').length"):
+        problems.append("the Cameras tab holds the live view's feeds with no footage")
+    shoot(cdp, os.path.join(out, "91-cameras-no-clips.png"))
+    # The key of the step that was jumped over: a toast, and nothing starts.
+    cdp.value("location.hash = '#home'")
+    time.sleep(1.0)
+    state = cdp.value("OMACAR_DEMO_TOUR.tour.state")
+    key = str(next((i for i in sorted(skip)), 3) + 1)
+    press(cdp, key)
+    time.sleep(0.6)
+    toast = cdp.value("(document.getElementById('toasts') || {}).innerText || ''")
+    if SKIPPED_TOAST not in toast:
+        problems.append(f"the key {key} toasted {toast!r}, not {SKIPPED_TOAST!r}")
+    if cdp.value("OMACAR_DEMO_TOUR.tour.state") != state or cdp.value("location.hash") != "#home":
+        problems.append(f"the key {key} started or moved the tour ({cdp.value('OMACAR_DEMO_TOUR.tour.state')}, "
+                        f"{cdp.value('location.hash')})")
+    shoot(cdp, os.path.join(out, "92-skipped-key-toast.png"))
+    return problems
+
+
 STATE_JS = ("(() => { const t = OMACAR_DEMO_TOUR.tour; return [t.state, t.index,"
             " t.state === 'idle' ? 0 : t.elapsed(), location.hash, Date.now()]; })()")
 
 
-def follow_tour(cdp, steps, watch, out=None, on_step=None, grace=90, check=None):
+def follow_tour(cdp, steps, watch, out=None, on_step=None, grace=90, check=None, skip=()):
     """Start the tour from the top and follow it to its end. Screenshots into
     `out` when given. `check()`, when given, is called at every look and may
-    raise to stop the tour (the recorder's guard). Returns (entries,
+    raise to stop the tour (the recorder's guard). `skip` is the indexes of the
+    steps the tour must jump over (no footage: skipped_steps): they are expected
+    NOT to run, and every other step to run once, in order. Returns (entries,
     problems): entries are [index, id, wall-clock ms at entry, hash at entry]."""
     plan = shot_plan(steps)
-    total = sum(float(s["secs"]) for s in steps)
+    skip = set(skip)
+    total = sum(float(s["secs"]) for i, s in enumerate(steps) if i not in skip)
     problems = []
     entries = []
     done = set()
@@ -479,8 +630,10 @@ def follow_tour(cdp, steps, watch, out=None, on_step=None, grace=90, check=None)
     watch.where = "end"
     # IN ORDER, EACH FOR ITS TIME.
     got = [e[0] for e in entries]
-    if got != list(range(len(steps))):
-        problems.append(f"the steps ran as {[g + 1 for g in got]}, not 1 to {len(steps)}")
+    expected = [i for i in range(len(steps)) if i not in skip]
+    if got != expected:
+        problems.append(f"the steps ran as {[g + 1 for g in got]}, not {[w + 1 for w in expected]}"
+                        + (f" (steps {sorted(i + 1 for i in skip)} jumped over: no footage)" if skip else ""))
     for a, b in zip(entries, entries[1:]):
         want = float(steps[a[0]]["secs"])
         took = (b[2] - a[2]) / 1000
@@ -511,21 +664,28 @@ def blank_shots(folder):
     return flat
 
 
-def tour_at(url, size, prof, out, allow, exe):
-    """One whole tour at one size, in a Chromium of its own. Returns a result
-    dict; raises nothing a tour can cause."""
+def tour_at(url, size, prof, out, allow, exe, footage=True):
+    """One whole tour at one size, in a Chromium of its own. `footage` is whether
+    the demo has clips: with none, the Cameras step must be jumped over and the
+    empty states shown (no_footage_checks). Returns a result dict; raises
+    nothing a tour can cause."""
     os.makedirs(out, exist_ok=True)
     watch = Watch(allow)
-    res = {"size": f"{size[0]}x{size[1]}", "out": out, "problems": []}
+    res = {"size": f"{size[0]}x{size[1]}", "out": out, "problems": [], "footage": footage}
     browser = Browser(exe, prof, size)
     cdp = Cdp(browser)
     try:
         steps = open_demo(cdp, url, size, watch)
+        skip = skipped_steps(steps, footage)
+        cdp.value(OBSERVE_JS)
         time.sleep(2.0)
         shoot(cdp, os.path.join(out, "00-booted.png"))
-        entries, problems = follow_tour(cdp, steps, watch, out)
-        res.update(steps=len(steps), entries=entries)
+        entries, problems = follow_tour(cdp, steps, watch, out, skip=skip)
+        res.update(steps=len(steps), entries=entries, skipped=sorted(i + 1 for i in skip))
         res["problems"] += problems
+        if not footage:
+            watch.where = "no footage"
+            res["problems"] += no_footage_checks(cdp, steps, skip, out)
     except (OSError, RuntimeError, TimeoutError, ValueError, KeyError) as e:
         res["problems"].append(f"the walk stopped: {e}")
     finally:
@@ -634,7 +794,7 @@ class Scratch:
     """A demo of this checkout in a scratch HOME, muted, on a port of its own,
     with nothing on the real machine reachable from it but the checkout."""
 
-    def __init__(self, work, clips=None, roadcams=None, roadcams_pins=None):
+    def __init__(self, work, clips=None, roadcams=None, roadcams_pins=None, no_clips=False):
         self.base = tempfile.mkdtemp(prefix="omacar-demo-e2e-", dir=work)
         self.home = os.path.join(self.base, "home")
         self.run = os.path.join(self.base, "run")
@@ -653,7 +813,13 @@ class Scratch:
             with open(p, "w", encoding="utf-8") as f:
                 f.write(f'#!/bin/sh\necho "{name} $*" >> "{self.shim_log}"\nexit 0\n')
             os.chmod(p, 0o755)
+        # NO CLIPS: an empty folder, which the camera feed finds nothing in (it does not
+        # start, and says so), as the demo is before the owner's cameras are in.
+        if no_clips and not clips:
+            clips = os.path.join(self.base, "clips")
+            os.makedirs(clips)
         self.clips = clips or self._make_clips()
+        self.footage = footage_in(self.clips)
         dead = "http://127.0.0.1:9"
         self.env = {
             "PATH": self.shims + ":/usr/local/bin:/usr/bin:/bin", "HOME": self.home,
@@ -768,7 +934,10 @@ def args_of(argv):
     ap.add_argument("--repeat", type=int, default=1, help="run the sizes this many times")
     ap.add_argument("--out", help="screenshots here (default: a folder beside the scratch one)")
     ap.add_argument("--work", default="/var/tmp", help="where the scratch folder goes")
-    ap.add_argument("--clips", help="camera clips to hand the demo (default: made here)")
+    ap.add_argument("--clips", help="camera clips to hand the demo (default: made here; an empty folder is the demo with no footage)")
+    ap.add_argument("--no-clips", action="store_true",
+                    help="no camera clips at all: the demo with no footage (the Cameras step is jumped over, "
+                         "Home and the Cameras tab show their empty state)")
     ap.add_argument("--roadcams", help="a saved road-cameras cache to seed the fake real state with")
     ap.add_argument("--roadcams-pins", help="and its pins file")
     ap.add_argument("--allow", action="append", default=[],
@@ -825,7 +994,7 @@ def main(argv=None):
             before = hash_tree(roots)
             noisy = {k for k in set(first) | set(before) if first.get(k) != before.get(k)}
         else:
-            sc = Scratch(a.work, a.clips, a.roadcams, a.roadcams_pins)
+            sc = Scratch(a.work, a.clips, a.roadcams, a.roadcams_pins, a.no_clips)
             url = sc.url
             log(f"\n  scratch HOME  {sc.home}\n  demo          {url}")
             before = sc.outside()
@@ -842,8 +1011,10 @@ def main(argv=None):
         for i, size in enumerate(sizes):
             tag = f"{size[0]}x{size[1]}" + (f"-{i // len(set(sizes)) + 1}" if a.repeat > 1 else "")
             log(f"\n  the tour at {tag}")
+            footage = sc.footage if sc else footage_up(a.port)
+            log(f"    footage: {'yes' if footage else 'none: the Cameras step must be jumped over'}")
             res = tour_at(url, size, os.path.join(profs, f"p{i}"), os.path.join(out, tag),
-                          a.allow, exe)
+                          a.allow, exe, footage)
             report["results"].append(res)
             for p in res["problems"] + [f"{w}: {e}" for w, e in res["errors"] + res["failed"]]:
                 log(f"    FAIL  {p}")

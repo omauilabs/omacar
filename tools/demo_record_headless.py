@@ -790,8 +790,11 @@ def record(r):
     if r.ff.poll() is not None:
         raise RuntimeError("ffmpeg stopped recording: " + r.ff.stderr.read().decode()[-400:])
     say("  recording: the tour, from the top")
+    # With no clips the tour jumps over its Cameras step (hardening D), and the video
+    # is the tour without it: that is the tour this run is expected to show.
     r.entries, tour_problems = e2e.follow_tour(r.cdp, r.steps, watch, out=None,
-                                               check=r.guard.check)
+                                               check=r.guard.check,
+                                               skip=e2e.skipped_steps(r.steps, r.sc.footage))
     r.problems += tour_problems
     time.sleep(TAIL + 0.5)
     r.guard.check()
