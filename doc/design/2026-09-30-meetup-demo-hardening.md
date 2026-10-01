@@ -72,3 +72,11 @@ The owner's cameras wait for parts, and the footage waits for them. The owner wi
 3. **The drowsy moment** works with no cabin clip: the chip, both levels and "I'm awake", with no broken cabin tile.
 4. **democheck:** missing clips become a note (`--`, "no footage yet: the tour skips Cameras") rather than a FAIL, so `check` can say ready. A clip that is present but won't play stays a FAIL.
 5. **Tests** for each, plus an e2e run on the box with no clips: the tour passes with the Cameras step skipped, and no console errors.
+
+**As built (D):**
+- **The page's answer** is `demo/js/footage.js`: footage is a role that is recording, from `GET /api/cams`, with no server flag. One detector serves the tour, the card and the screen. It looks when the tour starts (with the reset, capped at 3 s), as each of the tour's steps opens (in the background), and when Home and Cameras mount. While they show the empty state they look again every 5 s, so footage that arrives later is picked up without a reload.
+- **The tour** reads `"needs": "clips"` and `"missing"` in `tour.json`. Only a plain `false` skips a step: no answer yet enters it, because the empty state looks finished and a wrongly skipped step is gone. The decision is made as the step opens, so footage that arrives mid-tour is shown.
+- **The card and the screen** are `demo/js/cards/dashcam.js` and `demo/js/views/cameras.js`, in `demo/css/nofootage.css`. With a camera recording they hand over to the live card and view (imported and called, not copied).
+- **democheck:** no clip at all is a note. Some clips but not all stays a failure, because the tour would then show Cameras with the others empty. A clip that will not play stays `clips play`'s failure.
+- **The drowsy moment** needed no change: its chip and both cards draw no picture and ask the cameras for nothing, and a test holds that.
+- **The e2e:** `tools/demo_e2e.py --no-clips` expects steps 1-3 and 5-11, taps the Cameras tab, and checks the skipped key's toast. The headless recorder expects the same of a tour with no clips.

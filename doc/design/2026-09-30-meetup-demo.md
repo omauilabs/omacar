@@ -90,9 +90,9 @@ Today's `omacar demo` does not meet this. It redirects only the state and config
 
 | Screen | In the demo |
 |---|---|
-| **Home** (mockup 3) | The CR-Z picture from the mockups, as a private asset. The speed dial and tiles follow the drive. Navigation shows the next turn, Dashcams shows footage, and there are Phone integration, Now Playing and Oma Agent cards. |
+| **Home** (mockup 3) | The CR-Z picture from the mockups, as a private asset. The speed dial and tiles follow the drive. Navigation shows the next turn, Dashcams shows footage (or, until the cameras' footage is in, a composed empty state), and there are Phone integration, Now Playing and Oma Agent cards. |
 | **Navigation** | Drawn by the demo's own canvas renderer, with no map library, from OpenStreetMap data for the route. Roads are drawn by class, with the coastline and water, in the mockups' look: dark, a slate road network, a cyan route and an arrow for the car. The map is heading-up and follows the car, with a turn banner, the distance and the ETA. It is credited "© OpenStreetMap contributors", as the ODbL requires. Road cameras are the live app's tab: live Caltrans stills over the hotspot, or saved stills (seeded into the demo state, with their real age) without it. |
-| **Cameras** (mockup 6) | Front, rear and cabin loops, the timeline, one flagged hard-braking event, and working playback. |
+| **Cameras** (mockup 6) | Front, rear and cabin loops, the timeline, one flagged hard-braking event, and working playback. Until the footage is in, a composed empty state in the same look (hardening part D); the live screen takes over by itself once a camera is recording. |
 | **Vehicle** (mockup 5) | "All systems normal", live signals, no trouble codes, and a scripted **Scan vehicle**. |
 | **Agent** (mockup 7) | The chat with the mockup's chips and a "Play Omarchy Radio" chip. Scripted replies stream in. "Build me a focused night-drive layout" gives the preview, and **Apply** really changes the demo's Home layout. The mic shows "Listening…", then fills in the next scripted question. Labelled "Illustrative agent responses". |
 | **Work** (mockup 8) | Claude 01–03 and Codex sessions whose steps tick along. "Give me an update" is answered by voice. The driving view shows "Your agents are working". Labelled "CONCEPT · DEMO SESSIONS". |
@@ -145,7 +145,7 @@ Private files are never committed. They live under `share/assets/private/`, whic
 **At the venue**
 - A 5-minute card in the owner's notes: power, brightness, and the sound output and level set by hand.
 - `omacar demo check` prints "ready" or what's missing. It checks that:
-  - the songs, clips, map, voice lines and saved stills are there and match their pins;
+  - the songs, clips, map, voice lines and saved stills are there and match their pins (no clips at all yet is a note, not a failure: the tour skips Cameras);
   - every clip is H.264, so the Cameras tab's player can play it;
   - the demo window opens;
   - the live volume pin is off;
@@ -155,7 +155,7 @@ Private files are never committed. They live under `share/assets/private/`, whic
 **The tour**, about 6 minutes:
 1. Home
 2. Navigation
-3. Cameras, with the hard-braking clip
+3. Cameras, with the hard-braking clip (jumped over while there is no footage)
 4. The drowsy moment
 5. The Vehicle scan
 6. Agent: the night-drive layout, then Omarchy Radio
