@@ -355,9 +355,45 @@ def main():
                 held[path] = f.read()
             os.remove(path)
         r, lines = run(work, private)
-        check("none at all: clips fails, and clips play has nothing to ask (it is not a failure)",
-              lines[-1] == "not ready: clips" and any(ln.split()[:3] == ["--", "clips", "play"] for ln in lines),
+        # NO FOOTAGE YET IS A NOTE, NOT A FAULT (hardening D): the owner's cameras wait
+        # for parts, the demo looks finished without them (the tour skips Cameras, Home
+        # and the tab show their empty state) and so `check` can say ready.
+        check("none at all: clips is a note, not a failure, and the machine is ready",
+              lines[-1] == "ready" and not any(ln.split()[:1] == ["FAIL"] for ln in lines), r.stdout)
+        check("the note says the tour skips Cameras",
+              any(ln.split()[:2] == ["--", "clips"] and "no footage yet: the tour skips Cameras" in ln
+                  for ln in lines), r.stdout)
+        check("and clips play has nothing to ask (a note too)",
+              any(ln.split()[:3] == ["--", "clips", "play"] for ln in lines), r.stdout)
+        check("the note says where the clips go when they come",
+              any(ln.split()[:2] == ["--", "clips"] and os.path.join(private, "demo", "clips") in ln
+                  for ln in lines), r.stdout)
+        # An empty file is not footage either (clip_files has always said so).
+        with open(os.path.join(private, "demo", "clips", "front.mp4"), "wb"):
+            pass
+        r, lines = run(work, private)
+        check("an empty clip file is no footage: still a note",
+              lines[-1] == "ready" and any(ln.split()[:2] == ["--", "clips"] for ln in lines), r.stdout)
+        os.remove(os.path.join(private, "demo", "clips", "front.mp4"))
+        # An unplayable clip is a FAULT even when the rest are missing: a file that is there
+        # and will not play is the owner's mistake, not a wait.
+        with open(os.path.join(private, "demo", "clips", "front.mp4"), "wb") as f:
+            f.write(good + b"HEVC")
+        r, lines = run(work, private)
+        check("one clip, in the wrong codec, the others missing: not ready, naming both",
+              lines[-1] == "not ready: clips, clips play", r.stdout)
+        os.remove(os.path.join(private, "demo", "clips", "front.mp4"))
+        # Footage the camera feed is not pointed at does not count: OMACAR_DEMO_CLIPS
+        # names an empty folder, so there is none, whatever the private tree holds.
+        empty = os.path.join(work, "no-clips")
+        os.makedirs(empty)
+        with open(os.path.join(private, "demo", "clips", "front.mp4"), "wb") as f:
+            f.write(good)
+        r, lines = run(work, private, extra={"OMACAR_DEMO_CLIPS": empty})
+        check("OMACAR_DEMO_CLIPS on an empty folder: a note, and it names that folder",
+              lines[-1] == "ready" and any(ln.split()[:2] == ["--", "clips"] and empty in ln for ln in lines),
               r.stdout)
+        os.remove(os.path.join(private, "demo", "clips", "front.mp4"))
         for path, data in held.items():
             with open(path, "wb") as f:
                 f.write(data)

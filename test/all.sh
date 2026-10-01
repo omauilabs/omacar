@@ -209,5 +209,12 @@ python3 "$ROOT/test/demo_record_test.py" || fails=$((fails + 1))
 # server, browser or sink is touched.
 python3 "$ROOT/test/demo_record_headless_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: Task 9 --------------------------------------------------
+# ---- meetup demo: hardening D (no footage) ------------------------------------
+# What tools/demo_e2e.py expects of a demo with no clips: the steps the tour must
+# jump over, whether a folder or GET /api/cams says there is footage, and that its
+# walk passes a tour that skips Cameras only when no footage is expected. No
+# browser, no demo and no scratch HOME: the tour is a scripted page.
+python3 "$ROOT/test/demo_e2e_test.py" || fails=$((fails + 1))
+# ---- end meetup demo: hardening D ---------------------------------------------
 
 exit $((fails > 0))

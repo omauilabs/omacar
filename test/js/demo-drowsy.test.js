@@ -12,7 +12,7 @@ import { eq, ok } from "./assert.js";
 import {
   createDemoDrowsy, makeVoice, makeSay, register, chipAfterBar,
   L1_CUES, L2_CUES, L1_REASON, L2_AT, END_AT, SAY_AFTER, SAY_ID, BRAKE_TOAST, POLL_STALE_SECS,
-  CHIP_WATCHING, CHIP_PARKED,
+  CHIP_WATCHING, CHIP_PARKED, BRAKE_TOAST_NO_CLIP, demoEngine,
 } from "../demo/js/drowsy.js";
 import { createDrowsy } from "../js/drowsyrun.js";
 import { TRIGGER, TONE } from "../js/drowsyui.js";
@@ -60,6 +60,7 @@ function rig(over = {}) {
     say: (id) => { r.said.push([r.secs(), id]); return r.sayFails ? Promise.reject(new Error("no voice")) : Promise.resolve(); },
     stopVoice: () => { r.stops.push(r.secs()); r.order.push("stop"); },
     toast: (m, tone) => r.toasts.push([m, tone || ""]),
+    saved: () => true,                 // a camera is recording, unless a test says otherwise
     ...over,
   });
   r.ui = r.ctl.mount({ app: r.app, bar: r.bar, host: r.host });
@@ -97,7 +98,7 @@ function page(over = {}) {
     every: (fn) => { p.polls.push(fn); return 1; }, clock: () => p.now,
     els: { app: p.app, bar: p.bar, host: p.host, dz: null },
     later: () => 0, cancel: () => {}, player: () => ({ play: () => Promise.resolve() }), say: async () => {},
-    stopVoice: () => {}, toast: (...a) => p.toasts.push(a),
+    stopVoice: () => {}, toast: (...a) => p.toasts.push(a), saved: () => true,
   });
   return p;
 }
@@ -323,6 +324,48 @@ export default [
     eq(calls, [], "and no request: lib/cams.py marks it, as the live recorder does");
     eq(BRAKE_TOAST, "Hard braking. The clip is saved.");
   }],
+  // ---- ... and "The clip is saved" only while a camera is recording (hardening D) ----------
+  ["with no camera recording, a hard brake toasts 'Hard braking.' and no more: there is no clip to say is saved", () => {
+    const r = rig({ saved: () => false });
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 9 } });
+    eq(r.toasts, [["Hard braking.", ""]], "no mention of a clip");
+    eq([BRAKE_TOAST_NO_CLIP, BRAKE_TOAST], ["Hard braking.", "Hard braking. The clip is saved."], "the two texts");
+  }],
+  ["with a camera recording it keeps 'The clip is saved'", () => {
+    const r = rig({ saved: () => true });
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 9 } });
+    eq(r.toasts, [[BRAKE_TOAST, ""]], "the full toast");
+  }],
+  ["the text is chosen as the toast is made: footage that arrives between two brakes changes the second", () => {
+    let recording = false;
+    const r = rig({ saved: () => recording });
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 1 } });
+    recording = true;
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 2 } });
+    recording = false;
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 3 } });
+    eq(r.toasts.map((t) => t[0]), ["Hard braking.", BRAKE_TOAST, "Hard braking."], "one each, as it stood");
+  }],
+  ["a question that does not answer true makes no claim: a throw, nothing, or something else", () => {
+    for (const saved of [() => { throw new Error("boom"); }, () => undefined, () => null, () => "yes"]) {
+      const r = rig({ saved });
+      r.drive();
+      r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 4 } });
+      eq(r.toasts, [["Hard braking.", ""]], "no clip claimed");
+    }
+  }],
+  ["the page's own question is the footage detector's: unknown (not asked yet) is no claim either", () => {
+    const toasts = [];
+    const ctl = createDemoDrowsy({ later: () => 0, cancel: () => {}, player: () => ({ play: () => Promise.resolve() }),
+                                   say: async () => {}, stopVoice: () => {}, toast: (m) => toasts.push(m) });
+    ctl.feed({ scene: "drive" });
+    ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 5 } });
+    eq(toasts, ["Hard braking."], "the page has not looked at the cameras in this test: nothing is saved");
+    ctl.destroy();
+  }],
   ["and a second event, at another time, toasts again", () => {
     const r = rig();
     r.drive();
@@ -348,6 +391,45 @@ export default [
     r.drowsy();
     r.ctl.feed({ scene: "drowsy", event: { kind: "hard_brake", at: 3 } });
     eq([r.toasts.length, r.card().level], [1, "1"]);
+  }],
+
+  // ---- the drowsy moment with no footage (hardening D) -----------------------------------------
+  //
+  // The cameras wait for parts, and the demo is shown with no clip: the camera feed
+  // (lib/cams.py demo) does not run, so the cabin that swaps to the drowsy clip when
+  // the scene turns is not there to swap. The moment never needed it. The chip, both
+  // levels and "I'm awake" are this controller's and drowsyui's, and not one of them
+  // draws a picture or asks for one: nothing for a broken cabin tile to be.
+  ["with no camera feed the whole moment runs: Watching, Level 1, Level 2 and I'm awake, asking the cameras for nothing", () => {
+    const asked = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (u) => { asked.push(String((u && u.url) || u)); return Promise.reject(new Error("no server")); };
+    try {
+      const r = rig();
+      const pictures = () => r.app.querySelectorAll("img, video, canvas, iframe, object, picture").length
+                           + r.bar.querySelectorAll("img, video, canvas, iframe, object, picture").length
+                           + r.host.querySelectorAll("img, video, canvas, iframe, object, picture").length;
+      r.drive();
+      eq([r.chip(), pictures()], [["Watching", "ok"], 0], "the chip, no picture");
+      r.drowsy();
+      eq([r.card().level, r.card().title, pictures()], ["1", "You seem tired. Plan a break soon.", 0], "Level 1");
+      r.advance(L2_AT);
+      eq([r.card().level, r.card().title, r.card().awake, pictures()], ["2", "Are you with me?", "I'm awake", 0], "Level 2");
+      r.advance(SAY_AFTER);
+      eq(r.said.length, 1, "its voice line");
+      r.tap();
+      eq([r.card().shown, r.chip(), pictures()], [false, ["Watching", "ok"], 0], "I'm awake: over, and the chip is back");
+      r.drowsy();
+      r.advance(END_AT);
+      eq([r.card().shown, r.chip()], [false, ["Watching", "ok"]], "and one nobody taps ends by itself");
+    } finally { globalThis.fetch = real; }
+    eq(asked, [], "no request at all: nothing for the cameras, no cabin stream, no /api/cams");
+  }],
+  ["and a hard brake toasts as ever with no camera feed: the toast is the page's, the mark is the feed's", () => {
+    const r = rig();
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 7 } });
+    eq(r.toasts, [[BRAKE_TOAST, ""]], "one toast");
   }],
 
   // ---- the say that may not be there
@@ -414,6 +496,11 @@ export default [
   }],
 
   // ---- the page: afterBar, and where the sample comes from
+  ["demoEngine() is the controller register() made: the live Dashcams card reads its chip from it", () => {
+    const p = page();
+    ok(demoEngine() === p.ctl, "the page's controller");
+    eq(typeof demoEngine().on, "function", "with the live engine's face");
+  }],
   ["register wraps afterBar, keeps the one it found, and puts the chip in the bar once", async () => {
     const r = rig();
     const calls = [];

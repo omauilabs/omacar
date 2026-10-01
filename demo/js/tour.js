@@ -32,6 +32,25 @@
 // release() as it closes, and a start that finishes its reset in between
 // waits for the release.
 //
+// A STEP THAT NEEDS WHAT THE DEMO DOES NOT HAVE IS JUMPED OVER (hardening D). The
+// owner's cameras wait for parts, and the demo is shown with no footage: tour.json's
+// Cameras step says `"needs": "clips"`, the page tells the tour (`has(need)`) what
+// the demo has, and a step whose need it says is not there (`has` answers false) is
+// skipped as it comes up: no screen, no caption, no cues. The numbers, keys and
+// captions of the other steps stay as they are, so the tour is the one it was with
+// 35 s fewer.
+// Its key does nothing but toast the step's own `missing` words (the tour, running
+// or not, is left alone). `has` answers false only when it knows: null (not asked
+// yet, or no answer) enters the step, since the Cameras screen draws an empty state
+// of its own and a step that is wrongly shown still looks finished, where one that
+// is wrongly skipped is gone. It is asked as each step opens, not once at the start,
+// so footage that arrives mid-tour is shown; `refresh()` makes the page look again
+// (GET /api/cams): at the start (waited for with the reset, for RESET_WAIT_MS at
+// most), in the background as each step opens, and when the key of a skipped step
+// is pressed. Whether to look at all (does any step `need` anything?) is asked each
+// time and not once when the tour is made: the page hands the tour an empty list
+// of steps and fills it after tour.json has loaded (boot.js).
+//
 // Its keys (the Type Cover's): 1-9 jump to that step (and 0 to the tenth),
 // D drowsy, B hard braking, P park or drive, Space pause and resume, Esc the
 // menu. They are the tour's, so they do not pause it; anything else does.
@@ -46,6 +65,9 @@
 //   caption(text | null), notice(text, ms)
 //   reset() -> Promise                 the demo back to its start, before step 1
 //   parked() -> boolean, menu()        for P, and for Esc
+//   has(need) -> boolean | null        whether the demo has what a step `needs`; false skips the step
+//   refresh() -> Promise               look again at what the demo has (footage.js check)
+//   toast(text)                        the quiet word for the key of a skipped step
 
 export const PAUSED = "Tour paused · tap Resume";
 export const PAUSED_MS = 3000;
@@ -93,6 +115,7 @@ export function createTour(deps = {}) {
     reset: () => Promise.resolve(),
     parked: () => false,
     menu: () => {},
+    has: () => true, refresh: () => Promise.resolve(), toast: () => {},
     ...deps,
   };
   const steps = d.steps || [];
@@ -134,7 +157,8 @@ export function createTour(deps = {}) {
       let reset;
       try { reset = Promise.resolve(d.reset()); } catch (e) { reset = Promise.reject(e); }
       reset = reset.catch((e) => console.warn("demo tour: the reset failed:", e));
-      return Promise.race([reset, waited]).then(() => {
+      // The look at what the demo has goes with the reset, under the same cap.
+      return Promise.race([Promise.all([reset, look()]), waited]).then(() => {
         d.clock.cancel(guard);
         if (mine === epoch) whenFree(() => enter(clampIndex(at)));
       });
@@ -200,6 +224,7 @@ export function createTour(deps = {}) {
       if (/^[0-9]$/.test(k)) {
         const i = k === "0" ? 9 : Number(k) - 1;
         if (i >= steps.length) return false;
+        if (skipped(i)) { missing(i); return own(); }
         tour.jump(i);
         return own();
       }
@@ -226,6 +251,38 @@ export function createTour(deps = {}) {
   }
 
   function clampIndex(i) { return Math.max(0, Math.min(steps.length - 1, Number(i) || 0)); }
+
+  // Is the step one the demo cannot show right now? Only `false` says so.
+  function skipped(i) {
+    const need = steps[i] && steps[i].needs;
+    if (!need) return false;
+    try { return d.has(need) === false; }
+    catch (e) { console.warn("demo tour: what the demo has:", e); return false; }
+  }
+
+  // The first step from `i` on that can be shown, or -1 when none of them can.
+  function showable(i) {
+    for (let j = i; j < steps.length; j++) if (!skipped(j)) return j;
+    return -1;
+  }
+
+  // The page looks again at what the demo has. Never rejects: what it knew stands.
+  // Only a tour with a step that needs something ever asks, and that is asked HERE,
+  // each time: the page hands the tour an empty `steps` and fills it once tour.json
+  // has loaded (boot.js), so it cannot be known when the tour is made.
+  function look() {
+    if (!steps.some((s) => s.needs)) return Promise.resolve();
+    try { return Promise.resolve(d.refresh()).catch((e) => console.warn("demo tour: looking at what the demo has:", e)); }
+    catch (e) { console.warn("demo tour: looking at what the demo has:", e); return Promise.resolve(); }
+  }
+
+  // The key of a step that is jumped over says why, quietly, and the page looks
+  // again so that the next press knows if the footage has come.
+  function missing(i) {
+    try { d.toast(steps[i].missing || "That step is not available in this demo"); }
+    catch (e) { console.warn("demo tour: the toast:", e); }
+    look();
+  }
 
   function set(state, index = tour.index) {
     tour.state = state;
@@ -264,7 +321,7 @@ export function createTour(deps = {}) {
     const began = d.clock.now();
     restartedAt = began;
     try { d.cue("restart"); } catch (e) { console.warn("demo tour: the restart cue:", e); }
-    const look = () => {
+    const watchClock = () => {
       if (mine !== epoch) return;
       const w = worldClock();
       if ((w && w.t < RESYNC_BELOW_S) || d.clock.now() - began >= RESYNC_WAIT_MS) {
@@ -272,9 +329,9 @@ export function createTour(deps = {}) {
         whenFree(() => enter(tour.index));
         return;
       }
-      timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+      timers.push(d.clock.later(watchClock, RESYNC_LOOK_MS));
     };
-    timers.push(d.clock.later(look, RESYNC_LOOK_MS));
+    timers.push(d.clock.later(watchClock, RESYNC_LOOK_MS));
   }
 
   // A projection's screens are its own and the address says only `#carplay`,
@@ -301,9 +358,11 @@ export function createTour(deps = {}) {
     d.go(hash);
   }
 
-  function enter(i) {
+  function enter(from) {
     cancelAll();
     resyncing = false;          // a wait whose timer was just cancelled is over, however it came to be
+    const i = showable(from);
+    if (i < 0) { finish(); return; }        // nothing from here on can be shown: that was the end
     const s = steps[i];
     fired = new Set();
     offset = 0;
@@ -313,6 +372,14 @@ export function createTour(deps = {}) {
     nav(s.go);
     d.caption(s.caption || null);
     schedule();
+    look();                     // for the steps after this one: the page asks again, in the background
+  }
+
+  // The last step is Home, and the page stays there.
+  function finish() {
+    cancelAll();
+    set("idle", -1);
+    d.caption(null);
   }
 
   function schedule() {
@@ -342,11 +409,8 @@ export function createTour(deps = {}) {
   }
 
   function next() {
-    if (tour.index + 1 < steps.length) { enter(tour.index + 1); return; }
-    // The last step is Home, and the page stays there.
-    cancelAll();
-    set("idle", -1);
-    d.caption(null);
+    if (tour.index + 1 < steps.length) enter(tour.index + 1);
+    else finish();
   }
 
   return tour;

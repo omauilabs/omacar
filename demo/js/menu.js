@@ -13,8 +13,12 @@
 // that is still resetting (there is no step to pause yet) is held: it starts
 // its first step once the menu has closed.
 //
+// "Hard braking" says "The clip is saved" only while a camera is recording
+// (`saved()`, from footage.js; `refresh()` looks again as the menu opens, and the
+// items are drawn again with what it finds): with no footage there is no clip.
+//
 //   createCues({ post, sample, now }) -> { send(name), parked() }
-//   createMenu({ tour, cues, host, restart }) -> { open(), close(), toggle(), isOpen() }
+//   createMenu({ tour, cues, host, restart, saved, refresh }) -> { open(), close(), toggle(), isOpen() }
 
 import { h, icon } from "../../js/core.js";
 
@@ -69,9 +73,11 @@ const G = {
   x: ["M18 6 6 18", "M6 6l12 12"],
 };
 
-export function createMenu({ tour, cues, host = document.body, restart = () => {} } = {}) {
+export function createMenu({ tour, cues, host = document.body, restart = () => {},
+                             saved = () => true, refresh = null } = {}) {
   let sheet = null;
   let offTour = null;
+  let drawnSaved = null;      // what the items were last drawn as
   // While it is open every key is the menu's: Esc closes it, Tab, Enter and
   // Space work its buttons, and the tour and the page hear none of them.
   const onKey = (e) => {
@@ -110,8 +116,9 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
                    s: "About six minutes, from the top", run: () => tour.start() }));
     out.push(row({ id: "drowsy", g: G.eye, t: "Drowsy moment", key: "D",
                    s: "Level 1, then Level 2", run: () => cue("drowsy") }));
+    drawnSaved = clipSaved();
     out.push(row({ id: "brake", g: G.brake, t: "Hard braking", key: "B",
-                   s: "The clip is saved", run: () => cue("hard_brake") }));
+                   s: drawnSaved ? "The clip is saved" : null, run: () => cue("hard_brake") }));
     const parked = cues ? cues.parked() : false;
     out.push(row({ id: "park", g: parked ? G.drive : G.park, t: parked ? "Drive" : "Park", key: "P",
                    s: parked ? "The car pulls away" : "The car pulls over and stops",
@@ -125,6 +132,11 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
                    s: "The live app is underneath",
                    run: () => ["Run ", h("code", "omacar-demo off")] }));
     return out;
+  }
+
+  // Only a camera that is recording has a clip to save. A question that throws is "no".
+  function clipSaved() {
+    try { return saved() === true; } catch { return false; }
   }
 
   function cue(name) {
@@ -152,6 +164,19 @@ export function createMenu({ tour, cues, host = document.body, restart = () => {
     if (tour && tour.subscribe) offTour = tour.subscribe(paint);
     const first = sheet.querySelector(".dm-item");
     if (first && first.focus) first.focus({ preventScroll: true });
+    // Look again at the cameras; if the answer is not what the items say, draw them
+    // again (and give the focus back to the one that had it).
+    if (refresh) {
+      const again = () => {
+        if (!sheet || clipSaved() === drawnSaved) return;
+        const at = document.activeElement && document.activeElement.dataset
+          ? document.activeElement.dataset.item : null;
+        paint();
+        const back = at && sheet.querySelector(`[data-item="${at}"]`);
+        if (back && back.focus) back.focus({ preventScroll: true });
+      };
+      try { Promise.resolve(refresh()).then(again, () => {}); } catch { /* the items as they are */ }
+    }
   }
 
   function close() {

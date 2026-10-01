@@ -24,7 +24,9 @@
 // event. The mark that locks the clips and puts "Hard braking" on the Cameras
 // timeline is lib/cams.py demo's, off the same live.json, as the live
 // recorder marks its own: kind "hard-braking", which POST /api/cams/mark
-// cannot write.
+// cannot write. IT SAYS "The clip is saved" ONLY WHILE A CAMERA IS RECORDING
+// (footage.js, hardening D): with no footage there is no clip, and the toast is
+// "Hard braking." and no more. Only a camera known to be recording makes the claim.
 //
 // WHERE THE SAMPLE COMES FROM. The store's live sample, on a screen with the
 // fast clock running. The Cameras tab has none (main.js polls /api/live only
@@ -39,6 +41,7 @@
 import { store, api, toast } from "../../js/core.js";
 import { mountDrowsyUI, TRIGGER } from "../../js/drowsyui.js";
 import { alertPlayer } from "../../js/alertplayer.js";
+import { getFootage } from "./footage.js";
 
 // What 'Test the alerts' plays at Level 1 and at Level 2 (drowsyrun.js
 // engine.test(), t = 0 and t = 11 s), which is not exported there. The test
@@ -58,6 +61,8 @@ export const END_AT = 30;                   // seconds after Level 1: it ends by
 export const SAY_AFTER = 3;                 // the voice line follows Level 2's bark by this
 export const SAY_ID = "drowsy-l2";
 export const BRAKE_TOAST = "Hard braking. The clip is saved.";
+// With no camera recording there is no clip to say is saved.
+export const BRAKE_TOAST_NO_CLIP = "Hard braking.";
 export const CHIP_WATCHING = "Watching";
 export const CHIP_PARKED = "Paused · stopped";
 // With the store's live sample this stale, ask /api/live ourselves.
@@ -95,6 +100,8 @@ export function createDemoDrowsy(opts = {}) {
     say: voice.say,
     stopVoice: voice.stop,
     toast,
+    // Whether a camera is recording, so that there is a clip to say is saved.
+    saved: () => getFootage().has() === true,
     later: (fn, ms) => setTimeout(fn, ms),
     cancel: (id) => clearTimeout(id),
     ...opts,
@@ -171,6 +178,11 @@ export function createDemoDrowsy(opts = {}) {
 
   const evKey = (ev) => `${ev.kind}@${ev.at ?? ""}`;
 
+  // Asked as the toast is made. A question that throws is "no".
+  function clipSaved() {
+    try { return d.saved() === true; } catch { return false; }
+  }
+
   // One sample of the demo world (live.json's `demo`), as often as it is seen.
   function feed(demo) {
     if (!demo || typeof demo !== "object") return;
@@ -195,7 +207,7 @@ export function createDemoDrowsy(opts = {}) {
       if (!announced.has(key)) {
         announced.add(key);
         if (announced.size > 64) announced.delete(announced.values().next().value);
-        if (!first && ev.kind === "hard_brake") d.toast(BRAKE_TOAST);
+        if (!first && ev.kind === "hard_brake") d.toast(clipSaved() ? BRAKE_TOAST : BRAKE_TOAST_NO_CLIP);
       }
     }
   }
@@ -273,6 +285,12 @@ function follow(ctl, { store: s = store, api: a = api, every, clock }) {
 }
 
 export function chipAfterBar(vbar) { if (active) active.afterBar(vbar); }
+
+// The page's controller, or null before register() has made it. It has the live
+// engine's face (state, on()), so Home's live Dashcams card can read its chip from
+// it (demo/js/cards/dashcam.js): the demo does not run the live engine, whose chip
+// says "Off".
+export function demoEngine() { return active; }
 
 // `deps` is for the tests: the controller's own (player, say, stopVoice, toast,
 // later, cancel) and { store, api, every, clock, els }.

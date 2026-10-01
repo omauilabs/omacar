@@ -40,7 +40,7 @@ async function rig(over = {}) {
   // `world` is the page's store.sample.demo (store.live.demo while a screen polls fast, the snapshot's
   // copy otherwise): { t, loop_secs }, or null when the page has none.
   const r = { c, steps, log: [], captions: [], notices: [], hash: "#home", resets: 0, menus: 0, parked: false,
-              world: null, screens: [] };
+              world: null, screens: [], toasts: [] };
   const at = () => c.now / 1000;
   r.tour = createTour({
     steps,
@@ -56,6 +56,7 @@ async function rig(over = {}) {
     menu: () => { r.menus++; },
     demo: () => r.world,
     screen: (id) => { r.screens.push(id); return true; },
+    toast: (text) => r.toasts.push(text),
     ...over.deps,
   });
   r.key = (key, mods = {}) => {
@@ -930,6 +931,329 @@ export default [
     eq(fake.paused, 1, "paused");
     menu.toggle();
     eq(menu.isOpen(), false, "toggled shut");
+  }],
+
+  // ---- a step that needs what the demo does not have (hardening D) -------------------------
+  //
+  // The owner's cameras wait for parts, and the demo is shown without footage. tour.json's
+  // Cameras step says `"needs": "clips"`; the page tells the tour (`has(need)`) whether the
+  // demo has them, from GET /api/cams, and the tour jumps over a step whose need is not
+  // met. Step numbers, keys and captions stay as they are: a skipped step is jumped over,
+  // and its key does nothing but toast. `has` answers false, or nothing (null: not asked
+  // yet, or no answer), and only an answer of false skips: the Cameras screen draws an
+  // empty state of its own, so a step wrongly entered still looks finished, where a step
+  // wrongly skipped is gone.
+  ["tour.json: only the Cameras step needs anything, and it says what its key toasts", async () => {
+    const steps = await loadSteps();
+    eq(steps.filter((s) => s.needs).map((s) => [s.id, s.needs]), [["cameras", "clips"]], "Cameras needs clips");
+    eq(steps[3].missing, "Cameras aren't connected in this demo", "the toast");
+    eq(steps.map((s) => s.id), ["home", "navigation", "roadcams", "cameras", "drowsy", "vehicle",
+                                "agent", "work", "carplay", "androidauto", "end"], "the steps are the same");
+    eq(steps.map((s) => s.secs), [40, 40, 15, 35, 40, 30, 60, 40, 35, 30, 10], "and last as long");
+  }],
+
+  ["with no footage the tour jumps over Cameras, and every other step runs as it did", async () => {
+    const r = await rig({ deps: { has: (need) => need !== "clips" } });
+    const seen = [];
+    r.tour.subscribe((t) => { if (t.state === "running" && seen[seen.length - 1] !== t.index) seen.push(t.index); });
+    await r.tour.start();
+    r.c.advance(TOTAL(r.steps) + 5);
+    eq(seen, [-1, 0, 1, 2, 4, 5, 6, 7, 8, 9, 10], "step 4 is never entered");
+    const want = [
+      [0, "reset"], [0, "go", "#home"], [25, "do", "radio.play"],
+      [40, "go", "#navigation"],
+      [80, "go", "#roadcams"],
+      [95, "go", "#home"], [95, "cue", "drive"], [98, "cue", "drowsy"],
+      [135, "go", "#vehicle"], [150, "go", "#scan"],
+      [165, "go", "#advisor"], [165, "cue", "park"], [173, "do", "agent.ask(night)"],
+      [195, "do", "agent.apply"], [210, "do", "agent.ask(radio)"],
+      [225, "go", "#work"], [225, "cue", "drive"], [249, "do", "work.update"],
+      [265, "go", "#carplay"], [277, "do", "projection.open(maps)"], [289, "do", "projection.open(nowplaying)"],
+      [300, "go", "#androidauto"], [320, "do", "home.restore"],
+      [330, "go", "#home"],
+    ];
+    eq(r.log, want, "the tour, 35 s shorter");
+    ok(!r.log.some((l) => l[2] === "#cameras" || l[2] === "hard_brake"), "no Cameras screen, no hard brake");
+    ok(!r.captions.some((c) => c[1] && c[1].startsWith("Three cameras")), "and its caption is never shown");
+    eq(r.tour.state, "idle", "it ends, on Home");
+    eq(r.toasts, [], "and says nothing about it: the tour is not a key");
+  }],
+
+  ["with footage the tour is the one it was: Cameras is entered, with its cues", async () => {
+    const r = await rig({ deps: { has: () => true } });
+    await r.tour.start();
+    r.c.advance(TOTAL(r.steps) + 5);
+    ok(r.log.some((l) => l[1] === "go" && l[2] === "#cameras"), "Cameras");
+    eq(r.log.filter((l) => l[0] >= 95 && l[0] <= 100 && l[1] === "cue").map((l) => l[2]), ["drive", "hard_brake"], "its cues");
+  }],
+
+  ["a missing answer (null: not asked, or no reply) does not skip: only false does", async () => {
+    for (const unknown of [null, undefined]) {
+      const r = await rig({ deps: { has: () => unknown } });
+      await r.tour.start();
+      r.c.advance(100);
+      ok(r.log.some((l) => l[2] === "#cameras"), `has() = ${unknown}: Cameras is entered`);
+    }
+  }],
+
+  ["the decision is made as the step is entered, not when the tour starts", async () => {
+    let footage = false;
+    const r = await rig({ deps: { has: () => footage } });
+    await r.tour.start();
+    r.c.advance(50);                      // Navigation
+    footage = true;                       // the camera feed came up
+    r.c.advance(50);
+    ok(r.log.some((l) => l[2] === "#cameras"), "Cameras, which a tour that began without footage now shows");
+    const later = await rig({ deps: { has: () => footage } });
+    footage = true;
+    await later.tour.start();
+    later.c.advance(60);
+    footage = false;                      // and it went
+    later.c.advance(40);
+    ok(!later.log.some((l) => l[2] === "#cameras"), "and one that began with footage skips it once it has gone");
+  }],
+
+  ["the key of a skipped step toasts and does nothing else; its neighbours' keys still work", async () => {
+    const r = await rig({ deps: { has: (need) => need !== "clips" } });
+    await r.tour.start();
+    r.c.advance(50);                      // step 2, Navigation
+    const before = [r.tour.state, r.tour.index, r.hash, r.log.length, r.captions.length];
+    const k = r.key("4");
+    eq([k.used, k.prevented], [true, true], "4 is the tour's, and kept from the page");
+    eq(r.toasts, ["Cameras aren't connected in this demo"], "the quiet toast");
+    eq([r.tour.state, r.tour.index, r.hash, r.log.length, r.captions.length], before,
+       "the tour is where it was: no jump, no cue, no caption, no pause");
+    r.c.advance(5);
+    eq(r.tour.state, "running", "still running");
+    r.key("5");
+    eq([r.tour.index, r.hash], [4, "#home"], "5 jumps to the drowsy moment");
+    r.key("3");
+    eq([r.tour.index, r.hash], [2, "#roadcams"], "3 to the road cameras");
+    eq(r.toasts.length, 1, "and neither toasted");
+  }],
+
+  ["the key of a skipped step, with the tour idle, starts nothing", async () => {
+    const r = await rig({ deps: { has: () => false } });
+    const k = r.key("4");
+    eq([k.used, r.tour.state, r.tour.index, r.log.length], [true, "idle", -1, 0], "idle, and nothing sent");
+    eq(r.toasts, ["Cameras aren't connected in this demo"], "toast");
+    r.key("1");
+    eq(r.tour.state, "running", "1 starts as ever");
+  }],
+
+  ["a step with no `missing` words toasts a plain default, and one with footage toasts nothing", async () => {
+    const steps = [{ id: "a", go: "#a", secs: 5, at: [] },
+                   { id: "b", go: "#b", secs: 5, needs: "clips", at: [] }];
+    const r = await rig({ steps, deps: { has: () => false } });
+    r.key("2");
+    eq(r.toasts, ["That step is not available in this demo"], "the default");
+    const w = await rig({ steps, deps: { has: () => true } });
+    w.key("2");
+    eq([w.toasts, w.tour.index], [[], 1], "with footage: it jumps");
+  }],
+
+  ["jump() to a skipped step goes on to the next one that can run", async () => {
+    const r = await rig({ deps: { has: () => false } });
+    await r.tour.jump(3);
+    eq([r.tour.index, r.hash], [4, "#home"], "the drowsy moment");
+    r.c.advance(3);
+    eq(r.last(), [3, "cue", "drowsy"], "with its own cues");
+  }],
+
+  ["skipped steps at the end of the tour end it", async () => {
+    const steps = [{ id: "a", go: "#a", secs: 5, caption: "A", at: [] },
+                   { id: "b", go: "#b", secs: 5, caption: "B", needs: "x", at: [] },
+                   { id: "c", go: "#c", secs: 5, caption: "C", needs: "x", at: [] }];
+    const r = await rig({ steps, deps: { has: () => false } });
+    await r.tour.start();
+    r.c.advance(6);
+    eq([r.tour.state, r.tour.index], ["idle", -1], "the tour is over");
+    eq(r.gos(), ["#a"], "only the first was shown");
+    eq(r.captions[r.captions.length - 1][1], null, "its caption gone");
+    const all = await rig({ steps: steps.map((s) => ({ ...s, needs: "x" })), deps: { has: () => false } });
+    await all.tour.start();
+    eq([all.tour.state, all.gos()], ["idle", []], "a tour with nothing to show ends at once");
+  }],
+
+  ["the tour looks again at what the demo has: at its start (waited for) and at each step's entry", async () => {
+    let footage = true, looks = 0;
+    const r = await rig({ deps: { has: () => footage, refresh: async () => { looks++; footage = false; } } });
+    const first = r.tour.start();
+    eq(looks, 1, "the start's own look, with the reset, before step 1");
+    await first;
+    eq(looks, 2, "and one as step 1 opened");
+    r.c.advance(TOTAL(r.steps) + 5);
+    ok(!r.log.some((l) => l[2] === "#cameras"), "the start's answer (no footage) decided Cameras");
+    eq(looks, 1 + 10, "ten steps opened, none of them Cameras");
+  }],
+
+  ["a look that never answers holds the start for RESET_WAIT_MS and no longer; one that fails holds nothing", async () => {
+    const hung = await rig({ deps: { has: () => true, refresh: () => new Promise(() => {}) } });
+    let started = false;
+    const p = hung.tour.start().then(() => { started = true; });
+    await tick();
+    eq([started, hung.gos()], [false, []], "waiting");
+    hung.c.advance(RESET_WAIT_MS / 1000);
+    await p;
+    eq(hung.gos(), ["#home"], "on after the cap");
+    const warn = console.warn;
+    const said = [];
+    console.warn = (...a) => said.push(a.join(" "));
+    try {
+      const failed = await rig({ deps: { has: () => false, refresh: () => Promise.reject(new Error("no server")) } });
+      await failed.tour.start();
+      eq(failed.gos(), ["#home"], "a failed look: the tour starts");
+      failed.c.advance(100);
+      ok(!failed.log.some((l) => l[2] === "#cameras"), "on what it knew");
+    } finally { console.warn = warn; }
+    ok(said.every((x) => x.startsWith("demo tour")), "its warnings are the tour's own: " + said.join("|"));
+  }],
+
+  // boot.js hands the tour an EMPTY steps array and fills it once tour.json has loaded, so whether
+  // any step needs something is a question for the moment of asking, never for the tour's making.
+  ["a tour made with no steps and given them afterwards, as boot.js does, still looks: at its start, as each step opens, and on a skipped key", async () => {
+    const steps = [];
+    let looks = 0;
+    const r = await rig({ steps, deps: { has: (need) => need !== "clips", refresh: async () => { looks++; } } });
+    steps.push(...await loadSteps());                 // tour.json loaded after the tour was made
+    const started = r.tour.start();
+    eq(looks, 1, "the start's own look, with the reset");
+    await started;
+    eq(looks, 2, "and one as step 1 opened");
+    r.c.advance(40);
+    eq([r.tour.index, looks], [1, 3], "and one as Navigation opened");
+    r.key("4");
+    eq([r.toasts, looks], [["Cameras aren't connected in this demo"], 4], "the key of the skipped step looks again too");
+    r.c.advance(TOTAL(r.steps));
+    eq(looks, 4 + 8, "eight more as the other steps opened (Cameras jumped over)");
+  }],
+
+  ["and with footage, the look happens as the Cameras step itself opens", async () => {
+    const steps = [];
+    let looks = 0;
+    const r = await rig({ steps, deps: { has: () => true, refresh: async () => { looks++; } } });
+    steps.push(...await loadSteps());
+    await r.tour.start();
+    r.c.advance(94);
+    const before = looks;
+    eq(r.tour.index, 2, "still in the road cameras");
+    r.c.advance(2);
+    eq([r.tour.index, looks], [3, before + 1], "Cameras opened, and the page looked as it did");
+  }],
+
+  ["a tour with no step that needs anything never looks", async () => {
+    let looks = 0;
+    const steps = [{ id: "a", go: "#a", secs: 5, at: [] }, { id: "b", go: "#b", secs: 5, at: [] }];
+    const r = await rig({ steps, deps: { refresh: async () => { looks++; } } });
+    await r.tour.start();
+    r.c.advance(11);
+    eq(looks, 0, "no look");
+  }],
+
+  ["a throwing has() or refresh() is no reason to stop the tour", async () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const r = await rig({ deps: { has: () => { throw new Error("boom"); }, refresh: () => { throw new Error("boom"); } } });
+      await r.tour.start();
+      r.c.advance(100);
+      ok(r.log.some((l) => l[2] === "#cameras"), "Cameras is entered: a question that fails does not skip");
+    } finally { console.warn = warn; }
+  }],
+
+  ["Resume after a skipped step goes back to the screen the tour is on, and its step numbers are the same", async () => {
+    const r = await rig({ deps: { has: (need) => need !== "clips" } });
+    await r.tour.start();
+    r.c.advance(100);                      // step 5, the drowsy moment, 5 s in
+    eq(r.tour.index, 4, "step 5 is step 5 (its number is stable)");
+    r.tour.touch();
+    eq(r.tour.state, "paused", "paused");
+    r.hash = "#vehicle";
+    r.tour.resume();
+    eq([r.tour.state, r.tour.index, r.hash], ["running", 4, "#home"], "back on the drowsy moment's screen");
+  }],
+
+  // ---- the menu's "Hard braking": "The clip is saved" only while a camera is recording (hardening D) ----
+  ["the menu's Hard braking says 'The clip is saved' by default, and with a camera recording", async () => {
+    const r = await rig();
+    for (const opts of [{}, { saved: () => true }]) {
+      const host = document.createElement("div");
+      const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host, ...opts });
+      menu.open();
+      const sub = (id) => { const e = host.querySelector(`[data-item="${id}"] .dm-s`); return e ? e.textContent : null; };
+      eq(sub("brake"), "The clip is saved", "kept");
+      menu.close();
+    }
+  }],
+
+  ["with no camera recording the Hard braking row drops it, and the other rows are as they were", async () => {
+    const r = await rig();
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host,
+                              saved: () => false });
+    menu.open();
+    const row = host.querySelector('[data-item="brake"]');
+    eq([row.querySelector(".dm-t").textContent, row.querySelector(".dm-s")], ["Hard braking", null], "the title, and no subtitle");
+    eq(row.querySelector(".dm-k").textContent, "B", "its key");
+    eq(host.querySelector('[data-item="drowsy"] .dm-s').textContent, "Level 1, then Level 2", "Drowsy moment's is unchanged");
+    eq(host.querySelector('[data-item="start"] .dm-s').textContent, "About six minutes, from the top", "so is Start tour's");
+    row.click();
+    eq([r.log.length, menu.isOpen()], [0, false], "it still sends the cue (to a fake: nothing here), and closes");
+  }],
+
+  ["the menu looks again as it opens: the answer that differs redraws the row, and the focus stays where it was", async () => {
+    const r = await rig();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let recording = false;
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host,
+                              saved: () => recording, refresh: async () => { recording = true; } });
+    const sub = () => { const e = host.querySelector('[data-item="brake"] .dm-s'); return e ? e.textContent : null; };
+    menu.open();
+    ok(host.querySelector('[data-item="brake"]'), "drawn");
+    host.querySelector('[data-item="brake"]').focus();
+    eq(document.activeElement && document.activeElement.dataset.item, "brake", "the presenter is on it");
+    await tick();
+    eq(sub(), "The clip is saved", "footage came: drawn again with it");
+    eq(document.activeElement && document.activeElement.dataset.item, "brake", "and the focus is still on that row");
+    menu.close();
+    // the other way, and one that did not change: no redraw at all
+    recording = true;
+    let draws = 0;
+    const seen = new MutationObserver(() => { draws++; });
+    menu.open();
+    seen.observe(host.querySelector(".dm-list"), { childList: true });
+    await tick();
+    await tick();
+    eq(draws, 0, "an answer that agrees with the items does not redraw them");
+    menu.close();
+    seen.disconnect();
+    host.remove();
+  }],
+
+  ["a look that fails, and one that answers after the menu has closed, change nothing", async () => {
+    const r = await rig();
+    const host = document.createElement("div");
+    let done;
+    let recording = false;
+    const mk = (refresh) => createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host,
+                                         saved: () => recording, refresh });
+    const failing = mk(() => Promise.reject(new Error("no server")));
+    failing.open();
+    await tick();
+    ok(host.querySelector('[data-item="brake"]') && !host.querySelector('[data-item="brake"] .dm-s'), "as drawn");
+    failing.close();
+    const late = mk(() => new Promise((yes) => { done = yes; }));
+    late.open();
+    late.close();
+    recording = true;
+    done();
+    await tick();
+    eq(host.querySelector(".dm-sheet"), null, "nothing redrawn into a menu that is gone");
+    const throwing = mk(() => { throw new Error("boom"); });
+    throwing.open();
+    ok(host.querySelector(".dm-sheet"), "a refresh that throws does not stop it opening");
+    throwing.close();
   }],
 
   // ---- the scripted scan ----------------------------------------------------------------

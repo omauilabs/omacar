@@ -1,5 +1,5 @@
 {
-  "_comment": "The meetup demo's tour (doc/design/2026-09-30-meetup-demo.md §6), read by demo/js/tour.js. Each step opens `go`, shows `caption` for `secs`, and does each of `at` that many seconds in: a `cue` to the demo world (POST /api/demo/cue), a `go` to another screen, or a `do`, one of the modules' own functions (demo/js/boot.js ACTIONS) with its `arg`. `resumeAt` is where Resume takes the page back to once that action has run. The hard brake and the drowsy moment need a moving car (a parked one has neither), so their steps say `drive` first: from the top the car is already driving and it changes nothing, and after a jump from the Agent's stop it pulls away. Home and its look go back to how they were before the agent's Apply while Android Auto is up, so the tour ends on the Home it started on.",
+  "_comment": "The meetup demo's tour (doc/design/2026-09-30-meetup-demo.md §6), read by demo/js/tour.js. Each step opens `go`, shows `caption` for `secs`, and does each of `at` that many seconds in: a `cue` to the demo world (POST /api/demo/cue), a `go` to another screen, or a `do`, one of the modules' own functions (demo/js/boot.js ACTIONS) with its `arg`. `resumeAt` is where Resume takes the page back to once that action has run. The hard brake and the drowsy moment need a moving car (a parked one has neither), so their steps say `drive` first: from the top the car is already driving and it changes nothing, and after a jump from the Agent's stop it pulls away. Home and its look go back to how they were before the agent's Apply while Android Auto is up, so the tour ends on the Home it started on. A step with `needs` is jumped over while the demo lacks it (\"clips\": no camera is recording, which the page reads from GET /api/cams): its numbers and captions are the same, and its key toasts `missing`.",
   "version": 1,
   "steps": [
     { "id": "home", "title": "Home", "go": "#home", "secs": 40,
@@ -12,6 +12,7 @@
       "caption": "Caltrans cameras along the route.",
       "at": [] },
     { "id": "cameras", "title": "Cameras", "go": "#cameras", "secs": 35,
+      "needs": "clips", "missing": "Cameras aren't connected in this demo",
       "caption": "Three cameras, recorded in one-minute clips. A hard stop saves the clip.",
       "at": [{ "t": 0, "cue": "drive" }, { "t": 5, "cue": "hard_brake" }] },
     { "id": "drowsy", "title": "The drowsy moment", "go": "#home", "secs": 40,

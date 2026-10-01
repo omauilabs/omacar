@@ -508,6 +508,45 @@ try:
     check("and goes cleanly", (rc, ours_running(), listening(PORT)), (0, [], False))
     open(SHIM_LOG, "w").close()
 
+    head("demo on with no clips says so; clips and a feed that still fails is said as a failure")
+    # THE OWNER'S CAMERAS WAIT FOR PARTS (hardening D): with no clip at all the feed has
+    # nothing to play and does not start, which is the expected state, not a fault.
+    def cameras_line(out):
+        return [ln.strip() for ln in out.splitlines() if ln.split()[:1] == ["cameras"]]
+
+    NO_CLIPS = os.path.join(SCRATCH, "no-clips")
+    os.makedirs(NO_CLIPS)
+    rc, out = omacar("demo", "on", timeout=180, env=dict(ENV, OMACAR_DEMO_CLIPS=NO_CLIPS))
+    check("demo on with an empty clips folder still starts", rc, 0)
+    check("and says no footage yet, and that the tour skips Cameras, as the cameras line",
+          cameras_line(out), ["cameras        no footage yet; the tour skips Cameras"])
+    check("not that the feed did not start", "did not start" in out, False)
+    check("it does not claim to have started the camera feed",
+          "the camera feed" in out.split("started", 1)[-1].split("\n", 1)[0], False)
+    rc, _ = omacar("demo", "off", timeout=120)
+    check("and goes cleanly", (rc, ours_running(), listening(PORT)), (0, [], False))
+    # Clips that are there, and a feed that fails all the same (a stand-in interpreter that
+    # will not run `cams.py demo`): the failure, and where to read why.
+    real_shim = open(VENV_PY, encoding="utf-8").read()
+    with open(VENV_PY, "w", encoding="utf-8") as f:
+        f.write(f'#!/bin/sh\ncase "$*" in\n'
+                f'  *"cams.py demo --help"*) exec "{PY}" "$@" ;;\n'
+                f'  *"cams.py demo"*) echo "stand-in: the feed fails" >&2; exit 1 ;;\n'
+                f'esac\nexec "{PY}" "$@"\n')
+    try:
+        rc, out = omacar("demo", "on", timeout=180)
+        omacar("demo", "off", timeout=120)
+    finally:
+        with open(VENV_PY, "w", encoding="utf-8") as f:
+            f.write(real_shim)
+    check("with clips there and a feed that fails, the demo still starts", rc, 0)
+    check("and the failure is said, with its log",
+          [ln.split(None, 1)[1] for ln in cameras_line(out)],
+          [f"the camera feed did not start; see {os.path.join(DEMO_ROOT, 'state', 'omacar', 'demo-cams.log')}"])
+    check("and not as no footage", "no footage yet" in out, False)
+    check("all of it gone", (ours_running(), listening(PORT)), ([], False))
+    open(SHIM_LOG, "w").close()
+
     def still_up():
         """What is left of the demo: its processes, its window, its ffmpegs
         (ours_running), and ACTIVE."""

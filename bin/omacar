@@ -614,6 +614,17 @@ demo_start() {
   return "$rc"
 }
 
+# Whether the camera feed has any footage to play: a clip with something in it
+# in the folder it reads (OMACAR_DEMO_CLIPS, or the private tree's, as
+# demo_start_now hands it over). The same "there" as lib/democheck.py's.
+demo_has_clips() {
+  local dir="${OMACAR_DEMO_CLIPS:-$ROOT/share/assets/private/demo/clips}" role
+  for role in front rear cabin cabin-drowsy; do
+    [[ -f "$dir/$role.mp4" && -s "$dir/$role.mp4" ]] && return 0
+  done
+  return 1
+}
+
 demo_start_now() {
   local py i from=()
   py="$(serve_py)"
@@ -793,9 +804,16 @@ os.replace(tmp, out)
         exit 1 ;;
       *)
         # The feed is not a reason to stop the demo (it runs without footage,
-        # and says so), but is never claimed as started when it is not.
+        # and says so), but is never claimed as started when it is not. With no
+        # clips at all it is not a fault either: the owner's footage is not in
+        # yet, the tour skips Cameras, and Home and the tab show their empty
+        # state. Clips that are there and a feed that still did not start are.
         if [[ "$part" == cams ]]; then
-          cams_note="the camera feed did not start; see $OMACAR_STATE/demo-cams.log"
+          if demo_has_clips; then
+            cams_note="the camera feed did not start; see $OMACAR_STATE/demo-cams.log"
+          else
+            cams_note="no footage yet; the tour skips Cameras"
+          fi
           continue
         fi
         if [[ "$part" == guard ]]; then
