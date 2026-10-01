@@ -18,6 +18,7 @@ import { hasFootage, createFootage, getFootage, POLL_TIMEOUT_MS, RECHECK_MS,
 import { dashcamCard, register as registerCard } from "../demo/js/cards/dashcam.js";
 import { camerasView, register as registerView } from "../demo/js/views/cameras.js";
 import { dashcamCard as liveDashcamCard } from "../js/dashcard.js";
+import { createDemoDrowsy, CHIP_WATCHING, CHIP_PARKED } from "../demo/js/drowsy.js";
 import liveCamerasView from "../js/views/cameras.js";
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -270,6 +271,54 @@ export default [
     ok(!c.node.textContent.includes(EMPTY_LINE), "and none of the empty state");
     c.destroy();
     eq(c.node.querySelector("img.dc-img").hasAttribute("src"), false, "destroying lets go of the stream");
+    c.node.remove();
+  }],
+
+  // ---- the live card's chip is the demo's, not the live engine's ----------------------------
+  //
+  // The demo does not run the live drowsy engine (js/alertness.js is not on its page), so the
+  // live card's own chip read "Off" beside REC while the top bar said "Watching". The card
+  // hands the live card the demo's controller as its engine.
+  ["with footage the live card's chip is the demo controller's, and is the top bar's chip, through a drive, a park and a drive", async () => {
+    const ctl = createDemoDrowsy({ later: () => 0, cancel: () => {}, player: () => ({ play: () => Promise.resolve() }),
+                                   say: async () => {}, stopVoice: () => {}, toast: () => {} });
+    const app = document.createElement("div"), bar = document.createElement("header"), host = document.createElement("div");
+    const right = document.createElement("div");
+    right.className = "tb-right";
+    bar.append(right);
+    ctl.mount({ app, bar, host });
+    const t = timers();
+    const given = [];
+    const liveCard = (node, o) => { given.push(o); return liveDashcamCard(node, { ...o, poll: () => Promise.resolve(UP),
+                                                                                   every: t.every, later: t.later, cancel: t.cancel }); };
+    const c = dashcamCard({ footage: fakeFootage(true), engine: () => ctl, liveCard, ...t });
+    document.body.appendChild(c.node);
+    await settle();
+    await settle();
+    eq(given.length, 1, "the live card was made");
+    ok(given[0].engine === ctl, "with the demo's controller as its engine");
+    const card = () => c.node.querySelector(".dc-drowsy").textContent;
+    const topBar = () => bar.querySelector(".tb-drowsy-t").textContent;
+    eq([card(), topBar(), ctl.state.chip], [CHIP_WATCHING, CHIP_WATCHING, "Watching"], "driving: all three say Watching");
+    ctl.feed({ scene: "parked" });
+    eq([card(), topBar(), ctl.state.chip], [CHIP_PARKED, CHIP_PARKED, "Paused · stopped"], "parked: all three say so");
+    ctl.feed({ scene: "drive" });
+    eq([card(), topBar()], [CHIP_WATCHING, CHIP_WATCHING], "and Watching again");
+    ok(card() !== "Off", "never the live engine's Off");
+    c.destroy();
+    eq(ctl.state.chip, CHIP_WATCHING, "the controller is untouched by it");
+    ctl.destroy();
+    c.node.remove();
+  }],
+
+  ["with no controller made, the live card keeps the live engine (engine: undefined, so its default applies)", async () => {
+    const given = [];
+    const c = dashcamCard({ footage: fakeFootage(true), engine: () => null,
+                            liveCard: (node, o) => { given.push(o); return { paint() {}, destroy() {} }; }, ...timers() });
+    document.body.appendChild(c.node);
+    await settle();
+    eq([given.length, given[0].engine], [1, undefined], "asked for no engine of its own");
+    c.destroy();
     c.node.remove();
   }],
 

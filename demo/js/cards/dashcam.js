@@ -12,23 +12,31 @@
 // is made on this card's own node and does everything it does today: the
 // picture, REC, the drowsy chip, the AUX line, its own polls. So footage that
 // arrives later is on Home with no reload, and the live app's states are not
-// touched. The card looks when it is made (Home mounted) and, while it shows
-// the empty state, every RECHECK_MS; once the live card has taken over it stops,
-// since the live card polls for itself.
+// touched, but for one thing: its drowsy chip reads the DEMO's controller
+// (demo/js/drowsy.js), not the live engine's, which the demo does not run and
+// which says "Off" beside REC while the top bar says "Watching". The card looks
+// when it is made (Home mounted) and, while it shows the empty state, every
+// RECHECK_MS; once the live card has taken over it stops, since the live card
+// polls for itself.
 //
-//   dashcamCard({ footage, live, go, every, cancel }) -> { node, paint(), destroy() }    home.js's card shape
+//   dashcamCard({ footage, live, liveCard, engine, go, every, cancel }) -> { node, paint(), destroy() }    home.js's card shape
 //   register(D, deps)                                  D.cards.dashcam = dashcamCard
 
 import { h, clear, icon } from "../../../js/core.js";
 import { ICONS } from "../../../js/icons.js";
 import { dashcamCard as liveDashcamCard } from "../../../js/dashcard.js";
 import { getFootage, emptyState, RECHECK_MS } from "../footage.js";
+import { demoEngine } from "../drowsy.js";
 
 const goto = (id) => { location.hash = "#" + id; };
 
 export function dashcamCard({
   footage = getFootage(),
-  live = (node) => liveDashcamCard(node),
+  // The live card's own engine is the page's drowsy controller; with none made
+  // (undefined) it keeps the live default, as the live app has it.
+  engine = demoEngine,
+  liveCard = liveDashcamCard,
+  live = (node) => liveCard(node, { engine: engine() || undefined }),
   go = goto,
   every = (fn, ms) => setInterval(fn, ms),
   cancel = (id) => clearInterval(id),
