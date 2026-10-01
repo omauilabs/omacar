@@ -14,10 +14,14 @@
 //   when Home mounts        (the Dashcams card, cards/dashcam.js)
 //   when Cameras mounts     (the screen, views/cameras.js)
 //
-// and the card and the screen go on looking every RECHECK_MS while they show
-// the empty state, so a demo started before its footage was in place picks it up
-// without a reload. They stop once the live card or view has taken over: those
-// poll for themselves.
+// and the card and the screen go on looking every RECHECK_MS for as long as they
+// are on the page, in BOTH states. Showing the empty state, that is how a demo
+// started before its footage was in place picks it up with no reload. Showing the
+// live card or view (which poll for themselves, but know nothing of the demo's
+// two states), that is how a feed that has gone is noticed: with no camera
+// recording for HANDBACK_LOOKS looks in a row they hand back to the empty state,
+// the live module destroyed or unmounted first. A look that fails changes nothing,
+// and one that finds a camera recording starts the count again.
 //
 //   createFootage({ get, later, cancel }) -> { has() -> true | false | null, check() -> Promise<true | false | null> }
 //   getFootage()                          the page's one
@@ -36,6 +40,9 @@ export const NEEDS_CLIPS = "clips";
 // polls use LIVE_TIMEOUT_MS (5 s), and this one is shorter than the next look.
 export const POLL_TIMEOUT_MS = 2500;
 export const RECHECK_MS = 5000;
+// Looks in a row that find no camera recording before the live card or view is
+// handed back to the empty state.
+export const HANDBACK_LOOKS = 2;
 
 // The empty state's words: the brief's, exactly.
 export const EMPTY_TITLE = "Front, rear and cabin cameras";

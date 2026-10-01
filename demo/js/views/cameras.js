@@ -8,12 +8,15 @@
 // clips, and a hard stop saves the clip" and the three cameras by name, in the
 // same look as Home's card (demo/css/nofootage.css).
 //
-// IT DOES NOT REPLACE THE LIVE SCREEN, IT HANDS OVER TO IT. When a camera is
+// IT DOES NOT REPLACE THE LIVE SCREEN, IT HANDS OVER TO IT, AND BACK. When a camera is
 // recording (footage.js, GET /api/cams) share/js/views/cameras.js is mounted on
 // the same root with the same options and is the screen it always is, unchanged:
 // footage that arrives while the empty state is up replaces it with no reload.
-// The screen looks when it is mounted and, while it shows the empty state, every
-// RECHECK_MS; once the live screen is up it stops, since that polls for itself.
+// The screen looks when it is mounted and every RECHECK_MS after, in both states;
+// with no camera recording for HANDBACK_LOOKS looks in a row it unmounts the live
+// screen and draws the empty state again (a feed that died, a folder that was
+// emptied). A look that fails changes nothing and one that finds a camera starts
+// the count again.
 //
 // With no answer yet it draws nothing for the moment the look takes (a few ms on
 // the box's own server), so a demo with footage never flashes the empty state.
@@ -25,7 +28,7 @@
 
 import { clear, h } from "../../../js/core.js";
 import liveCamerasView from "../../../js/views/cameras.js";
-import { getFootage, emptyState, RECHECK_MS } from "../footage.js";
+import { getFootage, emptyState, RECHECK_MS, HANDBACK_LOOKS } from "../footage.js";
 
 export function camerasView({
   footage = getFootage(),
@@ -37,11 +40,7 @@ export function camerasView({
     let alive = true;
     let mode = null;                // "empty" | "live"
     let unmountLive = null;
-    let timer = null;
-
-    function stopLooking() {
-      if (timer !== null) { cancel(timer); timer = null; }
-    }
+    let misses = 0;                 // looks in a row that found no camera, while live
 
     function dropLive() {
       if (!unmountLive) return;
@@ -53,14 +52,13 @@ export function camerasView({
     function show(want) {
       if (want === mode) return;
       mode = want;
-      dropLive();
+      misses = 0;
+      dropLive();                   // the live screen goes before anything is drawn in its place
       clear(root);
       if (want === "empty") {
         root.appendChild(h("div.nf-view", emptyState({ roles: true })));
-        if (timer === null) timer = every(look, RECHECK_MS);
         return;
       }
-      stopLooking();
       try { unmountLive = live(root, opts) || null; }
       catch (e) {
         console.warn("demo Cameras:", e);
@@ -73,18 +71,24 @@ export function camerasView({
     function look() {
       return footage.check().then((has) => {
         if (!alive) return;
-        if (has === null || has === undefined) { if (mode === null) show("empty"); return; }
-        show(has ? "live" : "empty");
+        if (has === true) { misses = 0; show("live"); return; }
+        if (has === false) {
+          if (mode === "live" && ++misses < HANDBACK_LOOKS) return;
+          show("empty");
+          return;
+        }
+        if (mode === null) show("empty");
       });
     }
 
     const known = footage.has();
     if (known !== null && known !== undefined) show(known ? "live" : "empty");
     look();
+    const timer = every(look, RECHECK_MS);
 
     return () => {
       alive = false;
-      stopLooking();
+      cancel(timer);
       dropLive();
     };
   };

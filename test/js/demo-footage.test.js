@@ -13,7 +13,7 @@
 // are stand-ins that note how they were called (the last tests of each section
 // run the real ones, on a scripted server). Nothing here reaches a server.
 import { eq, ok } from "./assert.js";
-import { hasFootage, createFootage, getFootage, POLL_TIMEOUT_MS, RECHECK_MS,
+import { hasFootage, createFootage, getFootage, POLL_TIMEOUT_MS, RECHECK_MS, HANDBACK_LOOKS,
          EMPTY_TITLE, EMPTY_LINE, NEEDS_CLIPS } from "../demo/js/footage.js";
 import { dashcamCard, register as registerCard } from "../demo/js/cards/dashcam.js";
 import { camerasView, register as registerView } from "../demo/js/views/cameras.js";
@@ -190,19 +190,52 @@ export default [
     c.node.remove();
   }],
 
-  ["no answer yet: the empty state shows, never a black or empty card, and then the answer decides", async () => {
+  // THE COLD BOOT: a page that has not asked the cameras yet. The card shows its frame and nothing
+  // in it until the first answer (as the Cameras screen draws nothing), so a demo with footage never
+  // flashes the empty state before the picture, and one without it never flashes the live look.
+  ["no answer yet: the card's frame and nothing in it, and then the answer decides: the live card", async () => {
     const f = fakeFootage(null);
     f.hold = true;
     let made = 0;
     const c = dashcamCard({ footage: f, live: (n) => { made++; return { paint() {}, destroy() {} }; }, ...timers() });
     document.body.appendChild(c.node);
-    ok(c.node.textContent.includes(EMPTY_LINE), "the empty state while it asks");
-    eq(f.checks, 1, "it asked as it was made: Home mounted");
+    await settle();
+    eq([c.node.children.length, c.node.textContent], [0, ""], "nothing drawn in it while it asks: no empty state, no live card");
+    ok(c.node.matches(".card.hc.hc-cam.nf-card"), "the frame is the card's own, in the empty look (a panel, not the live card's black)");
+    eq([made, f.checks], [0, 1], "it asked as it was made: Home mounted");
     f.value = true;
     f.held();
     await settle();
     eq(made, 1, "footage: the live card");
-    ok(!c.node.textContent.includes(EMPTY_LINE), "and the empty state is gone");
+    ok(!c.node.textContent.includes(EMPTY_LINE), "and the empty state never showed");
+    ok(!c.node.classList.contains("nf-card"), "nor its look");
+    c.destroy();
+    c.node.remove();
+  }],
+
+  ["no answer yet, then no footage: the empty state is what shows, with the live card never made", async () => {
+    const f = fakeFootage(null);
+    f.hold = true;
+    let made = 0;
+    const c = dashcamCard({ footage: f, live: () => { made++; return { paint() {}, destroy() {} }; }, ...timers() });
+    document.body.appendChild(c.node);
+    f.value = false;
+    f.held();
+    await settle();
+    ok(c.node.textContent.includes(EMPTY_LINE), "the empty state");
+    eq(made, 0, "no live card");
+    c.destroy();
+    c.node.remove();
+  }],
+
+  ["no answer yet, and a look that tells nothing: the empty state, never a blank card for good", async () => {
+    const f = fakeFootage(null);
+    f.hold = true;
+    const c = dashcamCard({ footage: f, live: () => ({ paint() {}, destroy() {} }), ...timers() });
+    document.body.appendChild(c.node);
+    f.held();                                         // answers null: nothing is known
+    await settle();
+    ok(c.node.textContent.includes(EMPTY_LINE), "the empty state");
     c.destroy();
     c.node.remove();
   }],
@@ -224,7 +257,65 @@ export default [
     await settle();
     eq(made, 1, "the clips came: the live card");
     ok(!c.node.textContent.includes(EMPTY_LINE), "the empty state is gone");
-    eq(t.running().length, 0, "and the looking stops: the live card polls for itself");
+    eq(t.running().map((x) => x.ms), [RECHECK_MS], "and the looking goes on, every 5 s, for the way back");
+    c.destroy();
+    c.node.remove();
+  }],
+
+  // ---- the way back: live to empty ------------------------------------------------------------
+  //
+  // While the live card is up the card keeps a slow look at /api/cams, and when no camera is
+  // recording for HANDBACK_LOOKS looks in a row (the feed died, a clip folder was emptied) it hands
+  // back to the empty state, the live card destroyed first. A single miss is not a reason: a look
+  // that finds a camera recording starts the count again, and one that fails (null) neither counts
+  // nor clears it.
+  ["live to empty: with no camera recording for two looks in a row the live card is destroyed and the empty state drawn", async () => {
+    eq(HANDBACK_LOOKS, 2, "two");
+    const f = fakeFootage(true);
+    const t = timers();
+    const order = [];
+    const c = dashcamCard({ footage: f, live: (n) => { order.push("live"); n.appendChild(Object.assign(document.createElement("img"), { className: "dc-img" }));
+                                                         return { paint() {}, destroy() { order.push("destroyed"); } }; }, ...t });
+    document.body.appendChild(c.node);
+    await settle();
+    eq(t.running().map((x) => x.ms), [RECHECK_MS], "live, and looking every 5 s");
+    f.value = false;
+    t.ticks[0].fn();
+    await settle();
+    eq(order, ["live"], "one look with no camera: still the live card");
+    ok(!c.node.textContent.includes(EMPTY_LINE), "no empty state yet");
+    t.ticks[0].fn();
+    await settle();
+    eq(order, ["live", "destroyed"], "two in a row: the live card is destroyed");
+    ok(c.node.textContent.includes(EMPTY_LINE) && c.node.textContent.includes("Dashcams"), "and the empty state is drawn");
+    eq(c.node.querySelectorAll(".dc-img").length, 0, "with nothing of the live card left in the node");
+    ok(c.node.classList.contains("nf-card"), "in the empty look");
+    f.value = true;
+    t.ticks[0].fn();
+    await settle();
+    eq(order, ["live", "destroyed", "live"], "and when a camera records again, the live card again");
+    c.destroy();
+    eq(order[order.length - 1], "destroyed", "destroyed with the card");
+    eq(t.running().length, 0, "and the looking stops");
+    c.node.remove();
+  }],
+
+  ["live to empty: one miss in between does not count: false, true, false is still live; a look that tells nothing neither counts nor clears", async () => {
+    const f = fakeFootage(true);
+    const t = timers();
+    const order = [];
+    const c = dashcamCard({ footage: f, live: () => { order.push("live"); return { paint() {}, destroy() { order.push("destroyed"); } }; }, ...t });
+    document.body.appendChild(c.node);
+    await settle();
+    const look = async (v) => { f.value = v; t.ticks[0].fn(); await settle(); };
+    await look(false);
+    await look(true);
+    await look(false);
+    eq(order, ["live"], "false, true, false: the true started the count again");
+    await look(null);
+    eq(order, ["live"], "a look that tells nothing: nothing changes");
+    await look(false);
+    eq(order, ["live", "destroyed"], "false, (nothing), false: two with no camera");
     c.destroy();
     c.node.remove();
   }],
@@ -428,10 +519,58 @@ export default [
     eq(mounted, 1, "the clips came");
     eq(root.children.length, 1, "the empty state replaced, not added to");
     ok(root.querySelector(".cams"), "by the live view");
-    eq(t.running().length, 0, "and the looking stops");
+    eq(t.running().map((x) => x.ms), [RECHECK_MS], "and the looking goes on, for the way back");
     un();
     eq(unmounted, 1, "leaving unmounts the live view");
+    eq(t.running().length, 0, "and stops the looking");
     root.remove();
+  }],
+
+  ["live to empty: with no camera recording for two looks in a row the live view is unmounted and the empty state drawn", async () => {
+    const f = fakeFootage(true);
+    const t = timers();
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const order = [];
+    const un = camerasView({ footage: f, live: (r) => { order.push("mounted"); r.appendChild(Object.assign(document.createElement("div"), { className: "cams" }));
+                                                          return () => order.push("unmounted"); }, ...t })(root, {});
+    await settle();
+    eq(t.running().map((x) => x.ms), [RECHECK_MS], "live, and looking every 5 s");
+    f.value = false;
+    t.ticks[0].fn();
+    await settle();
+    eq([order, !!root.querySelector(".cams")], [["mounted"], true], "one look with no camera: still the live view");
+    t.ticks[0].fn();
+    await settle();
+    eq(order, ["mounted", "unmounted"], "two in a row: the live view is unmounted first");
+    eq([root.children.length, !!root.querySelector(".cams")], [1, false], "and nothing of it is left");
+    ok(root.textContent.includes(EMPTY_LINE), "the empty state is drawn");
+    f.value = true;
+    t.ticks[0].fn();
+    await settle();
+    eq(order, ["mounted", "unmounted", "mounted"], "and when a camera records again, the live view again");
+    un();
+    eq(order[order.length - 1], "unmounted", "leaving unmounts it");
+    eq(t.running().length, 0, "and stops the looking");
+    root.remove();
+  }],
+
+  ["live to empty: a true in between starts the count again, and a look that tells nothing neither counts nor clears", async () => {
+    const f = fakeFootage(true);
+    const t = timers();
+    const root = document.createElement("div");
+    const order = [];
+    const un = camerasView({ footage: f, live: () => { order.push("mounted"); return () => order.push("unmounted"); }, ...t })(root, {});
+    await settle();
+    const look = async (v) => { f.value = v; t.ticks[0].fn(); await settle(); };
+    await look(false);
+    await look(true);
+    await look(false);
+    eq(order, ["mounted"], "false, true, false: still live");
+    await look(null);
+    await look(false);
+    eq(order, ["mounted", "unmounted"], "false, (nothing), false: handed back");
+    un();
   }],
 
   ["leaving the tab stops the looking, and a late answer draws nothing", async () => {
