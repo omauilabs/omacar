@@ -350,6 +350,45 @@ export default [
     eq([r.toasts.length, r.card().level], [1, "1"]);
   }],
 
+  // ---- the drowsy moment with no footage (hardening D) -----------------------------------------
+  //
+  // The cameras wait for parts, and the demo is shown with no clip: the camera feed
+  // (lib/cams.py demo) does not run, so the cabin that swaps to the drowsy clip when
+  // the scene turns is not there to swap. The moment never needed it. The chip, both
+  // levels and "I'm awake" are this controller's and drowsyui's, and not one of them
+  // draws a picture or asks for one: nothing for a broken cabin tile to be.
+  ["with no camera feed the whole moment runs: Watching, Level 1, Level 2 and I'm awake, asking the cameras for nothing", () => {
+    const asked = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (u) => { asked.push(String((u && u.url) || u)); return Promise.reject(new Error("no server")); };
+    try {
+      const r = rig();
+      const pictures = () => r.app.querySelectorAll("img, video, canvas, iframe, object, picture").length
+                           + r.bar.querySelectorAll("img, video, canvas, iframe, object, picture").length
+                           + r.host.querySelectorAll("img, video, canvas, iframe, object, picture").length;
+      r.drive();
+      eq([r.chip(), pictures()], [["Watching", "ok"], 0], "the chip, no picture");
+      r.drowsy();
+      eq([r.card().level, r.card().title, pictures()], ["1", "You seem tired. Plan a break soon.", 0], "Level 1");
+      r.advance(L2_AT);
+      eq([r.card().level, r.card().title, r.card().awake, pictures()], ["2", "Are you with me?", "I'm awake", 0], "Level 2");
+      r.advance(SAY_AFTER);
+      eq(r.said.length, 1, "its voice line");
+      r.tap();
+      eq([r.card().shown, r.chip(), pictures()], [false, ["Watching", "ok"], 0], "I'm awake: over, and the chip is back");
+      r.drowsy();
+      r.advance(END_AT);
+      eq([r.card().shown, r.chip()], [false, ["Watching", "ok"]], "and one nobody taps ends by itself");
+    } finally { globalThis.fetch = real; }
+    eq(asked, [], "no request at all: nothing for the cameras, no cabin stream, no /api/cams");
+  }],
+  ["and a hard brake toasts as ever with no camera feed: the toast is the page's, the mark is the feed's", () => {
+    const r = rig();
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 7 } });
+    eq(r.toasts, [[BRAKE_TOAST, ""]], "one toast");
+  }],
+
   // ---- the say that may not be there
   ["the voice is imported only when needed, and its absence is no error", async () => {
     let asked = 0;
