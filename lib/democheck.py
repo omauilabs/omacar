@@ -14,7 +14,9 @@ stopped, and nothing is played.
                  a map built from another route draws the car in the wrong place
     voice        a wav for every line in demo/data/voice.json
     clips        the cameras' footage: front, rear, cabin and cabin-drowsy, in
-                 demo/clips or where OMACAR_DEMO_CLIPS says, as the camera feed reads
+                 demo/clips or where OMACAR_DEMO_CLIPS says, as the camera feed reads.
+                 With none yet it is a note ("no footage yet: the tour skips Cameras"),
+                 not a failure; with some but not all it fails
     clips play   each clip present is H.264, by ffprobe (cams.py's own probe): the
                  feed copies the clips as they are and the Cameras tab's <video>
                  plays H.264 everywhere, HEVC only on some hardware
@@ -165,7 +167,20 @@ def clip_files(private):
 
 
 def clips(private):
+    """The footage, as a note and not a fault while there is none at all.
+
+    The owner's cameras wait for parts, and without footage the demo is
+    finished all the same: the tour skips Cameras, and Home's Dashcams card and
+    the Cameras tab show their empty state (demo/js/footage.js). So with NO clip
+    there, this is a note (None, "--"), and `check` can say ready. And it says
+    where the clips go, for when they come.
+
+    SOME clips, but not all, is still a fault: the feed would run for the cameras
+    that have footage and the tour would show the Cameras tab with the others
+    empty. A clip that is there and will not play is `clips play`'s."""
     here, found = clip_files(private)
+    if not found:
+        return None, f"no footage yet: the tour skips Cameras (the clips go in {here})"
     missing = [r for r in CLIP_ROLES if r not in found]
     if missing:
         return False, "stock/owner clips missing: " + ", ".join(missing) + f" (in {here})"
