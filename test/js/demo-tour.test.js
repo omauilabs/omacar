@@ -1141,6 +1141,89 @@ export default [
     eq([r.tour.state, r.tour.index, r.hash], ["running", 4, "#home"], "back on the drowsy moment's screen");
   }],
 
+  // ---- the menu's "Hard braking": "The clip is saved" only while a camera is recording (hardening D) ----
+  ["the menu's Hard braking says 'The clip is saved' by default, and with a camera recording", async () => {
+    const r = await rig();
+    for (const opts of [{}, { saved: () => true }]) {
+      const host = document.createElement("div");
+      const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host, ...opts });
+      menu.open();
+      const sub = (id) => { const e = host.querySelector(`[data-item="${id}"] .dm-s`); return e ? e.textContent : null; };
+      eq(sub("brake"), "The clip is saved", "kept");
+      menu.close();
+    }
+  }],
+
+  ["with no camera recording the Hard braking row drops it, and the other rows are as they were", async () => {
+    const r = await rig();
+    const host = document.createElement("div");
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host,
+                              saved: () => false });
+    menu.open();
+    const row = host.querySelector('[data-item="brake"]');
+    eq([row.querySelector(".dm-t").textContent, row.querySelector(".dm-s")], ["Hard braking", null], "the title, and no subtitle");
+    eq(row.querySelector(".dm-k").textContent, "B", "its key");
+    eq(host.querySelector('[data-item="drowsy"] .dm-s').textContent, "Level 1, then Level 2", "Drowsy moment's is unchanged");
+    eq(host.querySelector('[data-item="start"] .dm-s').textContent, "About six minutes, from the top", "so is Start tour's");
+    row.click();
+    eq([r.log.length, menu.isOpen()], [0, false], "it still sends the cue (to a fake: nothing here), and closes");
+  }],
+
+  ["the menu looks again as it opens: the answer that differs redraws the row, and the focus stays where it was", async () => {
+    const r = await rig();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let recording = false;
+    const menu = createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host,
+                              saved: () => recording, refresh: async () => { recording = true; } });
+    const sub = () => { const e = host.querySelector('[data-item="brake"] .dm-s'); return e ? e.textContent : null; };
+    menu.open();
+    ok(host.querySelector('[data-item="brake"]'), "drawn");
+    host.querySelector('[data-item="brake"]').focus();
+    eq(document.activeElement && document.activeElement.dataset.item, "brake", "the presenter is on it");
+    await tick();
+    eq(sub(), "The clip is saved", "footage came: drawn again with it");
+    eq(document.activeElement && document.activeElement.dataset.item, "brake", "and the focus is still on that row");
+    menu.close();
+    // the other way, and one that did not change: no redraw at all
+    recording = true;
+    let draws = 0;
+    const seen = new MutationObserver(() => { draws++; });
+    menu.open();
+    seen.observe(host.querySelector(".dm-list"), { childList: true });
+    await tick();
+    await tick();
+    eq(draws, 0, "an answer that agrees with the items does not redraw them");
+    menu.close();
+    seen.disconnect();
+    host.remove();
+  }],
+
+  ["a look that fails, and one that answers after the menu has closed, change nothing", async () => {
+    const r = await rig();
+    const host = document.createElement("div");
+    let done;
+    let recording = false;
+    const mk = (refresh) => createMenu({ tour: r.tour, cues: createCues({ post: () => Promise.resolve(), sample: () => null }), host,
+                                         saved: () => recording, refresh });
+    const failing = mk(() => Promise.reject(new Error("no server")));
+    failing.open();
+    await tick();
+    ok(host.querySelector('[data-item="brake"]') && !host.querySelector('[data-item="brake"] .dm-s'), "as drawn");
+    failing.close();
+    const late = mk(() => new Promise((yes) => { done = yes; }));
+    late.open();
+    late.close();
+    recording = true;
+    done();
+    await tick();
+    eq(host.querySelector(".dm-sheet"), null, "nothing redrawn into a menu that is gone");
+    const throwing = mk(() => { throw new Error("boom"); });
+    throwing.open();
+    ok(host.querySelector(".dm-sheet"), "a refresh that throws does not stop it opening");
+    throwing.close();
+  }],
+
   // ---- the scripted scan ----------------------------------------------------------------
   ["scan: eight modules go from Scanning… to No codes over 12 s, and it ends all normal", () => {
     const c = clock();

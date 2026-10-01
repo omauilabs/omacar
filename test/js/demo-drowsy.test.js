@@ -12,7 +12,7 @@ import { eq, ok } from "./assert.js";
 import {
   createDemoDrowsy, makeVoice, makeSay, register, chipAfterBar,
   L1_CUES, L2_CUES, L1_REASON, L2_AT, END_AT, SAY_AFTER, SAY_ID, BRAKE_TOAST, POLL_STALE_SECS,
-  CHIP_WATCHING, CHIP_PARKED,
+  CHIP_WATCHING, CHIP_PARKED, BRAKE_TOAST_NO_CLIP, demoEngine,
 } from "../demo/js/drowsy.js";
 import { createDrowsy } from "../js/drowsyrun.js";
 import { TRIGGER, TONE } from "../js/drowsyui.js";
@@ -60,6 +60,7 @@ function rig(over = {}) {
     say: (id) => { r.said.push([r.secs(), id]); return r.sayFails ? Promise.reject(new Error("no voice")) : Promise.resolve(); },
     stopVoice: () => { r.stops.push(r.secs()); r.order.push("stop"); },
     toast: (m, tone) => r.toasts.push([m, tone || ""]),
+    saved: () => true,                 // a camera is recording, unless a test says otherwise
     ...over,
   });
   r.ui = r.ctl.mount({ app: r.app, bar: r.bar, host: r.host });
@@ -97,7 +98,7 @@ function page(over = {}) {
     every: (fn) => { p.polls.push(fn); return 1; }, clock: () => p.now,
     els: { app: p.app, bar: p.bar, host: p.host, dz: null },
     later: () => 0, cancel: () => {}, player: () => ({ play: () => Promise.resolve() }), say: async () => {},
-    stopVoice: () => {}, toast: (...a) => p.toasts.push(a),
+    stopVoice: () => {}, toast: (...a) => p.toasts.push(a), saved: () => true,
   });
   return p;
 }
@@ -323,6 +324,48 @@ export default [
     eq(calls, [], "and no request: lib/cams.py marks it, as the live recorder does");
     eq(BRAKE_TOAST, "Hard braking. The clip is saved.");
   }],
+  // ---- ... and "The clip is saved" only while a camera is recording (hardening D) ----------
+  ["with no camera recording, a hard brake toasts 'Hard braking.' and no more: there is no clip to say is saved", () => {
+    const r = rig({ saved: () => false });
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 9 } });
+    eq(r.toasts, [["Hard braking.", ""]], "no mention of a clip");
+    eq([BRAKE_TOAST_NO_CLIP, BRAKE_TOAST], ["Hard braking.", "Hard braking. The clip is saved."], "the two texts");
+  }],
+  ["with a camera recording it keeps 'The clip is saved'", () => {
+    const r = rig({ saved: () => true });
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 9 } });
+    eq(r.toasts, [[BRAKE_TOAST, ""]], "the full toast");
+  }],
+  ["the text is chosen as the toast is made: footage that arrives between two brakes changes the second", () => {
+    let recording = false;
+    const r = rig({ saved: () => recording });
+    r.drive();
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 1 } });
+    recording = true;
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 2 } });
+    recording = false;
+    r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 3 } });
+    eq(r.toasts.map((t) => t[0]), ["Hard braking.", BRAKE_TOAST, "Hard braking."], "one each, as it stood");
+  }],
+  ["a question that does not answer true makes no claim: a throw, nothing, or something else", () => {
+    for (const saved of [() => { throw new Error("boom"); }, () => undefined, () => null, () => "yes"]) {
+      const r = rig({ saved });
+      r.drive();
+      r.ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 4 } });
+      eq(r.toasts, [["Hard braking.", ""]], "no clip claimed");
+    }
+  }],
+  ["the page's own question is the footage detector's: unknown (not asked yet) is no claim either", () => {
+    const toasts = [];
+    const ctl = createDemoDrowsy({ later: () => 0, cancel: () => {}, player: () => ({ play: () => Promise.resolve() }),
+                                   say: async () => {}, stopVoice: () => {}, toast: (m) => toasts.push(m) });
+    ctl.feed({ scene: "drive" });
+    ctl.feed({ scene: "drive", event: { kind: "hard_brake", at: 5 } });
+    eq(toasts, ["Hard braking."], "the page has not looked at the cameras in this test: nothing is saved");
+    ctl.destroy();
+  }],
   ["and a second event, at another time, toasts again", () => {
     const r = rig();
     r.drive();
@@ -453,6 +496,11 @@ export default [
   }],
 
   // ---- the page: afterBar, and where the sample comes from
+  ["demoEngine() is the controller register() made: the live Dashcams card reads its chip from it", () => {
+    const p = page();
+    ok(demoEngine() === p.ctl, "the page's controller");
+    eq(typeof demoEngine().on, "function", "with the live engine's face");
+  }],
   ["register wraps afterBar, keeps the one it found, and puts the chip in the bar once", async () => {
     const r = rig();
     const calls = [];

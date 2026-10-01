@@ -182,6 +182,9 @@ const ready = loadSteps().then((s) => { steps.push(...s); })
 
 const menu = createMenu({
   tour, cues,
+  // "The clip is saved" only while a camera is recording.
+  saved: () => footage.has() === true,
+  refresh: () => footage.check(),
   restart: async () => { tour.stop(); await resetDemo(); show("#home"); },
 });
 
