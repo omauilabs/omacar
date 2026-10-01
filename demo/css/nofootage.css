@@ -35,11 +35,13 @@
 .hc-cam.nf-card .nf-line { font-size: .8rem; }
 .hc-cam.nf-card:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 
-/* The screen: one panel across the stage, as Home fills it (home.css). */
-.wrap:has(> .nf-view) { max-width: none; display: block; height: 100%; }
+/* The screen: one panel across the stage, as Home fills it (home.css), and no
+   taller than 780 px, centred, so a portrait tablet's does not stretch into an
+   empty slab. */
+.wrap:has(> .nf-view) { max-width: none; height: 100%; display: flex; flex-direction: column; justify-content: center; }
 .stage:has(> .wrap > .nf-view) { padding-bottom: 18px; }
 .nf-view {
-  height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  flex: 0 1 auto; height: min(100%, 780px); min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   border: 1px solid var(--hair); border-radius: var(--r-lg);
   background:
     radial-gradient(52% 46% at 50% 40%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 72%),

@@ -35,9 +35,10 @@
 // A STEP THAT NEEDS WHAT THE DEMO DOES NOT HAVE IS JUMPED OVER (hardening D). The
 // owner's cameras wait for parts, and the demo is shown with no footage: tour.json's
 // Cameras step says `"needs": "clips"`, the page tells the tour (`has(need)`) what
-// the demo has, and a step whose need is met only by `false`'s say-so is skipped as
-// it comes up: no screen, no caption, no cues. The numbers, keys and captions of
-// the other steps stay as they are, so the tour is the one it was with 35 s fewer.
+// the demo has, and a step whose need it says is not there (`has` answers false) is
+// skipped as it comes up: no screen, no caption, no cues. The numbers, keys and
+// captions of the other steps stay as they are, so the tour is the one it was with
+// 35 s fewer.
 // Its key does nothing but toast the step's own `missing` words (the tour, running
 // or not, is left alone). `has` answers false only when it knows: null (not asked
 // yet, or no answer) enters the step, since the Cameras screen draws an empty state
