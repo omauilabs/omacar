@@ -207,7 +207,10 @@ class Chromium:
         try:
             with open(log, "wb") as errs:
                 self.proc = subprocess.Popen(
-                    ["/bin/sh", "-c", f'exec "$@" 3<&{cmd_r} 4>&{ans_w}', "sh", exe,
+                    # bash, not /bin/sh: the pipes' numbers are often above 9,
+                    # and dash (Ubuntu's sh, the CI runner's) refuses a
+                    # descriptor of two digits as "Bad fd number".
+                    ["bash", "-c", f'exec "$@" 3<&{cmd_r} 4>&{ans_w}', "bash", exe,
                      "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
                      "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                      "--disable-backgrounding-occluded-windows",
