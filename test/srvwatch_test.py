@@ -201,6 +201,12 @@ class Scratch:
         os.chmod(run, 0o700)
         self.env = dict(
             os.environ,
+            # This suite aborts serve.py on purpose (SIGABRT, to prove a crash
+            # leaves its stack in the log). On an Omarchy machine the crash
+            # watcher would otherwise announce each one and start an agent to
+            # diagnose it; a crash from a process carrying OMARCHY_STAGE goes to
+            # that stage's log instead (omarchy-crash-watch).
+            OMARCHY_STAGE="omacar-srvwatch-test",
             HOME=os.path.join(d, "home"),
             XDG_STATE_HOME=os.path.join(d, "state"),
             XDG_CONFIG_HOME=os.path.join(d, "config"),
