@@ -146,7 +146,11 @@ rm -rf "$SCRATCH_HOME"
 #   drive_report
 #            a day into drives, the figures on the page, and the same promise
 #            for a page that is made to be shown to strangers
-for suite in ima sitrep drive_report; do
+#   roadmap  the capability map and the claims: shipped means tracked by
+#            git, a write names its gate, and regenerating the roadmap is
+#            not counted as shipping. It never renders the whole block,
+#            because rendering runs this script.
+for suite in ima sitrep drive_report roadmap; do
   if [[ -x "$VENV/bin/python" ]]; then
     "$VENV/bin/python" "$ROOT/test/${suite}_test.py" || fails=$((fails + 1))
   else
