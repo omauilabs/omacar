@@ -42,6 +42,7 @@ import argparse
 import glob
 import json
 import os
+import time
 import shutil
 import subprocess
 import sys
@@ -325,6 +326,15 @@ def demo_server():
     """None when the demo is off (nothing to ask), else (ok, what)."""
     if not os.path.exists(os.path.join(demo_root(), "ACTIVE")):
         return None
+    # A marker with no guard beating is left over (a power loss mid-demo):
+    # say so, rather than calling a server that was never meant to be up.
+    beat = os.path.join(demo_root(), "run", "guard.beat")
+    try:
+        fresh = time.time() - os.path.getmtime(beat) <= 10
+    except OSError:
+        fresh = False
+    if not fresh:
+        return False, "a demo marker is left over with nothing running: run omacar-demo off"
     port = os.environ.get("OMACAR_DEMO_PORT") or "7580"
     url = f"http://127.0.0.1:{port}/demo.html"
     try:

@@ -552,6 +552,14 @@ def main():
         with open(os.path.join(active, "ACTIVE"), "w", encoding="utf-8"):
             pass
         port = free_port()
+        # A marker with no guard beating is left over (a power loss mid-demo).
+        r, lines = run(work, private, port=port)
+        check("a marker with no guard beating: not ready, and it says left over",
+              lines[-1] == "not ready: demo server" and "left over" in r.stdout, r.stdout)
+        beat_dir = os.path.join(active, "run")
+        os.makedirs(beat_dir)
+        with open(os.path.join(beat_dir, "guard.beat"), "w", encoding="utf-8"):
+            pass
         r, lines = run(work, private, port=port)
         check("the demo on and no server: not ready: demo server",
               lines[-1] == "not ready: demo server", r.stdout)
@@ -567,6 +575,8 @@ def main():
 
         # Read only: nothing it looked at was written, and nothing was added.
         os.remove(os.path.join(active, "ACTIVE"))
+        os.remove(os.path.join(beat_dir, "guard.beat"))
+        os.rmdir(beat_dir)
         os.rmdir(active)
         after = listing(work)
         ignore = lambda d: {k: v for k, v in d.items()

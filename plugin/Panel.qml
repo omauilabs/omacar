@@ -54,6 +54,7 @@ Panel {
   // demo must never do is stand between you and the vehicle in front of you.
   readonly property string demoState: home + "/.local/state/omacar-demo/state"
   readonly property string demoMarkerFile: home + "/.local/state/omacar-demo/ACTIVE"
+  readonly property string demoBeatFile: home + "/.local/state/omacar-demo/run/guard.beat"
   property bool demoMarker: false
   readonly property bool demoing: root.demoMarker && !root.realLive
 
@@ -854,9 +855,13 @@ Panel {
   Process {
     id: loadDemo
     command: ["bash", "-c",
-      "if [ -f \"$1\" ]; then echo 1; cat \"$2\" 2>/dev/null || echo '{}';"
+      // The marker counts only while the demo's guard is beating (it touches
+      // guard.beat every 2 s). A marker left by a power loss, with nothing
+      // running, must not put the bar on demo data.
+      "if [ -f \"$1\" ] && [ -n \"$(find \"$3\" -newermt '-10 seconds' 2>/dev/null)\" ];"
+      + " then echo 1; cat \"$2\" 2>/dev/null || echo '{}';"
       + " else echo 0; echo '{}'; fi",
-      "x", root.demoMarkerFile, root.demoLiveFile]
+      "x", root.demoMarkerFile, root.demoLiveFile, root.demoBeatFile]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
