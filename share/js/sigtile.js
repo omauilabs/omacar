@@ -48,7 +48,7 @@ export function makeSignalTile(id, { label, def } = {}) {
         const out = d.get(s.values || {}, s, car);
         text(v, String(out.v));
         text(u, out.n || "");
-        text(note, "");
+        text(note, d.note ? d.note() : "");
         node.dataset.tone = out.tone || "";
         node.dataset.src = sourceKey(car, s);
         // A SCALE AND A TRAIL ARE BOTH CLAIMS ABOUT A VALUE, so they are only
