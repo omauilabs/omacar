@@ -227,5 +227,11 @@ python3 "$ROOT/test/demo_record_headless_test.py" || fails=$((fails + 1))
 # browser, no demo and no scratch HOME: the tour is a scripted page.
 python3 "$ROOT/test/demo_e2e_test.py" || fails=$((fails + 1))
 # ---- end meetup demo: hardening D ---------------------------------------------
+# ---- battery health: the bus-capture miner (Task 2) ---------------------------
+# tools/ima_mine.py against synthetic captures and a synthetic samples database:
+# the planted charge byte ranks first, noise does not, no overlap is said
+# plainly, and the source can reach neither the adapter nor the car.
+python3 "$ROOT/test/ima_mine_test.py" || fails=$((fails + 1))
+# ---- end battery health: Task 2 -----------------------------------------------
 
 exit $((fails > 0))
