@@ -2,7 +2,8 @@
 
   1. $OMACAR_PORT              explicit override
   2. the running bench emulator
-  3. a wired adapter on /dev/ttyUSB* or /dev/ttyACM*
+  3. a wired adapter on /dev/ttyUSB* or /dev/ttyACM*, passing over the USB
+     devices in NOT_ADAPTERS (a lightsaber board is a serial port too)
 
 The OBDLink SX is a wired FTDI device, so it lands on /dev/ttyUSB0. On Arch
 the group that owns those nodes is `uucp`, not `dialout` — being in the wrong
@@ -239,8 +240,55 @@ def bench_port():
         return None
 
 
-def wired_ports():
-    return sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*"))
+# USB devices that present a serial port and are never an OBD adapter.
+#
+# A Proffieboard -- a lightsaber sound board, hubbe.net, 1209:6668 -- is a CDC
+# ACM device, so it lands on /dev/ttyACM0 right beside where an adapter would.
+# drivelog took it the moment OmaSaber's daemon let go of it and sent it ELM327
+# AT commands; ProffieOS answers anything it does not know with "Whut?", which
+# is not a car. Worse, the board re-enumerates during a firmware flash, and a
+# recorder that grabs it then can wreck the flash. (In its STM32 bootloader it
+# is 0483:df11, which is DFU and has no tty, so it needs no entry here.)
+#
+# A deny list, not an allow list: an adapter whose ids cannot be read, or that
+# nobody has listed, is still offered exactly as before.
+NOT_ADAPTERS = {
+    ("1209", "6668"),       # Proffieboard (ProffieOS), hubbe.net
+}
+
+
+def usb_ids(name, sysfs="/sys"):
+    """(idVendor, idProduct) of the USB device behind a tty, or None.
+
+    /sys/class/tty/<name>/device is a USB interface; the device that carries
+    the ids is its parent for ttyACM, and a level or so further up for ttyUSB
+    (whose node sits under a usb-serial port). Walk up until idVendor appears.
+    """
+    try:
+        here = os.path.realpath(os.path.join(sysfs, "class", "tty", name, "device"))
+    except OSError:
+        return None
+    top = os.path.realpath(sysfs)
+    for _ in range(4):
+        here = os.path.dirname(here)
+        if not here.startswith(top) or here == top:
+            return None
+        try:
+            with open(os.path.join(here, "idVendor"), encoding="ascii") as f:
+                vendor = f.read().strip().lower()
+            with open(os.path.join(here, "idProduct"), encoding="ascii") as f:
+                product = f.read().strip().lower()
+            return vendor, product
+        except OSError:
+            continue
+    return None
+
+
+def wired_ports(dev="/dev", sysfs="/sys"):
+    ports = sorted(glob.glob(os.path.join(dev, "ttyUSB*"))
+                   + glob.glob(os.path.join(dev, "ttyACM*")))
+    return [p for p in ports
+            if usb_ids(os.path.basename(p), sysfs) not in NOT_ADAPTERS]
 
 
 def resolve():

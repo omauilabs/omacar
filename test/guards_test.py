@@ -4069,6 +4069,59 @@ check("--dry-run --remove-preset with nothing to remove says so and plans nothin
 
 _ima_shutil.rmtree(_dw_bin, ignore_errors=True)
 
+head("a lightsaber on ttyACM0 is not the adapter")
+# 2026-10-06: drivelog opened /dev/ttyACM0 the moment OmaSaber let go of it and
+# sent ELM327 AT commands to a Proffieboard. A fake sysfs and a fake /dev, laid
+# out as the kernel lays them out: the tty's `device` link is the USB
+# interface, and the ids are on its parent (ttyACM) or a level further up
+# (ttyUSB, under its usb-serial port). Nothing here is ever opened.
+import connect as _wp_connect  # noqa: E402
+_wp = tempfile.mkdtemp()
+_wp_dev = os.path.join(_wp, "dev")
+_wp_sys = os.path.join(_wp, "sys")
+os.makedirs(_wp_dev)
+
+
+def _wp_tty(name, iface, ids=None):
+    """A /dev node (an empty file) and a sysfs tty whose device is `iface`."""
+    open(os.path.join(_wp_dev, name), "w").close()
+    usbdev = os.path.dirname(iface) if name.startswith("ttyACM") \
+        else os.path.dirname(os.path.dirname(iface))
+    os.makedirs(os.path.join(_wp_sys, iface), exist_ok=True)
+    if ids:
+        for f, v in zip(("idVendor", "idProduct"), ids):
+            with open(os.path.join(_wp_sys, usbdev, f), "w") as fh:
+                fh.write(v + "\n")
+    os.makedirs(os.path.join(_wp_sys, "class", "tty", name))
+    os.symlink(os.path.join(_wp_sys, iface),
+               os.path.join(_wp_sys, "class", "tty", name, "device"))
+
+
+_wp_tty("ttyACM0", "devices/usb3/3-2/3-2:1.0", ("1209", "6668"))     # Proffieboard
+_wp_tty("ttyACM1", "devices/usb3/3-3/3-3:1.0", ("0403", "6001"))     # an adapter
+_wp_tty("ttyUSB0", "devices/usb3/3-4/3-4:1.0/ttyUSB0", ("1a86", "7523"))
+_wp_tty("ttyACM2", "devices/usb3/3-5/3-5:1.0")                       # ids unreadable
+
+
+def _wp_ports():
+    return [os.path.basename(p)
+            for p in _wp_connect.wired_ports(dev=_wp_dev, sysfs=_wp_sys)]
+
+
+check("the Proffieboard's ids are read through its interface's parent",
+      _wp_connect.usb_ids("ttyACM0", _wp_sys), ("1209", "6668"))
+check("a ttyUSB's ids are found a level further up",
+      _wp_connect.usb_ids("ttyUSB0", _wp_sys), ("1a86", "7523"))
+check("a tty with no ids in sysfs reads as unknown, not as anything",
+      _wp_connect.usb_ids("ttyACM2", _wp_sys), None)
+check("a tty sysfs has never heard of reads as unknown",
+      _wp_connect.usb_ids("ttyACM9", _wp_sys), None)
+check("discovery offers the adapters and passes over the saber",
+      _wp_ports(), ["ttyACM1", "ttyACM2", "ttyUSB0"])
+check("a port whose ids cannot be read is still offered, as before",
+      "ttyACM2" in _wp_ports(), True)
+shutil.rmtree(_wp, ignore_errors=True)
+
 # ----------------------------------------------------------------------- done
 print()
 if fails:
