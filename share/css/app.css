@@ -1951,3 +1951,17 @@ ul.tight li { margin-bottom: 5px; }
      leaving the card stranded at the bottom of it. */
   .show-stage { min-height: 52vh; }
 }
+
+/* ------------------------------------------------------------ pack health */
+.hcard { display: grid; gap: 10px; }
+.hcard .head { display: flex; align-items: center; gap: 12px; }
+.hcard .head .right { margin-left: auto; }
+.hc-reasons, .hc-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.hc-reasons li { font-size: .9rem; }
+.hc-row { display: grid; grid-template-columns: 9rem 120px auto; gap: 12px; align-items: center; }
+.hc-row > .muted { grid-column: 2 / -1; }
+.hc-k { color: var(--dim); font-size: .85rem; }
+.hc-spark svg { width: 120px; height: 28px; display: block; }
+.hc-spark path { fill: none; stroke: var(--info); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.hc-v { font-variant-numeric: tabular-nums; }
+.hc-foot { font-size: .72rem; }

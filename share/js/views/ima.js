@@ -53,6 +53,9 @@ import { lookup, decode } from "../knowledge.js";
 import { makeGauge } from "../gauges.js";
 import { pausedNote } from "../readings.js";
 import { sparkline } from "../charts.js";
+import { sparkPath } from "../spark.js";
+import { healthLine } from "../health.js";
+export { healthLine };
 
 // core.js owns the `api` object and this pass does not own core.js, so the
 // one-line `ima: () => req("/api/ima")` that belongs beside its siblings is in
@@ -150,8 +153,68 @@ function describe(code) {
   return { title: "Honda-specific, name unknown", sourced: false, note: "" };
 }
 
+// ---------------------------------------------------------------- pack health
+//
+// The verdict from lib/battery_health.py, as one card at the top of this
+// screen. It reads only /api/battery, which reads only the database: nothing
+// here asks the car anything. Each measure keeps its state; an undiscovered
+// one says "Not measured yet" and how it would be found, and never a number.
+const VERDICT_TONE = { "Healthy": "ok", "Watch it": "warn", "Failing": "bad" };
+const MEASURE_LABEL = { window: "Charge window", recals: "Recalibrations",
+  floor_share: "Time at the floor", capacity: "Capacity",
+  resistance: "Internal resistance", sag: "Voltage sag", blocks: "Cell blocks" };
+// The series key a measured row draws and quotes.
+const MEASURE_KEY = { window: "window_width", recals: "recals",
+                      floor_share: "floor_share" };
+
+function measureRow(name, m) {
+  const label = MEASURE_LABEL[name] || name;
+  if (!m || m.state === "undiscovered") {
+    return h("li.hc-row", h("span.hc-k", label),
+      h("span.muted", "Not measured yet" + (m && m.how ? " — " + m.how : "")));
+  }
+  const key = MEASURE_KEY[name];
+  const series = Array.isArray(m.series) ? m.series : [];
+  const pts = key ? series.filter((r) => typeof r[key] === "number")
+                         .map((r) => [r.t, r[key]]) : [];
+  const last = pts.length ? pts[pts.length - 1][1] : null;
+  const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svgEl.setAttribute("viewBox", "0 0 120 28");
+  svgEl.setAttribute("preserveAspectRatio", "none");
+  svgEl.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", sparkPath(pts, 120, 28));
+  svgEl.appendChild(path);
+  return h("li.hc-row", { data: { state: m.state } },
+    h("span.hc-k", label),
+    h("span.hc-spark", svgEl),
+    h("span.hc-v", last === null ? "—"
+      : Number.isInteger(last) ? String(last) : last.toFixed(1)));
+}
+
+export function healthCard(doc) {
+  doc = doc || {};
+  const verdict = doc.verdict || "Not enough data yet";
+  const tone = VERDICT_TONE[verdict] || "";
+  const reasons = Array.isArray(doc.reasons) ? doc.reasons : [];
+  const measures = doc.measures || {};
+  const th = doc.thresholds || {};
+  const sources = [...new Set(Object.values(th).map((t) => t && t.source)
+    .filter(Boolean))];
+  return h("section.card.hcard" + (tone ? ".tint-" + tone : ""),
+    h("div.head", h("h3", "Pack health"),
+      h("span.pill" + (tone ? "." + tone : "") + ".right", verdict)),
+    reasons.length ? h("ul.hc-reasons", ...reasons.map((r) => h("li", r))) : null,
+    h("ul.hc-rows", ...Object.entries(measures)
+      .filter(([, m]) => m && typeof m === "object" && m.state)
+      .map(([k, m]) => measureRow(k, m))),
+    sources.length ? h("p.muted.hc-foot", "Thresholds: " + sources.join("; ")
+      + ". Only measured readings feed the verdict.") : null);
+}
+
 export default function ima(root) {
   let doc = null;
+  let battery = null;
   let err = null;
   let loading = true;
 
@@ -164,6 +227,13 @@ export default function ima(root) {
   let poll = 0;
   // Whether the last draw() showed a hand-off, so a flip redraws (see below).
   let drawnPaused = false;
+
+  // Pack health rides alongside the IMA fetch; on failure the card is simply
+  // not drawn (no error card for a model that may have no database yet).
+  async function loadBattery() {
+    try { battery = await api.battery(); } catch { battery = null; }
+    draw();
+  }
 
   async function load(quiet) {
     if (!quiet) { loading = true; draw(); }
@@ -892,6 +962,9 @@ export default function ima(root) {
       return;
     }
     if (err) {
+      // The health model reads the database on its own; a failed IMA fetch
+      // does not take the verdict down with it.
+      if (battery && !battery.error) wrap.appendChild(healthCard(battery));
       wrap.appendChild(h("div.card.tint-bad",
         h("div.title", { style: { fontSize: "1rem" } },
           "Could not read the IMA record"),
@@ -908,6 +981,7 @@ export default function ima(root) {
         h("p.lede", doc.error)));
     }
     wrap.appendChild(header());
+    if (battery && !battery.error) wrap.appendChild(healthCard(battery));
     const dial = chargeDial();
     if (dial) {
       wrap.appendChild(dial);
@@ -923,6 +997,7 @@ export default function ima(root) {
 
   draw();
   load();
+  loadBattery();
 
   // THE PAUSED STATE ARRIVES ON THE STORE, not with /api/ima, so a hand-off
   // starting or ending redraws the dial -- when that flips, and only then.
@@ -943,6 +1018,6 @@ export default function ima(root) {
   // — pack charge moves on the timescale of a hill. The quiet poll only
   // redraws when the payload actually changed, so a parked car costs one
   // request and no repaint at all.
-  poll = setInterval(() => load(true), 6000);
+  poll = setInterval(() => { load(true); }, 6000);
   return () => { clearInterval(poll); offCar(); offLive(); };
 }

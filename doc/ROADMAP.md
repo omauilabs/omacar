@@ -725,8 +725,8 @@ the prose looking like a measurement.
   <br>*Asserted 2026-09-02. To re-check: Run `omacar doctor` on a pre-1996-protocol vehicle. The moment somebody does, this claim and roadmap item 2.5 both change, and every protocol entry that says 'untested' has to be re-read.*
 - Service 0x21 -- the pre-UDS live-data service, and the most likely remaining home for live IMA values -- has never been asked of the CR-Z's hybrid controllers with a correctly shaped 29-bit header.
   <br>*Asserted 2026-09-02. To re-check: The only 0x21 sweep on record used header 07E0, an 11-bit address, on a car running CAN 29/500; it is uninformative rather than a negative result. Two minutes parked with the engine running settles it: `omacar prospect --service 0x21 --headers 18DA03F1,18DA04F1,18DA10F1,18DA0EF1 --range 00-FF --parked`.*
-- Generic mode 01 PID 0x5B, hybrid battery remaining life, appears in this car's own supported-PID bitmap and has never once been polled.
-  <br>*Asserted 2026-09-02. To re-check: One request. A support bitmap is a claim the ECU makes about itself, not a reading, and bitmaps overstate. Ask it before anything is built on it.*
+- Generic mode 01 PID 0x5B, hybrid battery remaining life, answers on this car, and the recorder has stored it in samples.soc since that column was added. It is the pack's remaining life, not the manufacturer's state of charge, which has never answered.
+  <br>*Asserted 2026-10-05. To re-check: Count the rows: `sqlite3 <the VIN-named database> 'SELECT COUNT(*) FROM samples WHERE soc IS NOT NULL'`. Nonzero means it answered. The battery-health model (`omacar battery`) is built on that column.*
 - The IMA repair-frequency shares, part number and cell-block figures in share/data/dtc.json are unsourced, and the code they document (P1449) is not in this car's own fault catalogue.
   <br>*Asserted 2026-09-02. To re-check: The file's own _about says the shares come from published repair-frequency data but names no source, and its Mode 06 citations match the simulator rather than the car. Either cite a source that was actually read, or mark the entry unsourced. Until then it must not be surfaced as relevant to the CR-Z.*
 
