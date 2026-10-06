@@ -22,11 +22,19 @@ The three targets are proxies, and say so:
 Method: 1 s bins over the overlap of a capture and the samples. In a bin, the
 last frame value, and the sample nearest within 2 s. A series needs at least 60
 paired bins and 3 distinct values or it is skipped. Score is |Pearson r|.
+
+The recorder cannot poll PIDs while it listens to the bus, so a drive's
+captures usually fall in gaps between samples. Such a capture is bracketed
+instead: the last charge reading before it and the first after it, each within
+30 s, are joined by a straight line across its bins. Charge drifts slowly, so
+that holds for charge only; current and voltage still need real overlap. Each
+candidate says how many of its bins were bracketed.
 """
 
 import argparse
 import glob
 import json
+import bisect
 import math
 import os
 import sqlite3
@@ -41,6 +49,7 @@ MIN_BINS = 60
 MIN_DISTINCT = 3
 NEAREST = 2.0       # seconds: how far a sample may be from a bin and still count
 DERIV_SPAN = 5      # seconds, for the current proxy
+BRACKET_MAX = 30.0  # seconds: the furthest a bracketing charge reading may be
 TARGETS = ("charge", "current", "voltage")
 
 
@@ -146,6 +155,22 @@ def target_bins(samples, t0, t1):
     return out
 
 
+def bracket_bins(socs, t0, t1):
+    """{bin: {"charge"}} for a capture that falls wholly between two charge
+    readings, each within BRACKET_MAX of it, interpolated in a straight line.
+    socs is [(t, soc)] sorted, soc never None. Empty when not bracketed."""
+    times = [s[0] for s in socs]
+    i = bisect.bisect_left(times, t0) - 1
+    j = bisect.bisect_right(times, t1)
+    if i < 0 or j >= len(socs) or j != i + 1:
+        return {}
+    (ta, ca), (tb, cb) = socs[i], socs[j]
+    if t0 - ta > BRACKET_MAX or tb - t1 > BRACKET_MAX:
+        return {}
+    return {b: {"charge": ca + (cb - ca) * (b + 0.5 - ta) / (tb - ta)}
+            for b in range(int(t0), int(t1))}
+
+
 def series_for_capture(frames, t0, t1):
     """{(id, (i,) or (i, i+1)): {bin: value}}, last frame in each bin wins."""
     series = {}
@@ -163,8 +188,10 @@ def series_for_capture(frames, t0, t1):
 def mine(captures, samples):
     """Returns (candidates, stats). candidates is every scored series."""
     stats = {"captures": len(captures), "with_raw": 0, "raw_frames": 0,
-             "bus_seconds": 0.0, "overlap_captures": 0, "overlap_bins": 0}
-    # (id, bytes, target) -> ([x...], [y...]) accumulated across captures
+             "bus_seconds": 0.0, "overlap_captures": 0, "overlap_bins": 0,
+             "bracketed_captures": 0, "bracketed_bins": 0}
+    socs = [(s[0], float(s[1])) for s in samples if s[1] is not None]
+    # (id, bytes, target) -> ([x...], [y...], bracketed count) across captures
     pairs = {}
     for _name, _started, frames in captures:
         if not frames:
@@ -178,24 +205,31 @@ def mine(captures, samples):
             continue
         t0 = max(ft0, samples[0][0])
         t1 = min(ft1, samples[-1][0])
-        if t1 <= t0:
-            continue
-        tgt = target_bins(samples, t0, t1)
-        if not tgt:
-            continue
-        stats["overlap_captures"] += 1
-        stats["overlap_bins"] += len(tgt)
+        tgt = target_bins(samples, t0, t1) if t1 > t0 else {}
+        bracketed = False
+        if tgt:
+            stats["overlap_captures"] += 1
+            stats["overlap_bins"] += len(tgt)
+        else:
+            t0, t1 = ft0, ft1
+            tgt = bracket_bins(socs, t0, t1)
+            if not tgt:
+                continue
+            bracketed = True
+            stats["bracketed_captures"] += 1
+            stats["bracketed_bins"] += len(tgt)
         for (fid, idx), vals in series_for_capture(frames, t0, t1).items():
             for b, v in vals.items():
                 row = tgt.get(b)
                 if not row:
                     continue
                 for name, y in row.items():
-                    xs, ys = pairs.setdefault((fid, idx, name), ([], []))
-                    xs.append(v)
-                    ys.append(y)
+                    acc = pairs.setdefault((fid, idx, name), [[], [], 0])
+                    acc[0].append(v)
+                    acc[1].append(y)
+                    acc[2] += bracketed
     cands = []
-    for (fid, idx, name), (xs, ys) in pairs.items():
+    for (fid, idx, name), (xs, ys, nbr) in pairs.items():
         if len(xs) < MIN_BINS or len(set(xs)) < MIN_DISTINCT:
             continue
         r = pearson(xs, ys)
@@ -203,7 +237,7 @@ def mine(captures, samples):
             continue
         cands.append({"id": fid, "bytes": list(idx), "target": name,
                       "r": round(abs(r), 6), "sign": 1 if r >= 0 else -1,
-                      "bins": len(xs), "state": "candidate"})
+                      "bins": len(xs), "bracketed": nbr, "state": "candidate"})
     return cands, stats
 
 
@@ -237,14 +271,17 @@ def main(argv=None):
 
     print(f"{st['captures']} captures, {st['with_raw']} had raw frames "
           f"({st['raw_frames']} frames, {st['bus_seconds']:.0f} s of bus); "
-          f"{st['overlap_captures']} overlap the samples ({st['overlap_bins']} bins).")
-    if not st["overlap_bins"]:
+          f"{st['overlap_captures']} overlap the samples ({st['overlap_bins']} bins), "
+          f"{st['bracketed_captures']} are bracketed by charge readings "
+          f"({st['bracketed_bins']} bins, charge only).")
+    if not st["overlap_bins"] and not st["bracketed_bins"]:
         print(f"no overlap between the raw frames and the samples: {st['raw_frames']} "
               f"frames exist, over {st['bus_seconds']:.0f} s of bus, and nothing to line "
               "them up against. More drives with the adapter in will feed this.")
         return 0
     if not result:
-        print("overlap found, but no series reached 60 bins and 3 distinct values.")
+        print("frames lined up, but no series reached 60 bins and 3 distinct values. "
+              "Longer captures (a faster adapter link) will feed this.")
         return 0
     for name in TARGETS:
         rows = [c for c in result if c["target"] == name]
@@ -252,7 +289,8 @@ def main(argv=None):
         for c in rows:
             b = "+".join(str(i) for i in c["bytes"])
             print(f"  {c['id']:>8} byte {b:<5} r={c['r']:.3f} "
-                  f"({'+' if c['sign'] > 0 else '-'}) bins={c['bins']}  candidate")
+                  f"({'+' if c['sign'] > 0 else '-'}) bins={c['bins']} "
+                  f"bracketed={c['bracketed']}  candidate")
     print("\nCandidates only: check each against the car before trusting it.")
     return 0
 

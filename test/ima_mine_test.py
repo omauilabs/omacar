@@ -100,7 +100,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check("every candidate is state candidate",
           all(c["state"] == "candidate" for c in cands) and len(cands) > 0)
     check("every candidate has the contract's keys",
-          all(set(("id", "bytes", "target", "r", "bins", "state")) <= set(c) for c in cands))
+          all(set(("id", "bytes", "target", "r", "bins", "bracketed", "state")) <= set(c)
+              for c in cands))
+    check("overlap bins are not counted as bracketed",
+          all(c["bracketed"] == 0 for c in cands), str(cands[:1]))
     check("targets are only charge, current, voltage",
           {c["target"] for c in cands} <= {"charge", "current", "voltage"})
     check("at most 5 per target", all(sum(1 for c in cands if c["target"] == t) <= 5
@@ -141,8 +144,62 @@ with tempfile.TemporaryDirectory() as tmp:
     p = run(caps5, db, os.path.join(tmp, "out5"))
     check("an unreadable capture is skipped", p.returncode == 0, p.stderr[-300:])
 
+    # Bracketed: 30 short legs, each in a gap between charge readings, like the
+    # recorder's real legs (it cannot poll while it listens to the bus).
+    def make_legs(dirpath, dbpath, gap):
+        os.makedirs(dirpath)
+        db = sqlite3.connect(dbpath)
+        db.execute("CREATE TABLE samples(t REAL PRIMARY KEY, rpm, speed, load, throttle,"
+                   " coolant, intake, maf, stft, ltft, timing, lphk, eff, soc)")
+        for k in range(30):
+            o = 100 * k
+            for ts in (o - gap, o + 4 + gap):
+                db.execute("INSERT INTO samples VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (T0 + ts, 1500, 50, 30, 20, 80, 30, 5, 0, 0, 10, 0, 0,
+                            soc_at(ts)))
+            raw = []
+            for i in range(40):
+                t = i / 10.0
+                raw.append({"t": t, "id": "1A6",
+                            "data": f"0000{round(soc_at(o + t)):02X}00"})
+                raw.append({"t": t, "id": "2B0", "data": f"{random.randrange(256):02X}"})
+            with open(os.path.join(dirpath, f"leg{k}.json"), "w") as f:
+                json.dump({"started": T0 + o, "raw": raw}, f)
+        db.commit()
+        db.close()
+
+    caps6, db6 = os.path.join(tmp, "caps6"), os.path.join(tmp, "legs.db")
+    make_legs(caps6, db6, 3)
+    p = run(caps6, db6, os.path.join(tmp, "out6"))
+    c6 = json.load(open(os.path.join(tmp, "out6", "candidates.json")))
+    check("bracketed legs exit 0", p.returncode == 0, p.stderr[-300:])
+    check("bracketed legs rank 1A6 byte 2 first for charge",
+          bool(c6) and c6[0]["id"] == "1A6" and c6[0]["bytes"] == [2]
+          and c6[0]["target"] == "charge" and c6[0]["r"] > 0.95, str(c6[:1]))
+    check("bracketed legs give charge only", {c["target"] for c in c6} == {"charge"},
+          str({c["target"] for c in c6}))
+    check("every bracketed bin is counted as bracketed",
+          all(c["bracketed"] == c["bins"] for c in c6), str(c6[:1]))
+    check("the summary reports the bracketed legs", "30 are bracketed" in p.stdout,
+          p.stdout)
+
+    caps7, db7 = os.path.join(tmp, "caps7"), os.path.join(tmp, "far-legs.db")
+    make_legs(caps7, db7, 45)
+    p = run(caps7, db7, os.path.join(tmp, "out7"))
+    check("readings beyond 30 s do not bracket",
+          json.load(open(os.path.join(tmp, "out7", "candidates.json"))) == []
+          and "no overlap" in p.stdout.lower(), p.stdout)
+
 # Pure helpers
 check("pearson of a line is 1", abs(ima_mine.pearson([1, 2, 3, 4], [2, 4, 6, 8]) - 1) < 1e-9)
+socs = [(0.0, 50.0), (10.0, 60.0)]
+check("bracket interpolates in a straight line",
+      ima_mine.bracket_bins(socs, 2.0, 5.0) == {2: {"charge": 52.5}, 3: {"charge": 53.5},
+                                                4: {"charge": 54.5}})
+check("a reading inside the capture is not a bracket",
+      ima_mine.bracket_bins(socs + [(20.0, 70.0)], 5.0, 15.0) == {})
+check("a capture before the first reading is not bracketed",
+      ima_mine.bracket_bins(socs, -5.0, -1.0) == {})
 check("pearson of a constant is None", ima_mine.pearson([1, 1, 1], [1, 2, 3]) is None)
 
 src = open(TOOL).read()
