@@ -261,6 +261,7 @@ export const api = {
   // shape is in the "connecting" section below, so a change on the server side
   // is one edit here rather than three across the views.
   adapter: () => req("/api/adapter"),
+  battery: () => req("/api/battery"),
   daemon: (action) => req("/api/daemon", { method: "POST", body: JSON.stringify({ action }) }),
   // The pre-drive sequence. Start returns immediately; the steps arrive by
   // polling, because they take tens of seconds and the screen has to show

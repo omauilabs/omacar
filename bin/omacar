@@ -64,6 +64,9 @@
 #   omacar roadmap [--check|--list next]
 #                             regenerate the measured half of doc/ROADMAP.md;
 #                             --list shows the capability map by status
+#   omacar battery [rebuild|report]
+#                             the hybrid battery's verdict, from the drives
+#                             already recorded; reads the database only
 #   omacar cheatsheet [--set]
 #                             every command as a picture, for the wallpaper
 #   omacar board [stop]       the same commands, behind your windows, tappable
@@ -2001,6 +2004,8 @@ print()
   # is in the profile pool. It rewrites doc/ROADMAP.md only when one of
   # those numbers has actually moved, so it is safe to run in a hook.
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
+  # Reads the database and nothing else: no serial port, no adapter.
+  battery) shift; exec "$OMACAR_PY" "$ROOT/lib/battery_health.py" "$@" ;;
   cheatsheet|wallpaper) shift; exec python3 "$ROOT/lib/cheatsheet.py" "$@" ;;
   # SHUTTING DOWN IS A COMMAND, not two words buried in a button. The board
   # ran `systemctl poweroff` itself and looked at neither the exit code nor

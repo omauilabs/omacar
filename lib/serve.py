@@ -134,6 +134,7 @@ DEMO_ROUTES = {
     "/api/vehicles": READ,
     "/api/service-history": READ,
     "/api/ima": READ,
+    "/api/battery": READ,
     # Pictures, documents, procedures and what was learned, from the demo's
     # state (empty or seeded), and which private pictures exist (share/assets).
     "/api/photos": READ,

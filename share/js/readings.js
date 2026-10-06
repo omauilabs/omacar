@@ -8,6 +8,7 @@
 // Each entry now also names the PID it reads, so a tile can tell the two kinds
 // of empty apart: "the car does not report this" and "the car has not said yet".
 
+import { healthNote } from "./health.js";
 import { U, temp, econ, dist, vol, grouped, handingOver } from "./core.js";
 
 // The IMA tile's memory. A pack's direction cannot be read from one sample, so
@@ -138,6 +139,8 @@ const TILES = {
     // PID 0x5B: the pack's remaining life, which is not the manufacturer's
     // state of charge -- see the note on the dial in views/ima.js.
     label: "Hybrid pack",
+    // "Health: <verdict>" from the battery model, fetched lazily (health.js).
+    note: () => healthNote(),
     get: (v) => {
       const soc = v.HYBRID_BATTERY_REMAINING;
       return { v: num(soc, (x) => Math.round(x)), n: "%",
