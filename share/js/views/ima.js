@@ -783,30 +783,21 @@ export default function ima(root) {
   function health() {
     const hh = (doc && doc.health) || {};
     const series = hh.series || [];
-    const cap = hh.capacity || {};
 
     return h("section.sect",
       h("div.head",
         h("div", h("div.eyebrow", "Over time"),
           h("div.title", { style: { fontSize: "1.05rem" } },
-            "Pack health, and the frame waiting to hold it")),
+            "What the hybrid modules logged")),
         hh.span
           ? h("span.muted.right",
               `${hh.span.days < 1 ? "under a day" : Math.round(hh.span.days) + " days"} of record`)
           : null),
 
-      // The honest centrepiece: the series that would show degradation is
-      // empty, and saying why is worth more than drawing a flat line.
-      h("div.card" + (cap.have ? "" : ".ima-empty"),
-        h("div.eyebrow", "Pack capacity"),
-        h("div.title", { style: { fontSize: "1rem", marginTop: "2px" } },
-          cap.have ? "Trend" : "No history to draw"),
-        h("p.lede", { style: { marginTop: "6px" } }, cap.why || ""),
-        cap.fills_when
-          ? h("p.muted", { style: { marginTop: "8px" } },
-              "It fills from the first reading onward: " + cap.fills_when)
-          : null),
-
+      // Pack capacity used to sit here as an empty placeholder. The Pack
+      // health card at the top of the screen now owns capacity, with the
+      // session that will measure it, so this section keeps only the
+      // modules' own records over time.
       series.length
         ? h("div.grid.g2", ...series.map(seriesCard))
         : h("div.card", h("p.lede",
