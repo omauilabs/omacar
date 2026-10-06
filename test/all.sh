@@ -150,7 +150,7 @@ rm -rf "$SCRATCH_HOME"
 #            git, a write names its gate, and regenerating the roadmap is
 #            not counted as shipping. It never renders the whole block,
 #            because rendering runs this script.
-for suite in ima sitrep drive_report roadmap; do
+for suite in ima sitrep drive_report roadmap battery_health; do
   if [[ -x "$VENV/bin/python" ]]; then
     "$VENV/bin/python" "$ROOT/test/${suite}_test.py" || fails=$((fails + 1))
   else

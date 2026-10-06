@@ -1308,6 +1308,11 @@ def handle_get(path, query):
         # key rather than letting a hand-edited drive log become a 500.
         import ima
         return 200, ima.summary()
+    if path == "/api/battery":
+        # Same pattern as /api/ima: lazy import, and summary() is contracted
+        # never to raise -- it carries an "error" key instead of a 500.
+        import battery_health
+        return 200, battery_health.summary()
     if path == "/api/mode":
         # The tier, and what it permits, as one answer. The client needs both:
         # the tier to stamp on the document, and the verdicts to grey the right
