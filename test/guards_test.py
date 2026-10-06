@@ -3334,8 +3334,9 @@ check("pin records the hash and the size",
       (_pinned["sha256"] == _as.sha256(os.path.join(_d, "a.png")), _pinned["width"], _pinned["height"]),
       (True, 640, 480))
 _sh_a.rmtree(_d)
-check("the shipped manifest parses and names both car pictures",
-      sorted(_as.load_manifest()["assets"]), ["crz-home", "crz-xray"])
+check("the shipped manifest parses and names both car pictures and drowsy mode's five voice lines",
+      sorted(_as.load_manifest()["assets"]),
+      ["crz-home", "crz-xray", "voice-l1", "voice-l1-james", "voice-l2", "voice-l2-james", "voice-l3"])
 
 # ------------------------------------------------------------- the advisor
 head("The advisor asks Opus 5.5, and a cached answer names the model that gave it")

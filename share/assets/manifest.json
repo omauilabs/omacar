@@ -40,6 +40,31 @@
           0.9
         ]
       }
+    },
+    "voice-l1-james": {
+      "file": "voice/voice-l1-james.ogg",
+      "use": "Drowsy mode's spoken line: \"James, you seem tired. Plan a break soon.\" Piper, voice en_US-hfc_female-medium (dataset CC BY-NC-SA 4.0: personal, non-commercial use), Opus, peak -3 dBFS. Private because it carries the owner's name.",
+      "sha256": "d68a312985868964b86112eab6b1a41cb83a76821d300a23e7c2eb165dccb718"
+    },
+    "voice-l1": {
+      "file": "voice/voice-l1.ogg",
+      "use": "Drowsy mode's spoken line: \"You seem tired. Plan a break soon.\" Piper, voice en_US-hfc_female-medium (dataset CC BY-NC-SA 4.0: personal, non-commercial use), Opus, peak -3 dBFS. Private because it carries the owner's name.",
+      "sha256": "526ee780e679ffad6c4b6655c4688b11dbee1b7277549b4e5fcc0c8e83677fdd"
+    },
+    "voice-l2-james": {
+      "file": "voice/voice-l2-james.ogg",
+      "use": "Drowsy mode's spoken line: \"James, are you with me?\" Piper, voice en_US-hfc_female-medium (dataset CC BY-NC-SA 4.0: personal, non-commercial use), Opus, peak -3 dBFS. Private because it carries the owner's name.",
+      "sha256": "0468473f0e59024cc608e7210552b7f49950fe5c0bd7884b5764ba6d21f08491"
+    },
+    "voice-l2": {
+      "file": "voice/voice-l2.ogg",
+      "use": "Drowsy mode's spoken line: \"Are you with me?\" Piper, voice en_US-hfc_female-medium (dataset CC BY-NC-SA 4.0: personal, non-commercial use), Opus, peak -3 dBFS. Private because it carries the owner's name.",
+      "sha256": "2034150b8e2f1347f3ea012e853bc9633678f1681df576c0b7c5ce8b993668b8"
+    },
+    "voice-l3": {
+      "file": "voice/voice-l3.ogg",
+      "use": "Drowsy mode's spoken line: \"Pull over now.\" Piper, voice en_US-hfc_female-medium (dataset CC BY-NC-SA 4.0: personal, non-commercial use), Opus, peak -3 dBFS. Private because it carries the owner's name.",
+      "sha256": "0e9a781048a56ca5acb30c23e5f8111e956d46f1401c7ae1d4ecfe779af0cb2d"
     }
   },
   "fetch": {
