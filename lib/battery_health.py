@@ -28,6 +28,7 @@ import os
 import sqlite3
 import statistics
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import records  # noqa: E402
@@ -221,9 +222,15 @@ def summary():
         db = records.connect_rw()
         try:
             db.execute(TABLE)
-            newest = db.execute("SELECT MAX(t) FROM samples").fetchone()[0]
+            # Rebuild once per finished drive, not on every call: only when a
+            # driving sample is newer than the table and that drive has ended
+            # (no driving for GAP_S seconds). Parked samples and a drive
+            # still under way leave the table alone.
+            newest = db.execute("SELECT MAX(t) FROM samples WHERE speed > 3 "
+                                "AND soc IS NOT NULL").fetchone()[0]
             built = db.execute("SELECT MAX(t1) FROM battery_health").fetchone()[0]
-            if newest is not None and (built is None or newest > built):
+            if newest is not None and (built is None or newest > built) \
+                    and time.time() - newest > GAP_S:
                 rebuild(db)
             hist = history(db)
         finally:
