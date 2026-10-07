@@ -2548,7 +2548,7 @@ class EchoingElm:
             self._put(cmd.encode() + b"\r")
         if cmd == "ATE0":
             self.echo = False
-            self._put(b"OK\r")
+            self._put(b"OK\r\r>")                    # and its prompt
         elif cmd.startswith("ATBRD"):
             if not self.brd:
                 self._put(b"?\r")
@@ -2582,9 +2582,17 @@ class EchoingElm:
         return self._take(n)
 
     def read_until(self, term=b"\r"):
-        data = self._front()
-        i = data.find(term)
-        return self._take(i + 1 if i >= 0 else len(data))
+        # Across segments, as a serial port does: an echo and the answer
+        # after it are one stream of bytes to the host.
+        out = b""
+        while True:
+            data = self._front()
+            if not data:
+                return out
+            i = data.find(term)
+            if i >= 0:
+                return out + self._take(i + 1)
+            out += self._take(len(data))
 
 
 def _fresh_elm(**kw):
@@ -2678,6 +2686,10 @@ class _HandshakeElm(EchoingElm):
             raise sys.modules["serial"].SerialException("[Errno 5] Input/output error")
         if cmd == "ATE0" and self.fail == "echo-off ignored":
             return                       # mid-reset: nothing said, echo stays on
+        if cmd == "ATE0" and self.fail == "banner":
+            self.fail = None             # mid-reset: the reset's banner answers
+            self._put(b"\r\rELM327 v1.4b\r\r>")
+            return
         was = self.rate
         super().write(data)
         if cmd.startswith("ATBRD") and self.rate != was:
@@ -2709,7 +2721,7 @@ check("and every step it took, in order",
       [s.get("step") for s in _hf.get("steps") or []],
       ["echo-off", "ATBRD OK", "ident", "final OK"])
 check("the echo-off's reply is read before it is thrown away",
-      _said(_h, "echo-off"), "ATE0\rOK\r")
+      _said(_h, "echo-off"), "ATE0\rOK\r\r>")
 check("the identification is what the adapter sent at the new rate",
       _said(_h, "ident"), "ELM327 v1.4b\r")
 check("each step says how long its answer took",
@@ -2743,6 +2755,34 @@ check("which heard its own command echoed back", _said(_h, "ATBRD OK"), "ATBRD 0
 check("and the echo-off before it heard nothing at all", _said(_h, "echo-off"), "")
 check("the adapter fell back, and so did the link", (_hf.get("link_baud"), _h.ser.rate),
       (115200, 115200))
+
+# MEASURED ON THE CAR, 6 OCTOBER. init() starts this 0.5 s after ATZ, and the
+# adapter was still resetting: ATE0 drew nothing in 250 ms, and ATBRD's
+# "answer" was a bare CR -- the head of the reset banner. Read to the prompt,
+# the banner is the echo-off's answer instead, and a second ATE0 is the one
+# that takes. Raised that way it carried 28,565 frames in 15 s.
+_h = _stepped(fail="banner")
+check("an adapter still answering ATZ when ATE0 arrives is raised",
+      _h.raise_baud(500000), True)
+_hf = getattr(_h, "fastbaud", None) or {}
+check("after a second echo-off",
+      [s.get("step") for s in _hf.get("steps") or []],
+      ["echo-off", "echo-off", "ATBRD OK", "ident", "final OK"])
+check("the first of which heard the banner",
+      _said(_h, "echo-off"), "\r\rELM327 v1.4b\r\r>")
+check("both ends end up on 500000", (_h.ser.baudrate, _h.ser.rate), (500000, 500000))
+
+# A blank line ahead of ATBRD's OK is skipped, not taken for the answer.
+_h = _stepped()
+_orig_bw = _h.ser.write
+def _blank_first(d, _w=_orig_bw, _s=_h.ser):
+    _w(d)
+    if d.startswith(b"ATBRD"):
+        _s.segs.insert(0, (115200, b"\r"))
+_h.ser.write = _blank_first
+check("a blank line before ATBRD's OK does not fail the raise",
+      _h.raise_baud(500000), True)
+check("and ATBRD's answer recorded is the OK", _said(_h, "ATBRD OK"), "OK\r")
 
 # The ident at the new rate.
 _h = _stepped(fail="ident")
