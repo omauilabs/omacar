@@ -193,7 +193,9 @@ const TILES = {
     sampled: true,
     get: (v, s, car) => {
       const hy = hybridNow(s, car);
-      if (!hy || hy.flow.value === null) return { v: "—", n: "no speed reading" };
+      if (!hy || hy.flow.value === null) {
+        return { v: "—", n: s && s.connected ? "no speed reading" : "Waiting for the car" };
+      }
       const f = hy.flow;
       return { v: f.label, n: f.source === "measured" ? "" : f.source,
                tone: f.value < -0.05 ? "good" : "", source: f.source };

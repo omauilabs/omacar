@@ -84,4 +84,11 @@ export default [
     eq(h.charge.value, null);
     eq(h.charge.source, "not found yet");
   }],
+  ["with no car the flow reading waits, in the words every reading uses", async () => {
+    const { READINGS } = await import("../js/readings.js");
+    resetHybrid();
+    eq(READINGS.flow.get({}, { connected: false, values: {} }, car()).n, "Waiting for the car");
+    resetHybrid();
+    eq(READINGS.flow.get({}, { connected: true, values: {} }, car()).n, "no speed reading");
+  }],
 ];
