@@ -112,8 +112,10 @@ quantity it is. Nothing is polled that was not polled before.
   `test/js/handover.test.js`. The two can briefly differ (the estimate reacts
   to braking at once; the charge moves seconds later); the flow bar is the one
   meant for glancing.
-- **The demo's drive layout is the app default**, which this does not change;
-  the tile is added to the demo by hand in the editor before the meetup.
+- **The demo's drive screen gets the tile from `omacar demo on`.** The demo
+  serves the drive layout read-only, so its editor cannot add it; a demo with
+  no layout of its own is given one (flow, economy, coolant) inside its own
+  config folder. The live app's default layout is unchanged.
 
 ## Not in this design
 
