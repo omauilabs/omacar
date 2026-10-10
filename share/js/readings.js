@@ -9,6 +9,7 @@
 // of empty apart: "the car does not report this" and "the car has not said yet".
 
 import { healthNote } from "./health.js";
+import { hybridNow } from "./hybrid.js";
 import { U, temp, econ, dist, vol, grouped, handingOver } from "./core.js";
 
 // The IMA tile's memory. A pack's direction cannot be read from one sample, so
@@ -182,6 +183,27 @@ const TILES = {
       lastIma = imaNow(v.HYBRID_BATTERY_REMAINING);
       return lastIma;
     },
+  },
+  // ASSIST AND REGEN, ONE BAR EITHER SIDE OF ZERO (share/js/hybrid.js). No
+  // pid: it is worked out from the sample, so it pauses with the sample. The
+  // note under it always says where it came from -- "estimated" until a
+  // validated pack-current reading exists, "simulated" in the demo.
+  flow: {
+    label: "Hybrid flow",
+    sampled: true,
+    get: (v, s, car) => {
+      const hy = hybridNow(s, car);
+      if (!hy || hy.flow.value === null) return { v: "—", n: "no speed reading" };
+      const f = hy.flow;
+      return { v: f.label, n: f.source === "measured" ? "" : f.source,
+               tone: f.value < -0.05 ? "good" : "", source: f.source };
+    },
+    read: (v, s, car) => {
+      const hy = hybridNow(s, car);
+      return hy && hy.flow.value !== null ? Math.round(hy.flow.value * 100) : null;
+    },
+    scale: () => ({ min: -100, max: 100, step: 50,
+                    tick: (x) => (x < 0 ? "Charge" : x > 0 ? "Assist" : "0") }),
   },
   fuel: {
     pid: "FUEL_LEVEL",

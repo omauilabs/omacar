@@ -55,6 +55,7 @@ import { pausedNote } from "../readings.js";
 import { sparkline } from "../charts.js";
 import { sparkPath } from "../spark.js";
 import { healthLine } from "../health.js";
+import { makeHybridLive } from "../hybridlive.js";
 export { healthLine };
 
 // core.js owns the `api` object and this pass does not own core.js, so the
@@ -220,6 +221,10 @@ export default function ima(root) {
 
   const wrap = h("div.ima");
   root.appendChild(wrap);
+  // The Live section is built once and painted on every sample, apart from
+  // draw(), which rebuilds the rest of the page from /api/ima.
+  const live = makeHybridLive();
+  const paintLive = () => live.paint(store.car, store.shown);
 
   // What the last successful fetch looked like, so a quiet poll that finds
   // nothing new can leave the DOM completely alone.
@@ -972,6 +977,8 @@ export default function ima(root) {
         h("p.lede", doc.error)));
     }
     wrap.appendChild(header());
+    wrap.appendChild(live.node);
+    paintLive();
     if (battery && !battery.error) wrap.appendChild(healthCard(battery));
     const dial = chargeDial();
     if (dial) {
@@ -992,7 +999,7 @@ export default function ima(root) {
 
   // THE PAUSED STATE ARRIVES ON THE STORE, not with /api/ima, so a hand-off
   // starting or ending redraws the dial -- when that flips, and only then.
-  const onSample = () => { if (store.paused !== drawnPaused) draw(); };
+  const onSample = () => { if (store.paused !== drawnPaused) draw(); else paintLive(); };
   const offCar = store.on("car", onSample);
   const offLive = store.on("live", onSample);
 

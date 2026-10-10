@@ -535,6 +535,14 @@ check("a validated entry with a broken formula is dropped, not guessed at",
 check("the catalogue carries no header and no formula",
       set(signals.catalogue({"pid": [entry("validated")]})[0].keys()),
       {"id", "name", "unit"})
+check("a known pack quantity reaches the catalogue",
+      signals.catalogue({"pid": [dict(entry("validated"), quantity="ima.amps")]})[0]
+      .get("quantity"), "ima.amps")
+check("an unknown quantity is dropped, not guessed at",
+      "quantity" in signals.catalogue(
+          {"pid": [dict(entry("validated"), quantity="ima.amp")]})[0], False)
+check("a candidate with a quantity still never reaches the daemon",
+      signals.validated({"pid": [dict(entry("candidate"), quantity="ima.amps")]}), [])
 check("payload offset for a 0x22 reply skips 62 + two DID bytes",
       signals.payload_offset("22F181"), 3)
 # ONE TABLE, AND IT COVERS EVERY SERVICE ANY SWEEP MAY ASK. A second copy of

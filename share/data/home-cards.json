@@ -8,6 +8,7 @@
     "volts":    { "label": "12V system",    "reading": "volts",    "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
     "fuel":     { "label": "Fuel",          "reading": "fuel",     "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
     "charge":   { "label": "Hybrid pack",   "reading": "charge",   "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
+    "flow":     { "label": "Hybrid flow",   "reading": "flow",     "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
     "intake":   { "label": "Intake air",    "reading": "intake",   "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
     "econ_now": { "label": "Economy",       "reading": "econ_now", "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
     "phone":    { "label": "Phone",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },

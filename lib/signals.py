@@ -169,6 +169,13 @@ def is_valid_formula(formula):
 
 
 # --------------------------------------------------------------- the entries
+# WHICH PACK QUANTITY A READING IS, for the hybrid gauges (share/js/hybrid.js).
+# Optional, and only these spellings: an unknown quantity is dropped, not
+# guessed at, so a typo leaves the gauge saying "not found yet" rather than
+# drawing some other reading as pack current.
+QUANTITIES = ("ima.volts", "ima.amps", "ima.temp")
+
+
 def validated(doc):
     """The profile entries allowed to drive a reading, and nothing else.
 
@@ -192,6 +199,8 @@ def validated(doc):
             "request": request,
             "formula": formula,
         })
+        if p.get("quantity") in QUANTITIES:
+            out[-1]["quantity"] = p["quantity"]
     return out
 
 
@@ -270,5 +279,5 @@ def commands(doc):
 def catalogue(doc):
     """What the app needs to draw a tile: id, name, unit. No formula, no
     header -- the browser does not send requests, it shows numbers."""
-    return [{"id": e["id"], "name": e["name"], "unit": e["unit"]}
+    return [{k: e[k] for k in ("id", "name", "unit", "quantity") if k in e}
             for e in validated(doc)]
