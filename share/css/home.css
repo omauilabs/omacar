@@ -94,6 +94,9 @@
   background: radial-gradient(ellipse at 50% 62%, color-mix(in srgb, var(--ink) 6%, var(--panel)), var(--panel) 72%); }
 .car-stage { position: absolute; inset: 0; }
 .car-img { position: absolute; inset: 6% 4%; width: 92%; height: 88%; object-fit: contain; }
+/* The turning 3D car (share/js/car3d.js), in the same frame the picture fills. */
+.car-3d { position: absolute; inset: 2% 2% 10%; }
+.car-3d[hidden] { display: none; }
 .car-slot { position: absolute; inset: 14% 10%; display: grid; place-items: center;
             border: 1.5px dashed var(--edge-2); border-radius: var(--r); color: var(--faint); font-size: .8rem; }
 .callout { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 6px;

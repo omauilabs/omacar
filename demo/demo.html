@@ -163,6 +163,11 @@
 <link rel="stylesheet" href="demo/css/agent.css">
 <link rel="stylesheet" href="demo/css/work.css">
 <link rel="stylesheet" href="demo/css/nofootage.css">
+<!-- three.js r185, vendored (doc/car3d.md). Before any module script, or the
+     bare "three" specifier car3d.js and GLTFLoader share does not resolve. -->
+<script type="importmap">
+{"imports":{"three":"/vendor/three/three.module.min.js","three/addons/":"/vendor/three/addons/"}}
+</script>
 <script type="module" src="demo/js/boot.js"></script>
 <script type="module" src="js/main.js"></script>
 <!-- Loaded after the app, and separately, because it is not part of any view:

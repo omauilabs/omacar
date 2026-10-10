@@ -30,3 +30,4 @@ share/assets/private/
 # assets fetch` and held to the pins in share/assets/manifest.json. Never
 # committed: megabytes of binaries in a public repository.
 share/js/vendor/mediapipe/
+share/models/
