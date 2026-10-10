@@ -146,19 +146,19 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # Bracketed: 30 short legs, each in a gap between charge readings, like the
     # recorder's real legs (it cannot poll while it listens to the bus).
-    def make_legs(dirpath, dbpath, gap):
+    def make_legs(dirpath, dbpath, gap, legs=30, secs=4):
         os.makedirs(dirpath)
         db = sqlite3.connect(dbpath)
         db.execute("CREATE TABLE samples(t REAL PRIMARY KEY, rpm, speed, load, throttle,"
                    " coolant, intake, maf, stft, ltft, timing, lphk, eff, soc)")
-        for k in range(30):
+        for k in range(legs):
             o = 100 * k
-            for ts in (o - gap, o + 4 + gap):
+            for ts in (o - gap, o + secs + gap):
                 db.execute("INSERT INTO samples VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (T0 + ts, 1500, 50, 30, 20, 80, 30, 5, 0, 0, 10, 0, 0,
                             soc_at(ts)))
             raw = []
-            for i in range(40):
+            for i in range(secs * 10):
                 t = i / 10.0
                 raw.append({"t": t, "id": "1A6",
                             "data": f"0000{round(soc_at(o + t)):02X}00"})
@@ -182,6 +182,19 @@ with tempfile.TemporaryDirectory() as tmp:
           all(c["bracketed"] == c["bins"] for c in c6), str(c6[:1]))
     check("the summary reports the bracketed legs", "30 are bracketed" in p.stdout,
           p.stdout)
+    check("a candidate says how many captures it rests on",
+          bool(c6) and c6[0].get("captures") == 30, str(c6[:1]))
+    check("1A6 byte 2 moves inside a capture", bool(c6) and c6[0].get("moves_within") is True,
+          str(c6[:1]))
+
+    # Twelve longer legs: over 60 bins, but bracketing makes each leg ONE point
+    # against charge, and twelve points is not a lead.
+    caps8, db8 = os.path.join(tmp, "caps8"), os.path.join(tmp, "few-legs.db")
+    make_legs(caps8, db8, 3, legs=12, secs=7)
+    p = run(caps8, db8, os.path.join(tmp, "out8"))
+    check("fewer than 20 bracketed captures give no candidate, however many bins",
+          json.load(open(os.path.join(tmp, "out8", "candidates.json"))) == []
+          and "12 are bracketed" in p.stdout, p.stdout)
 
     caps7, db7 = os.path.join(tmp, "caps7"), os.path.join(tmp, "far-legs.db")
     make_legs(caps7, db7, 45)
