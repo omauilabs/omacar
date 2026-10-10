@@ -530,7 +530,8 @@ def expected_running(env):
         "between": num("OMACAR_DRIVELOG_BETWEEN", drivelog.BETWEEN_LEGS),
         "leg_lines": num("OMACAR_DRIVELOG_LEG_LINES", listenlib.DEFAULT_LIMIT, int),
         "quiet": num("OMACAR_DRIVELOG_QUIET", drivelog.QUIET_TIMEOUT),
-        "end_on_overflow": env.get("OMACAR_DRIVELOG_END_ON_OVERFLOW") == "1",
+        "end_on_overflow": {"1": True, "0": False}.get(
+            env.get("OMACAR_DRIVELOG_END_ON_OVERFLOW"), drivelog.END_ON_OVERFLOW),
     }
 
 

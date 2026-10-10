@@ -3517,7 +3517,7 @@ try:
     check("unset, the leg cap keeps listen's own default",
           _ov["leg_lines"], _ln.DEFAULT_LIMIT)
     check("unset, quiet keeps its default", _ov["quiet"], _dl.QUIET_TIMEOUT)
-    check("unset, ending on overflow is off", _ov["end_on_overflow"], False)
+    check("unset, ending on overflow is on", _ov["end_on_overflow"], True)
     check("and nothing was overridden", _ov["notes"], [])
 
     os.environ["OMACAR_DRIVELOG_BETWEEN"] = "240"
@@ -3543,8 +3543,12 @@ try:
           _ov["leg_lines"], _ln.DEFAULT_LIMIT)
     check("a value above the ceiling falls back to the default",
           _ov["quiet"], _dl.QUIET_TIMEOUT)
-    check("only the exact flag turns overflow-ending on",
-          _ov["end_on_overflow"], False)
+    check("an unrecognised overflow flag keeps the default, on",
+          _ov["end_on_overflow"], True)
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "0"
+    check("exactly \"0\" turns overflow-ending off",
+          _dl.read_overrides()["end_on_overflow"], False)
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "yes"
     # A GUARD THAT CANNOT FAIL IS NOT A GUARD. Confirmed by hand: disabling
     # the `if not (lo <= val <= hi):` bounds check in _env_number() (so an
     # out-of-range value is accepted rather than falling back) turned the two
