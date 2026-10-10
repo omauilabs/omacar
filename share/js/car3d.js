@@ -587,10 +587,20 @@ async function start(host, gpu, { rotate, drag, setState }) {
   // fixed by the lens; the horizontal one falls out of the aspect ratio, and
   // on a phone in portrait it is the tighter of the two -- which is exactly
   // the case a fixed distance gets wrong, by cropping the nose and tail off.
+  //
+  // THE TWO FIELDS ARE FITTED SEPARATELY. The sphere is as tall as the car is
+  // long, so fitting it into the vertical field left a low coupe in a wide card
+  // a third of the card's width (Home, 2026-10-10). Across, the car can turn
+  // its full length to the camera, so the sphere still governs; up and down,
+  // what the camera sees from 14 degrees is the car's own height plus the
+  // little of its length the elevation tips into view.
+  const tall = (bounds.max.y - bounds.min.y) / 2 * Math.cos(ELEVATION)
+    + radius * Math.sin(ELEVATION);
   function frame() {
     const vFov = camera.fov * (Math.PI / 180);
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
-    distance = (radius * MARGIN) / Math.sin(Math.min(vFov, hFov) / 2);
+    distance = Math.max((radius * MARGIN) / Math.tan(hFov / 2),
+                        (tall * MARGIN) / Math.tan(vFov / 2));
     camera.near = Math.max(0.01, distance - radius * 2);
     camera.far = distance + radius * 4;
     camera.updateProjectionMatrix();
@@ -762,6 +772,27 @@ async function start(host, gpu, { rotate, drag, setState }) {
       canvas.remove();
     },
   };
+}
+
+// THE CAR IN 3D WHEN IT CAN BE, A PICTURE WHEN IT CANNOT -- for a card that has
+// a picture of its own (Home's car card, the demo's). mountCar() on `stage`,
+// and onMode(true) while the 3D car is the thing on show, onMode(false) the
+// moment it is not: no model, no WebGL, a software renderer, a lost context or
+// a machine too slow for it. The card then shows its picture rather than
+// mountCar()'s silhouette, so a card never ends up emptier than it was before
+// a model existed. Returns the teardown, which releases the GL context.
+const SHOWN = new Set(["loading", "live", "degraded"]);
+
+export function carOrPicture(stage, onMode) {
+  stage.hidden = true;
+  return mountCar(stage, {
+    onState(st) {
+      if (st === "probing") return;
+      const on = SHOWN.has(st);
+      stage.hidden = !on;
+      onMode(on, st);
+    },
+  });
 }
 
 export default mountCar;

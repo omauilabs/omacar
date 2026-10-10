@@ -28,6 +28,7 @@
 
 import { h, store, toast } from "../../js/core.js";
 import { tyreState } from "../../js/systems.js";
+import { carOrPicture } from "../../js/car3d.js";
 import { register as navigation, mountMap } from "./views/navigation.js";
 import { register as navCard } from "./cards/navcard.js";
 import { register as agentCard } from "./cards/agentcard.js";
@@ -91,13 +92,22 @@ Promise.resolve().then(() => radio.load()).catch((e) => console.warn("Omarchy Ra
 // tools/demo_carpic.py), and the live card's own tyre callout.
 const CAR_PICTURE = "/demo-media/crz-home.png";
 D.cards.car = function carCard() {
+  // The owner's 3D CR-Z turns here when car3d.js can draw it (carOrPicture);
+  // the picture is what shows otherwise, as it always did.
   const img = h("img.car-img", { alt: "", hidden: true, draggable: "false" });
-  img.addEventListener("load", () => { img.hidden = false; });
+  let loaded = false, threeD = false;
+  img.addEventListener("load", () => { loaded = true; img.hidden = threeD; });
   img.src = CAR_PICTURE;
+  const stage3d = h("div.car-3d");
   const tyre = h("div.callout", { data: { tone: "" }, style: { left: "50%", top: "92%" } },
     h("span.co-dot"), h("span.co-k", "Tyres"), h("span.co-v"));
   const value = tyre.querySelector(".co-v");
-  const node = h("div.card.hc.hc-car.dm-car", h("div.car-stage", img, tyre));
+  const node = h("div.card.hc.hc-car.dm-car", h("div.car-stage", stage3d, img, tyre));
+  const unmount3d = carOrPicture(stage3d, (on) => {
+    threeD = on;
+    img.hidden = on || !loaded;
+    node.dataset.car = on ? "3d" : "picture";
+  });
   return {
     node,
     paint() {
@@ -105,6 +115,7 @@ D.cards.car = function carCard() {
       if (tyre.dataset.tone !== st.tone) tyre.dataset.tone = st.tone;
       if (value.textContent !== st.text) value.textContent = st.text;
     },
+    destroy() { unmount3d(); },
   };
 };
 

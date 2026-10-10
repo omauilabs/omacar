@@ -18,6 +18,7 @@ import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.
 import { savedLook, mountLookEffect } from "../looks.js";
 import { startEditing } from "../homeedit.js";
 import { latestAdvice } from "../advice.js";
+import { carOrPicture } from "../car3d.js";
 
 const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
@@ -111,18 +112,32 @@ function dialCard() {
   };
 }
 
+// THE CAR: IN 3D WHEN IT CAN BE, THE PICTURE WHEN IT CANNOT (car3d.js
+// carOrPicture). The owner's own model, share/models/crz.glb, is git-ignored:
+// a bought model and a manufacturer's design stay out of a public repository.
 function carCard() {
   const img = h("img.car-img", { alt: "", hidden: true, draggable: "false" });
   const slot = h("div.car-slot", h("span", "Your car's picture goes here"));
+  const stage3d = h("div.car-3d");
   const tyre = h("div.callout", { data: { tone: "" } },
     h("span.co-dot"), h("span.co-k", "Tyres"), h("span.co-v"));
-  const node = h("div.card.hc.hc-car", h("div.car-stage", img, slot, tyre));
+  const node = h("div.card.hc.hc-car", h("div.car-stage", stage3d, img, slot, tyre));
+  let picture = null;
+  let threeD = false;
+  const show = () => {
+    img.hidden = threeD || !picture;
+    if (!img.hidden && !img.src) img.src = picture.url;
+    slot.hidden = threeD || !!picture;
+    node.dataset.car = threeD ? "3d" : picture ? "picture" : "none";
+  };
   asset("crz-home").then((a) => {
-    if (a && a.url) { img.src = a.url; img.hidden = false; slot.hidden = true; }
+    picture = a && a.url ? a : null;
+    show();
     const at = (a && a.anchors && a.anchors.tyres) || [0.5, 0.9];
     tyre.style.left = (at[0] * 100) + "%";
     tyre.style.top = (at[1] * 100) + "%";
   });
+  const unmount3d = carOrPicture(stage3d, (on) => { threeD = on; show(); });
   return {
     node,
     paint() {
@@ -130,6 +145,7 @@ function carCard() {
       tyre.dataset.tone = st.tone;
       text(tyre.querySelector(".co-v"), st.text);
     },
+    destroy() { unmount3d(); },
   };
 }
 
