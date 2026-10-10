@@ -489,7 +489,8 @@ button { font: inherit; color: inherit; }
    without it a grid row refuses to shrink below its content and the bar gets
    pushed off the bottom of the screen by a long view. */
 .stage {
-  grid-area: stage; padding: 22px 26px 40px; overflow-y: auto; min-height: 0;
+  --stage-pad-t: 22px; --stage-pad-b: 40px;
+  grid-area: stage; padding: var(--stage-pad-t) 26px var(--stage-pad-b); overflow-y: auto; min-height: 0;
   overscroll-behavior: contain; transition: opacity .2s;
 }
 /* No visible ring on the stage itself: go() moves focus here after a
@@ -1776,7 +1777,10 @@ ul.tight li { margin-bottom: 5px; }
    clears 64px because the person pressing it is sitting in a car that is
    already running, and often in the dark. */
 .launch {
-  min-height: calc(100vh - var(--vbar) - var(--nav));
+  /* The stage's own padding too, or the screen is 62px taller than the stage
+     and the kiosk shows a scrollbar on the one screen with nothing to scroll
+     (seen on the tablet, 2026-10-10). */
+  min-height: calc(100vh - var(--vbar) - var(--nav) - var(--stage-pad-t) - var(--stage-pad-b));
   display: flex; flex-direction: column; align-items: center;
   justify-content: safe center; gap: clamp(10px, 2.2vh, 26px);
   padding: clamp(16px, 4vh, 48px); text-align: center;
