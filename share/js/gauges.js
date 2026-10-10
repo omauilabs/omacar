@@ -327,8 +327,13 @@ function bar(def) {
   value.textContent = "—";
   const unit = document.createElement("span");
   unit.className = "g-bar-n";
+  // EST / SIM: where a worked-out or simulated reading says so in type as
+  // large as the number, not in a footnote (share/js/hybrid.js).
+  const tag = document.createElement("span");
+  tag.className = "g-bar-tag";
   head.appendChild(value);
   head.appendChild(unit);
+  head.appendChild(tag);
 
   const track = document.createElement("div");
   track.className = "g-bar-track";
@@ -382,11 +387,15 @@ function bar(def) {
       fill.style.left = (Math.min(zeroT, at) * 100).toFixed(1) + "%";
       fill.style.width = (Math.abs(at - zeroT) * 100).toFixed(1) + "%";
       value.textContent = out.v;
-      unit.textContent = out.n || "";
+      unit.textContent = out.source ? "" : out.n || "";
+      tag.textContent = TAGS[out.source] || "";
       wrap.dataset.tone = out.tone || "";
+      wrap.dataset.source = out.source || "";
     },
   };
 }
+
+const TAGS = { estimated: "EST", simulated: "SIM" };
 
 const BUILDERS = { digital, dial, arc, bar };
 

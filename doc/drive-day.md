@@ -195,9 +195,11 @@ different in kind from `OMACAR_FASTBAUD` and `OMACAR_CAF0` above:
   leg starts: set-up (ATZ, the protocol search and the probe) took about
   11.5s at 115200 on 29 September, and until that was fixed a 10s QUIET
   ended every leg before its first frame.
-- `OMACAR_DRIVELOG_END_ON_OVERFLOW=1` — end a leg the moment the adapter
+- `OMACAR_DRIVELOG_END_ON_OVERFLOW` — end a leg the moment the adapter
   itself says `BUFFER FULL` or `STOPPED` (`Capture.overflowed()`), instead of
-  waiting out the full quiet timeout afterwards. Off by default; see below.
+  waiting out the full quiet timeout afterwards. **On by default since
+  2026-10-10**: an overflowed adapter sends nothing more, so the wait only
+  blanked the gauges. `=0` turns it off; `=1` is the default spelled out.
 
 A bad value for any of the first three (unparseable, or outside a sane
 floor/ceiling) is logged and the default used instead — it costs the
@@ -207,7 +209,8 @@ to the day's trip log at start-up.
 
 | Setup | A leg holds the port for | Then the gap is | Cycle | Telemetry |
 |---|---|---|---|---|
-| Default (nothing set) | ~120s — a 75ms burst, then the 120s quiet timeout waits out the silence | 90s | ~210s | **~43%** |
+| Default before 2026-10-10 (overflow did not end a leg) | ~120s — a 75ms burst, then the 120s quiet timeout waits out the silence | 90s | ~210s | **~43%** |
+| Default now (nothing set) | ~13s — set-up, a 75ms burst, then the 1s overflow settle | 90s | ~103s | **~87%** (estimated, not yet measured in the car) |
 | Fast link alone, default gap — this is also the **balanced** preset below | ~31s — the 60,000-line default cap at the ~1,900 lines/s measured above | 90s | ~121s | **~74%** |
 | **Telemetry-first** preset below | ~5s — a 10,000-line cap at the same ~1,900 lines/s, plus a few seconds of hand-over | 240s | ~250s | **roughly 95%** |
 

@@ -535,6 +535,14 @@ check("a validated entry with a broken formula is dropped, not guessed at",
 check("the catalogue carries no header and no formula",
       set(signals.catalogue({"pid": [entry("validated")]})[0].keys()),
       {"id", "name", "unit"})
+check("a known pack quantity reaches the catalogue",
+      signals.catalogue({"pid": [dict(entry("validated"), quantity="ima.amps")]})[0]
+      .get("quantity"), "ima.amps")
+check("an unknown quantity is dropped, not guessed at",
+      "quantity" in signals.catalogue(
+          {"pid": [dict(entry("validated"), quantity="ima.amp")]})[0], False)
+check("a candidate with a quantity still never reaches the daemon",
+      signals.validated({"pid": [dict(entry("candidate"), quantity="ima.amps")]}), [])
 check("payload offset for a 0x22 reply skips 62 + two DID bytes",
       signals.payload_offset("22F181"), 3)
 # ONE TABLE, AND IT COVERS EVERY SERVICE ANY SWEEP MAY ASK. A second copy of
@@ -3557,7 +3565,7 @@ try:
     check("unset, the leg cap keeps listen's own default",
           _ov["leg_lines"], _ln.DEFAULT_LIMIT)
     check("unset, quiet keeps its default", _ov["quiet"], _dl.QUIET_TIMEOUT)
-    check("unset, ending on overflow is off", _ov["end_on_overflow"], False)
+    check("unset, ending on overflow is on", _ov["end_on_overflow"], True)
     check("and nothing was overridden", _ov["notes"], [])
 
     os.environ["OMACAR_DRIVELOG_BETWEEN"] = "240"
@@ -3583,8 +3591,12 @@ try:
           _ov["leg_lines"], _ln.DEFAULT_LIMIT)
     check("a value above the ceiling falls back to the default",
           _ov["quiet"], _dl.QUIET_TIMEOUT)
-    check("only the exact flag turns overflow-ending on",
-          _ov["end_on_overflow"], False)
+    check("an unrecognised overflow flag keeps the default, on",
+          _ov["end_on_overflow"], True)
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "0"
+    check("exactly \"0\" turns overflow-ending off",
+          _dl.read_overrides()["end_on_overflow"], False)
+    os.environ["OMACAR_DRIVELOG_END_ON_OVERFLOW"] = "yes"
     # A GUARD THAT CANNOT FAIL IS NOT A GUARD. Confirmed by hand: disabling
     # the `if not (lo <= val <= hi):` bounds check in _env_number() (so an
     # out-of-range value is accepted rather than falling back) turned the two

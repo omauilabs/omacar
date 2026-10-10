@@ -222,3 +222,18 @@
   stroke-linejoin: round; stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
+
+/* The Live section (share/js/hybridlive.js). */
+.hybrid-live .hl-flow { margin: .4rem 0 .8rem; }
+.hybrid-live .hl-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; }
+@media (max-width: 720px) { .hybrid-live .hl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.hl-cell { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.hl-k { font-size: .8rem; color: var(--ghost); }
+.hl-val { display: flex; align-items: baseline; gap: .5em; }
+.hl-v { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.hl-src { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ghost); }
+.hl-cell svg { width: 100%; height: 28px; }
+.hl-cell svg path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.hl-note { margin: 0; font-size: .78rem; }
+.hl-cell[data-found="no"] { opacity: .55; }
+.hybrid-live[data-state="paused"] .hl-v { color: var(--ghost); }

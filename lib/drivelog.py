@@ -76,6 +76,14 @@ LIVE_STALE = 90.0           # a live.json older than this tells us nothing
 # more bytes through pyserial's 512-byte reads when the overflow word lands.
 OVERFLOW_SETTLE = 1.0
 
+# ON BY DEFAULT since 2026-10-10. Once the adapter has said BUFFER FULL or
+# STOPPED it sends nothing until a fresh ATMA, so waiting out QUIET_TIMEOUT
+# after that held a silent port for up to 120 s a leg: the gauges and the
+# charge readings went dark for two minutes to record nothing. On the real
+# captures of September, legs held 0.3 s of frames and the next charge reading
+# came 30-130 s later. OMACAR_DRIVELOG_END_ON_OVERFLOW=0 turns it off.
+END_ON_OVERFLOW = True
+
 STATE = os.path.join(records.STATE, "drivelog.json")
 OFFFILE = os.path.join(records.STATE, "drivelog-off")
 LOGDIR = os.path.join(records.STATE, "drivelog")
@@ -143,10 +151,11 @@ def read_overrides():
     leg_lines, n2 = _env_number(_ENV_LEG_LINES, listenlib.DEFAULT_LIMIT,
                                 _LEG_LINES_BOUNDS, cast=int)
     quiet, n3 = _env_number(_ENV_QUIET, QUIET_TIMEOUT, _QUIET_BOUNDS)
-    # Exact-match "1", the same as OMACAR_FASTBAUD and OMACAR_CAF0 -- an
-    # unrecognised value such as "yes" or "true" is the default, off, not a
-    # guess at what the author meant.
-    end_on_overflow = os.environ.get(_ENV_END_ON_OVERFLOW) == "1"
+    # Exact-match "1" or "0", the same spelling as OMACAR_FASTBAUD and
+    # OMACAR_CAF0 -- an unrecognised value such as "yes" or "false" is the
+    # default, on, not a guess at what the author meant.
+    flag = os.environ.get(_ENV_END_ON_OVERFLOW)
+    end_on_overflow = {"1": True, "0": False}.get(flag, END_ON_OVERFLOW)
     return {"between": between, "leg_lines": leg_lines, "quiet": quiet,
             "end_on_overflow": end_on_overflow,
             "notes": [n for n in (n1, n2, n3) if n]}
@@ -180,7 +189,7 @@ def _event(kind, **fields):
 class Supervisor:
     def __init__(self, leg_minutes=LEG_MINUTES, quiet=QUIET_TIMEOUT,
                  between=BETWEEN_LEGS, poll=IDLE_POLL, once=False,
-                 leg_lines=None, end_on_overflow=False):
+                 leg_lines=None, end_on_overflow=END_ON_OVERFLOW):
         self.leg_minutes = leg_minutes
         self.quiet = quiet
         self.between = between

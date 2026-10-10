@@ -464,7 +464,7 @@ check("the numbers expected from the preset",
 check("an unset variable expects the recorder's own default (remove-preset)",
       dv.expected_running({}),
       {"between": drivelog.BETWEEN_LEGS, "leg_lines": dv.listenlib.DEFAULT_LIMIT,
-       "quiet": drivelog.QUIET_TIMEOUT, "end_on_overflow": False})
+       "quiet": drivelog.QUIET_TIMEOUT, "end_on_overflow": drivelog.END_ON_OVERFLOW})
 
 _good = {"started": 2001.0, "between": 240.0, "leg_lines": 10000, "quiet": 10.0,
          "end_on_overflow": True}
