@@ -347,12 +347,23 @@ class Elm:
             # that window holds exactly what it always held.
             self.ser.timeout = self.HANDSHAKE_TIMEOUT
             trail["read_timeout"] = self.HANDSHAKE_TIMEOUT
-            t = time.time()
-            self.ser.reset_input_buffer()
-            self.ser.write(b"ATE0\r")
-            self.ser.flush()
-            time.sleep(0.25)
-            self._heard("echo-off", self._waiting(), t)
+            # TO THE PROMPT, AND TWICE IF NEED BE. On 6 October ATE0 drew
+            # nothing in 250 ms and ATBRD's "reply" was a bare CR 22 ms later:
+            # init() gets here 0.5 s after ATZ, while the adapter is still
+            # resetting, so the first ATE0 can be swallowed whole and the
+            # banner's leading blank lines arrive in its place. A second ATE0
+            # only when the first drew something other than OK: an adapter
+            # that said nothing at all will say nothing again, and the wait
+            # would only stretch a silent adapter's give-up.
+            for _attempt in range(2):
+                t = time.time()
+                self.ser.reset_input_buffer()
+                self.ser.write(b"ATE0\r")
+                self.ser.flush()
+                said = self.ser.read_until(b">")
+                self._heard("echo-off", said, t)
+                if b"OK" in said.upper() or not said:
+                    break
             self.ser.reset_input_buffer()
             trail["failed_at"] = "ATBRD OK"
             t = time.time()
@@ -362,7 +373,11 @@ class Elm:
             # identification that arrives at the NEW rate and turns it into
             # line noise, and the handshake then fails on a link that was
             # perfectly capable.
+            # A blank line is not an answer: skip it, inside the same budget.
             said = self.ser.read_until(b"\r")
+            while said and not said.strip() and \
+                    time.time() - t < self.HANDSHAKE_TIMEOUT:
+                said = self.ser.read_until(b"\r")
             if b"OK" not in said.upper():
                 self._heard("ATBRD OK", said, t)
                 # It may still have switched on us -- see _settle().
