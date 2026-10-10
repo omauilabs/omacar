@@ -29,6 +29,13 @@ instead: the last charge reading before it and the first after it, each within
 30 s, are joined by a straight line across its bins. Charge drifts slowly, so
 that holds for charge only; current and voltage still need real overlap. Each
 candidate says how many of its bins were bracketed.
+
+A bracketed capture is one straight line, so however many seconds it spans it
+is ONE independent point against charge, not one per second. A candidate
+resting on bracketing alone therefore needs at least 20 captures, and every
+candidate says how many captures it rests on and whether its value ever moved
+inside one: a value constant within every capture that tracks charge across
+them is as likely to be anything else that drifts over a drive.
 """
 
 import argparse
@@ -50,6 +57,7 @@ MIN_DISTINCT = 3
 NEAREST = 2.0       # seconds: how far a sample may be from a bin and still count
 DERIV_SPAN = 5      # seconds, for the current proxy
 BRACKET_MAX = 30.0  # seconds: the furthest a bracketing charge reading may be
+MIN_BRACKETED_CAPTURES = 20   # independent captures behind a bracketing-only lead
 TARGETS = ("charge", "current", "voltage")
 
 
@@ -193,7 +201,7 @@ def mine(captures, samples):
     socs = [(s[0], float(s[1])) for s in samples if s[1] is not None]
     # (id, bytes, target) -> ([x...], [y...], bracketed count) across captures
     pairs = {}
-    for _name, _started, frames in captures:
+    for cap_name, _started, frames in captures:
         if not frames:
             continue
         stats["with_raw"] += 1
@@ -224,20 +232,25 @@ def mine(captures, samples):
                 if not row:
                     continue
                 for name, y in row.items():
-                    acc = pairs.setdefault((fid, idx, name), [[], [], 0])
+                    acc = pairs.setdefault((fid, idx, name), [[], [], 0, {}])
                     acc[0].append(v)
                     acc[1].append(y)
                     acc[2] += bracketed
+                    acc[3].setdefault(cap_name, set()).add(v)
     cands = []
-    for (fid, idx, name), (xs, ys, nbr) in pairs.items():
+    for (fid, idx, name), (xs, ys, nbr, per_cap) in pairs.items():
         if len(xs) < MIN_BINS or len(set(xs)) < MIN_DISTINCT:
+            continue
+        if nbr == len(xs) and len(per_cap) < MIN_BRACKETED_CAPTURES:
             continue
         r = pearson(xs, ys)
         if r is None:
             continue
         cands.append({"id": fid, "bytes": list(idx), "target": name,
                       "r": round(abs(r), 6), "sign": 1 if r >= 0 else -1,
-                      "bins": len(xs), "bracketed": nbr, "state": "candidate"})
+                      "bins": len(xs), "bracketed": nbr, "captures": len(per_cap),
+                      "moves_within": any(len(vs) > 1 for vs in per_cap.values()),
+                      "state": "candidate"})
     return cands, stats
 
 
@@ -280,8 +293,10 @@ def main(argv=None):
               "them up against. More drives with the adapter in will feed this.")
         return 0
     if not result:
-        print("frames lined up, but no series reached 60 bins and 3 distinct values. "
-              "Longer captures (a faster adapter link) will feed this.")
+        print("frames lined up, but no series reached 60 bins and 3 distinct values"
+              + (f", or {MIN_BRACKETED_CAPTURES} bracketed captures"
+                 if st["bracketed_captures"] else "") + ". "
+              "More captures, and longer ones (a faster adapter link), will feed this.")
         return 0
     for name in TARGETS:
         rows = [c for c in result if c["target"] == name]
@@ -290,7 +305,8 @@ def main(argv=None):
             b = "+".join(str(i) for i in c["bytes"])
             print(f"  {c['id']:>8} byte {b:<5} r={c['r']:.3f} "
                   f"({'+' if c['sign'] > 0 else '-'}) bins={c['bins']} "
-                  f"bracketed={c['bracketed']}  candidate")
+                  f"bracketed={c['bracketed']} captures={c['captures']}"
+                  f"{'' if c['moves_within'] else ' flat-within'}  candidate")
     print("\nCandidates only: check each against the car before trusting it.")
     return 0
 
