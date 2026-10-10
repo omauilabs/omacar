@@ -162,7 +162,7 @@ export default function vehicle(root) {
     }
     const v = (car && car.vehicle) || {};
     text(when, v.surveyed_at ? `Last scan: ${shortDate(v.surveyed_at)}, ${clockOf(v.surveyed_at)}`
-                             : "No full scan has been run on this car yet");
+                             : "Scan vehicle checks every system the car has");
     text(carName, [v.year, v.make, v.model].filter(Boolean).join(" ") || (car && car.title) || "");
     text(spec, [v.engine, v.drivetrain].filter(Boolean).join("  ·  "));
     text(odo, car && car.odometer ? dist(car.odometer) : "");

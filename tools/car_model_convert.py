@@ -32,7 +32,7 @@ def mat(name, rgb, metal=0.0, rough=0.5, alpha=1.0, emit=None):
 
 M = {
     # Dark grey metallic, the owner's colour (Honda's "Polished Metal").
-    "paint": mat("paint", (0.045, 0.048, 0.054), metal=0.65, rough=0.28),
+    "paint": mat("paint", (0.11, 0.115, 0.125), metal=0.6, rough=0.3),
     "chrome": mat("chrome", (0.80, 0.80, 0.82), metal=1.0, rough=0.12),
     "rim": mat("rim", (0.55, 0.56, 0.58), metal=1.0, rough=0.25),
     "tire": mat("tire", (0.018, 0.018, 0.02), rough=0.85),

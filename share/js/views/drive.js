@@ -180,7 +180,7 @@ export default function drive(root, { arg } = {}) {
     }, "Workshop");
     editBtn = h("button.drive-exit", {
       onclick: () => { editing = !editing; paintEditor(); },
-    }, "Customise");
+    }, "Customize");
     controls.appendChild(exitBtn);
     controls.appendChild(editBtn);
 
@@ -246,7 +246,7 @@ export default function drive(root, { arg } = {}) {
     // visibility keeps the space, and still takes the button out of reach and
     // out of the tab order, so the rule above is unchanged.
     editBtn.style.visibility = moving ? "hidden" : "";
-    const want = editing ? "Done" : "Customise";
+    const want = editing ? "Done" : "Customize";
     if (editBtn.textContent !== want) editBtn.textContent = want;
   }
 
