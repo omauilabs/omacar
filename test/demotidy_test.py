@@ -158,7 +158,7 @@ def screens(exe, env):
     srv = subprocess.Popen([sys.executable, os.path.join(LIB, "serve.py"), str(port), copy],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     prof = os.path.join(work, "prof")
-    base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
+    base = [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox", "--mute-audio",
             f"--user-data-dir={prof}", "--window-size=1368,912"]
     try:
         for _ in range(60):

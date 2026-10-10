@@ -381,7 +381,7 @@ def main():
         ok(f"server up on {port}")
 
         r = subprocess.run(
-            [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
              f"--user-data-dir={profile}", "--virtual-time-budget=30000",
              # The fallback decoder is a <video> element, and a browser that
              # will not start one without a click cannot be asked about it.

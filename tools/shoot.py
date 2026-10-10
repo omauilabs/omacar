@@ -62,7 +62,7 @@ def served(extra=None):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     prof = tempfile.mkdtemp()
     url = f"http://127.0.0.1:{port}"
-    base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+    base = [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
             f"--user-data-dir={prof}", "--hide-scrollbars",
             "--force-device-scale-factor=2", COARSE]
     try:

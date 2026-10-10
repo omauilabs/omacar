@@ -206,12 +206,17 @@ class Chromium:
         # becomes Chromium by exec.
         try:
             with open(log, "wb") as errs:
+                # --password-store=basic: a headless browser cannot answer the
+                # desktop keyring's prompt, and an http page needs a cookie key
+                # from it. On 2026-10-10 the box had no keyring at all, and every
+                # page here hung before its first request. Tests never need the
+                # owner's keyring, so they do not ask it.
                 self.proc = subprocess.Popen(
                     # bash, not /bin/sh: the pipes' numbers are often above 9,
                     # and dash (Ubuntu's sh, the CI runner's) refuses a
                     # descriptor of two digits as "Bad fd number".
                     ["bash", "-c", f'exec "$@" 3<&{cmd_r} 4>&{ans_w}', "bash", exe,
-                     "--headless=new", "--disable-gpu", "--no-sandbox", "--mute-audio",
+                     "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox", "--mute-audio",
                      "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                      "--disable-backgrounding-occluded-windows",
                      f"--user-data-dir={prof}", "--remote-debugging-pipe", "about:blank"],
