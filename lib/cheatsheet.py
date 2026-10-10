@@ -513,7 +513,7 @@ def boxes_for(size, tmp, exe, src):
     """
     import json as _json
     r = subprocess.run(
-        [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+        [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
          f"--user-data-dir={os.path.join(tmp, 'profile2')}",
          "--hide-scrollbars", "--force-device-scale-factor=1",
          f"--window-size={size[0]},{size[1]}",
@@ -544,7 +544,7 @@ def render(out_path, size=None):
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     try:
         r = subprocess.run(
-            [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
              f"--user-data-dir={os.path.join(tmp, 'profile')}",
              "--hide-scrollbars", "--force-device-scale-factor=1",
              f"--window-size={w},{h}", f"--screenshot={out_path}",

@@ -266,7 +266,7 @@ class Browser(js_test.Chromium):
                     XDG_CONFIG_HOME=os.path.join(prof, "config"),
                     PULSE_SERVER="unix:" + os.path.join(run, "no-sound-server"))
         keep.update(env or {})
-        flags = ["--headless=new", "--disable-gpu", "--no-sandbox", "--no-first-run",
+        flags = ["--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox", "--no-first-run",
                  "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
                  "--disable-backgrounding-occluded-windows",
                  "--autoplay-policy=no-user-gesture-required", "--deny-permission-prompts",

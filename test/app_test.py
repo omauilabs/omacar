@@ -703,7 +703,7 @@ def run_probe(exe, probe, tag, flags=(), budget=12000):
         [python_for_server(), os.path.join(ROOT, "lib", "serve.py"), str(port), copy],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=_isolated_env())
     prof = tempfile.mkdtemp()
-    base = [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+    base = [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
             f"--user-data-dir={prof}", "--hide-scrollbars",
             "--force-device-scale-factor=1", *flags]
     try:
@@ -944,7 +944,7 @@ def lost_server_check(exe):
             except OSError:
                 continue
         r = subprocess.run(
-            [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
              f"--user-data-dir={prof}", "--virtual-time-budget=15000",
              "--dump-dom", f"http://127.0.0.1:{port}/app.html"],
             capture_output=True, text=True, timeout=180)
@@ -1031,7 +1031,7 @@ def main():
         ok(f"server up on {port}")
 
         r = subprocess.run(
-            [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+            [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
              f"--user-data-dir={profile}", "--virtual-time-budget=9000",
              "--enable-logging=stderr", "--dump-dom", url],
             capture_output=True, text=True, timeout=120)
@@ -1139,7 +1139,7 @@ def main():
                 except OSError:
                     continue
             r2 = subprocess.run(
-                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
                  f"--user-data-dir={prof2}", "--virtual-time-budget=12000",
                  "--dump-dom", f"http://127.0.0.1:{static}/app.html"],
                 capture_output=True, text=True, timeout=120)
@@ -1200,7 +1200,7 @@ def main():
                 except OSError:
                     continue
             subprocess.run(
-                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
                  f"--user-data-dir={gprof}", "--virtual-time-budget=2000",
                  "--dump-dom", f"http://127.0.0.1:{gport}/_seed.html"],
                 capture_output=True, timeout=120)
@@ -1216,7 +1216,7 @@ def main():
             # own page does, not the browser chrome, and a calibration measured
             # on the seed page measures the wrong page. Chromium 151, Sep 2026.
             rg = subprocess.run(
-                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
                  f"--user-data-dir={gprof}", "--hide-scrollbars",
                  "--force-device-scale-factor=1", "--window-size=1368,1055",
                  "--virtual-time-budget=20000", "--dump-dom",
@@ -1276,7 +1276,7 @@ def main():
                 except OSError:
                     continue
             rv = subprocess.run(
-                [exe, "--headless=new", "--disable-gpu", "--no-sandbox",
+                [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
                  f"--user-data-dir={vprof}", "--virtual-time-budget=12000",
                  "--dump-dom", f"http://127.0.0.1:{vport}/app.html"],
                 capture_output=True, text=True, timeout=120)
