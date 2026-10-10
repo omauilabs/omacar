@@ -721,6 +721,16 @@ demo_on() {
     echo "  the demo car could not be tidied, so it may show trouble codes:"
     printf '    %s\n' "${tidy_err:-demoworld.py tidy failed and said nothing}"
   fi
+  # THE DEMO'S DRIVE SCREEN SHOWS THE HYBRID FLOW BAR. The demo serves the
+  # drive layout read-only, so its editor cannot add the tile; a demo with no
+  # layout of its own gets one here, inside its own config folder (demo_env
+  # above). One it already has is left alone.
+  local drive_cfg="$XDG_CONFIG_HOME/omarchy/omacar-drive.json"
+  if [[ ! -f "$drive_cfg" ]]; then
+    mkdir -p "$(dirname "$drive_cfg")"
+    printf '%s\n' '{"hero": "speed", "tiles": ["flow", "econ_now", "coolant"], "kinds": {"flow": "bar"}, "columns": 3, "footer": "trip"}' > "$drive_cfg"
+  fi
+
   # The rollup the bar widget reads, built inside the demo's own state.
   "$py" -c "
 import sys, os, json, tempfile

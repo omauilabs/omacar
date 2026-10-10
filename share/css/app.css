@@ -976,6 +976,16 @@ textarea { resize: vertical; min-height: 66px; }
 }
 .g-bar[data-tone="warn"] .g-bar-fill { background: var(--warn); }
 .g-bar[data-tone="bad"]  .g-bar-fill { background: var(--bad); }
+.g-bar[data-tone="good"] .g-bar-fill { background: var(--ok); }
+/* An estimate is drawn hatched, and says EST as large as its number
+   (share/js/hybrid.js); a simulated one says SIM. Measured draws solid. */
+.g-bar[data-source="estimated"] .g-bar-fill,
+.g-bar[data-source="simulated"] .g-bar-fill {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px,
+    color-mix(in srgb, var(--ground) 55%, transparent) 6px 10px);
+}
+.g-bar-tag { margin-left: auto; font-weight: 700; letter-spacing: .08em;
+             font-size: clamp(.8rem, 3cqh, 1.4rem); color: var(--ghost); }
 .g-bar-ends {
   display: flex; justify-content: space-between; margin-top: .3em;
   font-size: clamp(.5rem, 1.2cqh, .7rem); color: var(--ghost);
