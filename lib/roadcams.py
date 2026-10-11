@@ -320,7 +320,11 @@ def _download(now, cached):
             raise Refused(f"it listed {got} Monterey County cameras, down from {had}")
     except (Unreachable, Refused) as e:
         offline = isinstance(e, Unreachable)
-        why = (f"No connection ({e})" if offline
+        # "No connection", never the socket's own words: this line is on the
+        # screen, and at the meetup's venue "[Errno 111] Connection refused"
+        # in orange is a bug report, not information (seen in the demo run of
+        # 2026-10-10). A refusal's reason is our own sentence, so it stays.
+        why = ("No connection" if offline
                else f"Caltrans' camera list didn't load ({e})")
         with _STATE_LOCK:
             _FEED_FAIL.update(at=now, error=why, offline=offline)

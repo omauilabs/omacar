@@ -364,6 +364,7 @@ def main():
     check("with no list ever kept and no connection: no Caltrans cameras",
           [c["id"] for c in none["cameras"] if c["kind"] == "still"], [])
     check("but the reason", (none["feed"]["error"] or "").startswith("No connection"), True)
+    check("and never the socket's own words", "Errno" in (none["feed"]["error"] or ""), False)
     check("and the construction cameras are still listed",
           [c["id"] for c in none["cameras"] if c["kind"] == "embed"],
           ["imjin-1", "imjin-2", "imjin-3"])
