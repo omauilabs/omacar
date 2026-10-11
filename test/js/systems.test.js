@@ -31,6 +31,9 @@ export default [
   ["and says all normal only when there was a scan", () =>
     eq([headline(groupSystems(M.map((m) => ({ ...m, codes: [] })), [])).text,
         headline(groupSystems([], [])).text], ["All systems normal", "No full scan yet"])],
+  ["a scan that reached only some systems is not 'all systems normal'", () =>
+    eq(headline(groupSystems([{ ...M[0], codes: [] }], [])),
+       { text: "No faults found · not every system scanned", tone: "ok" })],
   ["the tyre callout follows the deflation warning", () =>
     eq([tyreState({ modules: M, active_faults: F }), tyreState({ modules: [] }),
         tyreState({ modules: M.filter((m) => m.id !== "TPMS"), active_faults: [] })],

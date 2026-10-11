@@ -1,4 +1,4 @@
-// A screen that is coming, saying what it will do and which step builds it.
+// A screen that is coming, saying what it will do and what it is waiting for.
 // No sample map, no fake footage, no pretend sessions: an empty screen that
 // tells the truth is better than a full one that does not.
 import { h, icon } from "./core.js";
