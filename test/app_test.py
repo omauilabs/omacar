@@ -482,8 +482,8 @@ window.__st = store;
   await wait(3500);
   const out = { viewport: [innerWidth, innerHeight],
                 coarse: matchMedia("(pointer: coarse)").matches };
-  // Home's Navigation card, on the arrival screen: it names the road cameras
-  // and opens them, not the maps placeholder.
+  // Home's Navigation card, on the arrival screen: it shows the first pinned
+  // road camera and opens Road cameras, not the maps placeholder.
   const card = document.querySelector('.home-grid [data-card="nav"]');
   out.card = card ? [".hc-ph-t", ".hc-ph-s"].map((k) => (card.querySelector(k) || {}).textContent) : null;
   if (card) card.click();
@@ -584,10 +584,17 @@ def roadcams_check(exe):
         check(f"{orient}: the viewport is the tablet's, touch pointer "
               f"(got {g.get('viewport')}, coarse={g.get('coarse')})",
               g.get("viewport") == list(want) and g.get("coarse") is True)
-        check(f"{orient}: Home's Navigation card names the road cameras and opens them "
+        # The card shows the first pinned camera Caltrans publishes a still
+        # for (views/home.js roadCard), so the stub's own listing says which.
+        _l = roadcams_listing()
+        _byid = {c["id"]: c for c in _l.get("cameras", [])}
+        _first = next((_byid[i] for i in _l.get("pins", [])
+                       if i in _byid and _byid[i].get("kind") == "still"), None)
+        _card = g.get("card") or [None, None]
+        check(f"{orient}: Home's Navigation card shows the first pinned road camera and opens them "
               f"(card {g.get('card')!r}, opens {g.get('cardOpens')!r})",
-              g.get("card") == ["Road cameras", "Your commute: SR-1 at Imjin, Lightfighter, SR-68"]
-              and g.get("cardOpens") == "roadcams")
+              _first is not None and _card[0] == _first.get("name")
+              and str(_card[1]).startswith("Caltrans") and g.get("cardOpens") == "roadcams")
         check(f"{orient}: the Navigation tab opens Road cameras, with Maps beside it "
               f"(view {g.get('view')!r}, chips {g.get('chips')})",
               g.get("view") == "roadcams" and g.get("chips") == ["Road cameras", "Maps"])

@@ -19,6 +19,7 @@ import { savedLook, mountLookEffect } from "../looks.js";
 import { startEditing } from "../homeedit.js";
 import { latestAdvice } from "../advice.js";
 import { carOrPicture } from "../car3d.js";
+import { firstPinnedStill, ageText } from "../roadcams.js";
 
 const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
@@ -120,7 +121,7 @@ function carCard() {
   const slot = h("div.car-slot", h("span", "Your car's picture goes here"));
   const stage3d = h("div.car-3d");
   const tyre = h("div.callout", { data: { tone: "" } },
-    h("span.co-dot"), h("span.co-k", "Tyres"), h("span.co-v"));
+    h("span.co-dot"), h("span.co-k", "Tires"), h("span.co-v"));
   const node = h("div.card.hc.hc-car", h("div.car-stage", stage3d, img, slot, tyre));
   let picture = null;
   let threeD = false;
@@ -149,24 +150,73 @@ function carCard() {
   };
 }
 
+// THE ROAD CAMERAS CARD SHOWS A ROAD. The first camera the owner pinned that
+// Caltrans publishes a still for (roadcams.js firstPinnedStill, the camera the
+// Road cameras screen gives a moving car), its latest picture, or the copy on
+// disk when there is no internet. With no pinned camera, or nothing ever
+// fetched, it is the line it always was. Asked at most every two minutes:
+// Caltrans refreshes a still about that often, and Home repaints far faster.
+const ROAD_EVERY_MS = 120000;
+
+function roadCard() {
+  const img = h("img.hc-road-img", { alt: "", hidden: true, draggable: "false" });
+  const title = h("div.hc-ph-t", "Road cameras");
+  const line = h("div.hc-ph-s", "Your commute: SR-1 at Imjin, Lightfighter, SR-68");
+  const node = tappable(h("div.card.hc.hc-road",
+    img, h("div.hc-ph", icon(ICONS.nav, 28), title, line)), "roadcams");
+  let url = null, asked = 0, busy = false;
+  async function still(id) {
+    try { return await api.roadcamImage(id, false); }
+    catch (e) { if (e.saved) return api.roadcamImage(id, true); throw e; }
+  }
+  async function refresh() {
+    if (busy || Date.now() - asked < ROAD_EVERY_MS) return;
+    busy = true;
+    asked = Date.now();
+    try {
+      const cam = firstPinnedStill(await api.roadcams());
+      if (!cam) return;
+      const got = await still(cam.id);
+      const next = URL.createObjectURL(got.blob);
+      img.onload = () => {
+        if (url) URL.revokeObjectURL(url);
+        url = next;
+        img.hidden = false;
+        node.dataset.road = "still";
+      };
+      img.src = next;
+      text(title, cam.name || "Road camera");
+      // The server's source is an id ("caltrans"); the card says the name.
+      const src = !got.source || got.source === "caltrans" ? "Caltrans" : got.source;
+      text(line, got.age === null ? src : `${src} · ${ageText(got.age)}`);
+    } catch { /* the card keeps whatever it last showed */ }
+    finally { busy = false; }
+  }
+  return {
+    node,
+    paint() { refresh(); },
+    destroy() { if (url) URL.revokeObjectURL(url); url = null; },
+  };
+}
+
 function soonCard(ico, title, line, id) {
   const node = tappable(h("div.card.hc",
     h("div.hc-ph", icon(ico, 28), h("div.hc-ph-t", title), h("div.hc-ph-s", line))), id);
   return { node, paint() {} };
 }
 
+// One row per place the card goes, as the demo's card has: a lone "Music"
+// pill under the CarPlay row read as something left behind (2026-10-11).
 function phoneCard() {
-  const chip = (label, id) => h("button.hc-chip", { type: "button",
-    onclick: (e) => { e.stopPropagation(); if (!e.currentTarget.closest(".editing")) go(id); } }, label);
-  const nursery = chip("Nursery", "nursery");
+  const row = (ico, title, sub, id) => h("button.hc-row", { type: "button",
+    onclick: (e) => { e.stopPropagation(); if (!e.currentTarget.closest(".editing")) go(id); } },
+    icon(ico, 22), h("span", title, h("span.sub", sub)), h("span.chev", icon(ICONS.chevron, 18)));
+  const nursery = row(ICONS.camera, "Nursery", "The baby, from the road", "nursery");
   const node = h("div.card.hc.hc-phone",
     h("div.hc-title", icon(ICONS.phone, 18), "Phone integration"),
-    h("button.hc-row", { type: "button",
-      onclick: (e) => { e.stopPropagation(); if (!e.currentTarget.closest(".editing")) go("omaplay"); } },
-      icon(ICONS.phone, 22),
-      h("span", "Apple CarPlay", h("span.sub", "Your phone's screen, through the adapter")),
-      h("span.chev", icon(ICONS.chevron, 18))),
-    h("div.hc-chips", chip("Music", "music"), nursery));
+    row(ICONS.phone, "Apple CarPlay", "Your phone's screen, through the adapter", "omaplay"),
+    row(ICONS.music, "Music", "A visualizer that moves with what is playing", "music"),
+    nursery);
   return { node, paint() { nursery.hidden = !store.nurseryOn; } };
 }
 
@@ -206,7 +256,7 @@ function agentCard() {
 const MAKERS = {
   dial: dialCard,
   car: carCard,
-  nav: () => soonCard(ICONS.nav, "Road cameras", "Your commute: SR-1 at Imjin, Lightfighter, SR-68", "roadcams"),
+  nav: roadCard,
   // ---- redesign/cameras: the live front view (share/js/dashcard.js) -----------
   // Imported where the card is made, so the cameras branch meets this file in
   // one hunk (doc/design/2026-09-28-cameras-drowsy-plan.md).

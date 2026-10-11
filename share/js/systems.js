@@ -12,7 +12,7 @@ export const SYSTEMS = [
     match: (m) => /^(VSA|ABS)$/i.test(m.id || "") || /\b(abs|vsa|brake)/i.test(m.name || "") },
   { id: "steering",   label: "Steering",      sub: "Electric power steering",
     match: (m) => m.id === "EPS" },
-  { id: "tyres",      label: "Tyres",         sub: "Deflation warning",
+  { id: "tyres",      label: "Tires",         sub: "Deflation warning",
     match: (m) => m.id === "TPMS" },
   { id: "electrical", label: "Electrical",    sub: "12V system and body",
     match: (m) => m.system === "Body" },

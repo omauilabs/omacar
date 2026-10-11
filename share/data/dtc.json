@@ -291,20 +291,20 @@
     "manufacturer": "Honda",
     "emissions": false,
     "drivable": "Yes. Nothing is broken.",
-    "meaning": "This car has an indirect tyre pressure system: rather than sensors in the wheels, it watches wheel speeds and infers that a tyre has gone soft because it is turning faster. That comparison has to be re-taught whenever the tyres are rotated, replaced or reinflated.",
-    "symptoms": ["Tyre pressure warning light on with all four tyres correctly inflated"],
+    "meaning": "This car has an indirect tire pressure system: rather than sensors in the wheels, it watches wheel speeds and infers that a tire has gone soft because it is turning faster. That comparison has to be re-taught whenever the tires are rotated, replaced or reinflated.",
+    "symptoms": ["Tire pressure warning light on with all four tires correctly inflated"],
     "causes": [
-      { "what": "Not calibrated after a tyre rotation", "share": 92,
+      { "what": "Not calibrated after a tire rotation", "share": 92,
         "note": "Set all four pressures cold to the door placard, then hold the calibration button until it beeps twice.",
         "hours": 0.1 },
-      { "what": "One tyre a materially different size or wear", "share": 6, "hours": 0.0 },
+      { "what": "One tire a materially different size or wear", "share": 6, "hours": 0.0 },
       { "what": "Wheel speed sensor drift", "share": 2, "hours": 1.0 }
     ],
     "smart": [],
     "tests": [
-      { "name": "Calibrate", "tools": "Tyre pressure gauge",
+      { "name": "Calibrate", "tools": "Tire pressure gauge",
         "steps": [
-          "Check and set all four tyres cold to the placard pressure.",
+          "Check and set all four tires cold to the placard pressure.",
           "Ignition on, engine off.",
           "Hold the deflation warning calibration button until the indicator blinks twice.",
           "Drive normally for thirty minutes above 30 mph."

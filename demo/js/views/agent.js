@@ -357,7 +357,7 @@ function nightPicture({ radio, mountMap, big = false }) {
     const volts = Number(v.CONTROL_MODULE_VOLTAGE);
     tVolts.v.textContent = `${(Number.isFinite(volts) ? volts : 14.2).toFixed(1)} V`;
     const ty = tyreState(store.car);
-    tyres.textContent = `Tyres ${ty.text}`;
+    tyres.textContent = `Tires ${ty.text}`;
     tyres.dataset.tone = ty.tone;
     const nx = d && d.next;
     turn.replaceChildren(icon(GLYPH[nx && /left/.test(nx.modifier || "") ? "left"

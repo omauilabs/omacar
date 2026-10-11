@@ -12,7 +12,7 @@ schedule stays the fast answer, the log is the record.
 WHY MATCHING IS THE DANGEROUS PART.
 
 A receipt says "TIRE ROTATION" or "Rotate & balance 4 tires" or "R&B tires".
-The book says "Tyre rotation". Joining those is the whole feature, and getting
+The book says "Tire rotation". Joining those is the whole feature, and getting
 it wrong writes a maintenance record that is false — a car that looks serviced
 and is not. That is worse than no record at all, because a service history is
 exactly the kind of document people later trust absolutely.
@@ -57,10 +57,10 @@ SYNONYMS = {
     "lube oil filter": "Engine oil & filter",
     "signature service oil change": "Engine oil & filter",
     "full synthetic oil change": "Engine oil & filter",
-    "tire rotation": "Tyre rotation",
-    "tyre rotation": "Tyre rotation",
-    "rotate tires": "Tyre rotation",
-    "rotate and balance": "Tyre rotation",
+    "tire rotation": "Tire rotation",
+    "tyre rotation": "Tire rotation",
+    "rotate tires": "Tire rotation",
+    "rotate and balance": "Tire rotation",
     "air filter": "Air filter",
     "engine air filter": "Air filter",
     "cabin filter": "Cabin filter",

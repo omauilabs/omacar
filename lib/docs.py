@@ -423,7 +423,7 @@ EXTRACT_SCHEMA = {
     "odometer": "mileage recorded on the document, as a number, or null",
     "items": "list of what was done or bought, each {description, amount}",
     "service_items": "list of maintenance actions in OmaCar's vocabulary, e.g. "
-                     "['engine oil', 'oil filter', 'tyre rotation']",
+                     "['engine oil', 'oil filter', 'tire rotation']",
     "confidence": "high, medium or low — how legible and unambiguous this was",
     "unreadable": "true if the text was too poor to trust",
 }
