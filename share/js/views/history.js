@@ -36,7 +36,7 @@ export default function history(root) {
 
   // ---- twelve months ----
   const months = perf.months || [];
-  if (months.length > 1) {
+  if (months.length) {
     const cv = h("canvas");
     root.appendChild(h("div.card",
       h("div.row.wrapline",
@@ -45,11 +45,21 @@ export default function history(root) {
           h("span.chan", h("span.swatch", { style: { background: "#4FA8E8", height: "8px", width: "8px", borderRadius: "2px" } }), U.units.dist),
           h("span.chan", h("span.swatch", { style: { background: "#E5B457" } }), U.units.econ))),
       h("div", { style: { marginTop: "12px" } }, cv)));
-    requestAnimationFrame(() => barsAndLine(cv, months.map((m) => ({
-      label: MONTH_NAMES[parseInt(m.month.split("-")[1], 10) - 1][0],
-      bar: (m.km || 0) * U.units.km,
-      line: econVal(m.lphk),
-    })), { height: 170 }));
+    // TWELVE SLOTS, ending this month. Drawn from the months that had drives
+    // alone, two months of records filled the card as two bars, each half its
+    // width, under the title "Twelve months", labelled "S" and "O".
+    const byMonth = new Map(months.map((m) => [m.month, m]));
+    const now = new Date();
+    const slots = [];
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const m = byMonth.get(key);
+      slots.push({ label: MONTH_NAMES[d.getMonth()],
+                   bar: m ? (m.km || 0) * U.units.km : 0,
+                   line: m ? econVal(m.lphk) : null });
+    }
+    requestAnimationFrame(() => barsAndLine(cv, slots, { height: 170 }));
   }
 
   // ---- the year in numbers ----
