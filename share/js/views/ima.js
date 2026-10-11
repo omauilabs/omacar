@@ -481,7 +481,7 @@ export default function ima(root) {
             loading ? "Reading…" : "Refresh"))),
       h("p.lede",
         "Everything below is assembled from what this car has actually said — "
-        + "its own fault catalogues, its own sweep results, its own drive logs. "
+        + "its own fault catalogs, its own sweep results, its own drive logs. "
         + `${measured} of ${q.length} hybrid quantities have ever produced a `
         + "reading here. The rest say so, and say what would find them."));
   }

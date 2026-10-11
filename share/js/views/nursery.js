@@ -20,7 +20,7 @@
 // long it has been instead; everything under it is labelled as the last thing
 // that arrived.
 //
-// It must not put moving pictures at windscreen height while the car is
+// It must not put moving pictures at windshield height while the car is
 // moving. A video of a sleeping child is the most attention-capturing thing
 // that could be on this screen. Numbers are glanceable the way a fuel gauge
 // is; a feed is not. The app already knows the road speed, so the camera is
@@ -43,7 +43,7 @@ const MOVING_KPH = 3;
 // sample can simply stop arriving -- the link drops at a set of lights, the
 // daemon restarts, the adapter is knocked. Every one of those makes SPEED
 // undefined, which reads as zero, which reads as stopped. On a gate about a
-// video at windscreen height, "I lost the reading" must not mean "go ahead".
+// video at windshield height, "I lost the reading" must not mean "go ahead".
 // So motion latches: the camera comes back a minute after the last movement
 // seen, not the moment the number goes quiet.
 const SETTLE = 60000;
@@ -171,7 +171,7 @@ export default function nursery(el) {
       cam.appendChild(h("p.lede", "Not while the car is moving."));
       cam.appendChild(h("p.muted",
         "A video of a sleeping child is the most attention-capturing thing "
-        + "this screen could show, and it is at windscreen height. The "
+        + "this screen could show, and it is at windshield height. The "
         + "numbers above are safe to glance at; this is not. It comes back "
         + "a minute after the car has actually stopped \u2014 a reading that "
         + "merely went quiet is not a stop."));

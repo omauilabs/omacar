@@ -14,16 +14,16 @@ const KEY = "omacar.look";
 
 export const LOOKS = [
   { id: "normal", label: "OmaCar", effect: "off",
-    note: "The mockups' palette. No background." },
+    note: "The default palette. No background." },
   { id: "green", label: "Matrix", effect: "matrix",
     note: "Green palette with the rain behind it." },
   { id: "aurora", label: "Aurora", effect: "aurora",
-    note: "Default palette, a slow colour drift behind everything." },
+    note: "Default palette, a slow color drift behind everything." },
   // The only look that is not dark, and the only one for a condition the
   // desktop theme cannot know about: a glossy panel in direct sun, where every
   // other look here is a mirror.
   { id: "day", label: "Daylight", effect: "off",
-    note: "Near-black on white, for direct sunlight on the windscreen." },
+    note: "Near-black on white, for direct sunlight on the windshield." },
   { id: "dim", label: "Night · dim", effect: "off",
     note: "Everything pulled down. For a lit cabin after dark." },
   { id: "red", label: "Night · red", effect: "off",
@@ -32,7 +32,7 @@ export const LOOKS = [
   // to be the default; the owner's mockups are a designed palette now, and
   // this is how to wear the desktop's instead.
   { id: "omarchy", label: "Omarchy theme", effect: "off",
-    note: "Your desktop theme's colours, mapped onto OmaCar's." },
+    note: "Your desktop theme's colors, mapped onto OmaCar's." },
 ];
 
 export function savedLook() {
