@@ -130,7 +130,9 @@ export default function scan(root) {
       body.appendChild(h("div.note.warn",
         h("strong", "Showing the last scan on file. "),
         report.stale_reason
-          ? report.stale_reason + "."
+          // The server's reason is a clause ("the daemon is not running, …");
+          // here it starts a sentence.
+          ? report.stale_reason.charAt(0).toUpperCase() + report.stale_reason.slice(1) + "."
           : "The car was not re-read just now.",
         report.surveyed_at
           ? " Last read " + since(Date.now() / 1000 - report.surveyed_at) + "."
@@ -162,8 +164,8 @@ function renderReport(r) {
       h("div",
         h("div.eyebrow", "Vehicle system report"),
         h("div.title", { style: { fontSize: "1.4rem", marginTop: "2px" } },
-          t.codes ? `${t.codes} code${t.codes > 1 ? "s" : ""} in ${t.with_codes} of ${t.modules} modules`
-                  : `All ${t.modules} modules clean`),
+          t.codes ? `${t.codes} code${t.codes > 1 ? "s" : ""} in ${t.with_codes} of ${t.modules} module${t.modules === 1 ? "" : "s"}`
+                  : t.modules === 1 ? "The 1 module is clean" : `All ${t.modules} modules clean`),
         h("p.muted", { style: { marginTop: "4px" } },
           `${r.vehicle}  ·  ${maskVin(r.vin) || "no VIN"}  ·  ${dist(r.odometer)}  ·  ${fullDate(r.at)}`)),
       h("div.right.row.wrapline",
