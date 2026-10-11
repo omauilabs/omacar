@@ -6,7 +6,7 @@
     "",
     "A large fraction of what people buy a scan tool for is not an OBD",
     "operation at all. Honda's oil life reset is done with the buttons on the",
-    "instrument cluster. Tyre pressure calibration is a settings menu. Key fob",
+    "instrument cluster. Tire pressure calibration is a settings menu. Key fob",
     "resync is an ignition sequence. A $12,000 tablet does not do these any",
     "better than a person with the right instructions, and often does not do",
     "them at all.",
@@ -86,7 +86,7 @@
     },
     {
       "id": "honda-tpms-calibration",
-      "name": "Calibrate the tyre pressure monitor",
+      "name": "Calibrate the tire pressure monitor",
       "category": "service",
       "makes": [
         "Honda",
@@ -94,9 +94,9 @@
       ],
       "confidence": "reported",
       "source": "Honda deflation-warning system calibration, via the vehicle settings menu",
-      "symptom": "TPMS warning light after inflating tyres, rotating them, or changing a wheel.",
+      "symptom": "TPMS warning light after inflating tires, rotating them, or changing a wheel.",
       "steps": [
-        "Set every tyre to the pressure on the driver's door jamb placard, with the tyres cold.",
+        "Set every tire to the pressure on the driver's door jamb placard, with the tires cold.",
         "Turn the ignition to ON.",
         "Open the vehicle settings menu on the instrument display or infotainment screen.",
         "Find TPMS Calibration \u2014 often under Vehicle Settings or Customise Settings.",

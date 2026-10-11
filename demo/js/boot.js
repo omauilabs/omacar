@@ -100,7 +100,7 @@ D.cards.car = function carCard() {
   img.src = CAR_PICTURE;
   const stage3d = h("div.car-3d");
   const tyre = h("div.callout", { data: { tone: "" }, style: { left: "50%", top: "92%" } },
-    h("span.co-dot"), h("span.co-k", "Tyres"), h("span.co-v"));
+    h("span.co-dot"), h("span.co-k", "Tires"), h("span.co-v"));
   const value = tyre.querySelector(".co-v");
   const node = h("div.card.hc.hc-car.dm-car", h("div.car-stage", stage3d, img, tyre));
   const unmount3d = carOrPicture(stage3d, (on) => {

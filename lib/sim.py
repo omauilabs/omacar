@@ -480,7 +480,7 @@ def faults_for(today):
          "count": 14, "status": "stored", "severity": "normal", "freeze": ""},
         {"code": "C1B00", "system": "Chassis",
          "desc": "Deflation Warning System Needs Initialisation",
-         "detail": "Set after the tyres were rotated. Not a fault — the "
+         "detail": "Set after the tires were rotated. Not a fault — the "
                    "system just needs its calibration button held.",
          "first_seen": ts(2026, 8, 12), "last_seen": ts(2026, 8, 25, 9),
          "count": 22, "status": "stored", "severity": "normal", "freeze": ""},

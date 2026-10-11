@@ -36,7 +36,7 @@ import records  # noqa: E402
 # than an empty page. Every figure is editable and the handbook wins.
 STARTER = [
     ("Engine oil & filter", "A", 10000, 365, "check the handbook for your grade"),
-    ("Tyre rotation", "1", 10000, 365, "front to rear"),
+    ("Tire rotation", "1", 10000, 365, "front to rear"),
     ("Air filter", "2", 30000, 730, ""),
     ("Cabin filter", "", 20000, 365, ""),
     ("Brake fluid", "7", 0, 1095, "hygroscopic — time, not mileage"),
@@ -44,7 +44,7 @@ STARTER = [
     ("Transmission fluid", "3", 60000, 1825, ""),
     ("Spark plugs", "4", 100000, 3650, ""),
     ("Brake pads", "", 40000, 1460, "inspect; replace on thickness"),
-    ("Tyres", "", 60000, 2190, "and on age — check the DOT date"),
+    ("Tires", "", 60000, 2190, "and on age — check the DOT date"),
     ("12 V battery", "", 0, 1825, ""),
 ]
 

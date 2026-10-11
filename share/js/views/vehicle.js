@@ -20,7 +20,7 @@ const SYS_ICON = { engine: "gauge", hybrid: "leaf", brakes: "health", electrical
 // Named by the readings catalogue, as Home and Gauges name them.
 const LIVE = ["rpm", "coolant", "volts", "charge"];
 const CALLOUTS = [["engine", "Engine"], ["hybrid", "Hybrid system"], ["brakes", "Brakes"],
-                  ["steering", "Steering"], ["tyres", "Tyres"]];
+                  ["steering", "Steering"], ["tyres", "Tires"]];
 // THE HEADLINE'S GLYPH SAYS WHAT ITS WORDS SAY. It was built once as a check
 // mark and only recoloured, so "4 systems need attention" sat next to a tick.
 // A warning for anything that needs attention, a check only when every
