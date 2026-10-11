@@ -845,7 +845,10 @@ textarea { resize: vertical; min-height: 66px; }
   font-size: clamp(.8rem, 2cqh, 1.2rem); color: var(--dim); margin-top: .3rem;
   min-height: 1.4em;
 }
-.drive[data-state="offline"] .drive-speed { color: var(--faint); }
+/* With no car the hero is an em dash at up to 17rem, and at 600 it drew as a
+   grey slab that read as a rendering fault (the tablet, 2026-10-11). Light, it
+   reads as "no reading"; the size stays, so nothing jumps when the car comes. */
+.drive[data-state="offline"] .drive-speed { color: var(--faint); font-weight: 200; }
 
 .drive-row {
   display: grid; gap: clamp(8px, 1.4vw, 20px);

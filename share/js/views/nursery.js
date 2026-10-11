@@ -97,7 +97,9 @@ export default function nursery(el) {
     if (!doc.configured) {
       wrap.appendChild(h("div.card",
         h("div.title", "Nothing has been sent here yet"),
-        h("p.lede", doc.why || ""),
+        // The server's reason opens with the title's own words (the CLI needs
+        // them); the screen says them once.
+        h("p.lede", (doc.why || "").replace(/^nothing has been sent here yet\.\s*/i, "")),
         h("p.muted", "Run that at home, on a timer. This tablet only ever "
           + "reads the file it leaves behind — no credential is copied and "
           + "nothing new listens on a port.")));
