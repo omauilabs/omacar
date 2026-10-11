@@ -11,7 +11,7 @@
 // to disk, so a "recording" is two timestamps and a name. Nothing is
 // duplicated and nothing can drift out of step with the record.
 
-import { h, clear, store, api, toast, U, temp, speed, clockOf, shortDate } from "../core.js";
+import { h, clear, store, api, toast, U, temp, speed, clockOf, shortDate, mins } from "../core.js";
 import { explain } from "../learn.js";
 import { scope, PALETTE } from "../charts.js";
 
@@ -220,7 +220,8 @@ export default function data(root, { arg } = {}) {
     const t0 = rows[0].t, t1 = rows[rows.length - 1].t;
     try {
       const r = await api.saveRecording(
-        `${Math.round((t1 - t0) / 60)} min from ${shortDate(t0)} ${clockOf(t0)}`, t0, t1);
+        // "7h 27m", as Replay writes a session, not "447 min".
+        `${mins(t1 - t0)} from ${shortDate(t0)} ${clockOf(t0)}`, t0, t1);
       toast(`Saved recording #${r.id} — ${r.rows} samples. It is in the Log.`);
     } catch (e) { toast(String(e.message || e), "bad"); }
   }
