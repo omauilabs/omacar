@@ -65,9 +65,17 @@
 // having asked.
 
 import { h, clear, store, api, toast, clockOf, shortDate, mins, grouped,
-         econVal, U, sevTone } from "../core.js";
+         econVal, U, sevTone, dist } from "../core.js";
 import { KINDS, makeGauge, kindsFor, normaliseKind } from "../gauges.js";
 import { explain } from "../learn.js";
+
+// Recordings saved before 2026-10-11 were named "447 min from 2 Sep 11:04";
+// shown as Replay writes a session ("7h 27m from …"). The stored name stays.
+function recordingLabel(label) {
+  const m = /^(\d+) min from (.+)$/.exec(label || "");
+  if (!m) return label || "Recording";
+  return `${mins(Number(m[1]) * 60)} from ${m[2]}`;
+}
 
 // Which gauge face each channel wears, remembered per browser. Server-side
 // would be wrong: this is a preference about a screen, not about the car, and
@@ -311,14 +319,16 @@ export default function replay(root, { arg } = {}) {
         .filter((t) => t.t0 > 1e9 && t.t1 > t.t0)
         .map((t) => ({
           kind: "drive", t0: t.t0, t1: t.t1,
-          label: `Drive · ${t.km != null ? t.km.toFixed(1) + " km" : "?"}`,
+          // In the owner's units, as every other distance: this said "116.8 km"
+          // on a car whose screens all read miles.
+          label: `Drive · ${t.km != null ? dist(t.km) : "?"}`,
           detail: `${shortDate(t.t0)}  ${clockOf(t.t0)} — ${clockOf(t.t1)}`,
         }));
       const movies = recs
         .filter((r) => r.kind === "movie" && r.t0 && r.t1)
         .map((r) => ({
           kind: "recording", t0: r.t0, t1: r.t1,
-          label: r.label || "Recording",
+          label: recordingLabel(r.label),
           detail: `${shortDate(r.t0)}  ${clockOf(r.t0)} — ${clockOf(r.t1)}`,
         }));
       spans = [...trips, ...movies].sort((a, b) => b.t0 - a.t0);
