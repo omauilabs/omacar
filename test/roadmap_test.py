@@ -375,5 +375,26 @@ finally:
     R.ROOT = saved
     shutil.rmtree(fake, ignore_errors=True)
 
+head("A check whose name says 'failed' is not a failure")
+
+# "ok  3 failed looks in a row are a fault" is a PASSING check; counting any
+# "\d+ failed" made the roadmap report 3 failing on a green suite (2026-10-11).
+fake = tempfile.mkdtemp(prefix="omacar-roadmap-failed-")
+os.makedirs(os.path.join(fake, "test"))
+with open(os.path.join(fake, "test", "all.sh"), "w") as f:
+    f.write("#!/bin/bash\n"
+            "printf '\\n  The guard\\n\\n'\n"
+            "printf '    ok  3 failed looks in a row are a fault\\n'\n"
+            "printf '  888 passed, 0 failed\\n'\n"
+            "printf '  12 passed, 2 failed\\n'\n")
+saved = R.ROOT
+R.ROOT = fake
+try:
+    t = R.run_tests()
+    ok("only summary lines are counted as failures", t is not None and t["failed"] == 2)
+finally:
+    R.ROOT = saved
+    shutil.rmtree(fake, ignore_errors=True)
+
 print(f"\n  {PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

@@ -781,7 +781,7 @@
       "needs": ["obd-usb"],
       "depends": ["disc.honda-0x21", "disc.validate"],
       "evidence": [],
-      "notes": "No live IMA quantity has ever been captured on the CR-Z. The 2026-09-29 discovery drives are the next attempt."
+      "notes": "The screens exist (2026-10-10, #18): a Hybrid flow bar for the drive screen and a Live section on Vehicle → Hybrid, showing an estimate marked EST until a validated profile entry carries quantity ima.amps, ima.volts or ima.temp, then switching to it with no screen change. No live IMA quantity has been captured on the CR-Z yet; the parked IMA session (tools/ima-session.sh) is the next attempt."
     },
     {
       "id": "hyb.cell-balance",
@@ -3342,7 +3342,7 @@
       "needs": [],
       "depends": ["ui.car-art"],
       "evidence": ["share/js/car3d.js", "doc/car3d.md"],
-      "notes": "The viewer exists and contains no car geometry; three.js is not vendored. Photogrammetry of the owner's car is the recommended source."
+      "notes": "three.js r185 is vendored and the owner's bought CR-Z model was converted (tools/car_model_convert.py) and shown on Home on 2026-10-10 (#23). On 2026-10-11 the owner turned it off (\"I do not like the 3D model\"): the model is kept off the server and Home shows the static picture. Photogrammetry of the owner's own car remains the alternative."
     },
     {
       "id": "ui.themes",

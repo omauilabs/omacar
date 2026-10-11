@@ -314,8 +314,11 @@ def run_tests():
             seen[name] = [name, n]
             merged.append(seen[name])
     groups = merged
+    # Only a summary line ("888 passed, 0 failed") is a count. A bare "\d+
+    # failed" anywhere also matched the passing check "ok  3 failed looks in a
+    # row are a fault", and the roadmap reported 3 failing on a green suite.
     failed = sum(int(m.group(1)) for m in
-                 re.finditer(r"(\d+) failed", out.stdout))
+                 re.finditer(r"^\s*\d+ passed, (\d+) failed", out.stdout, re.M))
     return {"groups": groups, "checks": sum(g[1] for g in groups),
             "failed": failed, "ok": out.returncode == 0}
 
