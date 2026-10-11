@@ -94,7 +94,10 @@ export default function service(root) {
       [next.km_left !== null && next.km_left !== undefined
         ? (next.km_left < 0 ? "overdue by " + dist(Math.abs(next.km_left)) : "in " + dist(next.km_left))
         : null,
-       next.due_on ? "by " + isoDate(next.due_on) : null,
+       // A date already past is a date it went overdue on, not a deadline: the
+       // owner's oil read "by 2 Sep 2026" in October, under a red 0%.
+       next.due_on ? (next.due_on < new Date().toISOString().slice(0, 10)
+         ? "overdue since " + isoDate(next.due_on) : "by " + isoDate(next.due_on)) : null,
        next.last_on ? `last done ${isoDate(next.last_on)}${next.last_km ? " at " + dist(next.last_km) : ""}` : null,
       ].filter(Boolean).join("   ·   ")),
     next.note ? h("p.muted", { style: { marginTop: "4px" } }, next.note) : null));
@@ -136,7 +139,11 @@ export default function service(root) {
   tbl.appendChild(tb);
   root.appendChild(h("div.card",
     h("div.row", h("div.eyebrow", "The book"),
-      h("span.muted.right", s.due ? `${s.due} due or due soon` : "nothing due")),
+      // The same words the Report uses: "11 due or due soon" there was "11
+      // overdue" here, for the same eleven items.
+      h("span.muted.right", s.overdue
+        ? `${s.overdue} overdue${s.due > s.overdue ? ` · ${s.due - s.overdue} due soon` : ""}`
+        : s.due ? `${s.due} due soon` : "nothing due")),
     h("div", { style: { marginTop: "10px", overflowX: "auto" } }, tbl)));
 
   root.appendChild(h("p.muted",

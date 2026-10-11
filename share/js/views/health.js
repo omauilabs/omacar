@@ -144,7 +144,7 @@ export default function health(root) {
               h("td.muted", t.component || ""),
               h("td.num", `${t.value} ${t.unit || ""}`.trim()),
               h("td.num", t.hi !== null && t.hi !== undefined ? String(t.hi)
-                : t.lo !== null && t.lo !== undefined ? `min ${t.lo}` : "—"),
+                : t.lo !== null && t.lo !== undefined ? `min ${sig(t.lo)}` : "—"),
               h("td.num", hr(t) >= 0 ? pct(hr(t) * 100) : "—"))))))));
     }
   }
@@ -153,6 +153,14 @@ export default function health(root) {
 // One test, drawn as a measurement against the window it was judged in. Kept
 // as a function because only the tests that need looking at are drawn this
 // way now, and the rest are a table.
+// Five significant figures: "min 50.003968" and "100.00641 %" were every
+// digit the car sent, and the margin a person reads is in the first few.
+// Limits can arrive as text ("50.003968"), so a numeric string counts too.
+const sig = (x) => {
+  const n = typeof x === "string" && x.trim() !== "" ? Number(x) : x;
+  return typeof n === "number" && Number.isFinite(n) ? String(+n.toPrecision(5)) : x;
+};
+
 function m6card(t) {
   const failed = t.pass === false;
   const marginal = !failed && hr(t) > 0.85;
@@ -174,8 +182,8 @@ function m6card(t) {
     h("div.row", { style: { marginTop: "8px" } },
       h("span.muted", t.lo !== null && t.lo !== undefined ? `min ${t.lo}` : ""),
       h("span", { style: { fontWeight: "700", fontSize: "1.05rem", color: tint,
-                           margin: "0 auto" } }, `${t.value} ${t.unit}`),
-      h("span.muted", t.hi !== null && t.hi !== undefined ? `max ${t.hi}` : "")),
+                           margin: "0 auto" } }, `${sig(t.value)} ${t.unit}`),
+      h("span.muted", t.hi !== null && t.hi !== undefined ? `max ${sig(t.hi)}` : "")),
     t.headroom !== null && t.headroom !== undefined
       ? h("p.muted", { style: { marginTop: "6px" } },
           `${Math.round(t.headroom * 100)}% of the limit`)
