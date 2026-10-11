@@ -55,6 +55,18 @@ def bad(msg):
     print(f"  FAIL  {msg}")
 
 
+def until(cond, timeout=8.0, step=0.05):
+    """Wait for `cond()` to hold, up to `timeout` seconds; return whether it did.
+    A fixed sleep raced a loaded CI runner: three failed looks take three fake
+    pactl processes, and on 2026-10-10 and -11 they had not all run in 0.8 s."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(step)
+    return bool(cond())
+
+
 def check(msg, got, want):
     if got == want:
         ok(msg)
@@ -248,10 +260,10 @@ try:
     with_ours(fail_inputs=999)
     g = R.Guard(sink, b.pid, prof, [])
     g.start()
-    time.sleep(0.8)
+    until(lambda: g.violation)
     check(f"{R.BLIND} failed looks in a row are a fault",
           bool(g.violation) and "could not see" in g.violation, True)
-    time.sleep(0.3)
+    until(lambda: not alive(b.pid))
     check("and the browser is killed for it", alive(b.pid), False)
     b.wait(5)
     try:
