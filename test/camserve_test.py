@@ -74,6 +74,24 @@ def req(method, path, body=None, headers=None):
     return r.status, {k.lower(): v for k, v in r.getheaders()}, data
 
 
+def settled_threads(quiet=0.6, timeout=8.0):
+    """server_threads() once it has stopped changing for `quiet` seconds. A
+    baseline read straight after earlier requests can count a handler thread
+    that is still on its way out; when it left as the live connection's thread
+    arrived, "during > before" failed on a server doing exactly the right thing
+    (CI, 2026-10-11, under load)."""
+    end = time.time() + timeout
+    last, since = server_threads(), time.time()
+    while time.time() < end:
+        time.sleep(0.1)
+        now = server_threads()
+        if now != last:
+            last, since = now, time.time()
+        elif time.time() - since >= quiet:
+            break
+    return last
+
+
 def server_threads():
     """The server subprocess's own thread count (Linux's /proc), or None
     where /proc does not exist. ThreadingHTTPServer gives every connection
@@ -250,7 +268,7 @@ try:
     # both gaps at once.
     with open(cams.live_path("rear"), "wb") as f:
         f.write(J1)
-    before = server_threads()
+    before = settled_threads()
     s = socket.create_connection(("127.0.0.1", PORT), timeout=20)
     s.sendall(b"GET /api/cams/rear/live HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
     buf = b""
