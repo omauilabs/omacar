@@ -1,6 +1,6 @@
 [
   { "id": "work-update",
-    "text": "Two agents are running. Bulletin Builder passed its tests and is ready for your review. OmaSaber needs your input on the saber colour." },
+    "text": "Two agents are running. Bulletin Builder passed its tests and is ready for your review. OmaSaber needs your input on the saber color." },
   { "id": "work-sent",
     "text": "Sent. OmaSaber will document the setup first." },
   { "id": "layout-applied",

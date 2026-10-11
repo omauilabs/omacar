@@ -19,7 +19,7 @@ export default function live(root) {
   let raf = null, alive = true;
 
   const canvas = h("canvas", { width: 900, height: 900, role: "img",
-    "aria-label": "Ambient meter: ring colour shows driving efficiency, the bright arc shows road speed." });
+    "aria-label": "Ambient meter: ring color shows driving efficiency, the bright arc shows road speed." });
 
   const speedEl = h("div.cl-read.cl-speed", { style: { fontSize: "clamp(3rem, 9vw, 5.6rem)", fontWeight: "600",
     lineHeight: ".92", letterSpacing: "-.03em", fontVariantNumeric: "tabular-nums" } }, "—");

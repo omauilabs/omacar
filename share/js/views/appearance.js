@@ -137,7 +137,7 @@ function specimen(css) {
   box.appendChild(h("div.fnt-spec-h", "Next service"));
   box.appendChild(h("p.fnt-spec-p",
     "Small print sits a step down from the body ink, and has to survive a "
-    + "windscreen at noon."));
+    + "windshield at noon."));
   box.appendChild(h("div.fnt-spec-row",
     h("div.fnt-spec-v", "88"),
     h("div.fnt-spec-u", "km/h"),

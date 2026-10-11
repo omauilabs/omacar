@@ -537,7 +537,7 @@ export default [
   ["the lines other screens speak, word for word", async () => {
     await linesReady;
     eq([LINES["work-update"], LINES["layout-applied"], LINES.radio, LINES["drowsy-l2"], LINES.health], [
-      "Two agents are running. Bulletin Builder passed its tests and is ready for your review. OmaSaber needs your input on the saber colour.",
+      "Two agents are running. Bulletin Builder passed its tests and is ready for your review. OmaSaber needs your input on the saber color.",
       "Night drive is on. Navigation stays large, and I've dimmed the rest.",
       "Playing Omarchy Radio.",
       "James, are you with me?",

@@ -906,8 +906,8 @@ function openSettings() {
     // note names the consequence rather than the tier: "power user" tells
     // somebody nothing about whether the fan is going to spin.
     const TIER_NOTE = {
-      simplified: "The four things that matter, in plain words. Clearing codes only.",
-      power: "Every reading and every screen. Clearing codes only.",
+      simplified: "The four things that matter, in plain words. The only change it makes to the car is clearing codes.",
+      power: "Every reading and every screen. The only change it makes to the car is clearing codes.",
       technician: "Commands the car: actuators, published routines, sweeps.",
       god: "Also writes configuration. Drops back after 30 minutes.",
     };
@@ -958,7 +958,7 @@ function openSettings() {
         redraw();
       }));
 
-    rows.appendChild(row("Units", "The server owns this, so the dock card and the terminal follow",
+    rows.appendChild(row("Units", "Shared with the dock card and the terminal",
       U.units.dist, async (e) => {
         // Written to the server rather than to this browser, because the CLI,
         // the dock card and this app all read the same file. Flipping it here
@@ -972,7 +972,7 @@ function openSettings() {
           await store.refreshCar();
           redraw();
           go();
-          toast(`Now in ${next === "imperial" ? "miles" : "kilometres"}. The dock card and the terminal follow.`);
+          toast(`Now in ${next === "imperial" ? "miles" : "kilometers"}. The dock card and the terminal follow.`);
         } catch (err) {
           redraw();
           toast("Could not change units: " + (err.message || err), "bad");

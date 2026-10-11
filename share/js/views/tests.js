@@ -112,7 +112,7 @@ export default function tests(root) {
   fetch("data/tests.json", { cache: "no-store" })
     .then((r) => r.json())
     .then((d) => { if (!alive) return; cat = d; paint(); })
-    .catch(() => { clear(body); body.appendChild(h("div.empty", "Test catalogue unavailable.")); });
+    .catch(() => { clear(body); body.appendChild(h("div.empty", "Test catalog unavailable.")); });
 
   function paint() {
     clear(body);

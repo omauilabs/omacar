@@ -1,7 +1,7 @@
 // Themes — building your own, rather than picking from ours.
 //
 // The app has always worn whatever Omarchy was wearing, which is right on a
-// desktop and not enough in a car. A workshop and a windscreen at noon want
+// desktop and not enough in a car. A workshop and a windshield at noon want
 // different palettes, and the person who has to read this thing through the
 // glare is the one who should get to decide.
 //
@@ -149,7 +149,7 @@ export default function themes(root, { arg } = {}) {
     panel.appendChild(h("div.th-k", "Mode"));
     panel.appendChild(modes);
 
-    panel.appendChild(h("div.th-k", "Colours"));
+    panel.appendChild(h("div.th-k", "Colors"));
     const grid = h("div.th-fields");
     for (const [key, label, note] of FIELDS) {
       const hex = h("input.th-hex", {
@@ -211,7 +211,7 @@ export default function themes(root, { arg } = {}) {
         h("span.th-pill.ai", "advisor"),
         h("span.th-pill.info", "simulated")),
       h("div.th-pv-note", "Small print sits at --faint, and has to survive "
-        + "a windscreen at noon.")));
+        + "a windshield at noon.")));
     paintPreview();
     return previewHost;
   }
@@ -259,8 +259,8 @@ export default function themes(root, { arg } = {}) {
     wrap.appendChild(h("div.th-head",
       h("div",
         h("h2.th-title", "Themes"),
-        h("p.th-lede", "Eight colours and a mode. Everything else — the "
-          + "surface steps, the ink weights, the warning colours — is worked "
+        h("p.th-lede", "Eight colors and a mode. Everything else — the "
+          + "surface steps, the ink weights, the warning colors — is worked "
           + "out from them, so whatever you build stays readable in sunlight.")),
       h("button.th-btn.primary", {
         onclick: () => {

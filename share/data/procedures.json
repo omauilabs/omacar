@@ -144,11 +144,11 @@
         "Start the engine and let it reach full operating temperature \u2014 the cooling fan should cycle on at least once.",
         "Switch off every load: air conditioning, headlights, rear defogger, radio, fan.",
         "Leave the transmission in Park or Neutral, and do not touch the throttle.",
-        "Let it idle for ten minutes with the bonnet closed.",
+        "Let it idle for ten minutes with the hood closed.",
         "Switch off. The idle should be settled on the next start."
       ],
       "notes": [
-        "Steering must stay centred and still during the ten minutes \u2014 power steering load interferes with the learn on some models.",
+        "Steering must stay centered and still during the ten minutes \u2014 power steering load interferes with the learn on some models.",
         "If idle is still wrong afterwards, the relearn is not the problem: look at the throttle body, an intake leak, or fuel trims. OmaCar's fuel trim reading will tell you which."
       ]
     },

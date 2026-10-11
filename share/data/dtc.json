@@ -70,7 +70,7 @@
     "severity": "warning",
     "manufacturer": "Honda",
     "emissions": false,
-    "drivable": "Yes. The car runs on the petrol engine regardless; assist and regeneration are limited to protect the pack.",
+    "drivable": "Yes. The car runs on the gasoline engine regardless; assist and regeneration are limited to protect the pack.",
     "meaning": "Honda's own code for an IMA pack whose cell blocks no longer hold a matched charge. The motor control unit watches the spread between the weakest and strongest of the twenty cell blocks; when the weak one falls far enough behind, the pack can no longer be balanced and this sets.",
     "symptoms": [
       "IMA light on the dash",
@@ -668,7 +668,7 @@
     ],
     "smart": [
       { "pid": "MAF", "label": "Mass air flow", "expect": "2 – 7 g/s at idle",
-        "why": "The value itself. As a rule of thumb a healthy engine flows roughly its displacement in litres, times engine speed in thousands, times 0.6 g/s." },
+        "why": "The value itself. As a rule of thumb a healthy engine flows roughly its displacement in liters, times engine speed in thousands, times 0.6 g/s." },
       { "pid": "LONG_FUEL_TRIM_1", "label": "Long fuel trim", "expect": "-10 – +10 %",
         "why": "A sensor under-reporting drives trim strongly positive, which is how you tell it apart from a wiring fault." },
       { "pid": "ENGINE_LOAD", "label": "Calculated load", "expect": "15 – 30 % at idle",
