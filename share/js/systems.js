@@ -54,7 +54,16 @@ export function worstOf(groups) {
 export function headline(groups) {
   if (!groups.some((g) => g.modules.length)) return { text: "No full scan yet", tone: "" };
   const need = groups.filter((g) => g.status === "warn" || g.status === "bad");
-  if (!need.length) return { text: "All systems normal", tone: "ok" };
+  // "All systems normal" only when every named system was asked. On the
+  // owner's car on 2026-10-11 the last scan had reached the engine alone, and
+  // the headline said all was normal above four systems marked "Not scanned".
+  const unasked = groups.filter((g) => g.id !== "other" && !g.modules.length).length;
+  if (!need.length) {
+    // No count: Vehicle lists five rows and the X-ray two more systems, and a
+    // number that matched neither would be its own small lie.
+    return unasked ? { text: "No faults found · not every system scanned", tone: "ok" }
+                   : { text: "All systems normal", tone: "ok" };
+  }
   const tone = need.some((g) => g.status === "bad") ? "bad" : "warn";
   return { text: need.length === 1 ? `${need[0].label} needs attention`
                                    : `${need.length} systems need attention`, tone };
