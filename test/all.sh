@@ -99,7 +99,7 @@ python3 "$ROOT/test/driveway_e2e_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/srvwatch_test.py" || fails=$((fails + 1))
 
 # Work by voice: settings, gates, intent, sessions, relay, routes (doc/design/2026-10-13-work-voice-relay.md).
-for t in workcfg workgates; do
+for t in workcfg workgates workintent; do
   python3 "$ROOT/test/${t}_test.py" || fails=$((fails + 1))
 done
 
