@@ -256,6 +256,7 @@ MUST_REFUSE = [
     "/api/ai/anything",
     "/api/phone", "/api/phone/start", "/api/phone/stop", "/api/phone/input",
     "/api/phone/route", "/api/phone/video",
+    "/api/work/utterance", "/api/work/status",   # voice to a real machine's coding sessions
     "/api/no-such-route", "/api/begin/", "/api//begin",
 ]
 

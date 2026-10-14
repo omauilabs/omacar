@@ -34,6 +34,7 @@ class Config:
     quiet: tuple = (21, 7)
     relay_url: str = "http://127.0.0.1:7570"
     tablet_node: str = "omacar-1"
+    relay_token: str = ""   # on the box: the token the tablet's relay wrote; never logged
 
 
 def load(path=None):
@@ -67,4 +68,5 @@ def load(path=None):
                   daily_cap=int(raw.get("daily_cap", 6)),
                   quiet=(int(q[0]), int(q[1])),
                   relay_url=str(raw.get("relay_url", Config.relay_url)),
-                  tablet_node=str(raw.get("tablet_node", "omacar-1")))
+                  tablet_node=str(raw.get("tablet_node", "omacar-1")),
+                  relay_token=str(raw.get("relay_token", "")))

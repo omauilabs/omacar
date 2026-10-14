@@ -60,5 +60,11 @@ for bad in ("github.com", "api.github.com", "*.github.com", "uploads.github.com"
     except ValueError as e:
         check(f"{bad} refused", "github" in str(e))
 
+print("\n  relay token")
+check("no file: no relay token", workcfg.load(os.path.join(SCRATCH, "missing.toml")).relay_token, "")
+with open(p, "w") as f:
+    f.write('relay_token = "tok-123"\n')
+check("relay_token read", workcfg.load(p).relay_token, "tok-123")
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)
