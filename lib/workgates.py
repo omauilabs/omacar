@@ -99,10 +99,15 @@ def SECRET_PATHS(home):
             j(home, ".config", "gcloud"), j(home, ".azure")]
 
 
+def protected_places(home):
+    """Every place a session is kept out of: the live checkout, the app's
+    worktrees and SECRET_PATHS. worksession turns these into read denials."""
+    return [os.path.join(home, "Projects", "omacar"),
+            os.path.join(home, "Projects", ".omacar-wt")] + SECRET_PATHS(home)
+
+
 def _protected(ctx):
-    h = ctx.home
-    return [os.path.join(h, "Projects", "omacar"),
-            os.path.join(h, "Projects", ".omacar-wt")] + SECRET_PATHS(h)
+    return protected_places(ctx.home)
 
 
 def _is_protected(path, ctx):

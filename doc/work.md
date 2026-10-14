@@ -39,6 +39,11 @@ start), and the network list. Inside it:
   `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`) are blanked.
 - No web tools: WebFetch and WebSearch are refused ("Work sessions have no
   web access."). A session cannot read online docs.
+- No reads of the credential places (`~/.ssh`, `~/.config/gh`,
+  `~/.claude/.credentials.json`, `~/.netrc`, ...), the app's state and
+  config, the live checkout, `~/Projects/.omacar-wt/` or any
+  `share/assets/private/`. They are Claude Code `Read` deny rules for the
+  file tools and `sandbox.filesystem.denyRead` for shell commands.
 
 On top of that, `workgates.judge()` refuses the obvious forms early (a push to
 `main`, `gh pr merge`, `ssh omacar-1`, `sudo`, `systemctl`, a GitHub-hosted
@@ -112,8 +117,8 @@ token too (it is not a plain curl).
    a spoken reply.
 2. **Tablet, one real dispatch.** One real session against a scratch repo,
    ending in a draft PR. Before trusting the sandbox, from inside a session
-   confirm that a write outside its folder fails and that a connect to the
-   D-Bus socket fails.
+   confirm that a write outside its folder fails, that a connect to the
+   D-Bus socket fails, and that `cat ~/.claude/.credentials.json` fails.
 3. **Parked in the car.** The Work tab in a tablet worktree, never the live
    checkout until you say. Tested parked in the driveway.
 4. **Move to the box.** Only then, and only with your go-ahead, on a drive.

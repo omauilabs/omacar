@@ -119,6 +119,21 @@ check("credentials blanked, PATH kept",
       (env["PATH"], env["GH_TOKEN"], env["SSH_AUTH_SOCK"], env["DBUS_SESSION_BUS_ADDRESS"]),
       ("/usr/bin", "", "", ""))
 
+print("\n  F4b: reads of every protected place are denied by Claude Code too")
+import workgates  # noqa: E402
+rules = ws.read_denials("/home/u")
+missing = [p for p in workgates.SECRET_PATHS("/home/u")
+           if f"Read(/{p})" not in rules or f"Read(/{p}/**)" not in rules]
+check("a rule for every SECRET_PATHS entry, as file and as folder", missing, [])
+check("absolute rules start with //", all(r.startswith("Read(//") for r in rules), True)
+check("the live checkout, the app's worktrees and private assets",
+      all(r in rules for r in ("Read(//home/u/Projects/omacar/**)", "Read(//home/u/Projects/.omacar-wt/**)",
+                               "Read(//**/share/assets/private/**)")), True)
+check("the credentials file by name", "Read(//home/u/.claude/.credentials.json)" in rules, True)
+sbx = ws.sandbox_settings(workcfg.Project("p", ("p",), "/x", "t"), "/home/u")
+check("the sandbox denies the same reads to Bash",
+      sbx["filesystem"]["denyRead"], workgates.protected_places("/home/u"))
+
 print("\n  a usage limit stops it, with nothing pushed")
 s, ev, git = run([("limit",)], [True])
 check("limit", (ev[-1]["kind"], git.pushed), ("limit", []))

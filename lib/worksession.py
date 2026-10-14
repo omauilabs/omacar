@@ -43,13 +43,40 @@ or edit a pull request: the runner does both. If you are truly blocked, ask one
 short question with AskUserQuestion, two or three options; otherwise decide."""
 
 
-def sandbox_settings(project):
+def sandbox_settings(project, home=None):
     """Claude Code's own sandbox (bubblewrap on Linux): writes only in the
-    worktree, no Unix sockets, no network but the project's own list, and no
-    way for the model to step outside it. If it cannot start, nothing runs."""
+    worktree, no Unix sockets, no network but the project's own list, no
+    reads of the credential and protected places, and no way for the model
+    to step outside it. If it cannot start, nothing runs."""
+    home = home or os.path.expanduser("~")
     return {"enabled": True, "autoAllowBashIfSandboxed": True,
             "allowUnsandboxedCommands": False, "failIfUnavailable": True,
-            "network": {"allowedDomains": list(project.network)}}
+            "network": {"allowedDomains": list(project.network)},
+            "filesystem": {"denyRead": workgates.protected_places(home)}}
+
+
+PRIVATE_RULE = "Read(//**/share/assets/private/**)"
+
+
+def read_denials(home):
+    """Claude Code permission deny rules for reading every protected place
+    (workgates.protected_places: SECRET_PATHS, the live checkout, the app's
+    worktrees) and any share/assets/private. Passed as disallowed_tools: a
+    scoped disallowed rule denies matching calls in every permission mode.
+    `//` starts an absolute path in permission rules; each place gets a rule
+    for itself (a file) and for everything under it (a directory).
+
+    Claude Code merges Read deny rules, like sandbox.filesystem.denyRead,
+    into the sandbox's own configuration, so the OS also refuses those reads
+    to Bash commands (code.claude.com/docs/en/sandboxing, "Permission
+    rules": "Paths and domains from both sandbox settings and permission
+    rules are merged into the final sandbox configuration"). sandbox_settings
+    sets denyRead for the same places directly. Checked at rollout step 2:
+    `cat ~/.claude/.credentials.json` from inside a session must fail."""
+    rules = []
+    for p in workgates.protected_places(home):
+        rules += [f"Read(/{p})", f"Read(/{p}/**)"]
+    return rules + [PRIVATE_RULE]
 
 
 def session_env(base=None):
@@ -342,7 +369,10 @@ class Session:
             hooks={"PreToolUse": [sdk.HookMatcher(matcher=None, hooks=[self._pre])]},
             system_prompt={"type": "preset", "preset": "claude_code",
                            "append": SYSTEM_APPEND.format(gate=self.project.gate)},
-            sandbox=sandbox_settings(self.project), env=session_env())
+            sandbox=sandbox_settings(self.project, self.home), env=session_env(),
+            # Belt and braces with judge(): reads of protected places, and the
+            # web tools (F4a), are denied by Claude Code itself too.
+            disallowed_tools=read_denials(self.home) + sorted(workgates.WEB_TOOLS))
 
     def _sdk_client(self, options):
         return _sdk().ClaudeSDKClient(options=options)
