@@ -9,7 +9,7 @@ page is the how-to.
 
 You tap push-to-talk on the Work tab and say a task: "Omacar: fix the fastbaud
 read timeout." The relay transcribes it, reads it back ("Start it?"), and only
-an exact spoken "yes" starts it. A Claude Code session then works in its own
+a short spoken yes starts it (see "What you hear"). A Claude Code session then works in its own
 clone, runs the project's gate, and opens a **draft PR**. You hear milestones
 only: started, a question, gate failed, PR opened, finished, stuck, stopped.
 You never hear diffs, files or test output. Approving and merging happen in
@@ -25,11 +25,14 @@ Two pieces:
 ## What a session can never do
 
 Every session runs in Claude Code's own sandbox (bubblewrap on Linux; it needs
-the `bubblewrap` and `socat` packages). If the sandbox cannot start, the
-session does not start. Inside it:
+the `bubblewrap` and `socat` packages). OmaCar sets: sandbox enabled, no
+unsandboxed escape, fail if the sandbox is unavailable (the session does not
+start), and the network list. Inside it:
 
-- Writes go only to the session's own folder.
-- No Unix sockets: no desktop keyring, no SSH agent, no D-Bus.
+- Writes are confined to the session folder and no Unix sockets are reachable
+  (no keyring, SSH agent or D-Bus). These two limits are Claude Code's sandbox
+  defaults, not something OmaCar sets; they are checked at rollout step 2, not
+  by OmaCar's tests.
 - No network except the project's `network = [...]` list in `work.toml`.
   github.com domains are refused in that list: the agent never talks to GitHub.
 - Credential environment variables (`GH_TOKEN`, `GITHUB_TOKEN`,
@@ -62,6 +65,7 @@ daily_cap = 6            # sessions per day
 quiet = [21, 7]          # hours when lines are shown, not spoken, while parked
 # relay_url = "http://<box tailnet name>:7570"   # host = "box" only
 # relay_token = "..."                           # host = "box" only
+# tablet_node = "omacar-1"   # box only: the one tailnet node the relay answers
 
 [project.omacar]
 names = ["omacar", "car", "the car app"]
@@ -86,7 +90,11 @@ defaults to 6.
 2. Install `bubblewrap` and `socat`.
 3. Copy `examples/work.toml` to `~/.config/omacar/work.toml`. Point `path` at a
    **separate clone** of the project, never `~/Projects/omacar`.
-4. Start the relay: `systemctl --user enable --now omacar-work`.
+4. Start the relay: `systemctl --user enable --now omacar-work`. The unit
+   (`share/systemd/omacar-work.service`) runs `bin/omacar work serve` from
+   `~/Projects/omacar`, the live checkout. For rollout steps 2 and 3, on a
+   tablet worktree, do not enable it: run `bin/omacar work serve` by hand from
+   that worktree instead.
 5. Check it: `omacar work status`.
 
 ### The relay token
@@ -101,7 +109,9 @@ token too (it is not a plain curl).
 1. **Desk.** The relay and its tests with a fake SDK, then a recorded clip and
    a spoken reply.
 2. **Tablet, one real dispatch.** One real session against a scratch repo,
-   ending in a draft PR.
+   ending in a draft PR. Before trusting the sandbox, from inside a session
+   confirm that a write outside its folder fails and that a connect to the
+   D-Bus socket fails.
 3. **Parked in the car.** The Work tab in a tablet worktree, never the live
    checkout until you say. Tested parked in the driveway.
 4. **Move to the box.** Only then, and only with your go-ahead, on a drive.
@@ -116,12 +126,17 @@ token too (it is not a plain curl).
    tablet's `work.toml` as `relay_token = "..."`.
 4. On the tablet set `host = "box"` and
    `relay_url = "http://<box tailnet name>:7570"`.
+5. The box's `work.toml` may set `tablet_node` (default `"omacar-1"`). The box
+   relay answers only that tailnet node and refuses to start if it is empty.
 
 ## When sessions start and stop
 
 - **On the tablet,** the relay starts a session only while parked, using the
-  app's current rule: stopped for at least 60 seconds. (The confirmed-Park rule
-  from frame 0x191 is not merged yet.) When the car moves it stops running
+  app's current rule (`lib/workpark.py`): connected, speed at or under
+  3 km/h, no adapter hand-off; once the car has moved since the relay started
+  (or during any hand-off) it must hold that for 60 s. Unknown speed, link or
+  daemon counts as moving. (The confirmed-Park rule from frame 0x191 is not
+  merged yet.) When the car moves it stops running
   sessions and drops queued and pending tasks.
 - **On the box,** sessions are not tied to the car's motion, but the Work tab
   shows PR views only while parked.
@@ -130,8 +145,11 @@ token too (it is not a plain curl).
 
 - **Starting.** A rising tone, then you speak. Recording ends after 1.2 s of
   silence or 30 s.
-- **Confirming.** "Omacar: fix the fastbaud read timeout. Start it?" Only an
-  exact spoken "yes" starts the task. Silence or anything else: "Not started."
+- **Confirming.** "Omacar: fix the fastbaud read timeout. Start it?" A short
+  affirmative from a fixed list starts the task: yes, yeah, yep, sure, ok,
+  okay, go, start it, do it, go ahead, optionally plus one of please, it or
+  now. Any no, stop or cancel word anywhere in the reply means it does not
+  start. Silence or anything else: "Not started." after 20 s.
 - **Milestones.** "Omacar session started." "Omacar has a question: ..."
   "Omacar: gate passed, draft PR 41 opened." "Omacar is stuck."
 - **Answering a question.** Push-to-talk again. "Stop", "cancel" or "never
