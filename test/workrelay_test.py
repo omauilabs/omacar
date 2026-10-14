@@ -409,6 +409,17 @@ check("a refusal from _next is spoken, but not rendered on the loop thread",
       (bool(spoken), any(r[0] == loop_ident for r in renders)), (True, False))
 check("handler has a socket timeout", srv.RequestHandlerClass.timeout, 15)
 
+print("\n  F9: lines and free text are scrubbed by shape before logging and speaking")
+said9 = []
+R9 = mk("f9", workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0)),
+        render=lambda t, o: said9.append(t) or False)
+R9.emit({"kind": "question", "session": "x", "project": "omacar",
+         "question": "Is 1HGCM82633A004352 the right VIN?"})
+raw9 = open(R9.log).read()
+check("VIN not in the log", "1HGCM82633A004352" in raw9, False)
+check("rendered, without the VIN", (len(said9), any("1HGCM82633A004352" in t for t in said9)), (1, False))
+check("the line says withheld", "withheld" in R9.events(0)[-1]["line"], True)
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()
 os._exit(1 if fails else 0)

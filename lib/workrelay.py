@@ -46,6 +46,7 @@ PRUNE_EVERY_S = 86400
 SEEN_MAX = 500
 UNSURE = -1.0
 LIVE = ("starting", "running", "question", "gate", "pushing")
+FREE_TEXT = ("question", "why", "text", "instruction")
 
 
 def token_path(state_dir=STATE):
@@ -204,7 +205,15 @@ class Relay:
         e.setdefault("session", None)
         e.setdefault("project", None)
         at = self.clock()
+        # Session text (a question, a reason) comes from the model, which may
+        # have read the car's VIN out of a file: the by-shape net runs on every
+        # free-text field and on the line before anything is logged or spoken.
+        for k in FREE_TEXT:
+            if isinstance(e.get(k), str):
+                e[k] = workprivacy.scrub(e[k], ())
         e["line"] = workvoice.line(e)
+        if e["line"]:
+            e["line"] = workprivacy.scrub(e["line"], ())
         tmp = None
         if e["line"] and not workvoice.quiet_now(self.cfg.quiet, time.localtime(at).tm_hour,
                                                  self._parked()):
