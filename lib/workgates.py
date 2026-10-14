@@ -150,30 +150,64 @@ def _key_items(lines, i, indent, rest):
     return out
 
 
+def _split_top(value):
+    """Split a YAML flow list on commas outside nested brackets."""
+    value = re.sub(r"\s+#.*$", "", value).strip()
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    out, depth, cur = [], 0, ""
+    for ch in value:
+        depth += (ch == "[") - (ch == "]")
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur] if cur.strip() else out
+
+
+def _matrix_entries(lines, i, indent, rest):
+    """The entries of a matrix axis; each is one scalar or one nested label list."""
+    if rest.strip() and not rest.strip().startswith("#"):
+        return _split_top(rest)
+    out = []
+    for line in lines[i + 1:]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = re.match(r"^(\s*)-\s+(.*)$", line)
+        if not (m and len(m.group(1)) >= indent):
+            break
+        out.append(re.sub(r"\s+#.*$", "", m.group(2)))
+    return out
+
+
+def _bad_labels(labels):
+    """A hosted label, or `self-hosted` with nothing pinning it to a machine."""
+    low = [x.lower() for x in labels]
+    return any(x.startswith(HOSTED_PREFIX) for x in low) or low == ["self-hosted"]
+
+
 def _hosted(text):
     """Whether workflow text puts a job on a GitHub-hosted runner, or on a bare
-    `self-hosted` (which would match the Macs and the Beelink alike)."""
+    `self-hosted` (which would match the Macs and the Beelink alike). A matrix
+    entry is judged as its own label set, so `[self-hosted, Linux]` passes."""
     lines = text.splitlines()
     for i, line in enumerate(lines):
         m = re.match(r"^(\s*)(?:-\s+)?runs-on:\s*(.*)$", line)
         if not m:
             continue
-        items = _key_items(lines, i, len(m.group(1)), m.group(2))
         labels = []
-        for item in items:
+        for item in _key_items(lines, i, len(m.group(1)), m.group(2)):
             ref = re.search(r"\$\{\{\s*matrix\.(\w+)\s*\}\}", item)
             if not ref:
                 labels.append(item)
                 continue
             for j, l2 in enumerate(lines):
                 k = re.match(r"^(\s*)" + re.escape(ref.group(1)) + r":\s*(.*)$", l2)
-                if k:
-                    labels += _key_items(lines, j, len(k.group(1)), k.group(2))
-        low = [x.lower() for x in labels]
-        if any(x.startswith(HOSTED_PREFIX) for x in low) or low == ["self-hosted"]:
-            return True
-        if any(x == "self-hosted" for x in low) and any(
-                re.search(r"\$\{\{\s*matrix", x) for x in items):
+                if k and any(_bad_labels(_items(e)) for e in
+                             _matrix_entries(lines, j, len(k.group(1)), k.group(2))):
+                    return True
+        if labels and _bad_labels(labels):
             return True
     return False
 
@@ -203,9 +237,38 @@ def _text_after(tool, inp, path):
 
 # -- shell -------------------------------------------------------------------
 
+def _strip_comments(text):
+    """Remove shell comments: a `#` outside quotes that starts a word, to the
+    end of its line. Done before tokenising because a comment may hold an
+    apostrophe. A `#` inside a word (`a#`) is not a comment."""
+    out, quote, i = [], None, 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\" and quote == '"' and i + 1 < len(text):
+                out.append(ch)
+                i += 1
+                ch = text[i]
+            elif ch == quote:
+                quote = None
+        elif ch == "\\" and i + 1 < len(text):
+            out.append(ch)
+            i += 1
+            ch = text[i]
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "#" and (not out or out[-1] in " \t\n;|&("):
+            while i < len(text) and text[i] != "\n":
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _tokens(command):
     """Shell tokens with operators split out, or None when quotes are unbalanced.
-    `#` is not a comment here: judging a comment's words too is the safe side."""
+    Comments are already stripped (see _bash)."""
     text = command.replace("\n", " ; ").replace("$(", " ( ").replace("`", " ( ")
     try:
         lex = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
@@ -399,7 +462,7 @@ def _judge_words(words, ctx, depth):
 
 
 def _bash(command, ctx):
-    command = _expand(command, ctx)
+    command = _strip_comments(_expand(command, ctx))
     if DEVICE_RX.search(command):
         return NO_DEVICE
     if ".github/workflows" in command:

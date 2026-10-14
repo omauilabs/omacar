@@ -105,6 +105,10 @@ REFUSE = [
     ("switch -C main", bash("git switch -C main")),
     ("docker builder prune", bash("docker builder prune -af")),
     ("systemd-run", bash("systemd-run --user x")),
+    ("a hash inside quotes is no comment", bash('echo "# not a comment"; git push')),
+    ("matrix with a bare self-hosted", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    strategy:\n      matrix:\n        os: [[self-hosted]]\n"
+                   "    runs-on: ${{ matrix.os }}\n"})),
 ]
 ALLOW = [
     ("write in the worktree", ("Write", {"file_path": WT + "/lib/x.py", "content": "x"})),
@@ -131,6 +135,17 @@ ALLOW = [
     ("local npm install", bash("npm install")),
     ("uv pip install", bash("uv pip install -r requirements.txt")),
     ("new branch", bash("git checkout -b work/x")),
+    ("comment with an apostrophe", bash("ls # it's fine")),
+    ("comment line first", bash("# don't do this\nls")),
+    ("comment naming a protected place", bash("echo hi # see ~/.ssh")),
+    ("pinned matrix, inline", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    strategy:\n      matrix:\n"
+                   "        os: [[self-hosted, Linux], [self-hosted, macOS, ARM64]]\n"
+                   "    runs-on: ${{ matrix.os }}\n"})),
+    ("pinned matrix, block", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    strategy:\n      matrix:\n        os:\n"
+                   "          - [self-hosted, Linux]\n          - [self-hosted, macOS]\n"
+                   "    runs-on: ${{ matrix.os }}\n"})),
 ]
 
 # An Edit is judged on the file as it will be, so the fixture is a real file.
