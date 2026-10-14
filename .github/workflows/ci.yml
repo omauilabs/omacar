@@ -113,7 +113,14 @@ jobs:
 
   syntax:
     name: Everything parses
-    runs-on: [self-hosted, Linux]
+    # A light job (12 s median, never above 21 s; python ast, bash -n, grep):
+    # the light runner on the NUC takes it when the org variable
+    # OMAUILABS_LIGHT is 'on', so it does not queue behind 20-minute test runs
+    # for a slot it uses for seconds. Unset or off, it runs where it always
+    # did, which is what keeps it from waiting on a label no runner carries
+    # when the light runner is down. omauilabs/omaui, docs/ci.md, "The
+    # light-jobs lane". Never a GitHub-hosted runner, never a bare self-hosted.
+    runs-on: ${{ fromJSON(vars.OMAUILABS_LIGHT == 'on' && '["Linux","X64","omauilabs-light"]' || '["self-hosted","Linux"]') }}
     # Never for a fork's pull request (see the header).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 10
