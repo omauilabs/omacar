@@ -1,0 +1,11 @@
+# Work by voice: what the car may ask your machine to work on.
+# Copy to ~/.config/omacar/work.toml on the machine that runs `omacar work serve`.
+host = "tablet"          # "tablet" (parked only) or "box"
+daily_cap = 6
+quiet = [21, 7]          # hours when lines are shown, not spoken, while parked
+# relay_url = "http://omarchy:7570"   # where the tablet's app finds the relay (host = "box")
+
+[project.omacar]
+names = ["omacar", "car", "the car app"]
+path  = "~/Projects/omacar-work-src"   # never the live checkout ~/Projects/omacar
+gate  = "test/all.sh"
