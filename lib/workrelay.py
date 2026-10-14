@@ -4,16 +4,35 @@
 only while parked; on the box it listens on the tailnet and answers only the
 tablet's node. The page never talks to it: the app's server does
 (lib/workroutes.py).
+
+Only the app's server may drive it. At startup the relay writes a random token
+to <state_dir>/token (mode 0600) and every request must carry
+`Authorization: Bearer <token>`; a request with an Origin header is refused (a
+web page in the kiosk browser must not be able to start sessions), and on the
+tablet the Host header must be the loopback address. On the tablet the app
+server reads the token file (read_token()); on the box the owner copies the
+token into the tablet's work.toml as `relay_token = "..."`.
+
+Locking: self.lock guards state only. Transcription, intent parsing and Piper
+rendering all run outside it, and session events reach the log through a
+worker thread so the asyncio loop never waits on Piper.
 """
 import asyncio
 import base64
+import binascii
+import collections
+import hmac
 import json
 import os
 import re
+import secrets as _secrets
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +42,36 @@ STATE = os.path.join(os.path.expanduser(
     os.environ.get("XDG_STATE_HOME", "~/.local/state")), "omacar", "work")
 CONFIRM_S = 20.0
 KEEP_S = 7 * 86400
+PRUNE_EVERY_S = 86400
+SEEN_MAX = 500
 UNSURE = -1.0
+LIVE = ("starting", "running", "question", "gate", "pushing")
+
+
+def token_path(state_dir=STATE):
+    return os.path.join(state_dir, "token")
+
+
+def read_token(state_dir=STATE):
+    try:
+        with open(token_path(state_dir), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _write_token(state_dir):
+    tok = _secrets.token_urlsafe(32)
+    fd = os.open(token_path(state_dir), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(tok)
+    os.chmod(token_path(state_dir), 0o600)
+    return tok
+
+
+def _resolve(fut, value):
+    if not fut.done():
+        fut.set_result(value)
 
 
 class Relay:
@@ -43,14 +91,26 @@ class Relay:
         self.dir = state_dir
         for d in ("", "in", "clips"):
             os.makedirs(os.path.join(self.dir, d), exist_ok=True)
+        for name in os.listdir(os.path.join(self.dir, "in")):       # uploads a crash left behind
+            try: os.remove(os.path.join(self.dir, "in", name))
+            except OSError: pass
+        self.token = _write_token(self.dir)
         self.log = os.path.join(self.dir, "events.jsonl")
         self.lock = threading.RLock()
-        self.seen, self.sessions, self.queue = {}, {}, []
-        self.gates = {}          # session id -> "gate passed" | "gate failing", from its PR event
-        self.pending = None
+        self.ears_lock = threading.Lock()        # one transcription at a time
+        self.seen = collections.OrderedDict()    # client id -> reply, last SEEN_MAX
+        self.inflight = {}                       # client id -> [Event, reply]
+        self.sessions, self.queue = {}, []
+        self.created = {}                        # session id -> start time, this process
+        self.gates, self.last_line = {}, {}
+        self.repos = {}
+        self.pending = None                      # only ("confirm", Intent, expires)
+        self.questions = collections.deque()     # (session id, future), oldest first
         self.next_id = self._last_id() + 1
+        self.pool = ThreadPoolExecutor(max_workers=1)   # session events, in order
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
+        self.last_prune = self.clock()
         self.prune()
         self._recover()
 
@@ -64,212 +124,368 @@ class Relay:
     def _save(self):
         rows = [{"id": s.id, "project": s.project.name, "state": s.state,
                  "pr": s.pr, "branch": getattr(s, "branch", "")}
-                for s in self.sessions.values()]
+                for s in list(self.sessions.values())]
         with open(self._book() + ".tmp", "w", encoding="utf-8") as f:
             json.dump(rows, f)
         os.replace(self._book() + ".tmp", self._book())
 
     def _recover(self):
         try:
-            rows = json.load(open(self._book(), encoding="utf-8"))
+            with open(self._book(), encoding="utf-8") as f:
+                rows = json.load(f)
         except (OSError, ValueError):
             return
         for r in rows:
-            if r.get("state") in ("starting", "running", "question", "gate", "pushing"):
+            if r.get("state") in LIVE:
                 self.emit({"kind": "interrupted", "session": r["id"], "project": r["project"]})
-        os.remove(self._book())
+        try: os.remove(self._book())
+        except OSError: pass
 
     # ---- the event log ------------------------------------------------------
-    def _last_id(self):
+    def _rows(self):
+        """Every parseable record; a torn or garbage line is skipped, not fatal."""
+        out = []
         try:
-            with open(self.log, encoding="utf-8") as f:
-                last = 0
-                for row in f:
-                    last = max(last, json.loads(row).get("id", 0))
-                return last
-        except (OSError, ValueError):
-            return 0
+            with open(self.log, encoding="utf-8", errors="replace") as f:
+                for x in f:
+                    try:
+                        r = json.loads(x)
+                    except ValueError:
+                        continue
+                    if isinstance(r, dict) and isinstance(r.get("id"), int):
+                        out.append(r)
+        except OSError:
+            pass
+        return out
+
+    def _last_id(self):
+        return max((r["id"] for r in self._rows()), default=0)
+
+    def _append(self, rec):
+        """Append one line, first closing a torn last line so it cannot swallow ours."""
+        with open(self.log, "ab+") as f:
+            f.seek(0, 2)
+            if f.tell():
+                f.seek(-1, 2)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")
+            f.write((json.dumps(rec) + "\n").encode("utf-8"))
 
     def prune(self):
         cutoff = self.clock() - KEEP_S
-        try:
-            with open(self.log, encoding="utf-8") as f:
-                rows = [r for r in f if json.loads(r).get("at", 0) >= cutoff]
+        with self.lock:
+            rows = [r for r in self._rows() if r.get("at", 0) >= cutoff]
             with open(self.log + ".tmp", "w", encoding="utf-8") as f:
-                f.writelines(rows)
+                f.writelines(json.dumps(r) + "\n" for r in rows)
             os.replace(self.log + ".tmp", self.log)
-        except (OSError, ValueError):
-            pass
+        cdir = os.path.join(self.dir, "clips")
+        for name in os.listdir(cdir):
+            try:
+                if os.path.getmtime(os.path.join(cdir, name)) < cutoff:
+                    os.remove(os.path.join(cdir, name))
+            except OSError:
+                pass
 
     def _parked(self):
-        return True if self.park is None else bool(self.park.update())
+        # Park.update() belongs to the 1 Hz ticker; everyone else reads its answer.
+        return True if self.park is None else bool(getattr(self.park, "parked", False))
 
     def emit(self, e):
+        """Render outside the lock, then take the next id and append in one step,
+        so the log is always in id order and a slow Piper never blocks a request."""
+        e = dict(e)
+        e.setdefault("session", None)
+        e.setdefault("project", None)
+        at = self.clock()
+        e["line"] = workvoice.line(e)
+        tmp = None
+        if e["line"] and not workvoice.quiet_now(self.cfg.quiet, time.localtime(at).tm_hour,
+                                                 self._parked()):
+            tmp = os.path.join(self.dir, "clips", f"tmp-{uuid.uuid4().hex}.wav")
+            if not self.render(e["line"], tmp):
+                tmp = None
         with self.lock:
-            e = dict(e, id=self.next_id, at=self.clock())
+            e["id"], e["at"], e["clip"] = self.next_id, at, None
             self.next_id += 1
-            e["line"] = workvoice.line(e)
-            if e.get("kind") in ("pr_opened", "gate_failed") and e.get("session"):
-                self.gates[e["session"]] = "gate passed" if e["kind"] == "pr_opened" else "gate failing"
-            hour = time.localtime(e["at"]).tm_hour
-            e["clip"] = None
-            if e["line"] and not workvoice.quiet_now(self.cfg.quiet, hour, self._parked()):
+            if tmp is not None:
                 name = f"{e['id']}.wav"
-                if self.render(e["line"], os.path.join(self.dir, "clips", name)):
+                try:
+                    os.replace(tmp, os.path.join(self.dir, "clips", name))
                     e["clip"] = name
-            with open(self.log, "a", encoding="utf-8") as f:
-                f.write(json.dumps(e) + "\n")
+                except OSError:
+                    pass
+            if e["kind"] in ("pr_opened", "gate_failed") and e["session"]:
+                self.gates[e["session"]] = "gate passed" if e["kind"] == "pr_opened" else "gate failing"
+            if e["session"] and e["line"]:
+                self.last_line[e["session"]] = e["line"]
+            self._append(e)
             if self.sessions:
                 self._save()
-            return e
+        return e
+
+    def _emit_async(self, e):
+        # Sessions emit from the asyncio loop; Piper must not run there.
+        self.pool.submit(self.emit, e)
 
     def events(self, after):
-        try:
-            with open(self.log, encoding="utf-8") as f:
-                return [r for r in (json.loads(x) for x in f) if r["id"] > after]
-        except (OSError, ValueError):
-            return []
+        return [r for r in self._rows() if r["id"] > after]
 
     # ---- utterances -----------------------------------------------------------
     def utterance(self, client_id, audio_path, secrets):
         with self.lock:
             if client_id in self.seen:
-                try: os.remove(audio_path)
-                except OSError: pass
+                self._rm(audio_path)
                 return self.seen[client_id]
-            try:
-                text, sure = self.ears(audio_path)
-            finally:
-                try: os.remove(audio_path)
-                except OSError: pass
-            text = workprivacy.scrub(text, secrets)
-            if text.strip():
-                # The transcript is the one thing kept (7 days); it has no line, so no clip.
-                self.emit({"kind": "heard", "text": text})
-            reply = self._handle(text, sure)
-            self.seen[client_id] = reply
+            slot = self.inflight.get(client_id)
+            mine = slot is None
+            if mine:
+                slot = self.inflight[client_id] = [threading.Event(), None]
+        if not mine:                      # a duplicate waits for the first run's reply
+            self._rm(audio_path)
+            slot[0].wait(120)
+            return slot[1] if slot[1] is not None else {"error": "busy"}
+        try:
+            reply = self._utter(audio_path, secrets)
+            with self.lock:
+                self.seen[client_id] = reply
+                while len(self.seen) > SEEN_MAX:
+                    self.seen.popitem(last=False)
+            slot[1] = reply
             return reply
+        finally:
+            with self.lock:
+                self.inflight.pop(client_id, None)
+            slot[0].set()
 
-    def _handle(self, text, sure):
+    @staticmethod
+    def _rm(path):
+        try: os.remove(path)
+        except OSError: pass
+
+    def _utter(self, audio_path, secrets):
+        try:
+            with self.ears_lock:
+                text, sure = self.ears(audio_path)
+        finally:
+            self._rm(audio_path)
+        text = workprivacy.scrub(text, secrets)
+        if text.strip():
+            # The transcript is the one thing kept (7 days); it has no line, so no clip.
+            self.emit({"kind": "heard", "text": text})
         if not text.strip() or sure < UNSURE:
             return self.emit({"kind": "didnt_catch"})
-        p = self.pending
-        if p and p[0] == "question":
-            i = self.intent(text, self.cfg, pending="question")
-            if i.kind == "answer":
+        with self.lock:
+            mode = self._mode()
+        i = self.intent(text, self.cfg, pending=mode)         # may call a model: no lock
+        evs = []
+        with self.lock:
+            result = self._decide(i, mode, evs)
+        last = None
+        for ev in evs:
+            last = self.emit(ev)
+        return result if result is not None else last
+
+    def _mode(self):
+        """What the next utterance answers. A confirm comes first; then the oldest
+        live question. Questions whose session already ended are dropped."""
+        if self.pending:
+            return "confirm"
+        while self.questions and self.questions[0][1].done():
+            self.questions.popleft()
+        return "question" if self.questions else None
+
+    def _stop(self, s):
+        asyncio.run_coroutine_threadsafe(s.stop("stopped"), self.loop)
+
+    def _decide(self, i, mode, evs):
+        """State changes for one parsed utterance. Lock held; events go in `evs`
+        and are emitted (and rendered) after the lock is released."""
+        if self._mode() != mode:                  # the world moved while we parsed
+            evs.append({"kind": "didnt_catch"})
+            return None
+        if mode == "confirm":
+            p = self.pending
+            if i.kind == "yes":
                 self.pending = None
-                self.loop.call_soon_threadsafe(p[2].set_result, i.answer)
+                if self.clock() > p[2]:
+                    evs.append({"kind": "not_started", "project": p[1].project})
+                    return None
+                return self._start(p[1], evs)
+            if i.kind == "no":
+                self.pending = None
+                evs.append({"kind": "not_started", "project": p[1].project})
+                return None
+            evs.append({"kind": "didnt_catch"})
+            return None
+        if mode == "question":
+            sid, fut = self.questions[0]
+            if i.kind == "answer":
+                self.questions.popleft()
+                self.loop.call_soon_threadsafe(_resolve, fut, i.answer)
                 return {"ok": True}
             if i.kind == "stop":
                 # "stop" while a question is waiting stops the session that asked;
                 # its own `stopped` event is what gets spoken.
-                self.pending = None
-                s = self.sessions.get(p[1])
-                if s is not None:
-                    asyncio.run_coroutine_threadsafe(s.stop("stopped"), self.loop)
+                self.questions.popleft()
+                if sid in self.sessions:
+                    self._stop(self.sessions[sid])
                 return {"ok": True}
-            return self.emit({"kind": "didnt_catch"})
-        if p and p[0] == "confirm":
-            i = self.intent(text, self.cfg, pending="confirm")
-            if i.kind == "yes":
-                self.pending = None
-                return self._start(p[1])
-            if i.kind == "no":
-                self.pending = None
-                return self.emit({"kind": "not_started"})
-            return self.emit({"kind": "didnt_catch"})
-        i = self.intent(text, self.cfg, pending=None)
+            evs.append({"kind": "didnt_catch"})
+            return None
         if i.kind == "new_task":
-            if self.cfg.host == "tablet" and not self._parked():
-                return self.emit({"kind": "parked_only"})
-            if self._today() >= self.cfg.daily_cap:
-                return self.emit({"kind": "cap"})
+            ok, kind = self._may_start()
+            if not ok:
+                evs.append({"kind": kind, "project": i.project})
+                return None
             self.pending = ("confirm", i, self.clock() + CONFIRM_S)
-            return self.emit({"kind": "confirm", "project": i.project, "instruction": i.instruction})
+            evs.append({"kind": "confirm", "project": i.project, "instruction": i.instruction})
+            return None
         if i.kind == "status":
-            return self.emit({"kind": "status", "text": self._status_text()})
+            evs.append({"kind": "status", "text": self._status_text()})
+            return None
         if i.kind == "stop" and i.project:
-            for s in self.sessions.values():
+            for s in list(self.sessions.values()):
                 if s.project.name == i.project and s.state not in ("done", "stopped", "stuck"):
-                    asyncio.run_coroutine_threadsafe(s.stop("stopped"), self.loop)
+                    self._stop(s)
             return {"ok": True}
         if i.kind == "result" and i.project:
             done = [s for s in self.sessions.values() if s.project.name == i.project and s.pr]
-            text = (f"{i.project}: draft PR {done[-1].pr}, {self.gates.get(done[-1].id, 'gate failing')}."
-                    if done else f"{i.project}: no pull request yet.")
-            return self.emit({"kind": "status", "text": text})
+            if done:
+                gate = self.gates.get(done[-1].id)
+                text = f"{i.project}: draft PR {done[-1].pr}" + (f", {gate}." if gate else ".")
+            else:
+                text = f"{i.project}: no pull request yet."
+            evs.append({"kind": "status", "text": text})
+            return None
         if i.kind == "choose":
-            return self.emit({"kind": "choose", "choices": i.choices[:2]})
-        return self.emit({"kind": "didnt_catch"})
+            evs.append({"kind": "choose", "choices": i.choices[:2]})
+            return None
+        evs.append({"kind": "didnt_catch"})
+        return None
 
+    # ---- starting ---------------------------------------------------------------
     def _today(self):
-        day = time.localtime(self.clock()).tm_yday
-        return sum(1 for e in self.events(0)
-                   if e["kind"] == "started" and time.localtime(e["at"]).tm_yday == day)
+        """Sessions begun today: ones logged as started, plus ones this process
+        created whose `started` line is still on its way to the log."""
+        day = lambda t: time.localtime(t)[:3]                  # noqa: E731
+        today = day(self.clock())
+        ids = {r.get("session") or ("e%d" % r["id"]) for r in self._rows()
+               if r.get("kind") == "started" and day(r.get("at", 0)) == today}
+        ids |= {sid for sid, at in self.created.items() if day(at) == today}
+        return len(ids)
 
     def _running(self):
-        return [s for s in self.sessions.values()
-                if s.state in ("starting", "running", "question", "gate", "pushing")]
+        return [s for s in list(self.sessions.values()) if s.state in LIVE]
 
-    def _start(self, i):
-        project = self.cfg.projects[i.project]
+    def _may_start(self):
+        """The one gate for starting work: new_task, a spoken yes and a queued task
+        leaving the queue all pass through it. Lock held."""
+        if self.cfg.host == "tablet" and not self._parked():
+            return False, "parked_only"
+        if self._today() + len(self.queue) >= self.cfg.daily_cap:
+            return False, "cap"
+        return True, ""
+
+    def _start(self, i, evs):
+        ok, kind = self._may_start()
+        if not ok:
+            evs.append({"kind": kind, "project": i.project})
+            return None
         if len(self._running()) >= self.cfg.max_sessions:
             self.queue.append(i)
-            return self.emit({"kind": "busy"})
+            evs.append({"kind": "busy", "project": i.project})
+            return None
+        project = self.cfg.projects[i.project]
         holder = {}
 
         async def ask(question):
             fut = self.loop.create_future()
+            entry = (holder["s"].id, fut)
             with self.lock:
-                self.pending = ("question", holder["s"].id, fut)
-            return await fut
+                self.questions.append(entry)
+            try:
+                return await fut
+            finally:
+                with self.lock:
+                    try: self.questions.remove(entry)
+                    except ValueError: pass
 
-        s = self.make(project, i.instruction, emit=self.emit, ask=ask,
+        s = self.make(project, i.instruction, emit=self._emit_async, ask=ask,
                       home=os.path.expanduser("~"), host=self.cfg.host)
         holder["s"] = s
         self.sessions[s.id] = s
+        self.created[s.id] = self.clock()
         fut = asyncio.run_coroutine_threadsafe(s.run(), self.loop)
         fut.add_done_callback(lambda _f: self._next())
         return {"ok": True, "session": s.id}
 
     def _next(self):
+        evs = []
         with self.lock:
             if self.queue and len(self._running()) < self.cfg.max_sessions:
-                self._start(self.queue.pop(0))
+                self._start(self.queue.pop(0), evs)
+        for ev in evs:
+            self.emit(ev)
 
+    # ---- status -------------------------------------------------------------------
     def _status_text(self):
         rows = list(self.sessions.values())[::-1][:3]      # newest first; ids are random hex
         return " ".join(f"{s.project.name}: {s.state}." for s in rows) or "No sessions."
 
     def status(self):
+        with self.lock:
+            snap = [(s.id, s.project, s.state, s.pr, self.last_line.get(s.id, ""))
+                    for s in self.sessions.values()]
+            today = self._today()
         return {"host": self.cfg.host, "parked": self._parked(),
-                "today": self._today(), "cap": self.cfg.daily_cap,
-                "sessions": [{"id": s.id, "project": s.project.name, "state": s.state,
-                              "pr": s.pr, "repo": self._repo(s.project)}
-                             for s in self.sessions.values()]}
+                "today": today, "cap": self.cfg.daily_cap,
+                "sessions": [{"id": sid, "project": pr.name, "state": st, "pr": n,
+                              "repo": self._repo(pr), "line": line}
+                             for sid, pr, st, n, line in snap]}
 
     def _repo(self, project):
-        """owner/name of the project's GitHub remote, for the parked PR link."""
+        """owner/name of the project's GitHub remote, for the parked PR link (cached)."""
+        if project.path in self.repos:
+            return self.repos[project.path]
         try:
             r = subprocess.run(["git", "-C", project.path, "remote", "get-url", "origin"],
                                capture_output=True, text=True, timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             return ""
         m = re.search(r"github\.com[:/]([^/]+/[^/.\s]+)", r.stdout)
-        return m.group(1) if m else ""
+        self.repos[project.path] = m.group(1) if m else ""
+        return self.repos[project.path]
 
     def tick(self):
+        """1 Hz. The only caller of Park.update()."""
+        if self.park is not None:
+            self.park.update()
+        evs = []
         with self.lock:
-            if self.pending and self.pending[0] == "confirm" and self.clock() > self.pending[2]:
+            moving = self.cfg.host == "tablet" and not self._parked()
+            if self.pending and (moving or self.clock() > self.pending[2]):
+                evs.append({"kind": "not_started", "project": self.pending[1].project})
                 self.pending = None
-                self.emit({"kind": "not_started"})
-            if self.cfg.host == "tablet" and not self._parked():
+            if moving:
+                for q in self.queue:
+                    evs.append({"kind": "not_started", "project": q.project})
+                self.queue.clear()
                 for s in self._running():
-                    asyncio.run_coroutine_threadsafe(s.stop("stopped"), self.loop)
+                    self._stop(s)
+            due = self.clock() - self.last_prune >= PRUNE_EVERY_S
+            if due:
+                self.last_prune = self.clock()
+        for ev in evs:
+            self.emit(ev)
+        if due:
+            self.prune()
 
 
 # ---- HTTP -------------------------------------------------------------------
 MAX_AUDIO = 2 << 20
+MAX_BODY = MAX_AUDIO * 2           # base64 and JSON framing
+NODE_TTL_S = 60.0
+_nodes = {}                        # ip -> (when, node name)
 
 
 def _tailnet_ip():
@@ -285,22 +501,28 @@ def _node_of(ip):
         return ""
 
 
-def serve(cfg, port=7570):
-    relay = Relay(cfg)
-    host = "127.0.0.1" if cfg.host == "tablet" else _tailnet_ip()
+def _node_cached(ip):
+    now = time.monotonic()
+    hit = _nodes.get(ip)
+    if hit and now - hit[0] < NODE_TTL_S:
+        return hit[1]
+    node = _node_of(ip)
+    _nodes[ip] = (now, node)
+    return node
 
-    def ticker():
-        while True:
-            time.sleep(1)
-            relay.tick()
-    threading.Thread(target=ticker, daemon=True).start()
+
+def peer_ok(cfg, ip):
+    if cfg.host == "tablet":
+        return ip == "127.0.0.1"
+    return bool(cfg.tablet_node) and _node_cached(ip) == cfg.tablet_node
+
+
+def make_server(cfg, port, relay, host=None):
+    """The HTTP server, not yet serving. `host` defaults per cfg.host."""
+    if host is None:
+        host = "127.0.0.1" if cfg.host == "tablet" else _tailnet_ip()
 
     class H(BaseHTTPRequestHandler):
-        def _ok_peer(self):
-            if cfg.host == "tablet":
-                return self.client_address[0] == "127.0.0.1"
-            return _node_of(self.client_address[0]) == cfg.tablet_node
-
         def _json(self, obj, code=200):
             body = json.dumps(obj).encode()
             self.send_response(code)
@@ -309,21 +531,41 @@ def serve(cfg, port=7570):
             self.end_headers()
             self.wfile.write(body)
 
+        def _allowed(self):
+            """Who may ask: the tablet's app server, carrying the token, never a web page."""
+            if not peer_ok(cfg, self.client_address[0]):
+                return False
+            if self.headers.get("Origin") is not None:
+                return False
+            if cfg.host == "tablet":
+                p = self.server.server_address[1]
+                if self.headers.get("Host") not in (f"127.0.0.1:{p}", f"localhost:{p}"):
+                    return False
+            got = self.headers.get("Authorization") or ""
+            want = "Bearer " + relay.token
+            return hmac.compare_digest(got.encode(), want.encode())
+
         def do_GET(self):
-            if not self._ok_peer():
-                return self._json({"error": "not the tablet"}, 403)
-            path, _, q = self.path.partition("?")
-            if path == "/health":
+            if not self._allowed():
+                return self._json({"error": "not allowed"}, 403)
+            u = urllib.parse.urlsplit(self.path)
+            if u.path == "/health":
                 return self._json(dict(relay.status(), ok=True))
-            if path == "/events":
-                after = int((q.split("after=")[1:] or ["0"])[0].split("&")[0] or 0)
-                return self._json({"events": relay.events(after)})
-            if path.startswith("/clip/"):
-                name = os.path.basename(path)
+            if u.path == "/events":
+                raw = (urllib.parse.parse_qs(u.query).get("after") or ["0"])[0]
+                if not raw.isascii() or not raw.isdigit():
+                    return self._json({"error": "bad after"}, 400)
+                return self._json({"events": relay.events(int(raw))})
+            if u.path.startswith("/clip/"):
+                name = urllib.parse.unquote(u.path[len("/clip/"):])
                 p = os.path.join(relay.dir, "clips", name)
-                if not name.endswith(".wav") or not os.path.exists(p):
+                if not re.fullmatch(r"[0-9]+\.wav", name) or not os.path.isfile(p):
                     return self._json({"error": "no such clip"}, 404)
-                data = open(p, "rb").read()
+                try:
+                    with open(p, "rb") as f:
+                        data = f.read()
+                except OSError:
+                    return self._json({"error": "no such clip"}, 404)
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("Content-Length", str(len(data)))
@@ -332,31 +574,75 @@ def serve(cfg, port=7570):
             return self._json({"error": "no such endpoint"}, 404)
 
         def do_POST(self):
-            if not self._ok_peer():
-                return self._json({"error": "not the tablet"}, 403)
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_AUDIO * 2:
+            if not self._allowed():
+                self.close_connection = True
+                return self._json({"error": "not allowed"}, 403)
+            if self.path != "/utterance":
+                return self._json({"error": "no such endpoint"}, 404)
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+                return self._json({"error": "json only"}, 415)
+            raw = (self.headers.get("Content-Length") or "0").strip()
+            if not raw.isascii() or not raw.isdigit():       # also refuses a negative
+                self.close_connection = True
+                return self._json({"error": "bad length"}, 400)
+            n = int(raw)
+            if n > MAX_BODY:
                 self.close_connection = True
                 return self._json({"error": "too large"}, 413)
             try:
                 data = json.loads(self.rfile.read(n) or b"{}")
             except ValueError:
                 return self._json({"error": "bad json"}, 400)
-            if self.path != "/utterance":
-                return self._json({"error": "no such endpoint"}, 404)
-            cid = str(data.get("client_id", ""))[:64]
-            if not cid.replace("-", "").isalnum():
+            if not isinstance(data, dict):
+                return self._json({"error": "bad json"}, 400)
+            cid = data.get("client_id")
+            if not isinstance(cid, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,64}", cid):
                 return self._json({"error": "bad client id"}, 400)
+            b64 = data.get("audio_b64")
+            if not isinstance(b64, str) or not b64:
+                return self._json({"error": "bad audio"}, 400)
+            try:
+                audio = base64.b64decode(b64, validate=True)
+            except (binascii.Error, ValueError):
+                return self._json({"error": "bad audio"}, 400)
+            if not audio:
+                return self._json({"error": "bad audio"}, 400)
+            if len(audio) > MAX_AUDIO:
+                return self._json({"error": "too large"}, 413)
             ext = "webm" if "webm" in str(data.get("mime", "")) else "ogg"
-            path = os.path.join(relay.dir, "in", f"{cid}.{ext}")
+            sec = data.get("secrets")
+            sec = [x for x in sec if isinstance(x, str) and len(x) >= 4] if isinstance(sec, list) else []
+            path = os.path.join(relay.dir, "in", f"{cid}.{uuid.uuid4().hex[:8]}.{ext}")
             with open(path, "wb") as f:
-                f.write(base64.b64decode(data.get("audio_b64", "")))
-            return self._json(relay.utterance(cid, path, list(data.get("secrets") or [])))
+                f.write(audio)
+            try:
+                return self._json(relay.utterance(cid, path, sec))
+            except Exception:                                  # noqa: BLE001
+                return self._json({"error": "failed"}, 500)
 
         def log_message(self, *a):
             pass
 
-    ThreadingHTTPServer((host, port), H).serve_forever()
+    srv = ThreadingHTTPServer((host, port), H)
+    srv.daemon_threads = True
+    return srv
+
+
+def serve(cfg, port=7570, relay=None):
+    if cfg.host != "tablet" and not cfg.tablet_node:
+        raise SystemExit("work relay: host is box but tablet_node is empty; refusing to listen")
+    relay = relay or Relay(cfg)
+    srv = make_server(cfg, port, relay)
+
+    def ticker():
+        while True:
+            try:
+                relay.tick()
+            except Exception:                                  # noqa: BLE001
+                pass
+            time.sleep(1)
+    threading.Thread(target=ticker, daemon=True).start()
+    srv.serve_forever()
 
 
 if __name__ == "__main__":
