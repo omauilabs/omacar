@@ -74,14 +74,22 @@ def _sdk():
             sys.modules["mcp"] = popped
 
 
-def gate_argv(cmd, worktree, home, hide):
+def _real_dir(p):
+    return os.path.isdir(p) and not os.path.islink(p)
+
+
+def gate_argv(cmd, worktree, home, hide, is_real_dir=_real_dir):
     """The full argv that runs the gate in bubblewrap. Pure, so it is tested
     without running anything."""
     # --unshare-all keeps the network off; the tmpfs over /run hides the
     # desktop's sockets (D-Bus, Hyprland, PipeWire, keyring) under /run/user.
     argv = ["bwrap", "--die-with-parent", "--unshare-all", "--cap-drop", "ALL",
-            "--new-session", "--ro-bind", "/", "/", "--tmpfs", "/run",
-            "--tmpfs", "/var/run", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
+            "--new-session", "--ro-bind", "/", "/", "--tmpfs", "/run"]
+    # Where /var/run is a symlink to /run (Arch), bwrap cannot mount on it, and
+    # the tmpfs over /run already hides what it points at.
+    if is_real_dir("/var/run"):
+        argv += ["--tmpfs", "/var/run"]
+    argv += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
             "--bind", worktree, worktree]
     for path in hide:
         if os.path.isdir(path):

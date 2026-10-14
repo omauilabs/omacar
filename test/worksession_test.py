@@ -249,8 +249,13 @@ check("existing dir hidden by tmpfs", argv[argv.index(GH + "/.config/gh") - 1], 
 check("existing file hidden by /dev/null", argv[argv.index(GH + "/.git-credentials") - 2:argv.index(GH + "/.git-credentials") + 1], ["--ro-bind", "/dev/null", GH + "/.git-credentials"])
 check("host IPC and caps closed", ("--unshare-all" in argv, "--share-net" in argv,
       argv[argv.index("--cap-drop") + 1]), (True, False, "ALL"))
-check("/run and /var/run hidden after the root bind", [argv[argv.index(d) - 1] for d in ("/run", "/var/run")]
-      + [argv.index("/run") > argv.index("--ro-bind")], ["--tmpfs", "--tmpfs", True])
+argv_real = ws.gate_argv("c", "/wt", GH, [], is_real_dir=lambda p: True)
+argv_link = ws.gate_argv("c", "/wt", GH, [], is_real_dir=lambda p: False)
+check("real /var/run: tmpfs over /run and /var/run, after the root bind",
+      [argv_real[argv_real.index(d) - 1] for d in ("/run", "/var/run")]
+      + [argv_real.index("/run") > argv_real.index("--ro-bind")], ["--tmpfs", "--tmpfs", True])
+check("symlinked /var/run: skipped, /run still hidden",
+      ("/var/run" in argv_link, argv_link[argv_link.index("/run") - 1]), (False, "--tmpfs"))
 check("missing path skipped", GH + "/.aws" in argv, False)
 check("ends with the split command", argv[-3:], ["--", "test/all.sh", "--fast"])
 check("--chdir worktree before --", argv[argv.index("--chdir") + 1], "/wt")
