@@ -1,5 +1,5 @@
 import { eq, ok } from "./assert.js";
-import workView from "../js/views/work.js";
+import workView, { resetWork } from "../js/views/work.js";
 import { store, api } from "../js/core.js";
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -16,6 +16,7 @@ async function withWork(opts, fn) {
   store.motionLatched = false; store.stillSince = null; store.lastMoving = false;
   store.live = { connected: true, values: { SPEED: opts.speed || 0, RPM: 0 } };
   store.emit("live");
+  resetWork();
   const root = document.createElement("div");
   document.body.appendChild(root);
   const unmount = workView(root);
@@ -37,9 +38,13 @@ export default [
     ok(a && a.textContent.includes("41"), "PR 41 shown");
     eq(a.getAttribute("href"), "https://github.com/omauilabs/omacar/pull/41");
   })],
-  ["a pending question is shown large", () => withWork({ events: [
+  ["a pending question is shown large, with its own talk button", () => withWork({
+    sessions: [{ ...SESSION, state: "question" }], events: [
     { id: 1, at: 1, kind: "question", session: "s1", line: "omacar has a question: 0.8 s?" }] },
-    (root) => eq(root.querySelector(".work-question").textContent, "omacar has a question: 0.8 s?"))],
+    (root) => {
+      eq(root.querySelector(".work-question-text").textContent, "omacar has a question: 0.8 s?");
+      ok(root.querySelector(".work-question .work-talk"), "the card repeats the talk button");
+    })],
   ["the talk button is thumb-sized", () => withWork({}, (root) => {
     const r = root.querySelector(".work-talk").getBoundingClientRect();
     ok(r.width >= 160 && r.height >= 160, `talk button ${r.width}x${r.height}`);

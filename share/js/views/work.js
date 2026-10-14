@@ -8,11 +8,11 @@
 // share one in-flight request. Nothing here shows a transcript ("heard"
 // events) at all, so none can leak onto a moving screen.
 import { h, clear, store, api } from "../core.js";
-import { audioContext, voiceIn, resume, schedule, currentDb } from "../audiobus.js";
+import { audioContext, voiceIn, resume, schedule, currentDb, MUSIC_DB } from "../audiobus.js";
 import { glidePlan } from "../ramps.js";
 import { alertPlayer } from "../alertplayer.js";
 import { record } from "../work/recorder.js";
-import { createSpeech, repeatQuestion, offlineOnce } from "../work/speech.js";
+import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan } from "../work/speech.js";
 
 const POLL_MS = 2000;
 const NO_SIGNAL_MS = 5000;
@@ -22,24 +22,27 @@ const RESOLVES = ["pr_opened", "gate_failed", "stopped", "stuck", "finished", "l
 
 let speech = null;
 let lastId = 0;
+let caughtUp = false;      // the first poll after a load only catches up
 let offlineSaid = false;
 let wasMoving = false;
 let prevSpeed = 0;
 let question = null;       // { event, repeated }
 let inflight = null;
 let recording = false;
-let duckBase = null;       // the music level before a line ducked it
+
+const alertBusy = () => {
+  try { return alertPlayer().voices.some((v) => v.end > audioContext().currentTime); }
+  catch { return false; }
+};
 
 // Music ducks under speech as it does under alerts: 12 dB further down while
-// a line plays, glided, and back after it.
+// a line plays, glided, and back after it. Never while an alert sounds (the
+// alert player owns the music bus then), and always to an absolute level.
 function duck(on) {
+  const to = duckPlan(on, alertBusy(), MUSIC_DB, DUCK_DB);
+  if (to === null) return;
   try {
-    const ctx = audioContext();
-    if (on && duckBase === null) duckBase = currentDb("music");
-    if (!on && duckBase === null) return;
-    const to = on ? duckBase - DUCK_DB : duckBase;
-    schedule("music", glidePlan(currentDb("music"), to, 0.3), ctx.currentTime);
-    if (!on) duckBase = null;
+    schedule("music", glidePlan(currentDb("music"), to, 0.3), audioContext().currentTime);
   } catch { /* no audio: speech still works without the duck */ }
 }
 
@@ -55,22 +58,28 @@ async function playWav(b64, done) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   const buf = await ctx.decodeAudioData(bytes.buffer);
   const src = ctx.createBufferSource();
-  let cut = false;
   src.buffer = buf; src.connect(voiceIn());
   duck(true);
-  src.onended = () => { if (!cut) duck(false); done(); };
+  src.onended = () => { duck(false); done(); };
   src.start();
-  return () => { cut = true; duckBase = null; try { src.stop(); } catch { /* already ended */ } };
+  const cut = () => { try { src.stop(); } catch { /* already ended */ } };
+  cut.secs = buf.duration;
+  return cut;
 }
 
 function getSpeech() {
   if (speech) return speech;
   speech = createSpeech({
-    alertBusy: () => alertPlayer().voices.some((v) => v.end > audioContext().currentTime),
+    alertBusy,
+    busy: () => recording,
     now: () => Date.now() / 1000,
-    play: (item, done) => {
+    play: (item, finish) => {
       let cut = () => {};
       let stopped = false;
+      // A line that never ends (a stuck decode, a lost onended) must not wedge
+      // the queue: free it after its length + 5 s, or 40 s when unknown.
+      let timer = setTimeout(() => { stopped = true; cut(); duck(false); done(); }, 40000);
+      const done = () => { clearTimeout(timer); finish(); };
       // A clip that cannot be fetched (the offline clips before they are
       // installed, or no signal) is skipped: done() frees the queue.
       const fetchB64 = item.local
@@ -80,9 +89,12 @@ function getSpeech() {
           }).then((ab) => b64Of(new Uint8Array(ab)))
         : api.workClip(item.clip).then((r) => r.wav_b64);
       fetchB64.then((b64) => playWav(b64, done))
-        .then((c) => { cut = c; if (stopped) c(); })
-        .catch(done);
-      return () => { stopped = true; cut(); };
+        .then((c) => {
+          cut = c; if (stopped) { c(); return; }
+          clearTimeout(timer); timer = setTimeout(() => { stopped = true; c(); duck(false); done(); }, (c.secs + 5) * 1000);
+        })
+        .catch(() => { duck(false); done(); });
+      return () => { stopped = true; clearTimeout(timer); cut(); };
     },
   });
   setInterval(() => speech.tick(), 200);
@@ -100,23 +112,36 @@ function tone() {
   });
 }
 
+const noSignal = () => getSpeech().say({ id: "no_signal-" + Date.now(), at: Date.now() / 1000, local: "no_signal" });
+
 async function talk(setBusy) {
   if (recording) return;
   recording = true; setBusy(true);
+  // Whatever is being said stops now and plays again after; nothing new starts
+  // while the driver records (speech's busy gate).
+  getSpeech().interrupt();
   try {
-    await resume(); tone();
+    await resume();
+    if (!alertBusy()) tone();
     duck(true);
     let blob;
     try { blob = await record({ ctx: audioContext() }); } finally { duck(false); }
+    if (!blob.size) throw new Error("nothing recorded");
     const b64 = b64Of(new Uint8Array(await blob.arrayBuffer()));
     const sent = api.workSay({ client_id: crypto.randomUUID(), audio_b64: b64, mime: blob.type });
     const answered = await Promise.race([
       sent.then(() => true, () => false),
       new Promise((r) => setTimeout(() => r(false), NO_SIGNAL_MS)),
     ]);
-    if (!answered) getSpeech().say({ id: "no_signal-" + Date.now(), at: Date.now() / 1000, local: "no_signal" });
-  } catch { /* no microphone, or the clip would not record: nothing to send */ }
+    if (!answered) noSignal();
+  } catch { noSignal(); }   // a denied or failed microphone is told, not silent
   finally { recording = false; setBusy(false); }
+}
+
+// For tests: the page's polling state is module-wide, so each mount starts clean.
+export function resetWork() {
+  lastId = 0; caughtUp = false; offlineSaid = false; wasMoving = false; prevSpeed = 0;
+  question = null; inflight = null;
 }
 
 // One poll of the relay's events, shared by the view and main.js's clock.
@@ -130,6 +155,17 @@ export function pollWork() {
     if (offlineOnce({ online: r.online, said: offlineSaid, newDrive })) {
       offlineSaid = true;
       getSpeech().say({ id: "offline-" + Date.now(), at: Date.now() / 1000, local: "offline" });
+    }
+    if (!caughtUp) {
+      // After a load, only catch up: speak nothing from the retained backlog,
+      // but keep a question that is still waiting (shown, said at the next stop).
+      caughtUp = true;
+      const st = await api.workStatus().catch(() => null);
+      const c = catchUp(r.events, st && st.sessions);
+      lastId = Math.max(lastId, c.maxId);
+      if (c.pending) question = { event: c.pending, repeated: false };
+      prevSpeed = ((store.live || {}).values || {}).SPEED || 0;
+      return r;
     }
     for (const e of r.events || []) {
       lastId = Math.max(lastId, e.id);
@@ -152,25 +188,35 @@ export function pollWork() {
 export default function workView(root) {
   let alive = true;
   const list = h("div.work-list");
-  const qcard = h("div.work-question", { hidden: true });
+  const buttons = [];
   // Sized inline too: a thumb target in a moving car must not depend on a
   // stylesheet having loaded.
-  const btn = h("button.work-talk", {
-    type: "button", style: { minWidth: "180px", minHeight: "180px" },
-    onclick: () => talk((busy) => { btn.classList.toggle("busy", busy); }),
-  }, "Talk to Work");
+  const talkBtn = () => {
+    const b = h("button.work-talk", {
+      type: "button", style: { minWidth: "180px", minHeight: "180px" },
+      onclick: () => talk((busy) => buttons.forEach((x) => x.classList.toggle("busy", busy))),
+    }, "Talk to Work");
+    buttons.push(b);
+    return b;
+  };
+  const btn = talkBtn();
+  // The pending question repeats the button, so the answer is one tap away.
+  const qtext = h("div.work-question-text");
+  const qcard = h("div.work-question", { hidden: true }, qtext, talkBtn());
   clear(root);
-  root.append(h("div.work", qcard, btn, list));
+  root.append(h("div.work", btn, qcard, list));
 
   let status = null;       // the last sessions answer, kept to redraw on a stop or start
   let drawnMoving = null;
 
   function draw() {
     qcard.hidden = !question;
-    qcard.textContent = question ? question.event.line : "";
+    btn.hidden = !!question;
+    qtext.textContent = question ? question.event.line : "";
     clear(list);
     drawnMoving = store.moving;
-    // The relay lists sessions oldest first; the screen shows newest first.
+    // The relay adds sessions in the order they start and gives no start time,
+    // so newest first is that order reversed.
     for (const s of [...((status && status.sessions) || [])].reverse()) {
       const row = h("div.work-row",
         h("span.work-proj", s.project), " · ", s.state, " · ",
@@ -191,8 +237,9 @@ export default function workView(root) {
     if (st) status = st;
     draw();
   }
-  refresh();
-  const timer = setInterval(refresh, POLL_MS);
+  const tick = () => { refresh().catch(() => { /* the next poll tries again */ }); };
+  tick();
+  const timer = setInterval(tick, POLL_MS);
   // The car stopping or starting redraws at once (PRs appear or vanish); other
   // samples do nothing.
   const off = store.on("live", () => { if (status && store.moving !== drawnMoving) draw(); });

@@ -10,3 +10,4 @@
 .work-proj { font-weight: 600; }
 .work-line { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .work-pr { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.work-question { display: grid; gap: 16px; justify-items: center; order: -1; }
