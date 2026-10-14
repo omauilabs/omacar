@@ -1,5 +1,5 @@
 import { eq, ok } from "./assert.js";
-import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay } from "../js/work/speech.js";
+import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold } from "../js/work/speech.js";
 import { silenceStop, SILENCE_S, record } from "../js/work/recorder.js";
 
 function rig() {
@@ -52,6 +52,11 @@ export default [
     [afterSay({ queued: true, sent: false }), afterSay(null), afterSay({ queued: true, sent: true }),
      afterSay({ queued: true, sent: false, held: true })],
     ["no_signal", "no_signal", null, "held"])],
+  ["F7: quiet hours hold lines only while parked", () => eq(
+    [quietHold(23, [21, 7], false), quietHold(23, [21, 7], true), quietHold(12, [21, 7], false),
+     quietHold(6, [21, 7], false), quietHold(7, [21, 7], false), quietHold(10, [9, 17], false),
+     quietHold(23, null, false)],
+    [true, false, false, true, false, true, false])],
   ["a recorder that fails to start still releases the microphone", async () => {
     const stopped = [];
     const tracks = [0, 1].map((i) => ({ stop: () => stopped.push(i) }));

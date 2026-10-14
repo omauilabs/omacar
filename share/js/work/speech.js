@@ -33,6 +33,17 @@ export function catchUp(events, sessions) {
   return { maxId, pending };
 }
 
+// Quiet hours, the page's half: the owner's child sleeps near the parked
+// tablet, so while parked between quiet[0] and quiet[1] (from the relay's
+// /health, default 21-7) lines are shown, not spoken. While moving nothing is
+// held. The box relay cannot know where the car is, so this rule lives here.
+export function quietHold(hour, quiet, moving) {
+  if (moving || !Array.isArray(quiet) || quiet.length !== 2) return false;
+  const [start, end] = quiet;
+  const inside = start > end ? (hour >= start || hour < end) : (hour >= start && hour < end);
+  return inside;
+}
+
 // What the page does after posting a clip. The app's server answers once it
 // has tried to forward it: `sent` means the relay has it; `held` means the
 // relay is on the tablet and the car is moving, so the clip is saved and goes

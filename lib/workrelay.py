@@ -210,6 +210,10 @@ class Relay:
         return self.cfg.host == "tablet" and not self._parked()
 
     def _may_render(self, at):
+        if self.cfg.host != "tablet":
+            # The box cannot know where the car is: it always renders, and the
+            # page holds lines in quiet hours while parked (/health's "quiet").
+            return True
         if self._moving_tablet():
             return False                  # logged with clip None; the page shows the line
         return not workvoice.quiet_now(self.cfg.quiet, time.localtime(at).tm_hour, self._parked())
@@ -478,7 +482,7 @@ class Relay:
             snap = [(s.id, s.project, s.state, s.pr, self.last_line.get(s.id, ""))
                     for s in self.sessions.values()]
             today = self._today()
-        return {"host": self.cfg.host, "parked": self._parked(),
+        return {"host": self.cfg.host, "parked": self._parked(), "quiet": list(self.cfg.quiet),
                 "today": today, "cap": self.cfg.daily_cap,
                 "sessions": [{"id": sid, "project": pr.name, "state": st, "pr": n,
                               "repo": self._repo(pr), "line": line}

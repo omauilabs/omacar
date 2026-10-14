@@ -12,7 +12,7 @@ import { audioContext, voiceIn, resume, schedule, currentDb, MUSIC_DB } from "..
 import { glidePlan } from "../ramps.js";
 import { alertPlayer } from "../alertplayer.js";
 import { record } from "../work/recorder.js";
-import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay } from "../work/speech.js";
+import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold } from "../work/speech.js";
 
 const POLL_MS = 2000;
 const NO_SIGNAL_MS = 5000;
@@ -29,6 +29,7 @@ let prevSpeed = 0;
 let question = null;       // { event, repeated }
 let inflight = null;
 let recording = false;
+let quietHours = [21, 7];  // from the relay's /health; work.toml's quiet
 let notice = "";           // a short note under the button ("Saved, sent when parked.")
 
 const alertBusy = () => {
@@ -113,6 +114,10 @@ function tone() {
   });
 }
 
+// Lines from the relay play unless quiet hours hold them (parked only).
+const held = () => quietHold(new Date().getHours(), quietHours, store.moving);
+const noteStatus = (st) => { if (st && Array.isArray(st.quiet)) quietHours = st.quiet; };
+
 const noSignal = () => getSpeech().say({ id: "no_signal-" + Date.now(), at: Date.now() / 1000, local: "no_signal" });
 
 async function talk(setBusy) {
@@ -144,7 +149,7 @@ async function talk(setBusy) {
 // For tests: the page's polling state is module-wide, so each mount starts clean.
 export function resetWork() {
   lastId = 0; caughtUp = false; offlineSaid = false; wasMoving = false; prevSpeed = 0;
-  question = null; inflight = null; notice = "";
+  question = null; inflight = null; notice = ""; quietHours = [21, 7];
 }
 
 // One poll of the relay's events, shared by the view and main.js's clock.
@@ -164,6 +169,7 @@ export function pollWork() {
       // but keep a question that is still waiting (shown, said at the next stop).
       caughtUp = true;
       const st = await api.workStatus().catch(() => null);
+      noteStatus(st);
       const c = catchUp(r.events, st && st.sessions);
       lastId = Math.max(lastId, c.maxId);
       if (c.pending) question = { event: c.pending, repeated: false };
@@ -174,10 +180,10 @@ export function pollWork() {
       lastId = Math.max(lastId, e.id);
       if (e.kind === "question") question = { event: e, repeated: false };
       else if (RESOLVES.includes(e.kind) && question && question.event.session === e.session) question = null;
-      if (e.clip) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
+      if (e.clip && !held()) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
     }
     const speed = ((store.live || {}).values || {}).SPEED || 0;
-    if (question && question.event.clip && repeatQuestion(prevSpeed, speed, true, question.repeated)) {
+    if (question && question.event.clip && !held() && repeatQuestion(prevSpeed, speed, true, question.repeated)) {
       question.repeated = true;
       const e = question.event;
       getSpeech().say({ id: `${e.id}-again-${Date.now()}`, at: Date.now() / 1000, clip: e.clip, line: e.line });
@@ -239,6 +245,7 @@ export default function workView(root) {
     await pollWork();
     const st = await api.workStatus().catch(() => null);
     if (!alive) return;
+    noteStatus(st);
     if (st) status = st;
     draw();
   }

@@ -478,6 +478,25 @@ check("parked: the same clip is taken and transcribed", (code6, len(heard6)), (2
 TOK = TOK_SAVE
 srv6.shutdown()
 
+print("\n  F7: the box always renders; quiet hours are the page's, from /health")
+said7 = []
+R7 = mk("f7", workcfg.Config(host="box", daily_cap=6, projects=CFG.projects, quiet=(21, 7)),
+        render=lambda t, o: said7.append(t) or False)
+R7.park = None
+real_lt = workrelay.time.localtime
+workrelay.time.localtime = lambda t=None: time.struct_time((2026, 10, 13, 23, 0, 0, 1, 286, -1))
+try:
+    R7.emit({"kind": "started", "session": "x", "project": "omacar"})
+    check("box relay at 23:00 renders", said7, ["omacar session started."])
+    pk7 = FakePark()
+    T7 = mk("f7t", workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(21, 7)),
+            park_=pk7, render=lambda t, o: said7.append("tablet") or False)
+    T7.emit({"kind": "started", "session": "x", "project": "omacar"})
+    check("tablet relay at 23:00, parked: keeps its own quiet rule", said7.count("tablet"), 0)
+finally:
+    workrelay.time.localtime = real_lt
+check("health carries the quiet hours", R7.status()["quiet"], [21, 7])
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()
 os._exit(1 if fails else 0)
