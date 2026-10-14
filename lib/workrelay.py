@@ -43,6 +43,7 @@ import workcfg, workintent, workprivacy, workvoice  # noqa: E401,E402
 STATE = os.path.join(os.path.expanduser(
     os.environ.get("XDG_STATE_HOME", "~/.local/state")), "omacar", "work")
 CONFIRM_S = 20.0
+LIMIT_S = 3600.0
 KEEP_S = 7 * 86400
 PRUNE_EVERY_S = 86400
 SEEN_MAX = 500
@@ -115,6 +116,7 @@ class Relay:
         self.created = {}                        # session id -> start time, this process
         self.gates, self.last_line = {}, {}
         self.repos = {}
+        self.limited_until = 0.0                 # a usage limit pauses starts for LIMIT_S
         # Only ("confirm", Intent, expires). `expires` is None until the
         # read-back clip exists: the driver's 20 s start when it can be heard.
         self.pending = None
@@ -249,6 +251,8 @@ class Relay:
                     e["clip"] = name
                 except OSError:
                     pass
+            if e["kind"] == "limit" and e["session"]:
+                self.limited_until = at + LIMIT_S       # no retry loop against the limit
             if e["kind"] in ("pr_opened", "gate_failed") and e["session"]:
                 self.gates[e["session"]] = "gate passed" if e["kind"] == "pr_opened" else "gate failing"
             if e["session"] and e["line"]:
@@ -380,7 +384,7 @@ class Relay:
         if i.kind == "new_task":
             ok, kind = self._may_start()
             if not ok:
-                evs.append({"kind": kind, "project": i.project})
+                evs.append(self._refusal(kind, i.project))
                 return None
             self.pending = ("confirm", i, None)          # timed once its clip exists
             evs.append({"kind": "confirm", "project": i.project, "instruction": i.instruction})
@@ -388,6 +392,16 @@ class Relay:
         if i.kind == "status":
             evs.append({"kind": "status", "text": self._status_text()})
             return None
+        if i.kind == "stop" and not i.project:
+            # A bare "stop": the one running project's sessions, or a question.
+            names = sorted({s.project.name for s in self._running()})
+            if len(names) > 1:
+                evs.append({"kind": "choose", "choices": names[:2]})
+                return None
+            if not names:
+                evs.append({"kind": "status", "text": "No sessions running."})
+                return None
+            i = workintent.Intent("stop", project=names[0])
         if i.kind == "stop" and i.project:
             for s in list(self.sessions.values()):
                 if s.project.name == i.project and s.state not in ("done", "stopped", "stuck"):
@@ -427,14 +441,23 @@ class Relay:
         leaving the queue all pass through it. Lock held."""
         if self.cfg.host == "tablet" and not self._parked():
             return False, "parked_only"
+        if self.clock() < self.limited_until:
+            return False, "limit"
         if self._today() + len(self.queue) >= self.cfg.daily_cap:
             return False, "cap"
         return True, ""
 
+    def _refusal(self, kind, project):
+        """The event for a _may_start refusal; a limit says until when."""
+        e = {"kind": kind, "project": project}
+        if kind == "limit":
+            e["until"] = time.strftime("%H:%M", time.localtime(self.limited_until))
+        return e
+
     def _start(self, i, evs):
         ok, kind = self._may_start()
         if not ok:
-            evs.append({"kind": kind, "project": i.project})
+            evs.append(self._refusal(kind, i.project))
             return None
         if len(self._running()) >= self.cfg.max_sessions:
             self.queue.append(i)
@@ -501,7 +524,8 @@ class Relay:
                                capture_output=True, text=True, timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             return ""
-        m = re.search(r"github\.com[:/]([^/]+/[^/.\s]+)", r.stdout)
+        # Repo names may hold dots (omacar.github.io); only a trailing .git goes.
+        m = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?/?$", r.stdout.strip())
         self.repos[project.path] = m.group(1) if m else ""
         return self.repos[project.path]
 

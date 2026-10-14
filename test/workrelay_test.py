@@ -501,6 +501,50 @@ finally:
     workrelay.time.localtime = real_lt
 check("health carries the quiet hours", R7.status()["quiet"], [21, 7])
 
+print("\n  N1: a bare stop")
+TWO = workcfg.Config(host="box", daily_cap=9, projects={
+    "omacar": P("omacar", ("omacar",), "/p", "t"), "omalens": P("omalens", ("omalens",), "/q", "t")})
+N1 = mk("n1", TWO); N1.park = None
+tell(N1, "stop")
+check("no session running: said so", N1.events(0)[-1]["line"], "No sessions running.")
+start_one(N1)
+only = list(N1.sessions.values())[0]
+tell(N1, "stop")
+wait_for(lambda: only.state == "stopped")
+check("one running: it stops", only.state, "stopped")
+N1b = mk("n1b", TWO); N1b.park = None
+start_one(N1b); start_one(N1b)
+a, b = list(N1b.sessions.values())
+b.project = TWO.projects["omalens"]
+tell(N1b, "stop it")
+time.sleep(0.1)
+check("two running in two projects: asks which, stops nothing",
+      (N1b.events(0)[-1]["line"], a.state, b.state), ("omacar or omalens?", "running", "running"))
+
+print("\n  N2: after a usage limit, nothing starts for an hour")
+N2 = mk("n2", BIG)
+N2.emit({"kind": "limit", "session": "x", "project": "omacar", "until": "the limit resets"})
+n = len(FakeSession.made)
+tell(N2, "in omacar fix it")
+check("refused with the limit line", (N2.events(0)[-1]["kind"], len(FakeSession.made) - n, N2.pending), ("limit", 0, None))
+check("the line says until when", N2.events(0)[-1]["line"].startswith("Usage limit reached"), True)
+N2.clk[0] += workrelay.LIMIT_S + 1
+tell(N2, "in omacar fix it")
+check("an hour later, the confirm is asked", N2.events(0)[-1]["kind"], "confirm")
+N2.pending = None
+
+print("\n  N3: repo names may hold dots")
+class Out:
+    def __init__(s, o): s.stdout = o
+real_run = workrelay.subprocess.run
+for url, want in (("git@github.com:o/omacar.github.io.git\n", "o/omacar.github.io"),
+                  ("https://github.com/o/r.js\n", "o/r.js"), ("https://github.com/o/r\n", "o/r"),
+                  ("https://github.com/o/r.git/\n", "o/r")):
+    workrelay.subprocess.run = lambda *a, **k: Out(url)
+    N2.repos.clear()
+    check(f"repo of {url.strip()}", N2._repo(P("x", ("x",), "/r" + url, "t")), want)
+workrelay.subprocess.run = real_run
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()
 os._exit(1 if fails else 0)

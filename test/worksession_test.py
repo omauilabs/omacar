@@ -324,6 +324,15 @@ n = real.draft_pr(sess, "work/x-1234", "Work: x", "body")
 ws.Git._run = orig_run
 check("draft_pr: --repo, base, cwd is the project", ("--repo" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--repo") + 1] == "o/r",
       seen["cmd"][seen["cmd"].index("--base") + 1], seen["cwd"], n), (True, "main", T + "/proj", 7))
+ws.Git._run = lambda self, *cmd, cwd=None, timeout=120: (
+    subprocess.CompletedProcess(cmd, 0, "Creating pull request...\n", "") if cmd[0] == "gh"
+    else orig_run(self, *cmd, cwd=cwd, timeout=timeout))
+try:
+    real.draft_pr(sess, "work/x-1234", "Work: x", "body"); no_number = "returned"
+except RuntimeError:
+    no_number = "raised"
+ws.Git._run = orig_run
+check("N4: gh with no PR number is a failure, not PR 0", no_number, "raised")
 shutil.rmtree(T, ignore_errors=True)
 
 print("\n  F5: the runner checks the pushed tree before GitHub sees it")

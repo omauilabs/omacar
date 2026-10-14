@@ -45,6 +45,12 @@ for said, want in [("no", ("answer", "no")), ("don't", ("answer", "don't")),
     i = wi.parse(said, CFG, pending="question", ask_model=fake({}))
     check(f"{said!r} while asked", (i.kind, i.answer), want)
 
+print("\n  N1: a bare stop with nothing pending names no project, and skips the model")
+def no_model(prompt): raise AssertionError("model called")
+for said in ("stop", "Stop it."):
+    i = wi.parse(said, CFG, pending=None, ask_model=no_model)
+    check(f"{said!r} with nothing pending", (i.kind, i.project), ("stop", None))
+
 print("\n  new tasks are checked against the allowlist")
 i = wi.parse("in omacar fix the timeout", CFG, pending=None,
              ask_model=fake({"kind": "new_task", "project": "omacar", "instruction": "fix the timeout"}))

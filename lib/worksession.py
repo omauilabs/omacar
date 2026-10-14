@@ -271,7 +271,11 @@ class Git:
         if r.returncode != 0:
             raise RuntimeError(r.stderr.strip()[:300])
         m = re.search(r"/pull/(\d+)", r.stdout)
-        return int(m.group(1)) if m else 0
+        if not m:
+            # Pushed but no PR we can name: a failure, said as one (Session
+            # reports "pushed, PR not opened"), never a PR 0.
+            raise RuntimeError("gh printed no pull request")
+        return int(m.group(1))
 
 
 class Session:

@@ -70,6 +70,9 @@ def match_project(said, cfg):
 
 FILLER = {"please", "it", "now"}
 STOP = {"stop", "cancel", "never mind", "stop it", "cancel that"}
+# With nothing pending, a bare stop names no project: the relay stops the one
+# running session, or asks which when there are two.
+BARE_STOP = {"stop", "stop it"}
 NO_WORDS = {w for phrase in NO for w in phrase.split()}
 
 
@@ -114,6 +117,8 @@ def parse(transcript, cfg, *, pending, ask_model=None):
         return Intent("answer", answer=transcript.strip())
     if not said:
         return Intent("unclear")
+    if said in BARE_STOP:
+        return Intent("stop")
     try:
         got = (ask_model or _claude)(PROMPT.format(
             projects=", ".join(sorted(cfg.projects)), said=transcript))

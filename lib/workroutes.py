@@ -41,9 +41,18 @@ def _open(req, timeout):
     return _OPENER.open(req, timeout=timeout)
 
 
+def _cfg():
+    """work.toml, or the defaults when it cannot be read: a malformed file
+    makes Work offline (no token), never a 500 on every poll."""
+    try:
+        return workcfg.load()
+    except (OSError, ValueError, TypeError, KeyError, IndexError):   # TOMLDecodeError is a ValueError
+        return workcfg.Config()
+
+
 def _token():
     """The relay's bearer token, or "" when there is none to send."""
-    cfg = workcfg.load()
+    cfg = _cfg()
     if cfg.host == "tablet":
         import workrelay                     # heavy; only the tablet reads its file
         return workrelay.read_token()
@@ -190,7 +199,7 @@ def sender():
     global _sender
     with _sender_lock:
         if _sender is None:
-            _sender = Sender(workcfg.load().relay_url)
+            _sender = Sender(_cfg().relay_url)
 
             def loop():
                 while True:

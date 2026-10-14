@@ -177,6 +177,12 @@ check("a quarantine is logged with its status code, no clip or token",
       ("(400)" in err.getvalue(), "eA==" in err.getvalue(), "Bearer" in err.getvalue()), (True, False, False))
 wr._sender = None
 
+print("\n  N5: a malformed work.toml is offline, not a 500")
+open(toml, "w").write('host = "box"\nrelay_token = \n')
+check("token is empty", wr._token(), "")
+check("status answers, offline", wr.handle_get("/api/work/status", "")[1]["online"], False)
+open(toml, "w").write('host = "tablet"\n')
+
 print("\n  routes")
 check("unknown path falls through", wr.handle_get("/api/other", ""), None)
 check("bad clip name refused", wr.handle_get("/api/work/clip/..%2fx", "")[0], 404)
