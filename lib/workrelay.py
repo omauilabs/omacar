@@ -3,7 +3,8 @@
 `omacar work serve`. On the tablet it listens on 127.0.0.1, starts sessions only
 while parked, and runs whisper and Piper only while parked (a clip sent while
 moving gets 409 and waits in the app's queue; a line made while moving is
-logged without a clip and shown); on the box it listens on the tailnet and answers only the
+logged without a clip and shown) -- unless work.toml sets while_moving, the
+owner's choice, when none of those parked-only rules applies; on the box it listens on the tailnet and answers only the
 tablet's node. The page never talks to it: the app's server does
 (lib/workroutes.py).
 
@@ -205,11 +206,16 @@ class Relay:
         # Park.update() belongs to the 1 Hz ticker; everyone else reads its answer.
         return True if self.park is None else bool(getattr(self.park, "parked", False))
 
+    def _parked_only(self):
+        """The tablet's parked-only rule: on unless the owner set while_moving."""
+        return self.cfg.host == "tablet" and not self.cfg.while_moving
+
     def _moving_tablet(self):
         """On the tablet, the speech engines run only while parked (the
         amendment): whisper and Piper must not compete with drowsy detection
-        or the CAN recorder on the road."""
-        return self.cfg.host == "tablet" and not self._parked()
+        or the CAN recorder on the road. Not so when the owner chose
+        while_moving."""
+        return self._parked_only() and not self._parked()
 
     def _may_render(self, at):
         if self.cfg.host != "tablet":
@@ -439,7 +445,7 @@ class Relay:
     def _may_start(self):
         """The one gate for starting work: new_task, a spoken yes and a queued task
         leaving the queue all pass through it. Lock held."""
-        if self.cfg.host == "tablet" and not self._parked():
+        if self._moving_tablet():
             return False, "parked_only"
         if self.clock() < self.limited_until:
             return False, "limit"
@@ -509,7 +515,7 @@ class Relay:
             # The question the next answer goes to (the oldest waiting): the
             # page shows and repeats this one only.
             asking = self.questions[0][0] if self.questions else None
-        return {"host": self.cfg.host, "asking": asking, "parked": self._parked(), "quiet": list(self.cfg.quiet),
+        return {"host": self.cfg.host, "while_moving": self.cfg.while_moving, "asking": asking, "parked": self._parked(), "quiet": list(self.cfg.quiet),
                 "today": today, "cap": self.cfg.daily_cap,
                 "sessions": [{"id": sid, "project": pr.name, "state": st, "pr": n,
                               "repo": self._repo(pr), "line": line}
@@ -542,7 +548,7 @@ class Relay:
             self.park.update()
         evs = []
         with self.lock:
-            moving = self.cfg.host == "tablet" and not self._parked()
+            moving = self._moving_tablet()
             if self.pending and (moving or self._expired(self.pending)):
                 evs.append({"kind": "not_started", "project": self.pending[1].project})
                 self.pending = None

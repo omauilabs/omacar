@@ -545,6 +545,43 @@ for url, want in (("git@github.com:o/omacar.github.io.git\n", "o/omacar.github.i
     check(f"repo of {url.strip()}", N2._repo(P("x", ("x",), "/r" + url, "t")), want)
 workrelay.subprocess.run = real_run
 
+print("\n  A: while_moving on, a moving tablet works")
+WM = workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0), while_moving=True,
+                    max_sessions=1)
+pkw = FakePark(); pkw.parked = False
+said_wm = []
+RW = mk("wm", WM, park_=pkw, render=lambda t, o: said_wm.append(t) or False)
+tell(RW, "in omacar fix it")
+check("new_task while moving: a confirm, not parked_only", RW.events(0)[-1]["kind"], "confirm")
+check("the read-back was rendered while moving", said_wm[-1], "omacar: fix it. Start it?")
+tell(RW, "yes")
+wait_for(lambda: len(RW.sessions) == 1)
+wait_for(lambda: "started" in [e["kind"] for e in RW.events(0)])
+check("yes while moving starts the session", len(RW.sessions), 1)
+tell(RW, "in omacar fix it"); tell(RW, "yes")
+check("a second task queues (one at a time)", (len(RW.queue), RW.events(0)[-1]["kind"]), (1, "busy"))
+tell(RW, "in omacar fix it")
+check("a pending confirm and the queue ...", RW.pending is not None, True)
+RW.tick(); RW.tick()
+time.sleep(0.2)
+check("tick while moving: session kept, queue kept, confirm kept",
+      (list(RW.sessions.values())[0].state, len(RW.queue), RW.pending is not None), ("running", 1, True))
+check("no not_started or parked_only from the tick",
+      [e["kind"] for e in RW.events(0)].count("not_started") + [e["kind"] for e in RW.events(0)].count("parked_only"), 0)
+RW.pending = None
+srvw = workrelay.make_server(WM, 0, RW); PW = srvw.server_address[1]
+threading.Thread(target=srvw.serve_forever, daemon=True).start()
+TOK_SAVE, TOK = TOK, RW.token
+HEARD["wm1"] = "um"
+codew, _ = call("POST", "/utterance", {"client_id": "wm1", "audio_b64": b64, "mime": "audio/webm"},
+                port=PW, headers={"Host": f"127.0.0.1:{PW}"})
+check("POST /utterance while moving is not 409", codew != 409, True)
+hw = call("GET", "/health", port=PW, headers={"Host": f"127.0.0.1:{PW}"})[1]
+check("/health exposes while_moving", (hw["while_moving"], hw["parked"]), (True, False))
+TOK = TOK_SAVE
+check("/health of a default tablet says false", RH.status()["while_moving"], False)
+srvw.shutdown()
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()
 os._exit(1 if fails else 0)

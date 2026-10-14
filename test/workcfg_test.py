@@ -66,5 +66,20 @@ with open(p, "w") as f:
     f.write('relay_token = "tok-123"\n')
 check("relay_token read", workcfg.load(p).relay_token, "tok-123")
 
+print("\n  A: while_moving")
+check("no file: parked-only by default", workcfg.load(os.path.join(SCRATCH, "missing.toml")).while_moving, False)
+check("file without it: off", workcfg.load(p).while_moving, False)
+for val, want in (("true", True), ("false", False)):
+    with open(p, "w") as f:
+        f.write(f"while_moving = {val}\n")
+    check(f"while_moving = {val}", workcfg.load(p).while_moving, want)
+for bad in ('"yes"', "1", "[true]"):
+    with open(p, "w") as f:
+        f.write(f"while_moving = {bad}\n")
+    try:
+        workcfg.load(p); check(f"while_moving = {bad} refused", False)
+    except ValueError as e:
+        check(f"while_moving = {bad} refused", "while_moving" in str(e))
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)

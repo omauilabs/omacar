@@ -34,6 +34,9 @@ class Config:
     quiet: tuple = (21, 7)
     relay_url: str = "http://127.0.0.1:7570"
     tablet_node: str = "omacar-1"
+    # Off: the tablet's Work is parked-only. On: sessions, speech, PRs and diffs
+    # also run while the car moves (the owner's call, set in work.toml).
+    while_moving: bool = False
     relay_token: str = ""   # on the box: the token the tablet's relay wrote; never logged
 
 
@@ -62,6 +65,9 @@ def load(path=None):
         names = [name.lower()] + [str(n).lower() for n in p.get("names", [])]
         projects[name] = Project(name, tuple(dict.fromkeys(names)),
                                  os.path.expanduser(p["path"]), str(p["gate"]), network)
+    moving = raw.get("while_moving", False)
+    if not isinstance(moving, bool):
+        raise ValueError(f"work.toml: while_moving must be true or false, not {moving!r}")
     q = raw.get("quiet", [21, 7])
     return Config(host=host, projects=projects,
                   max_sessions=int(raw.get("max_sessions", 2)),
@@ -69,4 +75,5 @@ def load(path=None):
                   quiet=(int(q[0]), int(q[1])),
                   relay_url=str(raw.get("relay_url", Config.relay_url)),
                   tablet_node=str(raw.get("tablet_node", "omacar-1")),
+                  while_moving=moving,
                   relay_token=str(raw.get("relay_token", "")))
