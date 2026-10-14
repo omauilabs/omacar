@@ -2505,12 +2505,12 @@
       "title": "Work: coding sessions from the car",
       "user": "Continue work on my Omarchy machines from the car, by voice while driving.",
       "agent": "Relays sessions on the owner's Claude subscription through his own box.",
-      "status": "next",
+      "status": "building",
       "tier": "none",
       "needs": ["home-machine", "internet", "claude"],
       "depends": ["agent.voice"],
-      "evidence": ["share/js/views/work.js", "doc/design/2026-10-13-work-voice-relay.md"],
-      "notes": "Decided 2026-09-28: a relay on the owner's machine, no cloud hosting. Designed 2026-10-13 (doc/design/2026-10-13-work-voice-relay.md): push-to-talk dispatch from the car, spoken milestones, sessions on the box ending in draft PRs, review only when parked. The tab is still a placeholder."
+      "evidence": ["share/js/views/work.js", "lib/workrelay.py", "lib/workgates.py", "doc/work.md", "doc/design/2026-10-13-work-voice-relay.md"],
+      "notes": "Decided 2026-09-28: a relay on the owner's machine, no cloud hosting. Designed 2026-10-13 (doc/design/2026-10-13-work-voice-relay.md): push-to-talk dispatch from the car, spoken milestones, sessions ending in draft PRs, review only when parked. Built 2026-10-13 behind an opt-in install (OMACAR_WORK=1): relay, sandboxed sessions, gates, the Work tab. Not yet proven: no real session has run, nothing has been tried in the car, resume after a relay restart is not built. How-to: doc/work.md."
     },
     {
       "id": "agent.local-model",
