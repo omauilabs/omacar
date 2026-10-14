@@ -240,13 +240,14 @@ def handle_get(path, query):
                      "queued": len(sender().pending())}
     if path.startswith("/api/work/diff/"):
         sid = path[len("/api/work/diff/"):]
-        if not re.match(r"^[0-9a-f]{4,32}$", sid):
+        if not re.fullmatch(r"[0-9a-f]{4,32}", sid):
             return 404, {"error": "no such diff"}
         raw, _ = _get(f"/diff/{sid}")
         got = _json_of(raw) if raw else None
         if not got:
             return 404, {"error": "no such diff"}
-        return 200, {"stat": str(got.get("stat", "")), "summary": str(got.get("summary", ""))}
+        summary = got.get("summary")
+        return 200, {"stat": str(got.get("stat", "")), "summary": None if summary is None else str(summary)}
     if path.startswith("/api/work/clip/"):
         name = os.path.basename(path)
         if not re.match(r"^\d+\.wav$", name):

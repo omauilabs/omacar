@@ -233,7 +233,11 @@ try:
     check("a good id is proxied, only stat and summary pass",
           wr.handle_get("/api/work/diff/ab12cd34", ""), (200, {"stat": " a | 2 +-", "summary": "It fixed a."}))
     check("the relay was asked for /diff/<id>", seen_get, ["/diff/ab12cd34"])
-    for bad in ("..%2fx", "../health", "xyz", "ab1", "AB12CD34", "ab12cd34/x", "a" * 33, ""):
+    wr._get = lambda path: (json.dumps({"stat": "s", "summary": None}).encode(), "application/json")
+    check("a stat with no summary yet passes as null", wr.handle_get("/api/work/diff/ab12cd34", ""),
+          (200, {"stat": "s", "summary": None}))
+    wr._get = fake_get; del seen_get[:]; seen_get.append("/diff/ab12cd34")
+    for bad in ("ab12cd34\n", "..%2fx", "../health", "xyz", "ab1", "AB12CD34", "ab12cd34/x", "a" * 33, ""):
         check(f"id {bad!r} refused, relay not asked", (wr.handle_get("/api/work/diff/" + bad, "")[0], len(seen_get)), (404, 1))
     wr._get = lambda path: (None, "")
     check("no diff there: 404", wr.handle_get("/api/work/diff/ab12cd34", "")[0], 404)

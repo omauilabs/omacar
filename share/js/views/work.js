@@ -288,7 +288,7 @@ export default function workView(root) {
           : h("span.work-pr", `Draft PR #${s.pr}`));
         const d = diffs.get(s.id);
         // The stat lines and the summary; never the patch.
-        if (d) row.append(h("div.work-diff", h("pre.work-diff-stat", d.stat), h("div.work-diff-summary", d.summary)));
+        if (d) row.append(h("div.work-diff", h("pre.work-diff-stat", d.stat), h("div.work-diff-summary", d.summary || "")));
       }
       list.append(row);
     }
@@ -304,7 +304,7 @@ export default function workView(root) {
     for (const s of (st && st.sessions) || []) {
       if (!s.pr || diffs.has(s.id)) continue;
       diffs.set(s.id, null);
-      try { diffs.set(s.id, await api.workDiff(s.id)); } catch { /* none yet */ }
+      try { diffs.set(s.id, await api.workDiff(s.id)); } catch { diffs.delete(s.id); /* try again next poll */ }
     }
   }
 

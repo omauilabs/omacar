@@ -403,6 +403,29 @@ check("E1: a symlinked workflow: stuck, nothing pushed", (ev[-1]["kind"], pushed
 ev, pushed, git = run_real([{".github/workflows/ci.yml": "jobs:\n  a:\n    runs-on: ubuntu-latest\n"},
                             {".github/workflows/ci.yml": "jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n"}])
 check("E1: a hosted runner fixed by a later commit is clean", (ev[-1]["kind"], bool(pushed)), ("pr_opened", True))
+class MergeGit(AgentGit):
+    """The agent brings .netrc in on a side branch and merges it."""
+    def prepare(self, project, branch, sd):
+        ws.Git.prepare(self, project, branch, sd)
+        sh("git", "checkout", "-q", "-b", "side", cwd=sd)
+        open(sd + "/.netrc", "w").write("machine github.com password x\n")
+        sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "side", cwd=sd)
+        sh("git", "checkout", "-q", branch, cwd=sd)
+        open(sd + "/main.txt", "w").write("m\n")
+        sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "main side", cwd=sd)
+        sh("git", "merge", "-q", "--no-ff", "-m", "merge", "side", cwd=sd)
+        sh("git", "rm", "-q", "-f", ".netrc", cwd=sd); sh("git", "commit", "-qm", "drop", cwd=sd)
+def run_merge():
+    events = []
+    async def ask(q): return "x"
+    git = MergeGit({})
+    s = ws.Session(gp5, "merge it", emit=events.append, ask=ask, home=T, host="tablet",
+                   git=git, client_factory=lambda o: FakeClient([("result",)], s), options_factory=lambda: None)
+    asyncio.run(s.run())
+    return events, sh("git", "branch", "--list", "work/merge*", cwd=T + "/origin.git").strip()
+ev, pushed = run_merge()
+check("K1: a merge commit that brings in .netrc: stuck, nothing pushed",
+      (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a credential file", ""))
 ev, pushed, git = run_real({"lib/fix.py": "x = 1\n"})
 check("a clean commit: pushed and opened", (ev[-1]["kind"], bool(pushed), len(git.prs)), ("pr_opened", True, 1))
 

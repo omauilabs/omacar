@@ -48,11 +48,11 @@ export function shownQuestion(questions, asking) {
 // Whether a polled event is spoken. A question is said only when it is the one
 // the relay is asking about now (`asking`, from /health): a question for any
 // other session would invite an answer that goes to the wrong one. `asking`
-// undefined means the relay has not been heard: the relay only emits a
-// question once it reaches the head of its queue, so say it.
+// undefined means the relay has not been heard: say nothing (the repeat when
+// the car stops covers it).
 export function speakable(event, asking) {
   if (event.kind !== "question") return true;
-  return asking === undefined || event.session === asking;
+  return asking !== undefined && event.session === asking;
 }
 
 // The reading notice: the first time in a drive that PR or diff content is

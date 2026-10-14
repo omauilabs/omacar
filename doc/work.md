@@ -103,11 +103,10 @@ detection, and California Vehicle Code section 27602 and NHTSA's guideline
 
 - **Load warning.** While a session runs and the car is not parked, the relay
   reads the one-minute load average every 10 s. Two readings in a row above 90%
-  of the cores make it say once per drive: "The tablet is busy -- drowsy alerts
-  may lag." A drive ends when the car parks.
+  of the cores make it say once per drive: "The tablet is busy — drowsy alerts may lag." A drive ends when the car parks.
 - **Reading notice.** The first time in a drive that a PR or diff is on the
   Work tab while moving, a small dismissible line says: "Reading while driving:
-  CA Vehicle Code 27602 restricts screens in the driver's view, and NHTSA's
+  CA Vehicle Code §27602 restricts screens in the driver's view, and NHTSA's
   guideline is glances under 2 seconds. Shown because you chose it in
   work.toml." It does not come back until the next drive.
 - **Read me the diff.** Say "read me the diff" (or what changed) with a project
@@ -116,7 +115,8 @@ detection, and California Vehicle Code section 27602 and NHTSA's guideline
   repo, scrubs them, and has a small no-tools model say at most four sentences
   about which parts changed and why: no code, no file contents. If the model
   fails you hear the file count instead. The Work tab's diff panel shows the
-  stat lines and that summary (never the patch).
+  stat lines for any session with a PR on its own, and the summary once you
+  have asked for it (never the patch).
 
 ## Setting up on the tablet
 
@@ -219,7 +219,10 @@ token too (it is not a plain curl).
   "That's today's limit of sessions." "Work is offline." "No signal, saved."
   (the clip did not reach the relay within 5 s; it is kept and retried. The
   relay answers as soon as it holds the clip, before it transcribes it, so a
-  slow transcription is never "No signal").
+  slow transcription is never "No signal". The clip stays on disk until it is
+  processed, so a relay restart picks it up again; the car's identifying
+  strings are never written, so such a clip is scrubbed by shape only. If
+  transcribing fails you hear "Didn't catch that." and the clip can be resent).
   "Usage limit reached, sessions paused until <time>." (after a usage limit
   no new session starts for an hour).
 - **Alerts first.** A drowsy or other alert cuts speech off; the line is

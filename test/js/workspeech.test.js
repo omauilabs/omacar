@@ -65,7 +65,7 @@ export default [
   ["E3: a question event for a session the relay is not asking is not spoken", () => {
     const q = { id: 3, kind: "question", session: "s2" }, fin = { id: 4, kind: "finished", session: "s2" };
     eq([speakable(q, "s1"), speakable(q, "s2"), speakable(q, null), speakable(q, undefined),
-        speakable(fin, "s1")], [false, true, false, true, true]);
+        speakable(fin, "s1")], [false, true, false, false, true]);
   }],
   ["C: the reading notice: only moving, only when chosen, once per drive", () => eq(
     [readingNotice(true, true, false), readingNotice(true, true, true), readingNotice(false, true, false),

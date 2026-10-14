@@ -241,8 +241,12 @@ class Git:
         base = ["-C", path, "-c", "core.hooksPath=/dev/null"]
         # Every commit's names, not just the tree diff: a credential added and
         # then deleted is still in the pushed history.
-        names = self._git(*base, "log", "--format=", "--name-only", "--no-renames", "-z",
+        # -m: a merge commit's own changes (against each parent) are listed too;
+        # the tip's three-dot diff is unioned in for whatever a merge resolved.
+        names = self._git(*base, "log", "-m", "--format=", "--name-only", "--no-renames", "-z",
                           f"origin/{self.default}..{branch}").split("\0")
+        names += self._git(*base, "diff", "--name-only", "--no-renames", "-z",
+                           f"origin/{self.default}...{branch}").split("\0")
         for name in filter(None, names):
             if credential_name(name):
                 return CREDENTIAL_WHY

@@ -119,7 +119,7 @@ class Relay:
         # "Read me the diff": the stat/log of a session's branch (read in the
         # trusted repo) and a no-tools model that turns it into a few sentences.
         self.diff_input = diff_input or (lambda s: s.git.diff_summary_input(s))
-        self.summarise = summarise or workintent._claude_text
+        self.summarise = summarise or (lambda p: workintent._claude_text(p, timeout=10))
         self.diffs = {}                          # session id -> {"stat", "summary"}, for the page
         # busy_load: the tablet's CPU is shared with drowsy detection, so with
         # while_moving on, a drive that keeps it busy is warned about once.
@@ -127,9 +127,6 @@ class Relay:
         self.dir = state_dir
         for d in ("", "in", "clips"):
             os.makedirs(os.path.join(self.dir, d), exist_ok=True)
-        for name in os.listdir(os.path.join(self.dir, "in")):       # uploads a crash left behind
-            try: os.remove(os.path.join(self.dir, "in", name))
-            except OSError: pass
         self.token = _write_token(self.dir)
         self.log = os.path.join(self.dir, "events.jsonl")
         self.lock = threading.RLock()
@@ -155,6 +152,7 @@ class Relay:
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         threading.Thread(target=self._worker, daemon=True).start()   # the one that listens
+        self._requeue_leftovers()
         self.last_prune = self.clock()
         self.prune()
         self._recover()
@@ -325,25 +323,68 @@ class Relay:
         return [r for r in self._rows() if r["id"] > after]
 
     # ---- utterances -----------------------------------------------------------
+    def _sidecar(self, client_id):
+        return os.path.join(self.dir, "in", f"{client_id}.json")
+
+    def _requeue_leftovers(self):
+        """Clips accepted (202) before a crash. Each has a sidecar naming its
+        audio file and arrival time; the car's secrets were never written, so
+        they are reprocessed with none (the by-shape scrub still runs). Oldest
+        first. Audio with no sidecar is an upload that never finished: removed."""
+        d = os.path.join(self.dir, "in")
+        rows, known = [], set()
+        for name in os.listdir(d):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(d, name), encoding="utf-8") as f:
+                    r = json.load(f)
+                cid, audio = str(r["client_id"]), os.path.basename(str(r["audio"]))
+                rows.append((float(r["arrived"]), cid, os.path.join(d, audio)))
+                known.add(audio)
+            except (OSError, ValueError, KeyError, TypeError):
+                self._rm(os.path.join(d, name))
+        for name in os.listdir(d):
+            if not name.endswith(".json") and name not in known:
+                self._rm(os.path.join(d, name))
+        for arrived, cid, path in sorted(rows):
+            if not os.path.isfile(path):
+                self._rm(self._sidecar(cid))
+                continue
+            with self.lock:
+                self.accepted[cid] = True
+                self.arrived[cid] = arrived
+                self.inbox.put((cid, path, [], arrived))
+
     def accept(self, client_id, audio_path, secrets):
         """Take a clip over HTTP: receipt is acknowledged before anything is
         transcribed, so a slow whisper never reads as a dead link on the
         page ("No signal -- saved" for a clip that did arrive). One worker
         processes accepted clips in arrival order. A duplicate client id gets
-        the same acknowledgement and is processed once."""
+        the same acknowledgement and is processed once. The clip stays in in/
+        with a small sidecar until it has been processed, so a crash does not
+        lose it; the sidecar never holds the secrets."""
         arrived = self.clock()            # the receipt time is what F8's confirm window judges
         with self.lock:
             dup = (client_id in self.accepted or client_id in self.seen
                    or client_id in self.inflight)
-            if not dup:
-                self.accepted[client_id] = True
-                while len(self.accepted) > SEEN_MAX:
-                    self.accepted.popitem(last=False)
-                self.arrived[client_id] = arrived       # in flight from now: a yes waiting its turn counts
         if dup:
             self._rm(audio_path)
-        else:
-            self.inbox.put((client_id, audio_path, secrets, arrived))
+            return {"accepted": True}
+        side = self._sidecar(client_id)
+        with open(side + ".tmp", "w", encoding="utf-8") as f:
+            json.dump({"client_id": client_id, "arrived": arrived,
+                       "audio": os.path.basename(audio_path)}, f)
+        os.replace(side + ".tmp", side)
+        with self.lock:
+            if client_id in self.accepted or client_id in self.seen or client_id in self.inflight:
+                self._rm(audio_path)                 # a racing duplicate got in first
+                return {"accepted": True}
+            self.accepted[client_id] = True
+            while len(self.accepted) > SEEN_MAX:
+                self.accepted.popitem(last=False)
+            self.arrived[client_id] = arrived       # in flight from now: a yes waiting its turn counts
+            self.inbox.put((client_id, audio_path, secrets, arrived))   # in the lock: queue order == arrival order
         return {"accepted": True}
 
     def _worker(self):
@@ -352,9 +393,18 @@ class Relay:
             try:
                 self.utterance(client_id, path, secrets, arrived)
             except Exception:                                  # noqa: BLE001
+                # Transcription or intent failed after the 202: say so, and let
+                # a resend of the same id be processed.
                 self._rm(path)
                 with self.lock:
                     self.arrived.pop(client_id, None)
+                    self.accepted.pop(client_id, None)
+                try:
+                    self.emit({"kind": "didnt_catch"})
+                except Exception:                              # noqa: BLE001
+                    pass
+            finally:
+                self._rm(self._sidecar(client_id))
 
     def utterance(self, client_id, audio_path, secrets, arrived=None):
         if arrived is None:
@@ -412,7 +462,13 @@ class Relay:
             asked = self.pending if any(ev["kind"] == "confirm" for ev in evs) else None
         last = None
         for ev in evs:
-            last = self._read_diff(ev["_session"], secrets) if ev["kind"] == "_diff" else self.emit(ev)
+            if ev["kind"] == "_diff":
+                # The model may take seconds: its own thread, so the clip worker never waits on it.
+                threading.Thread(target=self._read_diff, args=(ev["_session"], secrets),
+                                 daemon=True).start()
+                last = {"ok": True}
+            else:
+                last = self.emit(ev)
         self._release_questions()                # an answer or a stop moves the FIFO on
         if asked is not None:
             with self.lock:                       # the clip exists now: start the 20 s
@@ -545,8 +601,21 @@ class Relay:
         return self.emit({"kind": "diff", "session": s.id, "project": name, "text": summary})
 
     def diff_of(self, sid):
+        """The page's diff panel: the stat, computed on demand (no model) for
+        any session whose branch is in the trusted repo, and the spoken
+        summary once "read me the diff" has produced one (else None)."""
         with self.lock:
-            return self.diffs.get(sid)
+            s, kept = self.sessions.get(sid), self.diffs.get(sid)
+        stat = None
+        if s is not None and (s.pr or getattr(s, "imported", False)):
+            try:
+                stat = workprivacy.scrub(self.diff_input(s)[0], ())
+            except Exception:                                  # noqa: BLE001
+                stat = None
+        if stat is None and kept is None:
+            return None
+        return {"stat": stat if stat is not None else kept["stat"],
+                "summary": kept["summary"] if kept else None}
 
     # ---- starting ---------------------------------------------------------------
     def _today(self):

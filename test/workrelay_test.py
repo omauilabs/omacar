@@ -360,6 +360,7 @@ check("secrets that are not a list are ignored, never split into letters",
 n = len(RH.events(0)); code2, ack2 = utt("c-ok", said="in omacar fix it")
 time.sleep(0.2)
 check("same client id over HTTP is one utterance, the same 202", ((code2, ack2), len(RH.events(0))), ((202, ack), n))
+wait_for(lambda: os.listdir(os.path.join(RH.dir, "in")) == [])
 check("uploads are deleted", os.listdir(os.path.join(RH.dir, "in")), [])
 cname = reply["clip"]
 check("the clip is served", call("GET", "/clip/" + cname)[0] if cname else None, 200)
@@ -607,11 +608,15 @@ RD = mk("d", BIG, cls=DiffSession, diff_input=dinput, summarise=good_summary); R
 RD.intent = dintent
 start_one(RD)
 sd = list(RD.sessions.values())[0]
-tell(RD, "zzdiff")
+def dtell(text="zzdiff", secrets=(), n=None):
+    """say it, then wait for the diff thread's event (or the status line)."""
+    before = len(RD.events(0)); tell(RD, text, secrets)
+    wait_for(lambda: len(RD.events(0)) > before + 1)
+dtell()
 check("no pushed or imported branch: said so, the model not asked",
       (RD.events(0)[-1]["line"], summaries), ("omacar: no changes to read yet.", []))
 sd.imported = True
-tell(RD, "zzdiff")
+dtell()
 ev = RD.events(0)[-1]
 check("a diff event with the summary, at most four sentences",
       (ev["kind"], ev["session"], ev["text"]),
@@ -624,33 +629,78 @@ check("stored for the page", RD.diff_of(sd.id)["summary"].startswith("It reworke
 check("the page's stat is scrubbed too", "1HGCM82633A004352" in RD.diff_of(sd.id)["stat"], False)
 def boom(prompt): raise RuntimeError("claude failed")
 RD.summarise = boom
-tell(RD, "zzdiff")
+dtell()
 check("summariser raising: the file count from the stat", RD.events(0)[-1]["line"], "omacar: 1 file changed.")
 RD.summarise = lambda p: "   "
-tell(RD, "zzdiff")
+dtell()
 check("an empty summary falls back too", RD.events(0)[-1]["line"], "omacar: 1 file changed.")
 RD.summarise = lambda p: "Plate 8ABC123 was touched."
-tell(RD, "zzdiff", secrets=["8ABC123"])
+dtell(secrets=["8ABC123"])
 check("a summary naming a secret is scrubbed", "8ABC123" in RD.events(0)[-1]["line"], False)
 RD.diff_input = lambda s: (_ for _ in ()).throw(RuntimeError("no branch"))
-tell(RD, "zzdiff")
+dtell()
 check("no readable branch: said so", RD.events(0)[-1]["line"], "omacar: no diff to read.")
 sd.imported = False; sd.pr = 12
 RD.diff_input = dinput; RD.summarise = good_summary
-tell(RD, "zzdiff")
+dtell()
 check("a session with a PR counts", RD.events(0)[-1]["kind"], "diff")
+slow_gate = threading.Event()
+RD.summarise = lambda p: (slow_gate.wait(5), "Slow summary.")[1]
+t0 = time.time(); before_n = len(RD.events(0)); tell(RD, "zzdiff"); took = time.time() - t0
+check("M3: the clip worker is free while the summariser runs", (took < 2, "diff" in [e["kind"] for e in RD.events(0)[before_n:]]), (True, False))
+slow_gate.set(); wait_for(lambda: RD.events(0)[-1]["kind"] == "diff")
+check("M3: the diff event is emitted when it finishes", RD.events(0)[-1]["text"], "Slow summary.")
+RD.summarise = good_summary
 srvd = workrelay.make_server(workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0), while_moving=True), 0, RD)
 PD = srvd.server_address[1]; threading.Thread(target=srvd.serve_forever, daemon=True).start()
 TOK_SAVE, TOK = TOK, RD.token
 hd = {"Host": f"127.0.0.1:{PD}"}
+RD.diffs.clear()
 code_d, body_d = call("GET", "/diff/" + sd.id, port=PD, headers=hd)
-check("GET /diff/<id> with the token", (code_d, sorted(body_d)), (200, ["stat", "summary"]))
+check("P1: before any spoken request: the stat is there, the summary null",
+      (code_d, "lib/a.py" in body_d["stat"], body_d["summary"]), (200, True, None))
+RD.summarise = good_summary; dtell()
+code_d, body_d = call("GET", "/diff/" + sd.id, port=PD, headers=hd)
+check("GET /diff/<id> after the spoken request: both", (code_d, "lib/a.py" in body_d["stat"], body_d["summary"][:9]), (200, True, "It rework"))
 check("GET /diff/<id> unknown id", call("GET", "/diff/abcd1234", port=PD, headers=hd)[0], 404)
 check("GET /diff/<id> bad id", call("GET", "/diff/..%2Fevents", port=PD, headers=hd)[0], 404)
 TOK = "wrong"
 check("GET /diff/<id> without the token", call("GET", "/diff/" + sd.id, port=PD, headers=hd)[0], 403)
 TOK = TOK_SAVE
 srvd.shutdown()
+
+print("\n  K2/I1: accepted clips survive a crash and an error")
+SD = os.path.join(SCRATCH, "k2")
+blocked = threading.Event(); heard_k2 = []
+def stuck_ears(path): blocked.wait(30); return "um", -0.2
+RK1 = workrelay.Relay(BIG, ears=stuck_ears, intent=intent, session_factory=EndingSession, park=FakePark(),
+                      clock=lambda: 7000.0, state_dir=SD, render=lambda t, o: False)
+HEARD["k1"] = "um"
+pk2 = os.path.join(SD, "in", "k1.abcd1234.webm"); open(pk2, "wb").write(b"x")
+RK1.accept("k1", pk2, ["8ABC123"])
+side = open(os.path.join(SD, "in", "k1.json")).read()
+check("the sidecar holds no secrets", ("8ABC123" in side, '"client_id": "k1"' in side), (False, True))
+def ears_k2(path): heard_k2.append(os.path.basename(path)); return "the plate is 8ABC123", -0.2
+RK2 = workrelay.Relay(BIG, ears=ears_k2, intent=intent, session_factory=EndingSession, park=FakePark(),
+                      clock=lambda: 7001.0, state_dir=SD, render=lambda t, o: False)
+wait_for(lambda: RK2.events(0) and RK2.events(0)[-1]["kind"] == "status")
+wait_for(lambda: os.listdir(os.path.join(SD, "in")) == [])
+check("crash: the new relay processes the clip once, then the clip and sidecar are gone",
+      (len(heard_k2), [e["kind"] for e in RK2.events(0)][:1], os.listdir(os.path.join(SD, "in"))),
+      (1, ["heard"], []))
+def bad_ears(path): raise RuntimeError("whisper died")
+RK3 = mk("k3", BIG); RK3.ears = bad_ears
+HEARD["k3a"] = "um"; p3 = os.path.join(SCRATCH, "k3a.webm"); open(p3, "wb").write(b"x")
+RK3.accept("k3a", p3, [])
+wait_for(lambda: [e["kind"] for e in RK3.events(0)] == ["didnt_catch"])
+check("I1: ears raising after the 202: a didnt_catch event with its line",
+      [(e["kind"], e["line"]) for e in RK3.events(0)], [("didnt_catch", "Didn't catch that.")])
+RK3.ears = ears
+HEARD["k3a"] = "um"; p3 = os.path.join(SCRATCH, "k3a.webm"); open(p3, "wb").write(b"x")
+RK3.accept("k3a", p3, [])
+wait_for(lambda: "heard" in [e["kind"] for e in RK3.events(0)])
+check("I1: a resend of the same client id is processed", "heard" in [e["kind"] for e in RK3.events(0)], True)
+check("I1: and no sidecar is left", os.listdir(os.path.join(RK3.dir, "in")), [])
 
 print("\n  B: a busy tablet is warned about, once per drive")
 load = [0.1]
@@ -691,9 +741,10 @@ RQ3 = mk("e3", BIG)
 start_one(RQ3); start_one(RQ3)
 qa, qb = list(RQ3.sessions.values())
 def qkinds(): return [(e["session"], e["question"]) for e in RQ3.events(0) if e["kind"] == "question"]
+E3F = []
 for sess_, text in ((qa, "a?"), (qb, "b?")):
     RQ3._emit_async({"kind": "question", "session": sess_.id, "project": "omacar", "question": text})
-    asyncio.run_coroutine_threadsafe(sess_.ask(text), RQ3.loop)
+    E3F.append(asyncio.run_coroutine_threadsafe(sess_.ask(text), RQ3.loop))
     wait_for(lambda: len(RQ3.questions) >= (1 if sess_ is qa else 2))
 wait_for(lambda: qkinds())
 time.sleep(0.2)
@@ -707,7 +758,7 @@ start_one(RQ3b); start_one(RQ3b)
 xa, xb = list(RQ3b.sessions.values())
 for sess_, text in ((xa, "a?"), (xb, "b?")):
     RQ3b._emit_async({"kind": "question", "session": sess_.id, "project": "omacar", "question": text})
-    asyncio.run_coroutine_threadsafe(sess_.ask(text), RQ3b.loop)
+    E3F.append(asyncio.run_coroutine_threadsafe(sess_.ask(text), RQ3b.loop))
     wait_for(lambda: len(RQ3b.questions) >= (1 if sess_ is xa else 2))
 asyncio.run_coroutine_threadsafe(xa.stop(), RQ3b.loop)
 tell(RQ3b, "stop")
@@ -721,9 +772,11 @@ RQ3c._emit_async({"kind": "question", "session": ya.id, "project": "omacar", "qu
 time.sleep(0.2)
 check("a question event arriving before its ask registers is held, then said once asked",
       [e["kind"] for e in RQ3c.events(0)].count("question"), 0)
-asyncio.run_coroutine_threadsafe(ya.ask("late?"), RQ3c.loop)
+E3F.append(asyncio.run_coroutine_threadsafe(ya.ask("late?"), RQ3c.loop))
 wait_for(lambda: any(e["kind"] == "question" for e in RQ3c.events(0)))
 check("emitted once the ask registers", [e["kind"] for e in RQ3c.events(0)].count("question"), 1)
+for f_ in E3F: f_.cancel()                      # M4: no pending asks left to be destroyed at exit
+time.sleep(0.2)
 
 print("\n  E2: accepted clips are processed in arrival order, once")
 order = []
