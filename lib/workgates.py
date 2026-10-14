@@ -91,7 +91,8 @@ def SECRET_PATHS(home):
             j(home, ".local", "share", "keyrings"),
             j(home, ".claude", ".credentials.json"), j(home, ".claude.json"),
             j(home, ".gnupg"), j(home, ".aws"),
-            j(home, ".docker", "config.json")]
+            j(home, ".docker", "config.json"), j(home, ".kube"),
+            j(home, ".config", "gcloud"), j(home, ".azure")]
 
 
 def _protected(ctx):

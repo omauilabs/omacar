@@ -31,7 +31,8 @@ REPAIRS = 2
 # Every way to a credential the parent process may hold. Blanked in the
 # session's environment so the agent inherits none of them.
 STRIP_ENV = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK",
-             "DBUS_SESSION_BUS_ADDRESS", "GIT_ASKPASS", "SSH_ASKPASS")
+             "DBUS_SESSION_BUS_ADDRESS", "GIT_ASKPASS", "SSH_ASKPASS",
+             "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE")
 SYSTEM_APPEND = """You are working for a driver who talks to you by voice from a car.
 Work only inside the current directory. Commit as you go with clear messages.
 Before you finish, run the project's gate: `{gate}`. Never push and never open
@@ -76,9 +77,11 @@ def _sdk():
 def gate_argv(cmd, worktree, home, hide):
     """The full argv that runs the gate in bubblewrap. Pure, so it is tested
     without running anything."""
-    argv = ["bwrap", "--die-with-parent", "--unshare-net", "--unshare-ipc",
-            "--unshare-pid", "--new-session", "--ro-bind", "/", "/",
-            "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
+    # --unshare-all keeps the network off; the tmpfs over /run hides the
+    # desktop's sockets (D-Bus, Hyprland, PipeWire, keyring) under /run/user.
+    argv = ["bwrap", "--die-with-parent", "--unshare-all", "--cap-drop", "ALL",
+            "--new-session", "--ro-bind", "/", "/", "--tmpfs", "/run",
+            "--tmpfs", "/var/run", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
             "--bind", worktree, worktree]
     for path in hide:
         if os.path.isdir(path):
@@ -124,10 +127,10 @@ class Git:
         self.default = head.removeprefix("origin/")
         url = self._git("-C", path, "remote", "get-url", "origin")
         os.makedirs(os.path.dirname(session_dir), exist_ok=True)
-        self._git("clone", "--no-hardlinks", "--branch", self.default, path, session_dir)
+        self._git("clone", "--no-hardlinks", path, session_dir)
         self._git("-C", session_dir, "remote", "set-url", "origin", url)
-        # Start from origin's tip, which the fetch above brought up to date.
-        self._git("-C", session_dir, "fetch", path, f"refs/remotes/origin/{self.default}")
+        # Start from origin's tip; no local branch of the default's name needed.
+        self._git("-C", session_dir, "fetch", "origin", self.default)
         self._git("-C", session_dir, "switch", "-c", branch, "FETCH_HEAD")
 
     def _import(self, session_dir, branch):
@@ -178,7 +181,8 @@ class Git:
         return r.returncode == 0 and r.stdout.strip() not in ("", "0")
 
     def push(self, session_dir, branch):
-        self._import(session_dir, branch)
+        # Pushes what has_commits imported; nothing is fetched here, so a stop
+        # that lands between the two is never followed by a push.
         self._git("-C", self.project.path, "-c", "core.hooksPath=/dev/null", "push",
                   "origin", f"refs/heads/{branch}:refs/heads/{branch}")
 
@@ -220,7 +224,12 @@ class Session:
         self._stopping = False       # set by stop(); run() checks it everywhere
         self._pushed = False
         self._ask_task = self._reader = None
+        self._done = False           # run() has returned; stop() is then a no-op
         self.ctx = workgates.Ctx(worktree=self.worktree, host=host, home=home)
+
+    def _set_state(self, state):
+        if not self._stopping:
+            self.state = state
 
     def _emit(self, kind, **kw):
         self.emit_raw(dict(kind=kind, session=self.id, project=self.project.name, **kw))
@@ -350,7 +359,7 @@ class Session:
             await self.stop("stuck")
             return True
         if self.problem:
-            self.state = "stopped" if self.problem == "limit" else "stuck"
+            self._set_state("stopped" if self.problem == "limit" else "stuck")
             if self.problem == "limit":
                 self.emit("limit", until="the limit resets")
             else:
@@ -365,6 +374,12 @@ class Session:
 
     async def run(self):
         try:
+            await self._guarded()
+        finally:
+            self._done = True
+
+    async def _guarded(self):
+        try:
             await self._run()
         except Exception as e:                                # noqa: BLE001
             if self._stopping:
@@ -378,9 +393,11 @@ class Session:
         if self._stopping:
             return
         self.emit("started")
-        self.state = "running"
+        self._set_state("running")
         self.client = self.client_factory(self.options_factory())
         async with self.client:
+            if self._stopping:
+                return
             await self.client.query(self.instruction)
             if await self._after_drain():
                 return
@@ -404,10 +421,10 @@ class Session:
             return
         if not await asyncio.to_thread(self.git.has_commits, self.worktree):
             if not self._stopping:
-                self.state = "done"
+                self._set_state("done")
                 self.emit("finished")
             return
-        self.state = "pushing"
+        self._set_state("pushing")
         body = "\n".join([
             f"Asked by voice from the car: \"{self.instruction}\"", "",
             f"Gate `{self.project.gate}`: {'passed' if gate_ok else 'still failing'}.",
@@ -421,12 +438,12 @@ class Session:
             return
         self.pr = await asyncio.to_thread(self.git.draft_pr, self.worktree, self.branch,
                                           f"Work: {self.instruction}", body)
-        self.state = "done"
+        self._set_state("done")
         self.emit("pr_opened" if gate_ok else "gate_failed", pr=self.pr)
 
     async def stop(self, reason="stopped"):
         """Idempotent: one terminal event, and run() ends without pushing."""
-        if self._stopping:
+        if self._stopping or self._done:
             return
         self._stopping = True
         self.state = reason if reason in ("stuck", "interrupted") else "stopped"

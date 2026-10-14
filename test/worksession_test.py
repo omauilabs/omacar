@@ -106,6 +106,8 @@ s, ev, git = run([("ask", "Which one?"), ("result",)], [True], answer=None,
 check("question in the PR body", "Which one?" in git.prs[0][1], True)
 
 print("\n  the sandbox is the wall")
+env = ws.session_env({"XDG_RUNTIME_DIR": "/run/user/1", "WAYLAND_DISPLAY": "w", "HYPRLAND_INSTANCE_SIGNATURE": "h"})
+check("desktop sockets' variables blanked", sorted(env.values()), ["", "", ""])
 sb = ws.sandbox_settings(workcfg.Project("p", ("p",), "/x", "t"))
 check("sandbox on, no way out, fails closed",
       (sb["enabled"], sb["allowUnsandboxedCommands"], sb["failIfUnavailable"]), (True, False, True))
@@ -162,6 +164,47 @@ s, ev, git = run([("ask", "Which one?"), ("result",)], [True], ask_delay=0.3,
 check("continues to a PR", ev[-1]["kind"], "pr_opened")
 check("answer delivered", CLIENTS[0].answer["updated_input"]["answers"]["Which one?"], "configurable")
 
+print("\n  a stop landing during the import is never followed by a push")
+class StopInImport(FakeGit):
+    def has_commits(self, wt, base=None):
+        asyncio.run_coroutine_threadsafe(self.s.stop(), self.loop).result(); return True
+def run_with(git, script=(("result",),)):
+    events = []
+    async def ask(q): return "x"
+    async def main():
+        git.loop = asyncio.get_running_loop()
+        s = ws.Session(PROJ, "fix the timeout", emit=events.append, ask=ask, home=HOME, host="tablet",
+                       git=git, client_factory=lambda o: FakeClient(list(script), s), options_factory=lambda: None)
+        git.s = s
+        await s.run(); return s
+    s = asyncio.run(main()); return s, events
+g = StopInImport([True]); s, ev = run_with(g)
+check("stop during has_commits: nothing pushed", ([e["kind"] for e in ev], g.pushed, g.prs), (["started", "stopped"], [], []))
+
+print("\n  state and pr after a stop")
+class StopInPR(FakeGit):
+    def draft_pr(self, wt, b, t, body):
+        asyncio.run_coroutine_threadsafe(self.s.stop(), self.loop).result(); return 41
+g = StopInPR([True]); s, ev = run_with(g)
+check("state stays stopped, pr recorded, one event", (s.state, s.pr, [e["kind"] for e in ev]), ("stopped", 41, ["started", "stopped"]))
+
+print("\n  stop while connecting")
+class SlowConnect(FakeClient):
+    async def __aenter__(self): await self.s.stop(); return self
+g = FakeGit([True]); events = []
+async def _m():
+    async def ask(q): return "x"
+    s = ws.Session(PROJ, "fix the timeout", emit=events.append, ask=ask, home=HOME, host="tablet",
+                   git=g, client_factory=lambda o: SlowConnect([("result",)], s), options_factory=lambda: None)
+    await s.run(); return s
+s = asyncio.run(_m())
+check("no query, no push", (s.client.queries, g.pushed, [e["kind"] for e in events]), ([], [], ["started", "stopped"]))
+
+print("\n  stop after the run is a no-op")
+s, ev, git = run([("result",)], [True])
+n = len(ev); asyncio.run(s.stop())
+check("no second terminal event, state kept", (len(ev), s.state), (n, "done"))
+
 print("\n  failures after prepare are spoken")
 class BadPush(FakeGit):
     def push(self, wt, b): raise RuntimeError("push rejected")
@@ -173,8 +216,6 @@ s, ev, git = run([("result",)], [True], git=BadPR([True]))
 check("failing draft_pr", (ev[-1]["kind"], ev[-1]["why"], git.pushed), ("stuck", "pushed, PR not opened", [s.branch]))
 
 print("\n  a limit during a repair is a limit")
-class Lim(FakeClient):
-    pass
 s, ev, git = run([("result",), ("limit",)], [False])
 check("limit after repair", (ev[-1]["kind"], git.pushed), ("limit", []))
 
@@ -201,14 +242,17 @@ print("\n  the gate runs in bubblewrap")
 GH = tempfile.mkdtemp()
 os.makedirs(GH + "/.config/gh"); open(GH + "/.git-credentials", "w").write("x")
 argv = ws.gate_argv("test/all.sh --fast", "/wt", GH, [GH + "/.config/gh", GH + "/.git-credentials", GH + "/.aws"])
-check("argv starts with bwrap, no network", (argv[0], "--unshare-net" in argv), ("bwrap", True))
+check("argv starts with bwrap, unshares all", (argv[0], "--unshare-all" in argv), ("bwrap", True))
 binds = [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
 check("only the worktree is writable", binds, ["/wt"])
-i = argv.index("--tmpfs", argv.index("/proc"))
-check("existing dir hidden by tmpfs", GH + "/.config/gh" in argv[argv.index("--bind"):], True)
+check("existing dir hidden by tmpfs", argv[argv.index(GH + "/.config/gh") - 1], "--tmpfs")
 check("existing file hidden by /dev/null", argv[argv.index(GH + "/.git-credentials") - 2:argv.index(GH + "/.git-credentials") + 1], ["--ro-bind", "/dev/null", GH + "/.git-credentials"])
+check("host IPC and caps closed", ("--unshare-all" in argv, "--share-net" in argv,
+      argv[argv.index("--cap-drop") + 1]), (True, False, "ALL"))
+check("/run and /var/run hidden after the root bind", [argv[argv.index(d) - 1] for d in ("/run", "/var/run")]
+      + [argv.index("/run") > argv.index("--ro-bind")], ["--tmpfs", "--tmpfs", True])
 check("missing path skipped", GH + "/.aws" in argv, False)
-check("ends with the split command", argv[-3:], ["--", "test/all.sh", "--fast"][-3:])
+check("ends with the split command", argv[-3:], ["--", "test/all.sh", "--fast"])
 check("--chdir worktree before --", argv[argv.index("--chdir") + 1], "/wt")
 shutil.rmtree(GH, ignore_errors=True)
 orig = ws.shutil.which; ws.shutil.which = lambda n: None
@@ -228,9 +272,12 @@ sh("git", "clone", "-q", T + "/origin.git", T + "/proj")
 open(T + "/proj/a.txt", "w").write("a"); sh("git", "add", ".", cwd=T + "/proj"); sh("git", "commit", "-qm", "one", cwd=T + "/proj")
 sh("git", "push", "-q", "origin", "HEAD:main", cwd=T + "/proj")
 sh("git", "remote", "set-head", "origin", "main", cwd=T + "/proj")
+sh("git", "checkout", "-q", "-b", "other", cwd=T + "/proj"); sh("git", "branch", "-D", "main", cwd=T + "/proj")
 gp = workcfg.Project("p", ("p",), T + "/proj", "true")
 real = ws.Git(); sess = T + "/Projects/.omacar-work/p-x"
 real.prepare(gp, "work/x-1234", sess)
+check("no local main needed; session starts at origin/main's tip",
+      sh("git", "rev-parse", "HEAD", cwd=sess).strip(), sh("git", "rev-parse", "origin/main", cwd=T + "/proj").strip())
 check("session folder is a clone on the work branch", sh("git", "branch", "--show-current", cwd=sess).strip(), "work/x-1234")
 check("origin points at the real origin", sh("git", "remote", "get-url", "origin", cwd=sess).strip(), T + "/origin.git")
 check("nothing to push yet", real.has_commits(sess), False)
