@@ -1,5 +1,5 @@
 import { eq, ok } from "./assert.js";
-import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold, shownQuestion, speakable } from "../js/work/speech.js";
+import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold, shownQuestion, speakable, readingNotice, READING_TEXT } from "../js/work/speech.js";
 import { silenceStop, SILENCE_S, record } from "../js/work/recorder.js";
 
 function rig() {
@@ -66,6 +66,13 @@ export default [
     const q = { id: 3, kind: "question", session: "s2" }, fin = { id: 4, kind: "finished", session: "s2" };
     eq([speakable(q, "s1"), speakable(q, "s2"), speakable(q, null), speakable(q, undefined),
         speakable(fin, "s1")], [false, true, false, true, true]);
+  }],
+  ["C: the reading notice: only moving, only when chosen, once per drive", () => eq(
+    [readingNotice(true, true, false), readingNotice(true, true, true), readingNotice(false, true, false),
+     readingNotice(true, false, false), readingNotice(true, undefined, false), readingNotice(false, false, false)],
+    [true, false, false, false, false, false])],
+  ["C: the notice names the law and the guideline and says why it is shown", () => {
+    ok(READING_TEXT.includes("\u00a727602") && READING_TEXT.includes("NHTSA") && READING_TEXT.includes("work.toml"), "text");
   }],
   ["a recorder that fails to start still releases the microphone", async () => {
     const stopped = [];

@@ -55,6 +55,15 @@ export function speakable(event, asking) {
   return asking === undefined || event.session === asking;
 }
 
+// The reading notice: the first time in a drive that PR or diff content is
+// on screen while moving, and only when the owner chose that (work.toml's
+// while_moving, from /health). Once per drive; the caller remembers.
+export function readingNotice(moving, whileMoving, shownThisDrive) {
+  return !!moving && !!whileMoving && !shownThisDrive;
+}
+export const READING_TEXT = "Reading while driving: CA Vehicle Code \u00a727602 restricts screens in the driver's view, "
+  + "and NHTSA's guideline is glances under 2 seconds. Shown because you chose it in work.toml.";
+
 // Quiet hours, the page's half: the owner's child sleeps near the parked
 // tablet, so while parked between quiet[0] and quiet[1] (from the relay's
 // /health, default 21-7) lines are shown, not spoken. While moving nothing is

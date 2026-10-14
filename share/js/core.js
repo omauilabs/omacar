@@ -258,6 +258,7 @@ export const api = {
   // Work by voice (lib/workroutes.py).
   workStatus: () => req("/api/work/status"),
   workEvents: (after) => req("/api/work/events?after=" + after),
+  workDiff: (id) => req("/api/work/diff/" + id),
   workClip: (name) => req("/api/work/clip/" + name),
   workSay: (body) => req("/api/work/utterance", { method: "POST", body: JSON.stringify(body) }),
   nursery: () => req("/api/nursery"),

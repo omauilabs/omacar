@@ -1,6 +1,8 @@
 // The Work tab: talk to your coding sessions from the car.
 // Design: doc/design/2026-10-13-work-voice-relay.md. While moving it shows one
-// button and one line per session; pull requests appear only while parked.
+// button and one line per session; pull requests and diffs appear only while
+// parked -- unless the owner chose while_moving in work.toml (from /health),
+// when they show always, with a one-time-per-drive reading notice.
 //
 // Speech goes out on the voice bus and always gives way to alerts (see
 // work/speech.js). The view polls every 2 s while mounted; main.js polls every
@@ -13,7 +15,7 @@ import { glidePlan } from "../ramps.js";
 import { alertPlayer } from "../alertplayer.js";
 import { record } from "../work/recorder.js";
 import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold,
-  shownQuestion, speakable } from "../work/speech.js";
+  shownQuestion, speakable, readingNotice, READING_TEXT } from "../work/speech.js";
 
 const POLL_MS = 2000;
 const NO_SIGNAL_MS = 5000;
@@ -35,6 +37,9 @@ let inflight = null;
 let recording = false;
 let quietHours = [21, 7];  // from the relay's /health; work.toml's quiet
 let notice = "";           // a short note under the button ("Saved, sent when parked.")
+let readingShown = false;  // the reading notice has been shown this drive
+let readingOpen = false;   // ... and not yet dismissed
+const diffs = new Map();   // session id -> { stat, summary } | null, for the diff panel
 
 const alertBusy = () => {
   try { return alertPlayer().voices.some((v) => v.end > audioContext().currentTime); }
@@ -168,6 +173,7 @@ async function talk(setBusy) {
 export function resetWork() {
   lastId = 0; caughtUp = false; offlineSaid = false; wasMoving = false; prevSpeed = 0;
   questions = new Map(); asking = undefined; inflight = null; notice = ""; quietHours = [21, 7];
+  readingShown = false; readingOpen = false; diffs.clear();
 }
 
 // One poll of the relay's events, shared by the view and main.js's clock.
@@ -178,6 +184,7 @@ export function pollWork() {
     if (!r) return null;
     const newDrive = store.moving && !wasMoving;
     wasMoving = store.moving;
+    if (newDrive) { readingShown = false; readingOpen = false; }
     if (offlineOnce({ online: r.online, said: offlineSaid, newDrive })) {
       offlineSaid = true;
       getSpeech().say({ id: "offline-" + Date.now(), at: Date.now() / 1000, local: "offline" });
@@ -197,6 +204,7 @@ export function pollWork() {
     const asked = [];     // questions are spoken only once we know which one is the relay's
     for (const e of r.events || []) {
       lastId = Math.max(lastId, e.id);
+      if (e.kind === "diff") diffs.delete(e.session);       // read again: the panel refetches
       if (e.kind === "question") questions.set(e.session, { event: e, repeated: false });
       else if (RESOLVES.includes(e.kind)) questions.delete(e.session);
       if (e.kind === "question") asked.push(e);
@@ -240,8 +248,11 @@ export default function workView(root) {
   const qtext = h("div.work-question-text");
   const qcard = h("div.work-question", { hidden: true }, qtext, talkBtn());
   const note = h("div.work-note");
+  const readingText = h("span", READING_TEXT);
+  const reading = h("div.work-reading", { hidden: true }, readingText,
+    h("button", { type: "button", "aria-label": "Dismiss", onclick: () => { readingOpen = false; reading.hidden = true; } }, "\u2715"));
   clear(root);
-  root.append(h("div.work", btn, note, qcard, list));
+  root.append(h("div.work", reading, btn, note, qcard, list));
 
   let status = null;       // the last sessions answer, kept to redraw on a stop or start
   let drawnMoving = null;
@@ -254,13 +265,18 @@ export default function workView(root) {
     note.textContent = notice;
     clear(list);
     drawnMoving = store.moving;
+    // PRs and diffs: parked, or any time when the owner chose while_moving.
+    const whileMoving = !!(status && status.while_moving);
+    const showPr = !store.moving || whileMoving;
+    let onScreen = false;
     // The relay adds sessions in the order they start and gives no start time,
     // so newest first is that order reversed.
     for (const s of [...((status && status.sessions) || [])].reverse()) {
       const row = h("div.work-row",
         h("span.work-proj", s.project), " · ", s.state, " · ",
         h("span.work-line", s.line || ""));
-      if (!store.moving && s.pr) {
+      if (showPr && s.pr) {
+        onScreen = true;
         row.append(s.repo
           // A new window, as documents.js opens a file: one tap must never
           // replace the dashboard (and its drowsy alerts) in a kiosk with no
@@ -270,8 +286,25 @@ export default function workView(root) {
             rel: "noopener noreferrer",
           }, `Draft PR #${s.pr}`)
           : h("span.work-pr", `Draft PR #${s.pr}`));
+        const d = diffs.get(s.id);
+        // The stat lines and the summary; never the patch.
+        if (d) row.append(h("div.work-diff", h("pre.work-diff-stat", d.stat), h("div.work-diff-summary", d.summary)));
       }
       list.append(row);
+    }
+    if (onScreen && readingNotice(store.moving, whileMoving, readingShown)) {
+      readingShown = true; readingOpen = true;
+    }
+    reading.hidden = !readingOpen;
+  }
+
+  // The diff panel's content, fetched once per session (and again after a
+  // "read me the diff"); no diff yet is null and stays quiet.
+  async function fetchDiffs(st) {
+    for (const s of (st && st.sessions) || []) {
+      if (!s.pr || diffs.has(s.id)) continue;
+      diffs.set(s.id, null);
+      try { diffs.set(s.id, await api.workDiff(s.id)); } catch { /* none yet */ }
     }
   }
 
@@ -281,6 +314,8 @@ export default function workView(root) {
     if (!alive) return;
     noteStatus(st);
     if (st) status = st;
+    if (st && (st.while_moving || !store.moving)) await fetchDiffs(st).catch(() => {});
+    if (!alive) return;
     draw();
   }
   const tick = () => { refresh().catch(() => { /* the next poll tries again */ }); };
