@@ -12,13 +12,14 @@ read timeout." The relay transcribes it, reads it back ("Start it?"), and only
 a short spoken yes starts it (see "What you hear"). A Claude Code session then works in its own
 clone, runs the project's gate, and opens a **draft PR**. You hear milestones
 only: started, a question, gate failed, PR opened, finished, stuck, stopped.
-You never hear diffs, files or test output. Approving and merging happen in
+You never hear files or test output, and a diff only when you ask "read me the
+diff" (a few sentences about what changed, never code). Approving and merging happen in
 GitHub, never from the car.
 
 Two pieces:
 
 - **The relay**, `omacar work serve`, runs the sessions. It runs on the tablet
-  first (parked only), then on the box.
+  first (parked only unless you set `while_moving`), then on the box.
 - **The Work tab** records, queues clips on disk, and plays the replies. It
   talks to the relay through the app's own server, never directly.
 
@@ -67,7 +68,8 @@ will fail; deciding what to do about that is left to the owner.
 cannot be dispatched. See `examples/work.toml`.
 
 ```toml
-host = "tablet"          # "tablet" (parked only) or "box"
+host = "tablet"          # "tablet" or "box"
+while_moving = true      # false (the default): the tablet is parked-only. See below.
 daily_cap = 6            # sessions per day
 quiet = [21, 7]          # hours when lines are shown, not spoken, while parked
 # relay_url = "http://<box tailnet name>:7570"   # host = "box" only
@@ -83,6 +85,38 @@ gate  = "test/all.sh"
 
 At most 2 sessions run at once; a third waits and is told so. The daily cap
 defaults to 6.
+
+## Work while driving: `while_moving`
+
+By default the tablet is parked-only (below). Setting `while_moving = true` in
+`work.toml` is your decision to use Work on the road, and it lifts every
+parked-only rule on the tablet: sessions start and keep running while the car
+moves, whisper and Piper run, clips are never held, and the Work tab shows the
+PR link and a diff panel while moving. `examples/work.toml` sets it; a missing
+value means `false`. It must be `true` or `false` (anything else is an error).
+Quiet hours, the three hard refusals, the sandbox, the pre-push checks and the
+token are unchanged. `/health` reports `"while_moving"`.
+
+The two risks are yours to weigh: the tablet's CPU is shared with drowsy
+detection, and California Vehicle Code section 27602 and NHTSA's guideline
+(glances under 2 seconds) both bear on screens in the driver's view.
+
+- **Load warning.** While a session runs and the car is not parked, the relay
+  reads the one-minute load average every 10 s. Two readings in a row above 90%
+  of the cores make it say once per drive: "The tablet is busy -- drowsy alerts
+  may lag." A drive ends when the car parks.
+- **Reading notice.** The first time in a drive that a PR or diff is on the
+  Work tab while moving, a small dismissible line says: "Reading while driving:
+  CA Vehicle Code 27602 restricts screens in the driver's view, and NHTSA's
+  guideline is glances under 2 seconds. Shown because you chose it in
+  work.toml." It does not come back until the next drive.
+- **Read me the diff.** Say "read me the diff" (or what changed) with a project
+  name. The relay takes the project's newest session that has a PR (or at least
+  an imported branch), reads the diffstat and commit subjects from the trusted
+  repo, scrubs them, and has a small no-tools model say at most four sentences
+  about which parts changed and why: no code, no file contents. If the model
+  fails you hear the file count instead. The Work tab's diff panel shows the
+  stat lines and that summary (never the patch).
 
 ## Setting up on the tablet
 
@@ -145,7 +179,7 @@ token too (it is not a plain curl).
 
 ## When sessions start and stop
 
-- **On the tablet,** the relay starts a session only while parked, using the
+- **On the tablet with `while_moving = false` (the default),** the relay starts a session only while parked, using the
   app's current rule (`lib/workpark.py`): connected, speed at or under
   3 km/h, no adapter hand-off, held for 60 s. After the relay starts, the car
   must be seen stopped for 60 s (a restart proves nothing about Park), and
@@ -156,9 +190,11 @@ token too (it is not a plain curl).
   only while parked: a clip you record while moving is saved on the tablet
   (the Work tab says "Saved, sent when parked.") and goes to the relay once
   parked, where it is read back and asked "Start it?" as usual; lines made
-  while moving are shown, not spoken.
-- **On the box,** sessions are not tied to the car's motion, but the Work tab
-  shows PR views only while parked.
+  while moving are shown, not spoken. With `while_moving = true` none of this
+  applies: the tablet behaves like the box below, and the load warning and
+  reading notice stand in for the block.
+- **On the box,** sessions are not tied to the car's motion. The Work tab
+  shows PR views only while parked, unless `while_moving = true`.
 
 ## What you hear
 
@@ -174,12 +210,16 @@ token too (it is not a plain curl).
 - **Answering a question.** Push-to-talk again. "Stop", "cancel" or "never
   mind" answers by stopping that session. With two questions waiting, the
   card shows (and the car repeats) the one your answer will go to: the oldest.
+  A second session's question is spoken only when it becomes that one, after
+  the first is answered, stopped or has timed out.
 - **Stopping.** "Stop" or "stop it" with nothing pending stops the running
   session; with sessions in two projects running it asks "Omacar or
   OmaLens?". "Stop omacar" names one.
 - **Problems.** "Didn't catch that." "Omacar or OmaLens?" for two matches.
   "That's today's limit of sessions." "Work is offline." "No signal, saved."
-  (the clip did not reach the relay within 5 s; it is kept and retried).
+  (the clip did not reach the relay within 5 s; it is kept and retried. The
+  relay answers as soon as it holds the clip, before it transcribes it, so a
+  slow transcription is never "No signal").
   "Usage limit reached, sessions paused until <time>." (after a usage limit
   no new session starts for an hour).
 - **Alerts first.** A drowsy or other alert cuts speech off; the line is

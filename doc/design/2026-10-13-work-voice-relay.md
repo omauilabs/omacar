@@ -63,6 +63,38 @@ Checked on the tablet, 2026-10-13: `~/.local/bin/claude` (mise shim, signed
 in), `gh` signed in as `mrjamesmyers`, `git`, Python 3.14.7; the Agent SDK
 (`claude_agent_sdk`) is not installed.
 
+## Amendment (owner, 2026-10-14): Work while driving
+
+The owner has decided that Work may be used while driving. The house rule is
+that the gospel is what the owner wants: the app warns once and does not refuse,
+and driving is not one of the three hard refusals. All four are allowed when
+the owner turns them on: sessions running on the tablet while the car moves,
+speech while moving, PRs and diffs on screen while moving, and "read me the
+diff" by voice.
+
+- **The setting.** `while_moving` in `work.toml`, a boolean. `examples/work.toml`
+  sets it to `true`; the code default is `false`, because the repository is
+  public and other owners opt in themselves.
+- **The default keeps the earlier rule.** The tablet's parked-only rule (no new
+  sessions while moving, running sessions and the queue dropped when the car
+  moves, whisper and Piper only while parked, a clip sent while moving held with
+  409, PRs only parked) applies **only when `while_moving` is false**. With it
+  true none of those rules applies; quiet hours, the three hard refusals, the
+  session sandbox, the bubblewrap gate, the pre-push checks, the bearer token
+  and the demo's refusal of `/api/work/*` are unchanged.
+- **The two risks the owner accepted**, named so the app can say them once:
+  the tablet's CPU is shared with drowsy detection (Work warns once per drive
+  when the load stays high: "The tablet is busy -- drowsy alerts may lag."), and
+  California Vehicle Code section 27602 and NHTSA's guideline of glances under
+  two seconds both bear on a screen in the driver's view (the Work tab shows a
+  dismissible reading notice the first time in a drive that a PR or diff is on
+  screen while moving).
+- **Read me the diff.** A new spoken kind: the relay summarises the newest
+  session's branch from the trusted repo (stat, names and commit subjects only,
+  scrubbed, through the same no-tools model path as intent) into at most four
+  sentences, and keeps the stat and summary for the Work tab's diff panel. The
+  patch itself is never shown or spoken.
+
 ## What is true today (checked 2026-10-13)
 
 - **The box has no Claude Code.** `claude` is not on its PATH since its home was

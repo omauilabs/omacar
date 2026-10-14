@@ -2510,7 +2510,7 @@
       "needs": ["home-machine", "internet", "claude"],
       "depends": ["agent.voice"],
       "evidence": ["share/js/views/work.js", "lib/workrelay.py", "lib/workgates.py", "doc/work.md", "doc/design/2026-10-13-work-voice-relay.md"],
-      "notes": "Decided 2026-09-28: a relay on the owner's machine, no cloud hosting. Designed 2026-10-13 (doc/design/2026-10-13-work-voice-relay.md): push-to-talk dispatch from the car, spoken milestones, sessions ending in draft PRs, review only when parked. Built 2026-10-13 behind an opt-in install (OMACAR_WORK=1): relay, sandboxed sessions, gates, the Work tab. Not yet proven: no real session has run, nothing has been tried in the car, resume after a relay restart is not built. How-to: doc/work.md."
+      "notes": "Decided 2026-09-28: a relay on the owner's machine, no cloud hosting. Designed 2026-10-13 (doc/design/2026-10-13-work-voice-relay.md): push-to-talk dispatch from the car, spoken milestones, sessions ending in draft PRs, review only when parked. Built 2026-10-13 behind an opt-in install (OMACAR_WORK=1): relay, sandboxed sessions, gates, the Work tab. Not yet proven: no real session has run, nothing has been tried in the car, resume after a relay restart is not built. Owner-approved 2026-10-14: work.toml `while_moving` (default false = parked-only) lets sessions, speech, PRs/diffs and \"read me the diff\" run while moving, with a load warning and a reading notice instead of a block. How-to: doc/work.md."
     },
     {
       "id": "agent.local-model",
