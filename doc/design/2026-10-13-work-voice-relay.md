@@ -33,6 +33,36 @@ Rejected:
   today, but it puts a phone in the driver's hand, is outside OmaCar's driving
   locks, and gives no control over branches. At most a parked-only fallback.
 
+## Amendment (owner, 2026-10-13): tablet now, box later
+
+Claude Code turned out to be installed and signed in on the tablet, not the
+box. The owner chose to build the relay so it runs on **either machine**:
+
+- **First, the tablet, parked only.** The relay runs on the tablet as user
+  `omacar` and is proven there with the car parked (rollout step 3).
+- **Then the box, before any use while driving.** The relay moves to the box
+  (user `jmyers`) before rollout step 4. Sessions never run on the tablet
+  while the car moves: when the relay finds itself on the tablet, it refuses
+  `new_task` unless Park is confirmed (the red-light rule), and a session
+  already running is stopped at the moment the car leaves Park.
+- **One code path.** The host is a setting (`host = "tablet" | "box"` in
+  `work.toml`). On the tablet the app's server calls the relay on
+  `127.0.0.1`; on the box, over the tailnet as in section 1.
+- **Extra gates on the tablet.** On top of section 3, a session on the
+  tablet may not open the adapter's serial or Bluetooth devices
+  (`/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/rfcomm*`), run `omacar` at all,
+  touch the app's state directory, the live checkout `~/Projects/omacar` or
+  any worktree under `~/Projects/.omacar-wt/`, or signal the app's server,
+  daemon or recorder processes. Its worktrees live under
+  `~/Projects/.omacar-work/` like on the box.
+- **Speech engines on the tablet.** whisper and Piper are installed on the
+  tablet for this phase only, and run only while parked, so they never
+  compete with drowsy detection or the CAN recorder on the road.
+
+Checked on the tablet, 2026-10-13: `~/.local/bin/claude` (mise shim, signed
+in), `gh` signed in as `mrjamesmyers`, `git`, Python 3.14.7; the Agent SDK
+(`claude_agent_sdk`) is not installed.
+
 ## What is true today (checked 2026-10-13)
 
 - **The box has no Claude Code.** `claude` is not on its PATH since its home was
@@ -245,13 +275,14 @@ weekly limit.
 
 ### Rollout
 
-1. **Prerequisite (owner):** install Claude Code on the box and sign in.
-2. **The box alone.** The relay, then a desk test from the Mac: send a recorded
-   clip, hear the reply. Then one real dispatch to a scratch repo, ending in a
-   draft PR.
+1. **Desk.** The relay and its tests on the Mac and the box with a fake
+   SDK; then a desk test sending a recorded clip and hearing the reply.
+2. **Tablet, one real dispatch.** The relay on the tablet (per the
+   amendment), one real session against a scratch repo, ending in a draft PR.
 3. **Parked in the car.** The Work tab in a tablet worktree, never the live
    checkout until the owner says. Tested parked in the driveway.
-4. **On a drive.** Only after step 3 passes, and only with the owner's go-ahead.
+4. **Move to the box (owner installs Claude Code there and signs in).** Then,
+   only with the owner's go-ahead, on a drive.
 
 ## Out of scope
 
