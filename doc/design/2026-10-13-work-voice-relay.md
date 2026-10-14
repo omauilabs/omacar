@@ -194,6 +194,24 @@ These rules are enforced in the relay's Python, in the SDK's permission
 callback, not asked of the model. Every refusal is logged, and spoken once per
 session.
 
+### How the rules are enforced (amended 2026-10-13, during the build)
+
+A review of the first gates build showed that a pattern check on shell text
+cannot hold these rules against an agent writing ordinary shell (`if git push`,
+`bash -lc`, `$HOME/...`, a script it wrote itself). So the rules are enforced in
+two layers:
+
+1. **An OS sandbox, which is the enforcement.** Every session runs with Claude
+   Code's own sandbox (bubblewrap on Linux): commands may write only inside the
+   session's worktree, reach no Unix sockets (so no desktop keyring and no SSH
+   agent), and reach no network host unless the project lists it in
+   `work.toml`. Commands may not ask to leave the sandbox. If the sandbox
+   cannot start, the session does not start. The session's environment carries
+   no `GH_TOKEN`, `GITHUB_TOKEN`, `SSH_AUTH_SOCK` or `DBUS_SESSION_BUS_ADDRESS`.
+   The runner, outside the sandbox, does the push and opens the draft PR.
+2. **`workgates.judge()`, the first line.** It refuses the obvious forms early
+   and gives the car a sentence to say. It is defence in depth, not the wall.
+
 ### What a session can never do
 
 - Write outside its own worktree.

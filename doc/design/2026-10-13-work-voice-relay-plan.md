@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - Sessions work on `work/<slug>` branches in worktrees under `~/Projects/.omacar-work/`; never on `main` or any default branch.
+- **Enforcement (amended during the build):** every session runs in Claude Code's sandbox (`enabled`, `allowUnsandboxedCommands: False`, `failIfUnavailable: True`, network only the project's `network` list, never github.com) with credential variables blanked; `workgates.judge()` is the first, speakable line, not the wall. The runner pushes outside the sandbox.
 - A session can never: write outside its worktree; `git push` (the runner pushes, never the agent); `gh pr merge|ready|review|edit|create`; `ssh`/`scp`/`rsync` to any host; run `omacar`; open `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/rfcomm*`; touch `~/Projects/omacar` or `~/Projects/.omacar-wt/` or any `share/assets/private/`; use `sudo`, `systemctl`, a package manager, or `docker … prune`; add `ubuntu-*`, `macos-*`, `windows-*` or a bare `self-hosted` `runs-on`.
 - The relay refuses `new_task` on host `tablet` unless parked, and stops a running session when the tablet's car leaves Park.
 - "Parked" in this build is the app's current rule (`store.moving` in `share/js/core.js`: speed ≤ 3 km/h, connected, no hand-off, held ≥ 60 s; unknown counts as moving), mirrored in Python by `workpark.Park`. **The spec names the confirmed-Park rule (frame 0x191 = P, branch `safety/parked-confirm`), which is not on `main`.** When that branch merges, `workpark.Park` switches to it; nothing else changes.
@@ -1125,8 +1126,30 @@ Flow of `run()`:
    ClaudeAgentOptions(cwd=worktree, model="sonnet", permission_mode="default",
        setting_sources=["user", "project"], can_use_tool=self._can_use,
        hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[self._pre])]},
-       system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND})
+       system_prompt={"type": "preset", "preset": "claude_code", "append": SYSTEM_APPEND},
+       sandbox=sandbox_settings(self.project), env=session_env())
    ```
+   **The sandbox is the enforcement; `judge()` is the first line** (spec section 3, "How the rules are enforced"). Two pure functions, tested without the SDK:
+   ```python
+   STRIP_ENV = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK",
+                "DBUS_SESSION_BUS_ADDRESS", "GIT_ASKPASS", "SSH_ASKPASS")
+
+   def sandbox_settings(project):
+       """Claude Code's own sandbox (bubblewrap on Linux): writes only in the
+       worktree, no Unix sockets, no network but the project's own list, and no
+       way for the model to step outside it. If it cannot start, nothing runs."""
+       return {"enabled": True, "autoAllowBashIfSandboxed": True,
+               "allowUnsandboxedCommands": False, "failIfUnavailable": True,
+               "network": {"allowedDomains": list(project.network)}}
+
+   def session_env(base=None):
+       """The session's environment: ours, minus every way to a credential.
+       Values are blanked, not removed, so they override the parent's."""
+       env = dict(os.environ if base is None else base)
+       return {k: ("" if k in STRIP_ENV else v) for k, v in env.items()}
+   ```
+   `project.network` is a new `workcfg.Project` field: `network = [...]` in `work.toml`, default `()` (add it to `workcfg.py` in this task: `network: tuple = ()` as the last dataclass field, read with `tuple(str(d) for d in p.get("network", []))`, and a `test/workcfg_test.py` row that it defaults to `()` and reads a list). Domains are never `github.com` or `api.github.com` — `load()` raises `ValueError` if a project lists either, with a test row.
+   A sandbox that cannot start ends the session through the SDK's error result: treat a `ResultMessage` with `subtype == "error_during_execution"` before any tool ran as `stuck` with `why="sandbox unavailable"`, and push nothing.
    `SYSTEM_APPEND` tells the agent: it is working by voice for a driver; work only in the current directory; commit as it goes; run the gate `<gate>` before finishing; never push or open a PR (the runner does); ask with AskUserQuestion only when truly blocked, one short question with 2–3 options.
 3. `_pre(input, tool_use_id, ctx)` → `judge()`; on refuse, emit `refused` (once per session) and return the deny dict:
    ```python
@@ -1240,6 +1263,17 @@ print("\n  an unanswered question parks in the PR")
 s, ev, git = run([("ask", "Which one?"), ("result",)], [True], answer=None,
                  timeouts={"question": 0.05, "silent": 5})
 check("question in the PR body", "Which one?" in git.prs[0][1], True)
+
+print("\n  the sandbox is the wall")
+sb = ws.sandbox_settings(workcfg.Project("p", ("p",), "/x", "t"))
+check("sandbox on, no way out, fails closed",
+      (sb["enabled"], sb["allowUnsandboxedCommands"], sb["failIfUnavailable"]), (True, False, True))
+check("no network by default", sb["network"]["allowedDomains"], [])
+env = ws.session_env({"PATH": "/usr/bin", "GH_TOKEN": "t", "SSH_AUTH_SOCK": "/s",
+                      "DBUS_SESSION_BUS_ADDRESS": "unix:x"})
+check("credentials blanked, PATH kept",
+      (env["PATH"], env["GH_TOKEN"], env["SSH_AUTH_SOCK"], env["DBUS_SESSION_BUS_ADDRESS"]),
+      ("/usr/bin", "", "", ""))
 
 print("\n  a usage limit stops it, with nothing pushed")
 s, ev, git = run([("limit",)], [True])
