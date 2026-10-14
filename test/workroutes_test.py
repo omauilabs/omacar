@@ -141,6 +141,42 @@ check("relay calls do not follow redirects",
       wr._NoRedirect().redirect_request(None, None, 302, "Found", {}, "http://evil/"), None)
 check("the opener uses that handler", any(isinstance(h, wr._NoRedirect) for h in wr._OPENER.handlers), True)
 
+print("\n  F6: a relay that takes no clips while moving (409) keeps the queue")
+S10 = sender("q10", http(409)); S10.enqueue(clip("h1")); S10.enqueue(clip("h2"))
+check("409: kept, nothing after it sent, not quarantined, relay counted online",
+      (S10.drain_once(), len(S10.pending()), os.path.isdir(S10.bad), S10.online, S10.held), (0, 2, False, True, True))
+S10.post = lambda u, p, t: {}
+check("once parked, both go, oldest first", (S10.drain_once(), S10.pending(), S10.held), (2, [], False))
+
+print("\n  F2: the page learns whether its clip reached the relay")
+up2 = [False]
+def post2(u, p, t):
+    if not up2[0]: raise OSError("no route")
+    return {"ok": True}
+wr._sender = sender("q11", post2)
+body = lambda cid: json.dumps(clip(cid))
+check("relay down: queued, not sent", wr.handle_post("/api/work/utterance", body("k1")),
+      (200, {"queued": True, "sent": False, "held": False}))
+up2[0] = True
+check("relay up: sent", wr.handle_post("/api/work/utterance", body("k2")),
+      (200, {"queued": True, "sent": True, "held": False}))
+check("the older clip went first, nothing left", wr._sender.pending(), [])
+wr._sender = sender("q12", http(409))
+check("tablet, moving: saved and held, not sent", wr.handle_post("/api/work/utterance", body("k3")),
+      (200, {"queued": True, "sent": False, "held": True}))
+busy = sender("q13", lambda u, p, t: {})
+busy.drain_lock.acquire(); wr._sender = busy
+threading.Timer(0.3, busy.drain_lock.release).start()
+check("a drain already running is waited for, then this clip goes",
+      wr.handle_post("/api/work/utterance", body("k4"))[1]["sent"], True)
+import io, contextlib
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    S14 = sender("q14", http(400)); S14.enqueue(clip("z1")); S14.drain_once()
+check("a quarantine is logged with its status code, no clip or token",
+      ("(400)" in err.getvalue(), "eA==" in err.getvalue(), "Bearer" in err.getvalue()), (True, False, False))
+wr._sender = None
+
 print("\n  routes")
 check("unknown path falls through", wr.handle_get("/api/other", ""), None)
 check("bad clip name refused", wr.handle_get("/api/work/clip/..%2fx", "")[0], 404)

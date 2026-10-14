@@ -392,18 +392,20 @@ check("an empty file gets a new token", len(mk("tok2").token) > 20, True)
 
 renders = []
 def spy(text, out): renders.append((threading.get_ident(), text)); return False
-QT = workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0))
-pk = FakePark(); RN = mk("rn", QT, park_=pk, render=spy)
+# On the box (the tablet renders nothing while moving, F6): the queued task
+# meets the daily cap when it leaves the queue.
+QB = workcfg.Config(host="box", daily_cap=3, projects=CFG.projects, quiet=(0, 0))
+RN = mk("rn", QB, render=spy); RN.park = None
 loop_ident = asyncio.run_coroutine_threadsafe(asyncio.sleep(0, threading.get_ident()), RN.loop).result(3)
 start_one(RN); start_one(RN)
 tell(RN, "in omacar fix it"); tell(RN, "yes")
 check("third is queued", len(RN.queue), 1)
 del renders[:]
-pk.parked = False                      # cached value only: no tick, so the queue is not cleared
+RN.created["other"] = RN.clk[0]        # a third session today: the queued one now meets the cap
 first = list(RN.sessions.values())[0]
 asyncio.run_coroutine_threadsafe(first.stop(), RN.loop)
-wait_for(lambda: "parked_only" in [e["kind"] for e in RN.events(0)])
-refusal = "Work starts sessions here only while parked."
+wait_for(lambda: "cap" in [e["kind"] for e in RN.events(0)])
+refusal = "That's today's limit of sessions."
 spoken = [r for r in renders if r[1] == refusal]
 check("a refusal from _next is spoken, but not rendered on the loop thread",
       (bool(spoken), any(r[0] == loop_ident for r in renders)), (True, False))
@@ -450,6 +452,31 @@ def render8(t, o, r=R8c):
 R8c.render = render8
 tell(R8c, "in omacar fix it")
 check("a 10 s render does not eat the window", R8c.pending[2], R8c.clk[0] + workrelay.CONFIRM_S)
+
+print("\n  F6: on the tablet, whisper and Piper run only while parked")
+heard6, said6 = [], []
+def ears6(path): heard6.append(path); return "um", -0.2
+pk6 = FakePark()
+R6 = mk("f6", workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0)),
+        park_=pk6, render=lambda t, o: said6.append(t) or False)
+R6.ears = ears6
+srv6 = workrelay.make_server(R6.cfg, 0, R6); P6 = srv6.server_address[1]
+threading.Thread(target=srv6.serve_forever, daemon=True).start()
+TOK_SAVE, TOK = TOK, R6.token
+pk6.parked = False
+code6, body6 = call("POST", "/utterance", {"client_id": "m1", "audio_b64": b64, "mime": "audio/webm"},
+                    port=P6, headers={"Host": f"127.0.0.1:{P6}"})
+check("moving: 409 parked_only, ears never called, nothing written",
+      (code6, body6, heard6, os.listdir(os.path.join(R6.dir, "in"))), (409, {"error": "parked_only"}, [], []))
+R6.emit({"kind": "started", "session": "x", "project": "omacar"})
+check("moving: an event is logged with its line, no clip, no render",
+      (R6.events(0)[-1]["line"], R6.events(0)[-1]["clip"], said6), ("omacar session started.", None, []))
+pk6.parked = True
+code6, _ = call("POST", "/utterance", {"client_id": "m1", "audio_b64": b64, "mime": "audio/webm"},
+                port=P6, headers={"Host": f"127.0.0.1:{P6}"})
+check("parked: the same clip is taken and transcribed", (code6, len(heard6)), (200, 1))
+TOK = TOK_SAVE
+srv6.shutdown()
 
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()

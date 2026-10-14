@@ -12,7 +12,7 @@ import { audioContext, voiceIn, resume, schedule, currentDb, MUSIC_DB } from "..
 import { glidePlan } from "../ramps.js";
 import { alertPlayer } from "../alertplayer.js";
 import { record } from "../work/recorder.js";
-import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan } from "../work/speech.js";
+import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay } from "../work/speech.js";
 
 const POLL_MS = 2000;
 const NO_SIGNAL_MS = 5000;
@@ -29,6 +29,7 @@ let prevSpeed = 0;
 let question = null;       // { event, repeated }
 let inflight = null;
 let recording = false;
+let notice = "";           // a short note under the button ("Saved, sent when parked.")
 
 const alertBusy = () => {
   try { return alertPlayer().voices.some((v) => v.end > audioContext().currentTime); }
@@ -129,11 +130,13 @@ async function talk(setBusy) {
     if (!blob.size) throw new Error("nothing recorded");
     const b64 = b64Of(new Uint8Array(await blob.arrayBuffer()));
     const sent = api.workSay({ client_id: crypto.randomUUID(), audio_b64: b64, mime: blob.type });
-    const answered = await Promise.race([
-      sent.then(() => true, () => false),
-      new Promise((r) => setTimeout(() => r(false), NO_SIGNAL_MS)),
+    const reply = await Promise.race([
+      sent.catch(() => null),
+      new Promise((r) => setTimeout(() => r(null), NO_SIGNAL_MS)),
     ]);
-    if (!answered) noSignal();
+    const next = afterSay(reply);
+    notice = next === "held" ? "Saved, sent when parked." : "";
+    if (next === "no_signal") noSignal();
   } catch { noSignal(); }   // a denied or failed microphone is told, not silent
   finally { recording = false; setBusy(false); }
 }
@@ -141,7 +144,7 @@ async function talk(setBusy) {
 // For tests: the page's polling state is module-wide, so each mount starts clean.
 export function resetWork() {
   lastId = 0; caughtUp = false; offlineSaid = false; wasMoving = false; prevSpeed = 0;
-  question = null; inflight = null;
+  question = null; inflight = null; notice = "";
 }
 
 // One poll of the relay's events, shared by the view and main.js's clock.
@@ -203,8 +206,9 @@ export default function workView(root) {
   // The pending question repeats the button, so the answer is one tap away.
   const qtext = h("div.work-question-text");
   const qcard = h("div.work-question", { hidden: true }, qtext, talkBtn());
+  const note = h("div.work-note");
   clear(root);
-  root.append(h("div.work", btn, qcard, list));
+  root.append(h("div.work", btn, note, qcard, list));
 
   let status = null;       // the last sessions answer, kept to redraw on a stop or start
   let drawnMoving = null;
@@ -213,6 +217,7 @@ export default function workView(root) {
     qcard.hidden = !question;
     btn.hidden = !!question;
     qtext.textContent = question ? question.event.line : "";
+    note.textContent = notice;
     clear(list);
     drawnMoving = store.moving;
     // The relay adds sessions in the order they start and gives no start time,

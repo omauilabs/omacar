@@ -1,7 +1,9 @@
 """Work's relay: clips in, sessions run, spoken lines out.
 
-`omacar work serve`. On the tablet it listens on 127.0.0.1 and starts sessions
-only while parked; on the box it listens on the tailnet and answers only the
+`omacar work serve`. On the tablet it listens on 127.0.0.1, starts sessions only
+while parked, and runs whisper and Piper only while parked (a clip sent while
+moving gets 409 and waits in the app's queue; a line made while moving is
+logged without a clip and shown); on the box it listens on the tailnet and answers only the
 tablet's node. The page never talks to it: the app's server does
 (lib/workroutes.py).
 
@@ -201,6 +203,17 @@ class Relay:
         # Park.update() belongs to the 1 Hz ticker; everyone else reads its answer.
         return True if self.park is None else bool(getattr(self.park, "parked", False))
 
+    def _moving_tablet(self):
+        """On the tablet, the speech engines run only while parked (the
+        amendment): whisper and Piper must not compete with drowsy detection
+        or the CAN recorder on the road."""
+        return self.cfg.host == "tablet" and not self._parked()
+
+    def _may_render(self, at):
+        if self._moving_tablet():
+            return False                  # logged with clip None; the page shows the line
+        return not workvoice.quiet_now(self.cfg.quiet, time.localtime(at).tm_hour, self._parked())
+
     def emit(self, e):
         """Render outside the lock, then take the next id and append in one step,
         so the log is always in id order and a slow Piper never blocks a request."""
@@ -218,8 +231,7 @@ class Relay:
         if e["line"]:
             e["line"] = workprivacy.scrub(e["line"], ())
         tmp = None
-        if e["line"] and not workvoice.quiet_now(self.cfg.quiet, time.localtime(at).tm_hour,
-                                                 self._parked()):
+        if e["line"] and self._may_render(at):
             tmp = os.path.join(self.dir, "clips", f"tmp-{uuid.uuid4().hex}.wav")
             if not self.render(e["line"], tmp):
                 tmp = None
@@ -617,6 +629,11 @@ def make_server(cfg, port, relay, host=None):
                 return self._json({"error": "not allowed"}, 403)
             if self.path != "/utterance":
                 return self._json({"error": "no such endpoint"}, 404)
+            if relay._moving_tablet():
+                # Before the clip is read, written or transcribed: the app's
+                # server keeps it on disk and sends it once parked.
+                self.close_connection = True
+                return self._json({"error": "parked_only"}, 409)
             if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
                 return self._json({"error": "json only"}, 415)
             raw = (self.headers.get("Content-Length") or "0").strip()

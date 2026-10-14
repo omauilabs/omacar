@@ -9,6 +9,7 @@ written into the queue. Every request to the relay carries its bearer token
 token is never logged or written anywhere by this module.
 """
 import base64
+import collections
 import json
 import os
 import re
@@ -76,6 +77,9 @@ def _secrets():
 # A relay answer that says the clip itself is bad (not the link, not the token):
 # keep it out of the way instead of letting it stall every clip behind it.
 RETRY_CODES = (401, 403, 408, 429)
+# The relay on the tablet takes no clip while the car moves (its speech engines
+# run only while parked): keep this one and everything after it, and stop.
+HOLD_CODE = 409
 
 
 class Sender:
@@ -92,6 +96,8 @@ class Sender:
         self.write_lock = threading.Lock()                # dedupe + write: never waits on the network
         self.drain_lock = threading.Lock()                # one drain at a time
         self.online = None
+        self.held = False                                 # the relay said parked_only
+        self.delivered = collections.deque(maxlen=200)    # client ids the relay took
 
     @staticmethod
     def _id_of(name):
@@ -127,11 +133,15 @@ class Sender:
         except OSError:
             pass
 
-    def drain_once(self):
+    def drain_once(self, wait=0.0):
         """Send the queue oldest first; returns the count sent. A bad clip goes
-        to bad/ and the rest continue; a dead link, a refused token or a relay
-        error stops the drain and keeps everything."""
-        if not self.drain_lock.acquire(blocking=False):
+        to bad/ and the rest continue; a dead link, a refused token, a relay
+        error or a relay that is not taking clips while moving (409) stops the
+        drain and keeps everything. With `wait`, a drain already running is
+        waited for (up to `wait` s) and then this one runs."""
+        got = (self.drain_lock.acquire(timeout=wait) if wait > 0
+               else self.drain_lock.acquire(blocking=False))
+        if not got:
             return 0                                       # a drain is already running
         sent = 0
         try:
@@ -149,7 +159,13 @@ class Sender:
                     secrets = self.secrets()
                     self.post(self.url + "/utterance", dict(rec, secrets=secrets), ANSWER_S)
                 except urllib.error.HTTPError as e:
+                    if e.code == HOLD_CODE:
+                        self.online, self.held = True, True
+                        break
                     if 400 <= e.code < 500 and e.code not in RETRY_CODES:
+                        # The status only: never the token, the clip or its secrets.
+                        print(f"work: relay refused a queued clip ({e.code}); moved to bad/",
+                              file=sys.stderr, flush=True)
                         self._quarantine(name)
                         continue
                     self.online = False
@@ -158,7 +174,8 @@ class Sender:
                     self.online = False
                     break
                 os.remove(p)
-                self.online = True
+                self.online, self.held = True, False
+                self.delivered.append(rec.get("client_id"))
                 sent += 1
         finally:
             self.drain_lock.release()
@@ -230,10 +247,15 @@ def handle_post(path, body):
         data = json.loads(body or "{}")
     except ValueError:
         return 400, {"error": "bad json"}
-    if not isinstance(data, dict) or not sender().enqueue(data):
+    s = sender()
+    if not isinstance(data, dict) or not s.enqueue(data):
         return 400, {"error": "bad client id"}
-    threading.Thread(target=sender().drain_once, daemon=True).start()
-    return 200, {"queued": True}
+    # One drain, now, so the page learns whether this clip reached the relay:
+    # `sent` false is what plays "No signal, saved". `held` means the relay is
+    # on the tablet and the car is moving: saved, sent once parked.
+    s.drain_once(wait=ANSWER_S)
+    sent = data.get("client_id") in s.delivered
+    return 200, {"queued": True, "sent": sent, "held": (not sent) and s.held}
 
 
 if __name__ == "__main__":

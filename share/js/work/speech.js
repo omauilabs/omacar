@@ -33,6 +33,17 @@ export function catchUp(events, sessions) {
   return { maxId, pending };
 }
 
+// What the page does after posting a clip. The app's server answers once it
+// has tried to forward it: `sent` means the relay has it; `held` means the
+// relay is on the tablet and the car is moving, so the clip is saved and goes
+// once parked (nothing is spoken while moving then). Anything else -- not
+// sent, an error, no answer in time (reply null) -- is "No signal, saved".
+export function afterSay(reply) {
+  if (reply && reply.sent) return null;
+  if (reply && reply.held) return "held";
+  return "no_signal";
+}
+
 // The music level Work asks for under a line, or null to leave the bus alone.
 // An alert owns the music bus while it sounds; and the target is always the
 // absolute level, never a captured one, so repeated ducks cannot ratchet.

@@ -1,5 +1,5 @@
 import { eq, ok } from "./assert.js";
-import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan } from "../js/work/speech.js";
+import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay } from "../js/work/speech.js";
 import { silenceStop, SILENCE_S, record } from "../js/work/recorder.js";
 
 function rig() {
@@ -48,6 +48,10 @@ export default [
     [null, null, -24, -12])],
   ["speech stays quiet while the driver records, then plays", () => { const r = rig(); r.busy(true); r.s.say({ id: 1, at: 0 }); r.s.tick(); eq(r.log, []); r.busy(false); r.s.tick(); eq(r.log, ["play 1"]); }],
   ["tapping to talk cuts the line, which plays again afterwards", () => { const r = rig(); r.s.say({ id: 1, at: 0 }); r.s.tick(); r.busy(true); r.s.interrupt(); r.s.tick(); eq(r.log, ["play 1", "cut 1"]); r.busy(false); r.t = 10; r.s.tick(); eq(r.log, ["play 1", "cut 1", "play 1"]); }],
+  ["F2: sent:false plays No signal; sent plays nothing; held (tablet, moving) is silent", () => eq(
+    [afterSay({ queued: true, sent: false }), afterSay(null), afterSay({ queued: true, sent: true }),
+     afterSay({ queued: true, sent: false, held: true })],
+    ["no_signal", "no_signal", null, "held"])],
   ["a recorder that fails to start still releases the microphone", async () => {
     const stopped = [];
     const tracks = [0, 1].map((i) => ({ stop: () => stopped.push(i) }));
