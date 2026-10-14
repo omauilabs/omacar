@@ -587,6 +587,45 @@ TOK = TOK_SAVE
 check("/health of a default tablet says false", RH.status()["while_moving"], False)
 srvw.shutdown()
 
+print("\n  E3: only the head of the question FIFO is spoken")
+RQ3 = mk("e3", BIG)
+start_one(RQ3); start_one(RQ3)
+qa, qb = list(RQ3.sessions.values())
+def qkinds(): return [(e["session"], e["question"]) for e in RQ3.events(0) if e["kind"] == "question"]
+for sess_, text in ((qa, "a?"), (qb, "b?")):
+    RQ3._emit_async({"kind": "question", "session": sess_.id, "project": "omacar", "question": text})
+    asyncio.run_coroutine_threadsafe(sess_.ask(text), RQ3.loop)
+    wait_for(lambda: len(RQ3.questions) >= (1 if sess_ is qa else 2))
+wait_for(lambda: qkinds())
+time.sleep(0.2)
+check("two sessions ask: only the first's question event exists", qkinds(), [(qa.id, "a?")])
+tell(RQ3, "blue")
+wait_for(lambda: len(qkinds()) == 2)
+check("answered: the second's question is emitted next", qkinds(), [(qa.id, "a?"), (qb.id, "b?")])
+check("the second is now the one asking", RQ3.status()["asking"], qb.id)
+RQ3b = mk("e3b", BIG)
+start_one(RQ3b); start_one(RQ3b)
+xa, xb = list(RQ3b.sessions.values())
+for sess_, text in ((xa, "a?"), (xb, "b?")):
+    RQ3b._emit_async({"kind": "question", "session": sess_.id, "project": "omacar", "question": text})
+    asyncio.run_coroutine_threadsafe(sess_.ask(text), RQ3b.loop)
+    wait_for(lambda: len(RQ3b.questions) >= (1 if sess_ is xa else 2))
+asyncio.run_coroutine_threadsafe(xa.stop(), RQ3b.loop)
+tell(RQ3b, "stop")
+wait_for(lambda: any(e["kind"] == "question" and e["session"] == xb.id for e in RQ3b.events(0)))
+check("the head is stopped: the next question is emitted",
+      [e["session"] for e in RQ3b.events(0) if e["kind"] == "question"], [xa.id, xb.id])
+RQ3c = mk("e3c", BIG)
+start_one(RQ3c)
+ya = list(RQ3c.sessions.values())[0]
+RQ3c._emit_async({"kind": "question", "session": ya.id, "project": "omacar", "question": "late?"})
+time.sleep(0.2)
+check("a question event arriving before its ask registers is held, then said once asked",
+      [e["kind"] for e in RQ3c.events(0)].count("question"), 0)
+asyncio.run_coroutine_threadsafe(ya.ask("late?"), RQ3c.loop)
+wait_for(lambda: any(e["kind"] == "question" for e in RQ3c.events(0)))
+check("emitted once the ask registers", [e["kind"] for e in RQ3c.events(0)].count("question"), 1)
+
 print("\n  E2: accepted clips are processed in arrival order, once")
 order = []
 def ears_e2(path):

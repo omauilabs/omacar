@@ -1,5 +1,5 @@
 import { eq, ok } from "./assert.js";
-import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold, shownQuestion } from "../js/work/speech.js";
+import { createSpeech, REPLAY_S, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold, shownQuestion, speakable } from "../js/work/speech.js";
 import { silenceStop, SILENCE_S, record } from "../js/work/recorder.js";
 
 function rig() {
@@ -61,6 +61,11 @@ export default [
     const a = { id: 1, session: "s1", line: "A?" }, b = { id: 2, session: "s2", line: "B?" };
     eq([shownQuestion([a, b], "s1"), shownQuestion([b, a], "s2"), shownQuestion([a, b], null),
         shownQuestion([b, a], undefined)], [a, b, null, a]);
+  }],
+  ["E3: a question event for a session the relay is not asking is not spoken", () => {
+    const q = { id: 3, kind: "question", session: "s2" }, fin = { id: 4, kind: "finished", session: "s2" };
+    eq([speakable(q, "s1"), speakable(q, "s2"), speakable(q, null), speakable(q, undefined),
+        speakable(fin, "s1")], [false, true, false, true, true]);
   }],
   ["a recorder that fails to start still releases the microphone", async () => {
     const stopped = [];

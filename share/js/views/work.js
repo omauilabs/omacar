@@ -13,7 +13,7 @@ import { glidePlan } from "../ramps.js";
 import { alertPlayer } from "../alertplayer.js";
 import { record } from "../work/recorder.js";
 import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold,
-  shownQuestion } from "../work/speech.js";
+  shownQuestion, speakable } from "../work/speech.js";
 
 const POLL_MS = 2000;
 const NO_SIGNAL_MS = 5000;
@@ -194,15 +194,20 @@ export function pollWork() {
       prevSpeed = ((store.live || {}).values || {}).SPEED || 0;
       return r;
     }
+    const asked = [];     // questions are spoken only once we know which one is the relay's
     for (const e of r.events || []) {
       lastId = Math.max(lastId, e.id);
       if (e.kind === "question") questions.set(e.session, { event: e, repeated: false });
       else if (RESOLVES.includes(e.kind)) questions.delete(e.session);
-      if (e.clip && !held()) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
+      if (e.kind === "question") asked.push(e);
+      else if (e.clip && !held()) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
     }
     // With a question waiting, ask the relay which one it is answering, so the
     // repeat below is the right one even when the tab is not open.
     if (questions.size) noteStatus(await api.workStatus().catch(() => null));
+    for (const e of asked) {
+      if (e.clip && !held() && speakable(e, asking)) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
+    }
     const question = currentQuestion();
     const speed = ((store.live || {}).values || {}).SPEED || 0;
     if (question && question.event.clip && !held() && repeatQuestion(prevSpeed, speed, true, question.repeated)) {

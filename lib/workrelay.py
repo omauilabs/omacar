@@ -128,6 +128,7 @@ class Relay:
         # read-back clip exists: the driver's 20 s start when it can be heard.
         self.pending = None
         self.questions = collections.deque()     # (session id, future), oldest first
+        self.held_q = {}                         # session id -> question event waiting for the head
         self.next_id = self._last_id() + 1
         self.pool = ThreadPoolExecutor(max_workers=1)   # session events, in order
         self.loop = asyncio.new_event_loop()
@@ -277,7 +278,27 @@ class Relay:
 
     def _emit_async(self, e):
         # Sessions emit from the asyncio loop; Piper must not run there.
+        if e.get("kind") == "question" and e.get("session"):
+            self.pool.submit(self._hold_question, e)
+            return
         self.pool.submit(self.emit, e)
+
+    # ---- questions: spoken one at a time, in FIFO order ---------------------------
+    # The next answer goes to the head of the FIFO, so only the head's question
+    # is said. A later session's question event waits here until the earlier
+    # ones are answered, stopped or timed out, then is emitted (and spoken).
+    def _hold_question(self, e):
+        with self.lock:
+            self.held_q[e["session"]] = e
+        self._release_questions()
+
+    def _release_questions(self):
+        with self.lock:
+            while self.questions and self.questions[0][1].done():
+                self.questions.popleft()
+            ev = self.held_q.pop(self.questions[0][0], None) if self.questions else None
+        if ev is not None:
+            self.emit(ev)
 
     def events(self, after):
         return [r for r in self._rows() if r["id"] > after]
@@ -371,6 +392,7 @@ class Relay:
         last = None
         for ev in evs:
             last = self.emit(ev)
+        self._release_questions()                # an answer or a stop moves the FIFO on
         if asked is not None:
             with self.lock:                       # the clip exists now: start the 20 s
                 if self.pending is asked:
@@ -516,12 +538,15 @@ class Relay:
             entry = (holder["s"].id, fut)
             with self.lock:
                 self.questions.append(entry)
+            self.pool.submit(self._release_questions)
             try:
                 return await fut
             finally:
                 with self.lock:
                     try: self.questions.remove(entry)
                     except ValueError: pass
+                    self.held_q.pop(entry[0], None)
+                self.pool.submit(self._release_questions)
 
         s = self.make(project, i.instruction, emit=self._emit_async, ask=ask,
                       home=os.path.expanduser("~"), host=self.cfg.host)
@@ -602,6 +627,7 @@ class Relay:
                 self.last_prune = self.clock()
         for ev in evs:
             self.emit(ev)
+        self._release_questions()
         if due:
             self.prune()
 

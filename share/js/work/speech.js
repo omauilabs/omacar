@@ -45,6 +45,16 @@ export function shownQuestion(questions, asking) {
   return qs.find((q) => q.session === asking) || null;
 }
 
+// Whether a polled event is spoken. A question is said only when it is the one
+// the relay is asking about now (`asking`, from /health): a question for any
+// other session would invite an answer that goes to the wrong one. `asking`
+// undefined means the relay has not been heard: the relay only emits a
+// question once it reaches the head of its queue, so say it.
+export function speakable(event, asking) {
+  if (event.kind !== "question") return true;
+  return asking === undefined || event.session === asking;
+}
+
 // Quiet hours, the page's half: the owner's child sleeps near the parked
 // tablet, so while parked between quiet[0] and quiet[1] (from the relay's
 // /health, default 21-7) lines are shown, not spoken. While moving nothing is
