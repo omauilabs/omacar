@@ -262,6 +262,21 @@ class Git:
                     return why
         return ""
 
+    def diff_summary_input(self, session):
+        """What "read me the diff" may show a model: the stat, the changed
+        names and the commit subjects of the session's branch, computed in the
+        trusted repo from its imported refs (hooks off) -- never in the
+        session's clone, whose git config and hooks are the agent's. At most
+        4000 characters in all."""
+        base = ["-C", self.project.path, "-c", "core.hooksPath=/dev/null"]
+        branch = session.branch
+        stat = self._git(*base, "diff", "--stat", f"origin/{self.default}...{branch}")[:3000]
+        names = self._git(*base, "diff", "--name-only", "--no-renames", "-z",
+                          f"origin/{self.default}...{branch}").split("\0")
+        log = self._git(*base, "log", "--format=%s",
+                        f"origin/{self.default}..{branch}")[:4000 - len(stat)]
+        return stat, [n for n in names if n][:500], log
+
     def push(self, session_dir, branch):
         # Pushes what has_commits imported; nothing is fetched here, so a stop
         # that lands between the two is never followed by a push.
@@ -309,6 +324,7 @@ class Session:
         self.last_message = time.monotonic()
         self._stopping = False       # set by stop(); run() checks it everywhere
         self._pushed = False
+        self.imported = False        # the branch is in the trusted repo (diff_summary_input can read it)
         self._ask_task = self._reader = None
         self._done = False           # run() has returned; stop() is then a no-op
         self.ctx = workgates.Ctx(worktree=self.worktree, host=host, home=home)
@@ -513,6 +529,7 @@ class Session:
                 self._set_state("done")
                 self.emit("finished")
             return
+        self.imported = True
         self._set_state("pushing")
         body = "\n".join([
             f"Asked by voice from the car: \"{self.instruction}\"", "",

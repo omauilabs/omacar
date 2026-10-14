@@ -1,6 +1,8 @@
 """What the car says about Work, and the sound of it.
 
 Milestones only, at most two sentences, never a diff, a file or test output.
+The one exception is the owner asking "read me the diff": that summary (kind
+`diff`) may run to four sentences, and is prose about what changed, never code.
 Piper speaks; it is a system program run as its own process (GPL-3.0, never
 bundled), and a machine without it shows the line instead of failing.
 """
@@ -21,6 +23,7 @@ LINES = {
     "refused": "{p} tried something Work does not allow. {why}",
     "didnt_catch": "Didn't catch that.", "choose": "{a} or {b}?",
     "status": "{text}",
+    "diff": "{p}: {text}",
     "limit": "Usage limit reached — sessions paused until {t}.",
     "cap": "That's today's limit of sessions.",
     "offline": "Work is offline.", "no_signal": "No signal — saved.",
@@ -41,9 +44,13 @@ def _instruction(s):
     return _first_sentence(str(s))[:150].strip().rstrip(".!?").strip()
 
 
-def _two(s):
+def _sentences(s, n, cap):
     parts = re.split(r"(?<=[.?!])\s+", s.strip())
-    return " ".join(parts[:2])[:220]
+    return " ".join(parts[:n])[:cap]
+
+
+def _two(s):
+    return _sentences(s, 2, 220)
 
 
 def line(e):
@@ -56,6 +63,8 @@ def line(e):
                        why=_first_sentence(str(e.get("why", ""))), a=ch[0],
                        b=ch[1] if len(ch) > 1 else "", t=e.get("until", ""),
                        text=e.get("text", ""))
+    if e.get("kind") == "diff":
+        return _sentences(text, 4, 400)
     return _two(text)
 
 

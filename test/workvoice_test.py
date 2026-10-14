@@ -19,6 +19,12 @@ said = v.line({"kind": "question", "project": "omacar", "question": long_q})
 check("question cut to its first sentence", said, "omacar has a question: Should it be 0.8 s?")
 check("at most two sentences, ever",
       v.line({"kind": "refused", "project": "p", "why": "One. Two. Three."}).count(". ") <= 1, True)
+check("busy_load", v.line({"kind": "busy_load"}), "The tablet is busy — drowsy alerts may lag.")
+four = "One changed. Two changed. Three changed. Four changed. Five changed."
+check("D: a diff line may run to four sentences", v.line({"kind": "diff", "project": "omacar", "text": four}),
+      "omacar: One changed. Two changed. Three changed. Four changed.")
+check("D: a diff line is capped at 400 chars", len(v.line({"kind": "diff", "project": "p", "text": "word " * 200})), 400)
+check("D: other kinds stay at two sentences", v.line({"kind": "status", "text": four}), "One changed. Two changed.")
 check("unknown kind says nothing wrong", v.line({"kind": "nope"}), "")
 check("quiet at 23:00 parked", v.quiet_now((21, 7), 23, True), True)
 check("not quiet at 23:00 moving", v.quiet_now((21, 7), 23, False), False)

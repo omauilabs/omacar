@@ -587,6 +587,71 @@ TOK = TOK_SAVE
 check("/health of a default tablet says false", RH.status()["while_moving"], False)
 srvw.shutdown()
 
+print("\n  D: read me the diff")
+def diffmodel(prompt):
+    if "Sentence: zzdiff" in prompt: return {"kind": "diff", "project": "omacar"}
+    return model(prompt)
+def dintent(text, cfg, *, pending): return workintent.parse(text, cfg, pending=pending, ask_model=diffmodel)
+summaries = []
+def good_summary(prompt):
+    summaries.append(prompt); return "It reworked the retry loop. It added two tests. Docs untouched. One. Two five."
+class DiffSession(EndingSession):
+    id_n = [0]
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw); DiffSession.id_n[0] += 1
+        self.id = "d1a%d" % DiffSession.id_n[0]; self.imported = False
+inputs = []
+def dinput(s):
+    inputs.append(s.id); return (" lib/a.py | 4 ++--\n 1 file changed\nVIN 1HGCM82633A004352", ["lib/a.py"], "fix retry\nadd tests")
+RD = mk("d", BIG, cls=DiffSession, diff_input=dinput, summarise=good_summary); RD.park = None
+RD.intent = dintent
+start_one(RD)
+sd = list(RD.sessions.values())[0]
+tell(RD, "zzdiff")
+check("no pushed or imported branch: said so, the model not asked",
+      (RD.events(0)[-1]["line"], summaries), ("omacar: no changes to read yet.", []))
+sd.imported = True
+tell(RD, "zzdiff")
+ev = RD.events(0)[-1]
+check("a diff event with the summary, at most four sentences",
+      (ev["kind"], ev["session"], ev["text"]),
+      ("diff", sd.id, "It reworked the retry loop. It added two tests. Docs untouched. One."))
+check("the line is project: summary", ev["line"], "omacar: It reworked the retry loop. It added two tests. Docs untouched. One.")
+check("the model got the stat and the log, VIN-shaped text withheld",
+      ("lib/a.py" in summaries[0], "fix retry" in summaries[0], "1HGCM82633A004352" in summaries[0]), (True, True, False))
+check("the input was read for that session", inputs, [sd.id])
+check("stored for the page", RD.diff_of(sd.id)["summary"].startswith("It reworked"), True)
+check("the page's stat is scrubbed too", "1HGCM82633A004352" in RD.diff_of(sd.id)["stat"], False)
+def boom(prompt): raise RuntimeError("claude failed")
+RD.summarise = boom
+tell(RD, "zzdiff")
+check("summariser raising: the file count from the stat", RD.events(0)[-1]["line"], "omacar: 1 file changed.")
+RD.summarise = lambda p: "   "
+tell(RD, "zzdiff")
+check("an empty summary falls back too", RD.events(0)[-1]["line"], "omacar: 1 file changed.")
+RD.summarise = lambda p: "Plate 8ABC123 was touched."
+tell(RD, "zzdiff", secrets=["8ABC123"])
+check("a summary naming a secret is scrubbed", "8ABC123" in RD.events(0)[-1]["line"], False)
+RD.diff_input = lambda s: (_ for _ in ()).throw(RuntimeError("no branch"))
+tell(RD, "zzdiff")
+check("no readable branch: said so", RD.events(0)[-1]["line"], "omacar: no diff to read.")
+sd.imported = False; sd.pr = 12
+RD.diff_input = dinput; RD.summarise = good_summary
+tell(RD, "zzdiff")
+check("a session with a PR counts", RD.events(0)[-1]["kind"], "diff")
+srvd = workrelay.make_server(workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0), while_moving=True), 0, RD)
+PD = srvd.server_address[1]; threading.Thread(target=srvd.serve_forever, daemon=True).start()
+TOK_SAVE, TOK = TOK, RD.token
+hd = {"Host": f"127.0.0.1:{PD}"}
+code_d, body_d = call("GET", "/diff/" + sd.id, port=PD, headers=hd)
+check("GET /diff/<id> with the token", (code_d, sorted(body_d)), (200, ["stat", "summary"]))
+check("GET /diff/<id> unknown id", call("GET", "/diff/abcd1234", port=PD, headers=hd)[0], 404)
+check("GET /diff/<id> bad id", call("GET", "/diff/..%2Fevents", port=PD, headers=hd)[0], 404)
+TOK = "wrong"
+check("GET /diff/<id> without the token", call("GET", "/diff/" + sd.id, port=PD, headers=hd)[0], 403)
+TOK = TOK_SAVE
+srvd.shutdown()
+
 print("\n  B: a busy tablet is warned about, once per drive")
 load = [0.1]
 pkb = FakePark(); pkb.parked = False

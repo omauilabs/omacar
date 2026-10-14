@@ -13,12 +13,13 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-KINDS = {"new_task", "status", "stop", "result"}
+KINDS = {"new_task", "status", "stop", "result", "diff"}
 YES = {"yes", "yeah", "yep", "sure", "ok", "okay", "go", "start it", "do it", "go ahead"}
 NO = {"no", "nope", "cancel", "stop", "don't", "dont", "cancel that", "never mind"}
 PROMPT = """You turn one spoken sentence from a driver into JSON. Kinds:
 new_task (start work: project + instruction), status (what's going on),
-stop (stop a session: project), result (read me the result: project).
+stop (stop a session: project), result (read me the result: project),
+diff (read me what changed: project).
 Projects: {projects}. Reply with only a JSON object:
 {{"kind": ..., "project": ... or null, "instruction": ... or "", "session": null}}
 Sentence: {said}"""
@@ -84,7 +85,9 @@ def _exact(said, vocab):
     return len(w) > 1 and w[-1] in FILLER and " ".join(w[:-1]) in vocab
 
 
-def _claude(prompt):
+def _claude_text(prompt, timeout=30):
+    """One no-tools, one-turn `claude -p --model haiku` call in OmaCar's state
+    folder; the model's text. Raises when claude fails."""
     import ai
     import records
     proc = subprocess.run(
@@ -92,11 +95,15 @@ def _claude(prompt):
          "--model", "haiku", "--max-turns", "1", "--strict-mcp-config",
          "--disallowedTools", "Bash", "Read", "Write", "Edit", "Glob", "Grep",
          "WebSearch", "WebFetch", "Task", "Agent", "TodoWrite", "NotebookEdit"],
-        input=prompt, capture_output=True, text=True, timeout=30,
+        input=prompt, capture_output=True, text=True, timeout=timeout,
         cwd=records.STATE)
     if proc.returncode != 0:
         raise RuntimeError("intent: claude failed")
-    text = json.loads(proc.stdout).get("result", "")
+    return str(json.loads(proc.stdout).get("result", ""))
+
+
+def _claude(prompt):
+    text = _claude_text(prompt)
     m = re.search(r"\{.*\}", text, re.S)
     return json.loads(m.group(0)) if m else {}
 

@@ -222,6 +222,24 @@ check("the confirm event arrives afterwards", [e["kind"] for e in E2R.events(0)]
 check("one transcription", len(ears_calls), 1)
 E2S.shutdown(); wr._sender = None
 
+print("\n  D: the diff route")
+seen_get = []
+def fake_get(path):
+    seen_get.append(path)
+    return (json.dumps({"stat": " a | 2 +-", "summary": "It fixed a.", "extra": 1}).encode(), "application/json")
+real_get = wr._get
+wr._get = fake_get
+try:
+    check("a good id is proxied, only stat and summary pass",
+          wr.handle_get("/api/work/diff/ab12cd34", ""), (200, {"stat": " a | 2 +-", "summary": "It fixed a."}))
+    check("the relay was asked for /diff/<id>", seen_get, ["/diff/ab12cd34"])
+    for bad in ("..%2fx", "../health", "xyz", "ab1", "AB12CD34", "ab12cd34/x", "a" * 33, ""):
+        check(f"id {bad!r} refused, relay not asked", (wr.handle_get("/api/work/diff/" + bad, "")[0], len(seen_get)), (404, 1))
+    wr._get = lambda path: (None, "")
+    check("no diff there: 404", wr.handle_get("/api/work/diff/ab12cd34", "")[0], 404)
+finally:
+    wr._get = real_get
+
 print("\n  routes")
 check("unknown path falls through", wr.handle_get("/api/other", ""), None)
 check("bad clip name refused", wr.handle_get("/api/work/clip/..%2fx", "")[0], 404)
@@ -231,6 +249,7 @@ import serve  # noqa: E402
 check("demo refuses /api/work/utterance", serve.demo_route("/api/work/utterance") == serve.ALLOW, False)
 check("demo refuses /api/work/events", serve.demo_route("/api/work/events") == serve.ALLOW, False)
 check("demo refuses /api/work/clip/1.wav", serve.demo_route("/api/work/clip/1.wav") == serve.ALLOW, False)
+check("demo refuses /api/work/diff/ab12cd34", serve.demo_route("/api/work/diff/ab12cd34") == serve.ALLOW, False)
 check("demo refuses /api/work/status", serve.demo_route("/api/work/status") == serve.ALLOW, False)
 
 print(f"\n  {fails} failed" if fails else "\n  all passed")

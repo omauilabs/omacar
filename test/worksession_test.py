@@ -405,6 +405,26 @@ ev, pushed, git = run_real([{".github/workflows/ci.yml": "jobs:\n  a:\n    runs-
 check("E1: a hosted runner fixed by a later commit is clean", (ev[-1]["kind"], bool(pushed)), ("pr_opened", True))
 ev, pushed, git = run_real({"lib/fix.py": "x = 1\n"})
 check("a clean commit: pushed and opened", (ev[-1]["kind"], bool(pushed), len(git.prs)), ("pr_opened", True, 1))
+
+print("\n  D: the diff summary input is read in the trusted repo")
+class Br:                                   # what Session offers: a branch name
+    branch = "work/diff-1"
+many = {f"lib/f{i}.py": "x = %d\n" % i for i in range(300)}
+gd = AgentGit(many)
+gd.prepare(gp5, Br.branch, T + "/Projects/.omacar-work/diff-1")
+MARKD = T + "/hookran"
+os.makedirs(T + "/Projects/.omacar-work/diff-1/evil")
+open(T + "/Projects/.omacar-work/diff-1/evil/post-checkout", "w").write(f"#!/bin/sh\ntouch {MARKD}\n")
+os.chmod(T + "/Projects/.omacar-work/diff-1/evil/post-checkout", 0o755)
+sh("git", "config", "core.hooksPath", T + "/Projects/.omacar-work/diff-1/evil", cwd=T + "/Projects/.omacar-work/diff-1")
+sh("git", "commit", "-q", "--allow-empty", "-m", "second subject", cwd=T + "/Projects/.omacar-work/diff-1")
+gd.has_commits(T + "/Projects/.omacar-work/diff-1")
+stat, names, log = gd.diff_summary_input(Br)
+check("the stat names the changed files", "lib/f1.py" in stat, True)
+check("names are the changed files", (len(names), "lib/f1.py" in names), (300, True))
+check("the log has both commit subjects", log.split("\n"), ["second subject", "agent"])
+check("stat and log together are capped at 4000", len(stat) + len(log) <= 4000, True)
+check("no hook of the session clone ran", os.path.exists(MARKD), False)
 shutil.rmtree(T, ignore_errors=True)
 
 

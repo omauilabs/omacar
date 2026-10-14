@@ -75,6 +75,18 @@ check("unknown kind", i.kind, "unclear")
 i = wi.parse("x", CFG, pending=None, ask_model=fake("not a dict"))
 check("garbage from the model", i.kind, "unclear")
 
+print("\n  D: read me the diff")
+i = wi.parse("read me what changed in omacar", CFG, pending=None,
+             ask_model=fake({"kind": "diff", "project": "omacar"}))
+check("diff for a known project", (i.kind, i.project), ("diff", "omacar"))
+m = fake({"kind": "diff", "project": None})
+i = wi.parse("read me the diff", CFG, pending=None, ask_model=m)
+check("diff with no project is unclear", i.kind, "unclear")
+check("the prompt offers it", "diff (read me what changed: project)" in wi.PROMPT, True)
+i = wi.parse("read me the diff in omalens", CFG, pending=None,
+             ask_model=fake({"kind": "diff", "project": "omacar"}))
+check("the transcript still checks the model", (i.kind, i.choices), ("choose", ("omacar", "omalens")))
+
 print("\n  scrub")
 sec = wp.secrets_from({"vin": "JHMZF1D60FS000000", "plate": "8ABC123", "driver": "Jim"})
 check("short names are not hunted", "Jim" in sec, False)
