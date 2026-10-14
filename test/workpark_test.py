@@ -18,7 +18,9 @@ STOP = {"connected": True, "values": {"SPEED": 0}}
 GO = {"connected": True, "values": {"SPEED": 40}}
 
 check("no daemon: not parked", at(0, {"connected": False, "status": "no daemon"}), False)
-check("connected and stopped from the start: parked", at(1, STOP), True)
+check("fresh Park, connected and stopped: not parked yet", at(1, STOP), False)
+check("fresh Park, stopped 59 s: not parked", at(60, STOP), False)
+check("fresh Park, stopped 60 s: parked", at(61, STOP), True)
 check("moving: not parked", at(2, GO), False)
 # The stop begins at t=32 (still_since=32).
 check("stopped 0 s (a red light): not parked", at(32, STOP), False)
@@ -29,15 +31,15 @@ check("link drop resets the clock", (at(94, {"connected": False}), at(100, STOP)
       (False, False, False, True))
 check("no SPEED is not stopped", at(200, {"connected": True, "values": {}}), False)
 
-# A hand-off latches motion: a fresh car, parked, then a hand-off needs a full settle.
+# A hand-off resets the settle: parked, then a hand-off needs a full settle again.
 t = [0.0]; s = [{}]
 P = workpark.Park(read=lambda: s[0], clock=lambda: t[0])
-check("fresh car stopped: parked", at(0, STOP), True)
-check("hand-off: not parked", at(1, dict(STOP, handover=True)), False)
-check("after hand-off, stopped 0 s: not parked", at(2, STOP), False)
-check("after hand-off, stopped 59 s: not parked", at(61, STOP), False)
-check("after hand-off, stopped 60 s: parked", at(62, STOP), True)
-check("non-numeric SPEED is unknown, no raise", at(63, {"connected": True, "values": {"SPEED": "--"}}), False)
+check("fresh car settles: parked at 60 s", (at(0, STOP), at(60, STOP)), (False, True))
+check("hand-off: not parked", at(61, dict(STOP, handover=True)), False)
+check("after hand-off, stopped 0 s: not parked", at(62, STOP), False)
+check("after hand-off, stopped 59 s: not parked", at(121, STOP), False)
+check("after hand-off, stopped 60 s: parked", at(122, STOP), True)
+check("non-numeric SPEED is unknown, no raise", at(123, {"connected": True, "values": {"SPEED": "--"}}), False)
 
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)

@@ -2,8 +2,12 @@
 
 The page's rule (store.moving in share/js/core.js) in Python: moving while the
 speed is over 3 km/h, during any hand-off of the adapter, and until the car
-has sat stopped and connected for SETTLE_S without a break. A car never seen
-moving since start counts as parked once it is connected and stopped.
+has sat stopped and connected for SETTLE_S without a break.
+
+Unlike the page, the relay starts latched: it cannot know whether the car was
+moving just before it started (a crash and a restart at a red light), so after
+any relay start the car must be seen stopped for SETTLE_S before it counts as
+parked.
 
 Stricter than the page in one way: not knowing is not parked. No daemon, no
 link, no speed -- the relay treats each as moving.
@@ -26,7 +30,7 @@ class Park:
             import records
             read = records.live
         self.read, self.clock = read, clock
-        self.ever_moved = False
+        self.ever_moved = True       # latched: a restart proves nothing about Park
         self.still_since = None
         self.parked = False
 

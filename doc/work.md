@@ -133,8 +133,9 @@ token too (it is not a plain curl).
 
 - **On the tablet,** the relay starts a session only while parked, using the
   app's current rule (`lib/workpark.py`): connected, speed at or under
-  3 km/h, no adapter hand-off; once the car has moved since the relay started
-  (or during any hand-off) it must hold that for 60 s. Unknown speed, link or
+  3 km/h, no adapter hand-off, held for 60 s. After the relay starts, the car
+  must be seen stopped for 60 s (a restart proves nothing about Park), and
+  after any hand-off the 60 s start again. Unknown speed, link or
   daemon counts as moving. (The confirmed-Park rule from frame 0x191 is not
   merged yet.) When the car moves it stops running
   sessions and drops queued and pending tasks.
