@@ -240,10 +240,13 @@ def _text_after(tool, inp, path):
 def _strip_comments(text):
     """Remove shell comments: a `#` outside quotes that starts a word, to the
     end of its line. Done before tokenising because a comment may hold an
-    apostrophe. A `#` inside a word (`a#`) is not a comment."""
+    apostrophe, and after joining continued lines (`a\\<newline>#` is `a#`). A `#` inside a word (`a#`) is not a comment."""
     out, quote, i = [], None, 0
     while i < len(text):
         ch = text[i]
+        if ch == "\\" and text[i + 1:i + 2] == "\n" and quote != "'":
+            i += 2                  # bash deletes backslash-newline outright
+            continue
         if quote:
             if ch == "\\" and quote == '"' and i + 1 < len(text):
                 out.append(ch)

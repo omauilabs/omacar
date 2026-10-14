@@ -106,6 +106,8 @@ REFUSE = [
     ("docker builder prune", bash("docker builder prune -af")),
     ("systemd-run", bash("systemd-run --user x")),
     ("a hash inside quotes is no comment", bash('echo "# not a comment"; git push')),
+    ("hash after a continued line is mid-word", bash("echo a\\\n#; git push")),
+    ("hash after a continued line hides a read", bash("echo a\\\n#; ls ~/.ssh")),
     ("matrix with a bare self-hosted", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
         "content": "jobs:\n  a:\n    strategy:\n      matrix:\n        os: [[self-hosted]]\n"
                    "    runs-on: ${{ matrix.os }}\n"})),
@@ -135,6 +137,7 @@ ALLOW = [
     ("local npm install", bash("npm install")),
     ("uv pip install", bash("uv pip install -r requirements.txt")),
     ("new branch", bash("git checkout -b work/x")),
+    ("a continued command", bash("ls \\\n  -la")),
     ("comment with an apostrophe", bash("ls # it's fine")),
     ("comment line first", bash("# don't do this\nls")),
     ("comment naming a protected place", bash("echo hi # see ~/.ssh")),
