@@ -261,7 +261,9 @@ def handle_post(path, body):
         return 400, {"error": "bad client id"}
     # One drain, now, so the page learns whether this clip reached the relay:
     # `sent` false is what plays "No signal, saved". `held` means the relay is
-    # on the tablet and the car is moving: saved, sent once parked.
+    # on the tablet and the car is moving: saved, sent once parked. The relay
+    # answers 202 as soon as it holds the clip, so a slow transcription is not
+    # "no signal".
     s.drain_once(wait=ANSWER_S)
     sent = data.get("client_id") in s.delivered
     return 200, {"queued": True, "sent": sent, "held": (not sent) and s.held}

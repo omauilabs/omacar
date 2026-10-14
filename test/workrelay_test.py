@@ -350,12 +350,16 @@ check("non-numeric after=", call("GET", "/events?after=abc")[0], 400)
 check("clip path traversal, encoded", call("GET", "/clip/..%2Fevents.jsonl")[0], 404)
 check("clip path traversal, dotted", call("GET", "/clip/../x.wav")[0], 404)
 check("no such clip", call("GET", "/clip/999.wav")[0], 404)
-code, reply = utt("c-ok", said="in omacar fix it", secrets="8ABC123")
-check("a good utterance", (code, reply.get("kind")), (200, "confirm"))
+code, ack = utt("c-ok", said="in omacar fix it", secrets="8ABC123")
+check("a good utterance is acknowledged at once (E2)", (code, ack), (202, {"accepted": True}))
+wait_for(lambda: any(e["kind"] == "confirm" for e in RH.events(0)))
+reply = [e for e in RH.events(0) if e["kind"] == "confirm"][-1]
+check("then processed: the confirm event", reply["kind"], "confirm")
 check("secrets that are not a list are ignored, never split into letters",
       any(e.get("text") == "in omacar fix it" for e in RH.events(0)), True)
-n = len(RH.events(0)); code2, reply2 = utt("c-ok", said="in omacar fix it")
-check("same client id over HTTP is one utterance", (reply2 == reply, len(RH.events(0))), (True, n))
+n = len(RH.events(0)); code2, ack2 = utt("c-ok", said="in omacar fix it")
+time.sleep(0.2)
+check("same client id over HTTP is one utterance, the same 202", ((code2, ack2), len(RH.events(0))), ((202, ack), n))
 check("uploads are deleted", os.listdir(os.path.join(RH.dir, "in")), [])
 cname = reply["clip"]
 check("the clip is served", call("GET", "/clip/" + cname)[0] if cname else None, 200)
@@ -478,7 +482,8 @@ check("moving: an event is logged with its line, no clip, no render",
 pk6.parked = True
 code6, _ = call("POST", "/utterance", {"client_id": "m1", "audio_b64": b64, "mime": "audio/webm"},
                 port=P6, headers={"Host": f"127.0.0.1:{P6}"})
-check("parked: the same clip is taken and transcribed", (code6, len(heard6)), (200, 1))
+wait_for(lambda: heard6)
+check("parked: the same clip is taken and transcribed", (code6, len(heard6)), (202, 1))
 TOK = TOK_SAVE
 srv6.shutdown()
 
@@ -561,7 +566,7 @@ check("yes while moving starts the session", len(RW.sessions), 1)
 tell(RW, "in omacar fix it"); tell(RW, "yes")
 check("a second task queues (one at a time)", (len(RW.queue), RW.events(0)[-1]["kind"]), (1, "busy"))
 tell(RW, "in omacar fix it")
-check("a pending confirm and the queue ...", RW.pending is not None, True)
+check("a third task is awaiting its yes", RW.pending is not None, True)
 RW.tick(); RW.tick()
 time.sleep(0.2)
 check("tick while moving: session kept, queue kept, confirm kept",
@@ -581,6 +586,40 @@ check("/health exposes while_moving", (hw["while_moving"], hw["parked"]), (True,
 TOK = TOK_SAVE
 check("/health of a default tablet says false", RH.status()["while_moving"], False)
 srvw.shutdown()
+
+print("\n  E2: accepted clips are processed in arrival order, once")
+order = []
+def ears_e2(path):
+    cid = os.path.basename(path).split(".")[0]; order.append(cid); time.sleep(0.2 if cid == "o1" else 0)
+    return HEARD[cid], -0.2
+RO = mk("e2", CT, park_=FakePark()); RO.ears = ears_e2
+RO.clk[0] = 5000.0
+def drop(cid, text):
+    HEARD[cid] = text
+    p = os.path.join(SCRATCH, cid + ".webm"); open(p, "wb").write(b"x")
+    return RO.accept(cid, p, [])
+a1 = drop("o1", "um"); a2 = drop("o2", "um"); a3 = drop("o1", "um")
+check("all three acknowledged at once, the duplicate with the same ack", (a1, a2, a3), ({"accepted": True},) * 3)
+wait_for(lambda: len(order) == 2 and not RO.arrived)
+time.sleep(0.2)
+check("arrival order, the duplicate processed once", order, ["o1", "o2"])
+check("both clips were decided", [e["kind"] for e in RO.events(0)].count("status"), 2)
+RO.ears = lambda p: ("in omacar fix it", -0.2)
+RO.clk[0] = 6000.0
+HEARD["o4"] = "in omacar fix it"
+p4 = os.path.join(SCRATCH, "o4.webm"); open(p4, "wb").write(b"x"); RO.accept("o4", p4, [])
+wait_for(lambda: RO.pending is not None)
+RO.clk[0] += 19
+dry = threading.Event()
+def ears_yes(path): dry.wait(2); return "yes", -0.2
+RO.ears = ears_yes
+HEARD["o5"] = "yes"
+p5 = os.path.join(SCRATCH, "o5.webm"); open(p5, "wb").write(b"x"); RO.accept("o5", p5, [])
+time.sleep(0.1); RO.clk[0] += 3                    # the window ends while the yes waits to be heard
+dry.set()
+wait_for(lambda: {"started", "not_started"} & {e["kind"] for e in RO.events(0)})
+check("a yes received at 19 s counts though it was decided at 22 s (receipt time)",
+      ("started" in [e["kind"] for e in RO.events(0)], "not_started" in [e["kind"] for e in RO.events(0)]), (True, False))
 
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()

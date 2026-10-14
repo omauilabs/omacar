@@ -183,6 +183,45 @@ check("token is empty", wr._token(), "")
 check("status answers, offline", wr.handle_get("/api/work/status", "")[1]["online"], False)
 open(toml, "w").write('host = "tablet"\n')
 
+print("\n  E2: a slow transcription is not a dead link")
+import http.client, time
+import workcfg as _wc, workintent, workrelay
+ears_calls = []
+def slow_ears(path):
+    ears_calls.append(path); time.sleep(8); return "in omacar fix it", -0.2
+E2_CFG = _wc.Config(host="tablet", daily_cap=6, quiet=(0, 0),
+                    projects={"omacar": _wc.Project("omacar", ("omacar",), "/p", "t")})
+class _Parked:
+    parked = True
+    def update(self): return True
+E2R = workrelay.Relay(E2_CFG, ears=slow_ears, park=_Parked(), state_dir=os.path.join(SCRATCH, "e2relay"),
+                      intent=lambda t, c, *, pending: workintent.parse(
+                          t, c, pending=pending,
+                          ask_model=lambda p: {"kind": "new_task", "project": "omacar", "instruction": "fix it"}),
+                      render=lambda t, o: False, session_factory=lambda *a, **k: None)
+E2S = workrelay.make_server(E2_CFG, 0, E2R); E2P = E2S.server_address[1]
+threading.Thread(target=E2S.serve_forever, daemon=True).start()
+def real_post(url, payload, timeout):
+    c = http.client.HTTPConnection("127.0.0.1", E2P, timeout=timeout)
+    c.request("POST", "/utterance", json.dumps(payload).encode(),
+              {"Authorization": "Bearer " + E2R.token, "Content-Type": "application/json"})
+    r = c.getresponse(); data = r.read(); c.close()
+    if r.status >= 400: raise urllib.error.HTTPError(url, r.status, "x", {}, None)
+    return json.loads(data)
+wr._sender = sender("q15", real_post)
+t0 = time.time()
+code15, body15 = wr.handle_post("/api/work/utterance", json.dumps(clip("e2a")))
+took = time.time() - t0
+check("the route reports sent:true within 5 s while whisper takes 8 s",
+      (code15, body15, took < 5.0), (200, {"queued": True, "sent": True, "held": False}, True))
+check("nothing has been decided yet", [e["kind"] for e in E2R.events(0)], [])
+end = time.time() + 12
+while time.time() < end and "confirm" not in [e["kind"] for e in E2R.events(0)]:
+    time.sleep(0.1)
+check("the confirm event arrives afterwards", [e["kind"] for e in E2R.events(0)][-1], "confirm")
+check("one transcription", len(ears_calls), 1)
+E2S.shutdown(); wr._sender = None
+
 print("\n  routes")
 check("unknown path falls through", wr.handle_get("/api/other", ""), None)
 check("bad clip name refused", wr.handle_get("/api/work/clip/..%2fx", "")[0], 404)

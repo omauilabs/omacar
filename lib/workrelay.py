@@ -16,6 +16,9 @@ tablet the Host header must be the loopback address. On the tablet the app
 server reads the token file (read_token()); on the box the owner copies the
 token into the tablet's work.toml as `relay_token = "..."`.
 
+A clip is acknowledged (202) the moment it is stored, before it is
+transcribed; one worker thread then hears accepted clips in arrival order.
+
 Locking: self.lock guards state only. Transcription, intent parsing and Piper
 rendering all run outside it, and session events reach the log through a
 worker thread so the asyncio loop never waits on Piper.
@@ -27,6 +30,7 @@ import collections
 import hmac
 import json
 import os
+import queue
 import re
 import secrets as _secrets
 import subprocess
@@ -111,6 +115,8 @@ class Relay:
         self.lock = threading.RLock()
         self.ears_lock = threading.Lock()        # one transcription at a time
         self.seen = collections.OrderedDict()    # client id -> reply, last SEEN_MAX
+        self.accepted = collections.OrderedDict()   # client ids taken over HTTP, last SEEN_MAX
+        self.inbox = queue.Queue()               # accepted clips, in arrival order
         self.inflight = {}                       # client id -> [Event, reply]
         self.arrived = {}                        # client id -> arrival time, while in flight
         self.sessions, self.queue = {}, []
@@ -126,6 +132,7 @@ class Relay:
         self.pool = ThreadPoolExecutor(max_workers=1)   # session events, in order
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
+        threading.Thread(target=self._worker, daemon=True).start()   # the one that listens
         self.last_prune = self.clock()
         self.prune()
         self._recover()
@@ -276,8 +283,40 @@ class Relay:
         return [r for r in self._rows() if r["id"] > after]
 
     # ---- utterances -----------------------------------------------------------
-    def utterance(self, client_id, audio_path, secrets):
-        arrived = self.clock()            # a yes is judged by when it was said, not parsed
+    def accept(self, client_id, audio_path, secrets):
+        """Take a clip over HTTP: receipt is acknowledged before anything is
+        transcribed, so a slow whisper never reads as a dead link on the
+        page ("No signal -- saved" for a clip that did arrive). One worker
+        processes accepted clips in arrival order. A duplicate client id gets
+        the same acknowledgement and is processed once."""
+        arrived = self.clock()            # the receipt time is what F8's confirm window judges
+        with self.lock:
+            dup = (client_id in self.accepted or client_id in self.seen
+                   or client_id in self.inflight)
+            if not dup:
+                self.accepted[client_id] = True
+                while len(self.accepted) > SEEN_MAX:
+                    self.accepted.popitem(last=False)
+                self.arrived[client_id] = arrived       # in flight from now: a yes waiting its turn counts
+        if dup:
+            self._rm(audio_path)
+        else:
+            self.inbox.put((client_id, audio_path, secrets, arrived))
+        return {"accepted": True}
+
+    def _worker(self):
+        while True:
+            client_id, path, secrets, arrived = self.inbox.get()
+            try:
+                self.utterance(client_id, path, secrets, arrived)
+            except Exception:                                  # noqa: BLE001
+                self._rm(path)
+                with self.lock:
+                    self.arrived.pop(client_id, None)
+
+    def utterance(self, client_id, audio_path, secrets, arrived=None):
+        if arrived is None:
+            arrived = self.clock()        # a yes is judged by when it was said, not parsed
         with self.lock:
             if client_id in self.seen:
                 self._rm(audio_path)
@@ -709,7 +748,7 @@ def make_server(cfg, port, relay, host=None):
             with open(path, "wb") as f:
                 f.write(audio)
             try:
-                return self._json(relay.utterance(cid, path, sec))
+                return self._json(relay.accept(cid, path, sec), 202)
             except Exception:                                  # noqa: BLE001
                 return self._json({"error": "failed"}, 500)
 
