@@ -2,6 +2,9 @@
 
 The agent edits and commits. The runner -- this file -- pushes and opens the
 PR, so the agent never needs, and is never given, the right to do either.
+Before the push the runner reads the branch's changed files itself
+(Git.tree_problem): a workflow that puts a job on a hosted runner, or a file
+named like a credential, means no push.
 Every tool call passes workgates.judge() from a PreToolUse hook first.
 
 The gate is a command from work.toml that lives in the worktree, which the
@@ -99,6 +102,19 @@ def gate_argv(cmd, worktree, home, hide, is_real_dir=_real_dir):
     return argv + ["--chdir", worktree, "--"] + shlex.split(cmd)
 
 
+CREDENTIAL_NAMES = {".git-credentials", ".netrc", "credentials.json",
+                    ".credentials.json", "id_rsa", "id_ed25519"}
+CREDENTIAL_WHY = "the branch adds a credential file"
+
+
+def credential_name(path):
+    """A path whose name says it holds a credential; such a file is never pushed."""
+    parts = path.split("/")
+    base = parts[-1]
+    return (base in CREDENTIAL_NAMES or base.endswith((".pem", ".key"))
+            or (base == "hosts.yml" and len(parts) > 1 and parts[-2] == "gh"))
+
+
 def slug(instruction):
     s = re.sub(r"[^a-z0-9]+", "-", instruction.lower()).strip("-")[:40].strip("-")
     return f"{s or 'task'}-{secrets.token_hex(2)}"
@@ -187,6 +203,27 @@ class Git:
         r = self._run("git", "-C", self.project.path, "rev-list", "--count",
                       f"origin/{self.default}..{branch}")
         return r.returncode == 0 and r.stdout.strip() not in ("", "0")
+
+    def tree_problem(self, branch):
+        """The last gate before GitHub: what the branch would add that the
+        session's own gates might have missed (a shell-written workflow, a
+        credential file). Read from the trusted repo's imported refs, hooks
+        off; nothing in the session folder runs. "" when clean."""
+        path = self.project.path
+        names = self._git("-C", path, "-c", "core.hooksPath=/dev/null", "diff",
+                          "--name-only", "--no-renames", "--diff-filter=d", "-z",
+                          f"origin/{self.default}...{branch}").split("\0")
+        for name in filter(None, names):
+            if credential_name(name):
+                return CREDENTIAL_WHY
+        for name in filter(None, names):
+            if re.search(r"(^|/)\.github/workflows/.+\.ya?ml$", name):
+                text = self._git("-C", path, "-c", "core.hooksPath=/dev/null",
+                                 "show", f"{branch}:{name}")
+                why = workgates.hosted_runner_problem(text)
+                if why:
+                    return why
+        return ""
 
     def push(self, session_dir, branch):
         # Pushes what has_commits imported; nothing is fetched here, so a stop
@@ -438,6 +475,16 @@ class Session:
             f"Gate `{self.project.gate}`: {'passed' if gate_ok else 'still failing'}.",
             *([""] + [f"Unanswered question: {q}" for q in self.unanswered] if self.unanswered else []),
             "", "Opened by voice from the car; review when parked."])
+        if self._stopping:
+            return
+        problem = await asyncio.to_thread(self.git.tree_problem, self.branch)
+        if problem:
+            # Nothing is pushed: the branch stays in the session folder and the
+            # trusted repo for the owner to look at when parked.
+            if not self._stopping:
+                self._set_state("stuck")
+                self.emit("stuck", why=problem)
+            return
         if self._stopping:
             return
         await asyncio.to_thread(self.git.push, self.worktree, self.branch)

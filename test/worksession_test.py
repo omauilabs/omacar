@@ -50,6 +50,7 @@ class FakeGit:
     def prepare(self, project, branch, wt): os.makedirs(wt, exist_ok=True)
     def gate(self, wt, cmd): ok = self.gates.pop(0); return ok, "" if ok else "FAIL x"
     def has_commits(self, wt, base="origin/HEAD"): return True
+    def tree_problem(self, branch): return ""
     def push(self, wt, branch): self.pushed.append(branch)
     def draft_pr(self, wt, branch, title, body): self.prs.append((title, body)); return 41
 
@@ -308,6 +309,57 @@ n = real.draft_pr(sess, "work/x-1234", "Work: x", "body")
 ws.Git._run = orig_run
 check("draft_pr: --repo, base, cwd is the project", ("--repo" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--repo") + 1] == "o/r",
       seen["cmd"][seen["cmd"].index("--base") + 1], seen["cwd"], n), (True, "main", T + "/proj", 7))
+shutil.rmtree(T, ignore_errors=True)
+
+print("\n  F5: the runner checks the pushed tree before GitHub sees it")
+check("credential names", [ws.credential_name(n) for n in (
+    ".netrc", "a/.git-credentials", "x/gh/hosts.yml", "hosts.yml", "k/id_ed25519", "c.pem",
+    "tls.key", "credentials.json", "lib/keys.py", "README.md")],
+    [True, True, True, False, True, True, True, True, False, False])
+T = tempfile.mkdtemp()
+sh("git", "init", "-q", "--bare", "-b", "main", T + "/origin.git")
+sh("git", "clone", "-q", T + "/origin.git", T + "/proj")
+os.makedirs(T + "/proj/.github/workflows")
+open(T + "/proj/.github/workflows/ci.yml", "w").write("jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n")
+sh("git", "add", ".", cwd=T + "/proj"); sh("git", "commit", "-qm", "one", cwd=T + "/proj")
+sh("git", "push", "-q", "origin", "HEAD:main", cwd=T + "/proj")
+sh("git", "remote", "set-head", "origin", "main", cwd=T + "/proj")
+gp5 = workcfg.Project("p", ("p",), T + "/proj", "true")
+
+class AgentGit(ws.Git):
+    """Real git; the 'agent' commits `files` in its clone right after prepare."""
+    def __init__(self, files):
+        super().__init__(); self.files = files; self.prs = []
+    def prepare(self, project, branch, sd):
+        super().prepare(project, branch, sd)
+        for name, text in self.files.items():
+            os.makedirs(os.path.dirname(os.path.join(sd, name)) or sd, exist_ok=True)
+            open(os.path.join(sd, name), "w").write(text)
+        sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "agent", cwd=sd)
+    async def gate(self, wt, cmd): return True, ""
+    def draft_pr(self, sd, b, t, body): self.prs.append(b); return 9
+
+def run_real(files):
+    events = []
+    async def ask(q): return "x"
+    git = AgentGit(files)
+    s = ws.Session(gp5, "fix the timeout", emit=events.append, ask=ask, home=T, host="tablet",
+                   git=git, client_factory=lambda o: FakeClient([("result",)], s), options_factory=lambda: None)
+    asyncio.run(s.run())
+    pushed = sh("git", "branch", "--list", "work/*", cwd=T + "/origin.git").strip()
+    return events, pushed, git
+
+ev, pushed, git = run_real({".github/workflows/ci.yml": "jobs:\n  a:\n    runs-on: ubuntu-latest\n"})
+check("a commit adding a hosted runner: stuck, nothing pushed, no PR",
+      (ev[-1]["kind"], ev[-1].get("why"), pushed, git.prs), ("stuck", "the branch adds a hosted CI runner", "", []))
+ev, pushed, git = run_real({".github/workflows/new.yaml": "jobs:\n  b:\n    runs-on: self-hosted\n"})
+check("a new workflow with a bare self-hosted: stuck",
+      (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a hosted CI runner", ""))
+ev, pushed, git = run_real({".netrc": "machine github.com password x\n"})
+check("a commit adding .netrc: stuck, nothing pushed",
+      (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a credential file", ""))
+ev, pushed, git = run_real({"lib/fix.py": "x = 1\n"})
+check("a clean commit: pushed and opened", (ev[-1]["kind"], bool(pushed), len(git.prs)), ("pr_opened", True, 1))
 shutil.rmtree(T, ignore_errors=True)
 
 

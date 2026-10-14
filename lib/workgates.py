@@ -229,6 +229,15 @@ def _hosted(text):
     return False
 
 
+HOSTED_WHY = "the branch adds a hosted CI runner"
+
+
+def hosted_runner_problem(text):
+    """For the runner's last check before a push: the why, or "" when the
+    workflow text keeps every job on our own pinned runners."""
+    return HOSTED_WHY if _hosted(text) else ""
+
+
 def _text_after(tool, inp, path):
     """What the file will contain once this write lands."""
     if tool == "Write":
