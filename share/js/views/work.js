@@ -12,7 +12,8 @@ import { audioContext, voiceIn, resume, schedule, currentDb, MUSIC_DB } from "..
 import { glidePlan } from "../ramps.js";
 import { alertPlayer } from "../alertplayer.js";
 import { record } from "../work/recorder.js";
-import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold } from "../work/speech.js";
+import { createSpeech, repeatQuestion, offlineOnce, catchUp, duckPlan, afterSay, quietHold,
+  shownQuestion } from "../work/speech.js";
 
 const POLL_MS = 2000;
 const NO_SIGNAL_MS = 5000;
@@ -26,7 +27,10 @@ let caughtUp = false;      // the first poll after a load only catches up
 let offlineSaid = false;
 let wasMoving = false;
 let prevSpeed = 0;
-let question = null;       // { event, repeated }
+// Waiting questions by session id: { event, repeated }. The one shown is the
+// session the relay is asking for (`asking`, from /health); see shownQuestion.
+let questions = new Map();
+let asking;                // undefined until the relay's status is heard
 let inflight = null;
 let recording = false;
 let quietHours = [21, 7];  // from the relay's /health; work.toml's quiet
@@ -116,7 +120,21 @@ function tone() {
 
 // Lines from the relay play unless quiet hours hold them (parked only).
 const held = () => quietHold(new Date().getHours(), quietHours, store.moving);
-const noteStatus = (st) => { if (st && Array.isArray(st.quiet)) quietHours = st.quiet; };
+function noteStatus(st) {
+  if (!st) return;
+  if (Array.isArray(st.quiet)) quietHours = st.quiet;
+  if ("asking" in st) asking = st.asking;
+  // A question whose session no longer waits (answered, ended) is dropped.
+  if (Array.isArray(st.sessions)) {
+    const waiting = new Set(st.sessions.filter((x) => x.state === "question").map((x) => x.id));
+    for (const sid of [...questions.keys()]) if (!waiting.has(sid)) questions.delete(sid);
+  }
+}
+
+function currentQuestion() {
+  const e = shownQuestion([...questions.values()].map((q) => q.event), asking);
+  return e ? questions.get(e.session) : null;
+}
 
 const noSignal = () => getSpeech().say({ id: "no_signal-" + Date.now(), at: Date.now() / 1000, local: "no_signal" });
 
@@ -149,7 +167,7 @@ async function talk(setBusy) {
 // For tests: the page's polling state is module-wide, so each mount starts clean.
 export function resetWork() {
   lastId = 0; caughtUp = false; offlineSaid = false; wasMoving = false; prevSpeed = 0;
-  question = null; inflight = null; notice = ""; quietHours = [21, 7];
+  questions = new Map(); asking = undefined; inflight = null; notice = ""; quietHours = [21, 7];
 }
 
 // One poll of the relay's events, shared by the view and main.js's clock.
@@ -172,16 +190,20 @@ export function pollWork() {
       noteStatus(st);
       const c = catchUp(r.events, st && st.sessions);
       lastId = Math.max(lastId, c.maxId);
-      if (c.pending) question = { event: c.pending, repeated: false };
+      for (const e of c.questions) questions.set(e.session, { event: e, repeated: false });
       prevSpeed = ((store.live || {}).values || {}).SPEED || 0;
       return r;
     }
     for (const e of r.events || []) {
       lastId = Math.max(lastId, e.id);
-      if (e.kind === "question") question = { event: e, repeated: false };
-      else if (RESOLVES.includes(e.kind) && question && question.event.session === e.session) question = null;
+      if (e.kind === "question") questions.set(e.session, { event: e, repeated: false });
+      else if (RESOLVES.includes(e.kind)) questions.delete(e.session);
       if (e.clip && !held()) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
     }
+    // With a question waiting, ask the relay which one it is answering, so the
+    // repeat below is the right one even when the tab is not open.
+    if (questions.size) noteStatus(await api.workStatus().catch(() => null));
+    const question = currentQuestion();
     const speed = ((store.live || {}).values || {}).SPEED || 0;
     if (question && question.event.clip && !held() && repeatQuestion(prevSpeed, speed, true, question.repeated)) {
       question.repeated = true;
@@ -220,6 +242,7 @@ export default function workView(root) {
   let drawnMoving = null;
 
   function draw() {
+    const question = currentQuestion();
     qcard.hidden = !question;
     btn.hidden = !!question;
     qtext.textContent = question ? question.event.line : "";

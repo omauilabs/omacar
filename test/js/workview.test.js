@@ -7,7 +7,8 @@ const SESSION = { id: "s1", project: "omacar", state: "done", pr: 41, repo: "oma
 
 async function withWork(opts, fn) {
   const was = { workStatus: api.workStatus, workEvents: api.workEvents, workClip: api.workClip };
-  api.workStatus = async () => ({ online: true, sessions: opts.sessions || [SESSION] });
+  api.workStatus = async () => ({ online: true, sessions: opts.sessions || [SESSION],
+    ...("asking" in opts ? { asking: opts.asking } : {}) });
   api.workEvents = async () => ({ online: opts.online !== false, events: opts.events || [] });
   api.workClip = async () => ({ wav_b64: "" });
   const clock = { t: 1e12 };
@@ -46,6 +47,18 @@ export default [
       eq(root.querySelector(".work-question-text").textContent, "omacar has a question: 0.8 s?");
       ok(root.querySelector(".work-question .work-talk"), "the card repeats the talk button");
     })],
+  ["F3: two questions waiting, the relay asking the first: the card shows the first", () => withWork({
+    sessions: [{ ...SESSION, state: "question" }, { ...SESSION, id: "s2", project: "omalens", state: "question" }],
+    asking: "s1", events: [
+      { id: 1, at: 1, kind: "question", session: "s1", line: "omacar has a question: A?" },
+      { id: 2, at: 2, kind: "question", session: "s2", line: "omalens has a question: B?" }] },
+    (root) => eq(root.querySelector(".work-question-text").textContent, "omacar has a question: A?"))],
+  ["F3: the relay asking the second: the card shows the second", () => withWork({
+    sessions: [{ ...SESSION, state: "question" }, { ...SESSION, id: "s2", project: "omalens", state: "question" }],
+    asking: "s2", events: [
+      { id: 1, at: 1, kind: "question", session: "s1", line: "omacar has a question: A?" },
+      { id: 2, at: 2, kind: "question", session: "s2", line: "omalens has a question: B?" }] },
+    (root) => eq(root.querySelector(".work-question-text").textContent, "omalens has a question: B?"))],
   ["the talk button is thumb-sized", () => withWork({}, (root) => {
     const r = root.querySelector(".work-talk").getBoundingClientRect();
     ok(r.width >= 160 && r.height >= 160, `talk button ${r.width}x${r.height}`);

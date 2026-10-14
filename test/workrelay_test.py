@@ -222,7 +222,11 @@ n = len(RI.sessions); tell(RI, "yes")
 check("the yes reached the confirm (queued: two already running); the question still waits",
       (RI.events(0)[-1]["kind"], len(RI.questions)), ("busy", 1))
 fb = asyncio.run_coroutine_threadsafe(sb.ask("b?"), RI.loop); wait_for(lambda: len(RI.questions) == 2)
-tell(RI, "blue"); tell(RI, "green")
+check("F3: status names the oldest waiting question's session", RI.status()["asking"], sa.id)
+tell(RI, "blue")
+check("F3: after it is answered, the next one", RI.status()["asking"], sb.id)
+tell(RI, "green")
+check("F3: none waiting is null", RI.status()["asking"], None)
 check("first answer to the first asker, second to the second",
       (fa.result(3), fb.result(3)), ("blue", "green"))
 

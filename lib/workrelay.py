@@ -482,7 +482,11 @@ class Relay:
             snap = [(s.id, s.project, s.state, s.pr, self.last_line.get(s.id, ""))
                     for s in self.sessions.values()]
             today = self._today()
-        return {"host": self.cfg.host, "parked": self._parked(), "quiet": list(self.cfg.quiet),
+            self._mode()                              # drops questions whose session ended
+            # The question the next answer goes to (the oldest waiting): the
+            # page shows and repeats this one only.
+            asking = self.questions[0][0] if self.questions else None
+        return {"host": self.cfg.host, "asking": asking, "parked": self._parked(), "quiet": list(self.cfg.quiet),
                 "today": today, "cap": self.cfg.daily_cap,
                 "sessions": [{"id": sid, "project": pr.name, "state": st, "pr": n,
                               "repo": self._repo(pr), "line": line}

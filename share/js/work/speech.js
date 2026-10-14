@@ -21,16 +21,28 @@ export function offlineOnce({ online, said, newDrive }) {
 
 // The first poll after a page load only catches up: the relay keeps a week of
 // events, and a reload mid-drive must not speak them. It returns the highest
-// id seen and the one thing still worth showing -- the latest question whose
-// session is still waiting on it (status state "question").
+// id seen and the one thing still worth showing -- the questions whose
+// sessions are still waiting on them (status state "question"), the latest
+// per session; `pending` is the latest of those.
 export function catchUp(events, sessions) {
   const waiting = new Set((sessions || []).filter((s) => s.state === "question").map((s) => s.id));
   let maxId = 0, pending = null;
+  const questions = new Map();
   for (const e of events || []) {
     maxId = Math.max(maxId, e.id);
-    if (e.kind === "question" && waiting.has(e.session)) pending = e;
+    if (e.kind === "question" && waiting.has(e.session)) { pending = e; questions.set(e.session, e); }
   }
-  return { maxId, pending };
+  return { maxId, pending, questions: [...questions.values()] };
+}
+
+// Which question the card shows and the car repeats. The relay answers the
+// oldest waiting question first and names its session in /health's `asking`;
+// showing any other would send the driver's answer to the wrong session.
+// `asking` undefined means the relay has not been heard yet: the oldest.
+export function shownQuestion(questions, asking) {
+  const qs = questions || [];
+  if (asking === undefined) return qs.reduce((a, q) => (a && a.id < q.id ? a : q), null);
+  return qs.find((q) => q.session === asking) || null;
 }
 
 // Quiet hours, the page's half: the owner's child sleeps near the parked
