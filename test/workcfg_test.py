@@ -47,5 +47,18 @@ try:
 except ValueError as e:
     check("project without gate refused", "gate" in str(e))
 
+print("\n  network allowlist")
+check("network defaults to ()", c.projects["omacar"].network, ())
+with open(p, "w") as f:
+    f.write('[project.x]\nnames=["x"]\npath="/tmp"\ngate="t"\nnetwork=["pypi.org", "files.pythonhosted.org"]\n')
+check("network read as a tuple", workcfg.load(p).projects["x"].network, ("pypi.org", "files.pythonhosted.org"))
+for bad in ("github.com", "api.github.com"):
+    with open(p, "w") as f:
+        f.write(f'[project.x]\nnames=["x"]\npath="/tmp"\ngate="t"\nnetwork=["pypi.org", "{bad}"]\n')
+    try:
+        workcfg.load(p); check(f"{bad} refused", False)
+    except ValueError as e:
+        check(f"{bad} refused", "github" in str(e))
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)

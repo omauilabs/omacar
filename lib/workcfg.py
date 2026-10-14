@@ -18,6 +18,11 @@ class Project:
     names: tuple
     path: str
     gate: str
+    network: tuple = ()   # domains the sandbox may reach; never GitHub
+
+
+# The runner pushes and opens PRs itself; the agent must not be able to.
+FORBIDDEN_DOMAINS = ("github.com", "api.github.com")
 
 
 @dataclass(frozen=True)
@@ -47,9 +52,14 @@ def load(path=None):
             raise ValueError(f"work.toml: project {name} has no gate command")
         if not p.get("path"):
             raise ValueError(f"work.toml: project {name} has no path")
+        network = tuple(str(d) for d in p.get("network", []))
+        for d in network:
+            if d.lower() in FORBIDDEN_DOMAINS:
+                raise ValueError(f"work.toml: project {name} lists {d} in network; "
+                                 "the runner talks to GitHub, the agent never does")
         names = [name.lower()] + [str(n).lower() for n in p.get("names", [])]
         projects[name] = Project(name, tuple(dict.fromkeys(names)),
-                                 os.path.expanduser(p["path"]), str(p["gate"]))
+                                 os.path.expanduser(p["path"]), str(p["gate"]), network)
     q = raw.get("quiet", [21, 7])
     return Config(host=host, projects=projects,
                   max_sessions=int(raw.get("max_sessions", 2)),
