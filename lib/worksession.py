@@ -132,6 +132,7 @@ def gate_argv(cmd, worktree, home, hide, is_real_dir=_real_dir):
 CREDENTIAL_NAMES = {".git-credentials", ".netrc", "credentials.json",
                     ".credentials.json", "id_rsa", "id_ed25519"}
 CREDENTIAL_WHY = "the branch adds a credential file"
+SYMLINK_WHY = "the branch has a symlinked CI workflow"
 
 
 def credential_name(path):
@@ -237,17 +238,26 @@ class Git:
         credential file). Read from the trusted repo's imported refs, hooks
         off; nothing in the session folder runs. "" when clean."""
         path = self.project.path
-        names = self._git("-C", path, "-c", "core.hooksPath=/dev/null", "diff",
-                          "--name-only", "--no-renames", "--diff-filter=d", "-z",
-                          f"origin/{self.default}...{branch}").split("\0")
+        base = ["-C", path, "-c", "core.hooksPath=/dev/null"]
+        # Every commit's names, not just the tree diff: a credential added and
+        # then deleted is still in the pushed history.
+        names = self._git(*base, "log", "--format=", "--name-only", "--no-renames", "-z",
+                          f"origin/{self.default}..{branch}").split("\0")
         for name in filter(None, names):
             if credential_name(name):
                 return CREDENTIAL_WHY
-        for name in filter(None, names):
-            if re.search(r"(^|/)\.github/workflows/.+\.ya?ml$", name):
-                text = self._git("-C", path, "-c", "core.hooksPath=/dev/null",
-                                 "show", f"{branch}:{name}")
-                why = workgates.hosted_runner_problem(text)
+        # A symlinked .github or workflow would hide the real file from the read below.
+        for entry in (self._git(*base, "ls-tree", "-z", branch, "--", ".github").split("\0")
+                      + self._git(*base, "ls-tree", "-r", "-z", branch, "--",
+                                  ".github/workflows").split("\0")):
+            if entry.startswith("120000 "):
+                return SYMLINK_WHY
+        for name in sorted(set(filter(None, names))):
+            if re.search(r"(^|/)\.github/workflows/.+\.ya?ml$", name, re.I):
+                r = self._run("git", *base, "show", f"{branch}:{name}")
+                if r.returncode != 0:
+                    continue          # deleted again by the tip: nothing there to run
+                why = workgates.hosted_runner_problem(r.stdout)
                 if why:
                     return why
         return ""

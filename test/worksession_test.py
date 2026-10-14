@@ -356,10 +356,19 @@ class AgentGit(ws.Git):
         super().__init__(); self.files = files; self.prs = []
     def prepare(self, project, branch, sd):
         super().prepare(project, branch, sd)
-        for name, text in self.files.items():
-            os.makedirs(os.path.dirname(os.path.join(sd, name)) or sd, exist_ok=True)
-            open(os.path.join(sd, name), "w").write(text)
-        sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "agent", cwd=sd)
+        # `files` is one commit's {name: text}, or a list of them; text None
+        # deletes, ("link", target) makes a symlink.
+        for files in (self.files if isinstance(self.files, list) else [self.files]):
+            for name, text in files.items():
+                full = os.path.join(sd, name)
+                os.makedirs(os.path.dirname(full) or sd, exist_ok=True)
+                if text is None:
+                    os.remove(full)
+                elif isinstance(text, tuple):
+                    os.symlink(text[1], full)
+                else:
+                    open(full, "w").write(text)
+            sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "agent", cwd=sd)
     async def gate(self, wt, cmd): return True, ""
     def draft_pr(self, sd, b, t, body): self.prs.append(b); return 9
 
@@ -382,6 +391,18 @@ check("a new workflow with a bare self-hosted: stuck",
 ev, pushed, git = run_real({".netrc": "machine github.com password x\n"})
 check("a commit adding .netrc: stuck, nothing pushed",
       (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a credential file", ""))
+ev, pushed, git = run_real([{".netrc": "machine github.com password x\n"}, {".netrc": None}])
+check("E1: .netrc added then deleted: still stuck, nothing pushed",
+      (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a credential file", ""))
+ev, pushed, git = run_real({".github/workflows/x.YML": "jobs:\n  a:\n    runs-on: ubuntu-latest\n"})
+check("E1: x.YML with ubuntu-latest: stuck",
+      (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a hosted CI runner", ""))
+ev, pushed, git = run_real([{"real.txt": "jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n"},
+                            {".github/workflows/ci.yml": ("link", "../../real.txt")}])
+check("E1: a symlinked workflow: stuck, nothing pushed", (ev[-1]["kind"], pushed), ("stuck", ""))
+ev, pushed, git = run_real([{".github/workflows/ci.yml": "jobs:\n  a:\n    runs-on: ubuntu-latest\n"},
+                            {".github/workflows/ci.yml": "jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n"}])
+check("E1: a hosted runner fixed by a later commit is clean", (ev[-1]["kind"], bool(pushed)), ("pr_opened", True))
 ev, pushed, git = run_real({"lib/fix.py": "x = 1\n"})
 check("a clean commit: pushed and opened", (ev[-1]["kind"], bool(pushed), len(git.prs)), ("pr_opened", True, 1))
 shutil.rmtree(T, ignore_errors=True)
