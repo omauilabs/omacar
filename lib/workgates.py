@@ -21,8 +21,12 @@ WRITE_TOOLS = {"Write": ("file_path",), "Edit": ("file_path",),
                "MultiEdit": ("file_path",), "NotebookEdit": ("notebook_path",)}
 READ_TOOLS = {"Read": ("file_path",), "Glob": ("path",), "Grep": ("path",)}
 FREE_TOOLS = {"AskUserQuestion", "TodoWrite", "ExitPlanMode", "EnterPlanMode",
-              "WebFetch", "WebSearch", "Task", "Agent", "BashOutput", "KillShell",
-              "Skill", "ToolSearch"}
+              "Task", "Agent", "BashOutput", "KillShell", "Skill", "ToolSearch"}
+# No web tools: a fetched page is untrusted text steering a session that holds
+# a checkout, and WebFetch runs outside the sandbox's network list. The cost:
+# sessions cannot read online docs.
+WEB_TOOLS = {"WebFetch", "WebSearch"}
+NO_WEB = "Work sessions have no web access."
 DEVICE_RX = re.compile(r"/dev/(tty|serial|rfcomm)")
 BANNED_WORDS = {"sudo", "su", "doas", "systemctl", "ssh", "scp", "rsync", "sftp",
                 "pacman", "yay", "paru", "apt", "apt-get", "dnf", "omacar",
@@ -522,6 +526,8 @@ def judge(tool, inp, ctx):
     if tool == "Bash":
         why = _bash(str(inp.get("command", "")), ctx)
         return (False, why) if why else (True, "")
+    if tool in WEB_TOOLS:
+        return False, NO_WEB
     if tool in FREE_TOOLS:
         return True, ""
     return False, f"Work sessions may not use {tool}."

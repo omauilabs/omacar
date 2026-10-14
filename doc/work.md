@@ -37,6 +37,8 @@ start), and the network list. Inside it:
   github.com domains are refused in that list: the agent never talks to GitHub.
 - Credential environment variables (`GH_TOKEN`, `GITHUB_TOKEN`,
   `SSH_AUTH_SOCK`, `DBUS_SESSION_BUS_ADDRESS`) are blanked.
+- No web tools: WebFetch and WebSearch are refused ("Work sessions have no
+  web access."). A session cannot read online docs.
 
 On top of that, `workgates.judge()` refuses the obvious forms early (a push to
 `main`, `gh pr merge`, `ssh omacar-1`, `sudo`, `systemctl`, a GitHub-hosted

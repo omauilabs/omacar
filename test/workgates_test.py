@@ -59,6 +59,8 @@ REFUSE = [
     ("bare self-hosted added", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
         "content": "jobs:\n  a:\n    runs-on: self-hosted\n"})),
     ("mcp tool", ("mcp__x__y", {})),
+    ("web fetch (F4a: no web tools)", ("WebFetch", {"url": "https://example.org", "prompt": "x"})),
+    ("web search (F4a: no web tools)", ("WebSearch", {"query": "x"})),
     ("unknown tool", ("Frobnicate", {})),
     # fix round 1: shell keywords, wrappers, shell -c, other spellings
     ("push in an if", bash("if git push; then :; fi")),
@@ -135,7 +137,6 @@ ALLOW = [
     ("grep", ("Grep", {"pattern": "push", "path": WT})),
     ("ask the driver", ("AskUserQuestion", {"questions": []})),
     ("todo list", ("TodoWrite", {"todos": []})),
-    ("web fetch", ("WebFetch", {"url": "https://example.org", "prompt": "x"})),
     ("the word push in a string", bash("grep -rn 'git push' doc/")),
     ("a sibling folder named like the live one", bash("ls ~/Projects/omacar-work-src")),
     ("a skill", ("Skill", {"skill": "superpowers:test-driven-development"})),
@@ -184,6 +185,10 @@ check("edit that keeps the pin", g.judge("Edit", dict(wf, old_string="a:", new_s
 print("\n  D1: quoting the stripper does not model is unreadable")
 check("$' gives the unreadable sentence", g.judge("Bash", {"command": "echo $'a'"}, CTX), (False, "That command could not be read safely."))
 check('$" gives the unreadable sentence', g.judge("Bash", {"command": 'echo $"a"'}, CTX), (False, "That command could not be read safely."))
+
+print("\n  F4a: sessions have no web tools")
+for t in ("WebFetch", "WebSearch"):
+    check(t + " refused with its sentence", g.judge(t, {}, CTX), (False, "Work sessions have no web access."))
 
 print("\n  reasons are speakable")
 _, why = g.judge("Bash", {"command": "git push"}, CTX)
