@@ -4,7 +4,7 @@
 A refusal quietly becoming an allow is the bug that matters most in Work, so
 this is a table, and both halves of it are checked.
 """
-import os, sys
+import os, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 import workgates as g  # noqa: E402
@@ -56,6 +56,55 @@ REFUSE = [
         "content": "jobs:\n  a:\n    runs-on: self-hosted\n"})),
     ("mcp tool", ("mcp__x__y", {})),
     ("unknown tool", ("Frobnicate", {})),
+    # fix round 1: shell keywords, wrappers, shell -c, other spellings
+    ("push in an if", bash("if git push; then :; fi")),
+    ("ssh in a for loop", bash("for r in a; do ssh $r; done")),
+    ("push in braces", bash("{ git push; }")),
+    ("negated push", bash("! git push")),
+    ("timeout ssh", bash("timeout 5 ssh box")),
+    ("env -i ssh", bash("env -i ssh box")),
+    ("bash -lc", bash("bash -lc 'git push'")),
+    ("/bin/bash -c", bash("/bin/bash -c 'git push'")),
+    ("git -C push", bash("git -C . push")),
+    ("git --no-pager push", bash("git --no-pager push")),
+    ("command git push", bash("command git push")),
+    ("absolute git push", bash("/usr/bin/git push")),
+    ("xargs git push", bash("xargs git push")),
+    ("time git push", bash("time git push")),
+    ("eval git push", bash("eval 'git push'")),
+    ("nohup ssh", bash("nohup ssh x")),
+    ("python inline push", bash("python3 -c 'import os; os.system(\"git push\")'")),
+    ("find -exec push", bash("find . -exec git push \\;")),
+    ("unbalanced quote hides a push", bash("true\ngit push\necho don't")),
+    ("hash inside a word is no comment", bash("echo a#; git push")),
+    ("$HOME spelling", bash("cat $HOME/Projects/omacar/lib/api.py")),
+    ("${HOME} ssh key", bash("cat ${HOME}/.ssh/id_ed25519")),
+    ("relative path to the live checkout", bash("cat ../../omacar/lib/api.py")),
+    ("gh api --method PUT", bash("gh api --method PUT repos/o/r/pulls/1/merge")),
+    ("gh api -f fields", bash("gh api repos/o/r/pulls -f title=x -f base=main")),
+    ("gh api graphql", bash("gh api graphql -f query='mutation{x}'")),
+    ("bare self-hosted in a list", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    runs-on: [self-hosted]\n"})),
+    ("bare self-hosted with a comment", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    runs-on: self-hosted # x\n"})),
+    ("hosted runner in a block list", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    runs-on:\n      - ubuntu-latest\n"})),
+    ("hosted runner via matrix", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n"
+                   "    runs-on: ${{ matrix.os }}\n"})),
+    ("edit the shell onto a workflow", bash("sed -i s/x/y/ .github/workflows/ci.yml")),
+    ("serial by-id", bash("cat /dev/serial/by-id/usb-FTDI_x")),
+    ("device glob", bash("ls /dev/ttyU*")),
+    ("read a device", ("Read", {"file_path": "/dev/ttyUSB0"})),
+    ("glob into the live checkout", ("Glob", {"pattern": "~/Projects/omacar/**"})),
+    ("grep glob into .ssh", ("Grep", {"pattern": "x", "glob": "~/.ssh/*"})),
+    ("grep from an ancestor", ("Grep", {"pattern": "x", "path": "~/Projects"})),
+    ("pip as a module", bash("python3 -m pip install --user foo")),
+    ("npm global", bash("npm install -g foo")),
+    ("checkout main with a flag", bash("git checkout -q main")),
+    ("switch -C main", bash("git switch -C main")),
+    ("docker builder prune", bash("docker builder prune -af")),
+    ("systemd-run", bash("systemd-run --user x")),
 ]
 ALLOW = [
     ("write in the worktree", ("Write", {"file_path": WT + "/lib/x.py", "content": "x"})),
@@ -73,7 +122,23 @@ ALLOW = [
     ("the word push in a string", bash("grep -rn 'git push' doc/")),
     ("a sibling folder named like the live one", bash("ls ~/Projects/omacar-work-src")),
     ("a skill", ("Skill", {"skill": "superpowers:test-driven-development"})),
+    ("a comment mentioning push", bash("echo hi # git push")),
+    ("a sibling named like the live one, relative", bash("cat ../../omacar-work-src/x")),
+    ("pinned self-hosted written", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
+        "content": "jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n"})),
+    ("gh api read", bash("gh api repos/o/r/pulls")),
+    ("grep inside the worktree", ("Grep", {"pattern": "x", "path": WT})),
+    ("local npm install", bash("npm install")),
+    ("uv pip install", bash("uv pip install -r requirements.txt")),
+    ("new branch", bash("git checkout -b work/x")),
 ]
+
+# An Edit is judged on the file as it will be, so the fixture is a real file.
+TMP = tempfile.mkdtemp()
+os.makedirs(TMP + "/.github/workflows")
+with open(TMP + "/.github/workflows/ci.yml", "w") as f:
+    f.write("jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n")
+CTX2 = g.Ctx(worktree=TMP, host="tablet", home=H)
 
 print("\n  must be refused")
 for name, (tool, inp) in REFUSE:
@@ -82,9 +147,19 @@ for name, (tool, inp) in REFUSE:
 print("\n  must be allowed")
 for name, (tool, inp) in ALLOW:
     check(name, g.judge(tool, inp, CTX), (True, ""))
+print("\n  an edit is judged against the file on disk")
+wf = {"file_path": TMP + "/.github/workflows/ci.yml"}
+a, why = g.judge("Edit", dict(wf, old_string="[self-hosted, Linux]", new_string="[self-hosted]"), CTX2)
+check("edit down to a bare self-hosted", (a, bool(why)), (False, True))
+check("edit that keeps the pin", g.judge("Edit", dict(wf, old_string="a:", new_string="b:"), CTX2), (True, ""))
+
 print("\n  reasons are speakable")
 _, why = g.judge("Bash", {"command": "git push"}, CTX)
 check("one sentence, no newline", ("\n" not in why, why.endswith(".")), (True, True))
+for name, (tool, inp) in REFUSE:
+    _, why = g.judge(tool, inp, CTX)
+    check("reason for " + name, ("\n" not in why, why.endswith(".")), (True, True))
 
+import shutil; shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)
