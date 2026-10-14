@@ -151,6 +151,7 @@ class Relay:
         self.held_q = {}                         # session id -> question event waiting for the head
         self.next_id = self._last_id() + 1
         self.pool = ThreadPoolExecutor(max_workers=1)   # session events, in order
+        self.pool.submit(lambda: None).result()         # its thread now, not on the first session event
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         threading.Thread(target=self._worker, daemon=True).start()   # the one that listens
