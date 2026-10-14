@@ -1,0 +1,12 @@
+/* Work: one big button, one line per session. */
+.work { display: grid; gap: 24px; justify-items: center; padding: 24px; }
+.work-talk { min-width: 180px; min-height: 180px; border-radius: 50%; font-size: 1.4rem;
+  font-weight: 600; background: var(--accent-fill, var(--accent)); color: var(--on-accent, #fff);
+  border: none; cursor: pointer; }
+.work-talk.busy { opacity: .6; }
+.work-question { font-size: 1.6rem; max-width: 40ch; text-align: center; }
+.work-list { width: min(720px, 100%); display: grid; gap: 12px; font-size: 1.2rem; }
+.work-row { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.work-proj { font-weight: 600; }
+.work-line { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.work-pr { font-weight: 600; color: var(--accent); white-space: nowrap; }

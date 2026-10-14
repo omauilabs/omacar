@@ -1,11 +1,200 @@
-import { ICONS } from "../icons.js";
-import { placeholder } from "../placeholder.js";
+// The Work tab: talk to your coding sessions from the car.
+// Design: doc/design/2026-10-13-work-voice-relay.md. While moving it shows one
+// button and one line per session; pull requests appear only while parked.
+//
+// Speech goes out on the voice bus and always gives way to alerts (see
+// work/speech.js). The view polls every 2 s while mounted; main.js polls every
+// 5 s from its own clock so lines are heard on other tabs too, and the two
+// share one in-flight request. Nothing here shows a transcript ("heard"
+// events) at all, so none can leak onto a moving screen.
+import { h, clear, store, api } from "../core.js";
+import { audioContext, voiceIn, resume, schedule, currentDb } from "../audiobus.js";
+import { glidePlan } from "../ramps.js";
+import { alertPlayer } from "../alertplayer.js";
+import { record } from "../work/recorder.js";
+import { createSpeech, repeatQuestion, offlineOnce } from "../work/speech.js";
+
+const POLL_MS = 2000;
+const NO_SIGNAL_MS = 5000;
+const DUCK_DB = 12;
+// Events that end a session's wait: its question is no longer pending.
+const RESOLVES = ["pr_opened", "gate_failed", "stopped", "stuck", "finished", "limit", "interrupted"];
+
+let speech = null;
+let lastId = 0;
+let offlineSaid = false;
+let wasMoving = false;
+let prevSpeed = 0;
+let question = null;       // { event, repeated }
+let inflight = null;
+let recording = false;
+let duckBase = null;       // the music level before a line ducked it
+
+// Music ducks under speech as it does under alerts: 12 dB further down while
+// a line plays, glided, and back after it.
+function duck(on) {
+  try {
+    const ctx = audioContext();
+    if (on && duckBase === null) duckBase = currentDb("music");
+    if (!on && duckBase === null) return;
+    const to = on ? duckBase - DUCK_DB : duckBase;
+    schedule("music", glidePlan(currentDb("music"), to, 0.3), ctx.currentTime);
+    if (!on) duckBase = null;
+  } catch { /* no audio: speech still works without the duck */ }
+}
+
+function b64Of(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+async function playWav(b64, done) {
+  await resume();
+  const ctx = audioContext();
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const buf = await ctx.decodeAudioData(bytes.buffer);
+  const src = ctx.createBufferSource();
+  let cut = false;
+  src.buffer = buf; src.connect(voiceIn());
+  duck(true);
+  src.onended = () => { if (!cut) duck(false); done(); };
+  src.start();
+  return () => { cut = true; duckBase = null; try { src.stop(); } catch { /* already ended */ } };
+}
+
+function getSpeech() {
+  if (speech) return speech;
+  speech = createSpeech({
+    alertBusy: () => alertPlayer().voices.some((v) => v.end > audioContext().currentTime),
+    now: () => Date.now() / 1000,
+    play: (item, done) => {
+      let cut = () => {};
+      let stopped = false;
+      // A clip that cannot be fetched (the offline clips before they are
+      // installed, or no signal) is skipped: done() frees the queue.
+      const fetchB64 = item.local
+        ? fetch(`/assets/work/${item.local}.wav`).then((r) => {
+            if (!r.ok) throw new Error(String(r.status));
+            return r.arrayBuffer();
+          }).then((ab) => b64Of(new Uint8Array(ab)))
+        : api.workClip(item.clip).then((r) => r.wav_b64);
+      fetchB64.then((b64) => playWav(b64, done))
+        .then((c) => { cut = c; if (stopped) c(); })
+        .catch(done);
+      return () => { stopped = true; cut(); };
+    },
+  });
+  setInterval(() => speech.tick(), 200);
+  return speech;
+}
+
+// Two rising notes, 0.15 s in all, on the voice bus.
+function tone() {
+  const ctx = audioContext(); const t = ctx.currentTime;
+  [[523.25, 0], [783.99, 0.08]].forEach(([hz, at]) => {
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.frequency.value = hz;
+    g.gain.setValueAtTime(0.3, t + at); g.gain.linearRampToValueAtTime(0, t + at + 0.07);
+    o.connect(g); g.connect(voiceIn()); o.start(t + at); o.stop(t + at + 0.08);
+  });
+}
+
+async function talk(setBusy) {
+  if (recording) return;
+  recording = true; setBusy(true);
+  try {
+    await resume(); tone();
+    duck(true);
+    let blob;
+    try { blob = await record({ ctx: audioContext() }); } finally { duck(false); }
+    const b64 = b64Of(new Uint8Array(await blob.arrayBuffer()));
+    const sent = api.workSay({ client_id: crypto.randomUUID(), audio_b64: b64, mime: blob.type });
+    const answered = await Promise.race([
+      sent.then(() => true, () => false),
+      new Promise((r) => setTimeout(() => r(false), NO_SIGNAL_MS)),
+    ]);
+    if (!answered) getSpeech().say({ id: "no_signal-" + Date.now(), at: Date.now() / 1000, local: "no_signal" });
+  } catch { /* no microphone, or the clip would not record: nothing to send */ }
+  finally { recording = false; setBusy(false); }
+}
+
+// One poll of the relay's events, shared by the view and main.js's clock.
+export function pollWork() {
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const r = await api.workEvents(lastId).catch(() => null);
+    if (!r) return null;
+    const newDrive = store.moving && !wasMoving;
+    wasMoving = store.moving;
+    if (offlineOnce({ online: r.online, said: offlineSaid, newDrive })) {
+      offlineSaid = true;
+      getSpeech().say({ id: "offline-" + Date.now(), at: Date.now() / 1000, local: "offline" });
+    }
+    for (const e of r.events || []) {
+      lastId = Math.max(lastId, e.id);
+      if (e.kind === "question") question = { event: e, repeated: false };
+      else if (RESOLVES.includes(e.kind) && question && question.event.session === e.session) question = null;
+      if (e.clip) getSpeech().say({ id: e.id, at: e.at, clip: e.clip, line: e.line });
+    }
+    const speed = ((store.live || {}).values || {}).SPEED || 0;
+    if (question && question.event.clip && repeatQuestion(prevSpeed, speed, true, question.repeated)) {
+      question.repeated = true;
+      const e = question.event;
+      getSpeech().say({ id: `${e.id}-again-${Date.now()}`, at: Date.now() / 1000, clip: e.clip, line: e.line });
+    }
+    prevSpeed = speed;
+    return r;
+  })().finally(() => { inflight = null; });
+  return inflight;
+}
 
 export default function workView(root) {
-  root.appendChild(placeholder({
-    icon: ICONS.agent, title: "Work", step: "Coming soon",
-    lines: ["Your coding sessions on your Omarchy machines: what each is doing, "
-            + "which one needs you, and a spoken instruction when you are driving.",
-            "Voice only while the car moves. Reviews wait until you are parked."],
-  }));
+  let alive = true;
+  const list = h("div.work-list");
+  const qcard = h("div.work-question", { hidden: true });
+  // Sized inline too: a thumb target in a moving car must not depend on a
+  // stylesheet having loaded.
+  const btn = h("button.work-talk", {
+    type: "button", style: { minWidth: "180px", minHeight: "180px" },
+    onclick: () => talk((busy) => { btn.classList.toggle("busy", busy); }),
+  }, "Talk to Work");
+  clear(root);
+  root.append(h("div.work", qcard, btn, list));
+
+  let status = null;       // the last sessions answer, kept to redraw on a stop or start
+  let drawnMoving = null;
+
+  function draw() {
+    qcard.hidden = !question;
+    qcard.textContent = question ? question.event.line : "";
+    clear(list);
+    drawnMoving = store.moving;
+    // The relay lists sessions oldest first; the screen shows newest first.
+    for (const s of [...((status && status.sessions) || [])].reverse()) {
+      const row = h("div.work-row",
+        h("span.work-proj", s.project), " · ", s.state, " · ",
+        h("span.work-line", s.line || ""));
+      if (!store.moving && s.pr) {
+        row.append(s.repo
+          ? h("a.work-pr", { href: `https://github.com/${s.repo}/pull/${s.pr}` }, `Draft PR #${s.pr}`)
+          : h("span.work-pr", `Draft PR #${s.pr}`));
+      }
+      list.append(row);
+    }
+  }
+
+  async function refresh() {
+    await pollWork();
+    const st = await api.workStatus().catch(() => null);
+    if (!alive) return;
+    if (st) status = st;
+    draw();
+  }
+  refresh();
+  const timer = setInterval(refresh, POLL_MS);
+  // The car stopping or starting redraws at once (PRs appear or vanish); other
+  // samples do nothing.
+  const off = store.on("live", () => { if (status && store.moving !== drawnMoving) draw(); });
+  return () => { alive = false; clearInterval(timer); off(); };
 }

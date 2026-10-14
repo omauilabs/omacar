@@ -138,8 +138,8 @@ import concernsView from "./views/concerns.js";
 import live from "./views/live.js";
 import navigationView from "./views/navigation.js";
 import roadcamsView from "./views/roadcams.js";
+import workView, { pollWork } from "./views/work.js";
 import camerasView from "./views/cameras.js";
-import workView from "./views/work.js";
 import { badge } from "./provenance.js";
 
 
@@ -1262,6 +1262,9 @@ async function boot() {
   setInterval(() => store.refreshCar(), 20000);
   // Cheap: one stat on the server and a no-op unless the theme actually moved.
   setInterval(applyTheme, 5000);
+  // Work's lines are heard on every tab, not only the Work tab. The view polls
+  // faster while it is open; the two share one in-flight request.
+  setInterval(() => { pollWork().catch(() => { /* Work is optional: never disturbs the app */ }); }, 5000);
 
   // ASKED FOR FROM OUTSIDE, WHICH IN A CAR MEANS SAID OUT LOUD.
   //
