@@ -54,7 +54,8 @@ def load(path=None):
             raise ValueError(f"work.toml: project {name} has no path")
         network = tuple(str(d) for d in p.get("network", []))
         for d in network:
-            if d.lower() in FORBIDDEN_DOMAINS:
+            host = d.lower().removeprefix("*.").strip(".")
+            if host == "github.com" or host.endswith(".github.com"):
                 raise ValueError(f"work.toml: project {name} lists {d} in network; "
                                  "the runner talks to GitHub, the agent never does")
         names = [name.lower()] + [str(n).lower() for n in p.get("names", [])]

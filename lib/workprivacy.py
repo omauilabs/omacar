@@ -5,9 +5,18 @@ value, and anything shaped like a VIN by shape.
 """
 import os
 import re
+import importlib.util
 import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mcp import IDENTIFIER, VEHICLE_SECRET, WITHHELD  # noqa: E402
+
+# OmaCar's lib/mcp.py is loaded by path under its own name. Registering it as
+# "mcp" would shadow the PyPI `mcp` package that claude_agent_sdk imports.
+_spec = importlib.util.spec_from_file_location(
+    "omacar_mcp", os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcp.py"))
+_omacar_mcp = importlib.util.module_from_spec(_spec)
+sys.modules["omacar_mcp"] = _omacar_mcp
+_spec.loader.exec_module(_omacar_mcp)
+IDENTIFIER, VEHICLE_SECRET, WITHHELD = (
+    _omacar_mcp.IDENTIFIER, _omacar_mcp.VEHICLE_SECRET, _omacar_mcp.WITHHELD)
 
 
 def secrets_from(vehicle):

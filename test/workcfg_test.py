@@ -52,7 +52,7 @@ check("network defaults to ()", c.projects["omacar"].network, ())
 with open(p, "w") as f:
     f.write('[project.x]\nnames=["x"]\npath="/tmp"\ngate="t"\nnetwork=["pypi.org", "files.pythonhosted.org"]\n')
 check("network read as a tuple", workcfg.load(p).projects["x"].network, ("pypi.org", "files.pythonhosted.org"))
-for bad in ("github.com", "api.github.com"):
+for bad in ("github.com", "api.github.com", "*.github.com", "uploads.github.com"):
     with open(p, "w") as f:
         f.write(f'[project.x]\nnames=["x"]\npath="/tmp"\ngate="t"\nnetwork=["pypi.org", "{bad}"]\n')
     try:

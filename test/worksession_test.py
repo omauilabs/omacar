@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A Work session against a fake SDK and a fake git: the events, the question,
 the gate repairs, the timeouts. Nothing reaches Claude, git or GitHub."""
-import asyncio, os, sys, tempfile
+import asyncio, os, shutil, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 import worksession as ws, workcfg  # noqa: E402
@@ -56,16 +56,25 @@ class FakeGit:
 HOME = tempfile.mkdtemp()
 PROJ = workcfg.Project("omacar", ("omacar",), os.path.join(HOME, "src"), "test/all.sh")
 
-def run(script, gates, answer="configurable", timeouts=None):
+CLIENTS = []
+def run(script, gates, answer="configurable", timeouts=None, ask_delay=0, stop_at=None, git=None):
     events = []
     async def ask(q):
         if answer is None: await asyncio.sleep(10)
+        await asyncio.sleep(ask_delay)
         return answer
-    git = FakeGit(gates)
+    git = git or FakeGit(gates)
+    def factory(opts):
+        c = FakeClient(script, s); CLIENTS.append(c); return c
     s = ws.Session(PROJ, "fix the timeout", emit=events.append, ask=ask, home=HOME,
                    host="tablet", git=git, timeouts=timeouts or ws.TIMEOUTS,
-                   client_factory=lambda opts: FakeClient(script, s), options_factory=lambda: None)
-    asyncio.run(s.run())
+                   client_factory=factory, options_factory=lambda: None)
+    async def main():
+        task = asyncio.ensure_future(s.run())
+        if stop_at is not None:
+            await asyncio.sleep(stop_at); await s.stop(); await s.stop()
+        await task
+    asyncio.run(main())
     return s, events, git
 
 print("\n  happy path")
@@ -116,12 +125,139 @@ s, ev, git = run([("sandbox",)], [True])
 check("stuck, sandbox unavailable", (ev[-1]["kind"], ev[-1].get("why")), ("stuck", "sandbox unavailable"))
 check("nothing pushed", (git.pushed, git.prs), ([], []))
 s, ev, git = run([("tool", "Read", {"file_path": "x"}), ("sandbox",)], [True])
-check("a failure after a tool ran is not blamed on the sandbox", ev[-1].get("why") != "sandbox unavailable", True)
+check("an error after a tool ran is stuck with its own why",
+      (ev[-1]["kind"], ev[-1].get("why")), ("stuck", "the session failed"))
+check("and pushes nothing", git.pushed, [])
 
 print("\n  silence is stuck")
 s, ev, git = run([("silence", 0.2), ("result",)], [True], timeouts={"question": 5, "silent": 0.05})
 check("stuck", ev[-1]["kind"], "stuck")
 check("nothing pushed", git.pushed, [])
+
+print("\n  stopping really stops")
+slow = [("silence", 1), ("result",)]
+s, ev, git = run(slow, [True], stop_at=0.1)
+check("stop during a drain: ends stopped, no push", ([e["kind"] for e in ev], git.pushed, git.prs), (["started", "stopped"], [], []))
+s, ev, git = run([("ask", "Which?"), ("result",)], [True], answer=None, stop_at=0.1)
+check("stop during a question: stopped, no push", ([e["kind"] for e in ev], git.pushed), (["started", "question", "stopped"], []))
+check("state stays stopped", s.state, "stopped")
+class StopGit(FakeGit):
+    async def gate(self, wt, cmd): await self.s.stop(); return True, ""
+g = StopGit([]); 
+def run_stop_gate():
+    global g
+    events = []
+    async def ask(q): return "x"
+    s = ws.Session(PROJ, "fix the timeout", emit=events.append, ask=ask, home=HOME, host="tablet",
+                   git=g, client_factory=lambda o: FakeClient([("result",)], s), options_factory=lambda: None)
+    g.s = s
+    asyncio.run(s.run()); return events
+ev = run_stop_gate()
+check("stop between gate and push: nothing pushed", ([e["kind"] for e in ev], g.pushed, g.prs), (["started", "stopped"], [], []))
+
+print("\n  a quiet spell during a question does not end the stream")
+CLIENTS.clear()
+s, ev, git = run([("ask", "Which one?"), ("result",)], [True], ask_delay=0.3,
+                 timeouts={"question": 5, "silent": 0.1})
+check("continues to a PR", ev[-1]["kind"], "pr_opened")
+check("answer delivered", CLIENTS[0].answer["updated_input"]["answers"]["Which one?"], "configurable")
+
+print("\n  failures after prepare are spoken")
+class BadPush(FakeGit):
+    def push(self, wt, b): raise RuntimeError("push rejected")
+s, ev, git = run([("result",)], [True], git=BadPush([True]))
+check("failing push: stuck, no PR", (ev[-1]["kind"], ev[-1]["why"], git.prs, s.state), ("stuck", "push rejected", [], "failed"))
+class BadPR(FakeGit):
+    def draft_pr(self, wt, b, t, body): raise RuntimeError("gh broke")
+s, ev, git = run([("result",)], [True], git=BadPR([True]))
+check("failing draft_pr", (ev[-1]["kind"], ev[-1]["why"], git.pushed), ("stuck", "pushed, PR not opened", [s.branch]))
+
+print("\n  a limit during a repair is a limit")
+class Lim(FakeClient):
+    pass
+s, ev, git = run([("result",), ("limit",)], [False])
+check("limit after repair", (ev[-1]["kind"], git.pushed), ("limit", []))
+
+print("\n  OmaCar's mcp.py does not shadow the SDK's mcp")
+import workprivacy  # noqa: E402,F401
+check("mcp is not OmaCar's", hasattr(sys.modules.get("mcp"), "VEHICLE_SECRET"), False)
+FAKE = tempfile.mkdtemp()
+os.makedirs(FAKE + "/claude_agent_sdk"); os.makedirs(FAKE + "/mcp")
+open(FAKE + "/claude_agent_sdk/__init__.py", "w").write("from mcp.types import X\n")
+open(FAKE + "/mcp/__init__.py", "w").write("")
+open(FAKE + "/mcp/types.py", "w").write("X = 1\n")
+sys.path.append(FAKE)
+sys.modules.pop("mcp", None)
+try:
+    check("_sdk() imports it despite lib/mcp.py", ws._sdk().X, 1)
+except Exception as e:
+    check("_sdk() imports it despite lib/mcp.py", repr(e), "ok")
+for m in [m for m in sys.modules if m == "mcp" or m.startswith("mcp.") or m.startswith("claude_agent_sdk")]:
+    del sys.modules[m]
+sys.path.remove(FAKE); shutil.rmtree(FAKE, ignore_errors=True)
+check("lib stays on sys.path", os.path.join(ROOT, "lib") in sys.path, True)
+
+print("\n  the gate runs in bubblewrap")
+GH = tempfile.mkdtemp()
+os.makedirs(GH + "/.config/gh"); open(GH + "/.git-credentials", "w").write("x")
+argv = ws.gate_argv("test/all.sh --fast", "/wt", GH, [GH + "/.config/gh", GH + "/.git-credentials", GH + "/.aws"])
+check("argv starts with bwrap, no network", (argv[0], "--unshare-net" in argv), ("bwrap", True))
+binds = [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
+check("only the worktree is writable", binds, ["/wt"])
+i = argv.index("--tmpfs", argv.index("/proc"))
+check("existing dir hidden by tmpfs", GH + "/.config/gh" in argv[argv.index("--bind"):], True)
+check("existing file hidden by /dev/null", argv[argv.index(GH + "/.git-credentials") - 2:argv.index(GH + "/.git-credentials") + 1], ["--ro-bind", "/dev/null", GH + "/.git-credentials"])
+check("missing path skipped", GH + "/.aws" in argv, False)
+check("ends with the split command", argv[-3:], ["--", "test/all.sh", "--fast"][-3:])
+check("--chdir worktree before --", argv[argv.index("--chdir") + 1], "/wt")
+shutil.rmtree(GH, ignore_errors=True)
+orig = ws.shutil.which; ws.shutil.which = lambda n: None
+try:
+    r = asyncio.run(ws.Git().gate("/nonexistent", "touch /tmp/should-not-exist-xyz"))
+    check("no bwrap: fails closed without running", (r[0], os.path.exists("/tmp/should-not-exist-xyz")), (False, False))
+finally:
+    ws.shutil.which = orig
+
+print("\n  real git: the agent's clone, the runner's push")
+T = tempfile.mkdtemp()
+def sh(*a, cwd=None):
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@x", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@x")
+    return subprocess.run(a, cwd=cwd, env=env, capture_output=True, text=True, check=True).stdout
+sh("git", "init", "-q", "--bare", "-b", "main", T + "/origin.git")
+sh("git", "clone", "-q", T + "/origin.git", T + "/proj")
+open(T + "/proj/a.txt", "w").write("a"); sh("git", "add", ".", cwd=T + "/proj"); sh("git", "commit", "-qm", "one", cwd=T + "/proj")
+sh("git", "push", "-q", "origin", "HEAD:main", cwd=T + "/proj")
+sh("git", "remote", "set-head", "origin", "main", cwd=T + "/proj")
+gp = workcfg.Project("p", ("p",), T + "/proj", "true")
+real = ws.Git(); sess = T + "/Projects/.omacar-work/p-x"
+real.prepare(gp, "work/x-1234", sess)
+check("session folder is a clone on the work branch", sh("git", "branch", "--show-current", cwd=sess).strip(), "work/x-1234")
+check("origin points at the real origin", sh("git", "remote", "get-url", "origin", cwd=sess).strip(), T + "/origin.git")
+check("nothing to push yet", real.has_commits(sess), False)
+open(sess + "/b.txt", "w").write("b"); sh("git", "add", ".", cwd=sess); sh("git", "commit", "-qm", "two", cwd=sess)
+os.makedirs(sess + "/evil"); MARK = T + "/marker"
+for hookdir in (sess + "/.git/hooks", sess + "/evil"):
+    for name in ("pre-push", "reference-transaction"):
+        open(hookdir + "/" + name, "w").write(f"#!/bin/sh\ntouch {MARK}\n")
+        os.chmod(hookdir + "/" + name, 0o755)
+sh("git", "config", "core.hooksPath", sess + "/evil", cwd=sess)
+sh("git", "config", "core.sshCommand", f"touch {MARK}", cwd=sess)
+check("commit found", real.has_commits(sess), True)
+real.push(sess, "work/x-1234")
+check("branch reached origin", "work/x-1234" in sh("git", "branch", "--list", "work/*", cwd=T + "/origin.git"), True)
+check("no hook or config of the session ran", os.path.exists(MARK), False)
+orig_run = ws.Git._run; seen = {}
+def fake_run(self, *cmd, cwd=None, timeout=120):
+    if cmd[0] == "gh": seen.update(cmd=cmd, cwd=cwd); return subprocess.CompletedProcess(cmd, 0, "https://github.com/o/r/pull/7\n", "")
+    return orig_run(self, *cmd, cwd=cwd, timeout=timeout)
+ws.Git._run = fake_run
+sh("git", "remote", "set-url", "origin", "git@github.com:o/r.git", cwd=T + "/proj")
+n = real.draft_pr(sess, "work/x-1234", "Work: x", "body")
+ws.Git._run = orig_run
+check("draft_pr: --repo, base, cwd is the project", ("--repo" in seen["cmd"] and seen["cmd"][seen["cmd"].index("--repo") + 1] == "o/r",
+      seen["cmd"][seen["cmd"].index("--base") + 1], seen["cwd"], n), (True, "main", T + "/proj", 7))
+shutil.rmtree(T, ignore_errors=True)
+
 
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)

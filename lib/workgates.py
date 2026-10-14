@@ -80,12 +80,24 @@ def _inside(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
+def SECRET_PATHS(home):
+    """Credential and app-state places no session may read, and that the
+    sandboxed gate has hidden from it. One list, so the two never drift."""
+    j = os.path.join
+    return [j(home, ".ssh"), j(home, ".config", "omacar"),
+            j(home, ".local", "state", "omacar"),
+            j(home, ".config", "gh"), j(home, ".git-credentials"),
+            j(home, ".netrc"), j(home, ".config", "git", "credentials"),
+            j(home, ".local", "share", "keyrings"),
+            j(home, ".claude", ".credentials.json"), j(home, ".claude.json"),
+            j(home, ".gnupg"), j(home, ".aws"),
+            j(home, ".docker", "config.json")]
+
+
 def _protected(ctx):
     h = ctx.home
     return [os.path.join(h, "Projects", "omacar"),
-            os.path.join(h, "Projects", ".omacar-wt"),
-            os.path.join(h, ".ssh"), os.path.join(h, ".config", "omacar"),
-            os.path.join(h, ".local", "state", "omacar")]
+            os.path.join(h, "Projects", ".omacar-wt")] + SECRET_PATHS(h)
 
 
 def _is_protected(path, ctx):
