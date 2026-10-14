@@ -128,12 +128,19 @@ token too (it is not a plain curl).
 1. Install Claude Code on the box and sign in (your step; no agent enters
    credentials). Install `bubblewrap`, `socat`, and Piper.
 2. Run `OMACAR_WORK=1 ./install.sh` there, make a `work.toml` with
-   `host = "box"`, and `systemctl --user enable --now omacar-work`.
+   `host = "box"`, and `systemctl --user enable --now omacar-work`. Point
+   each project's `path` at a **separate clone** on the box, not the live
+   checkout `~/Projects/omacar`: the runner fetches and pushes from it.
 3. Copy the contents of the box's `~/.local/state/omacar/work/token` into the
    tablet's `work.toml` as `relay_token = "..."`.
 4. On the tablet set `host = "box"` and
    `relay_url = "http://<box tailnet name>:7570"`.
-5. The box's `work.toml` may set `tablet_node` (default `"omacar-1"`). The box
+5. The tablet still needs its own offline clips ("No signal, saved", "Work
+   is offline", "Not started."): the page plays them when the box cannot be
+   reached. If the tablet has Piper, run `tools/work_render_offline.py` there;
+   otherwise render them on the box and copy `share/assets/work/*.wav` to the
+   tablet's checkout.
+6. The box's `work.toml` may set `tablet_node` (default `"omacar-1"`). The box
    relay answers only that tailnet node and refuses to start if it is empty.
 
 ## When sessions start and stop
@@ -145,7 +152,11 @@ token too (it is not a plain curl).
   after any hand-off the 60 s start again. Unknown speed, link or
   daemon counts as moving. (The confirmed-Park rule from frame 0x191 is not
   merged yet.) When the car moves it stops running
-  sessions and drops queued and pending tasks.
+  sessions and drops queued and pending tasks. whisper and Piper also run
+  only while parked: a clip you record while moving is saved on the tablet
+  (the Work tab says "Saved, sent when parked.") and goes to the relay once
+  parked, where it is read back and asked "Start it?" as usual; lines made
+  while moving are shown, not spoken.
 - **On the box,** sessions are not tied to the car's motion, but the Work tab
   shows PR views only while parked.
 
@@ -161,14 +172,22 @@ token too (it is not a plain curl).
 - **Milestones.** "Omacar session started." "Omacar has a question: ..."
   "Omacar: gate passed, draft PR 41 opened." "Omacar is stuck."
 - **Answering a question.** Push-to-talk again. "Stop", "cancel" or "never
-  mind" answers by stopping that session.
+  mind" answers by stopping that session. With two questions waiting, the
+  card shows (and the car repeats) the one your answer will go to: the oldest.
+- **Stopping.** "Stop" or "stop it" with nothing pending stops the running
+  session; with sessions in two projects running it asks "Omacar or
+  OmaLens?". "Stop omacar" names one.
 - **Problems.** "Didn't catch that." "Omacar or OmaLens?" for two matches.
   "That's today's limit of sessions." "Work is offline." "No signal, saved."
-  "Usage limit reached, sessions paused until <time>."
+  (the clip did not reach the relay within 5 s; it is kept and retried).
+  "Usage limit reached, sessions paused until <time>." (after a usage limit
+  no new session starts for an hour).
 - **Alerts first.** A drowsy or other alert cuts speech off; the line is
   replayed afterwards unless it is over 2 minutes old. Music ducks under speech.
-- **Quiet hours.** While parked at home between the `quiet` hours (default
-  21:00-07:00), lines are shown, not spoken.
+- **Quiet hours.** While parked between the `quiet` hours (default
+  21:00-07:00), lines are shown, not spoken. On the tablet the relay holds
+  them; on the box (which cannot know where the car is) the relay always
+  renders and the Work tab holds them, by the tablet's clock, while parked.
 
 ## Limits to know
 
