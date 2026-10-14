@@ -54,6 +54,7 @@ PRUNE_EVERY_S = 86400
 SEEN_MAX = 500
 UNSURE = -1.0
 LIVE = ("starting", "running", "question", "gate", "pushing")
+LOAD_EVERY_S = 10.0       # busy_load: how often the tablet's load is sampled while a drive runs sessions
 FREE_TEXT = ("question", "why", "text", "instruction")
 
 
@@ -92,7 +93,8 @@ def _resolve(fut, value):
 
 class Relay:
     def __init__(self, cfg, *, ears=None, intent=workintent.parse, session_factory=None,
-                 park=None, clock=time.time, state_dir=STATE, render=workvoice.render):
+                 park=None, clock=time.time, state_dir=STATE, render=workvoice.render,
+                 loadavg=os.getloadavg, cpus=os.cpu_count):
         if ears is None:
             import workears
             ears = workears.transcribe
@@ -104,6 +106,10 @@ class Relay:
             park = workpark.Park()
         self.cfg, self.ears, self.intent, self.make = cfg, ears, intent, session_factory
         self.park, self.clock, self.render = park, clock, render
+        self.loadavg, self.cpus = loadavg, cpus
+        # busy_load: the tablet's CPU is shared with drowsy detection, so with
+        # while_moving on, a drive that keeps it busy is warned about once.
+        self.load_next, self.load_high, self.load_warned = 0.0, 0, False
         self.dir = state_dir
         for d in ("", "in", "clips"):
             os.makedirs(os.path.join(self.dir, d), exist_ok=True)
@@ -606,6 +612,32 @@ class Relay:
             return False
         return not any(t <= p[2] for t in self.arrived.values())
 
+    def _busy_load(self):
+        """True once per drive when the 1-minute load average has exceeded 90%
+        of the cores on two samples in a row, 10 s apart, with a session
+        running. A drive ends (and may warn again) when the car parks. Lock held."""
+        if self.cfg.host != "tablet" or not self.cfg.while_moving:
+            return False
+        if self._parked():
+            self.load_next, self.load_high, self.load_warned = 0.0, 0, False
+            return False
+        if not self._running():
+            self.load_high = 0
+            return False
+        now = self.clock()
+        if self.load_warned or now < self.load_next:
+            return False
+        self.load_next = now + LOAD_EVERY_S
+        try:
+            high = self.loadavg()[0] > 0.9 * (self.cpus() or 1)
+        except (OSError, AttributeError):
+            return False
+        self.load_high = self.load_high + 1 if high else 0
+        if self.load_high >= 2:
+            self.load_warned = True
+            return True
+        return False
+
     def tick(self):
         """1 Hz. The only caller of Park.update()."""
         if self.park is not None:
@@ -622,6 +654,8 @@ class Relay:
                 self.queue.clear()
                 for s in self._running():
                     self._stop(s)
+            if self._busy_load():
+                evs.append({"kind": "busy_load"})
             due = self.clock() - self.last_prune >= PRUNE_EVERY_S
             if due:
                 self.last_prune = self.clock()

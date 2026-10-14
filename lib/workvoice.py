@@ -25,6 +25,7 @@ LINES = {
     "cap": "That's today's limit of sessions.",
     "offline": "Work is offline.", "no_signal": "No signal — saved.",
     "parked_only": "Work starts sessions here only while parked.",
+    "busy_load": "The tablet is busy — drowsy alerts may lag.",
     "busy": "Two sessions are running. It will start when one finishes.",
 }
 OFFLINE_LINES = {k: LINES[k] for k in ("no_signal", "offline", "not_started")}

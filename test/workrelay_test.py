@@ -587,6 +587,40 @@ TOK = TOK_SAVE
 check("/health of a default tablet says false", RH.status()["while_moving"], False)
 srvw.shutdown()
 
+print("\n  B: a busy tablet is warned about, once per drive")
+load = [0.1]
+pkb = FakePark(); pkb.parked = False
+RL = mk("b", WM, park_=pkb, loadavg=lambda: (load[0], 0, 0), cpus=lambda: 4)
+def busy_events(): return [e for e in RL.events(0) if e["kind"] == "busy_load"]
+RL.tick(); RL.clk[0] += 10; load[0] = 4.0; RL.tick(); RL.clk[0] += 10; RL.tick()
+check("no session running: no sample, no warning", len(busy_events()), 0)
+start_one(RL)
+RL.tick()
+check("one high sample is not enough", len(busy_events()), 0)
+RL.clk[0] += 5; RL.tick()
+check("samples are 10 s apart: 5 s later nothing more", len(busy_events()), 0)
+RL.clk[0] += 5; RL.tick()
+check("two high samples while moving with a session: one busy_load", len(busy_events()), 1)
+check("the line", busy_events()[0]["line"], "The tablet is busy — drowsy alerts may lag.")
+for _ in range(3):
+    RL.clk[0] += 10; RL.tick()
+check("a third, a fourth: none more this drive", len(busy_events()), 1)
+pkb.parked = True; RL.tick()
+pkb.parked = False; load[0] = 4.0
+RL.tick(); RL.clk[0] += 10; RL.tick()
+check("park, move again, high: another", len(busy_events()), 2)
+RL2 = mk("b2", WM, park_=pkb, loadavg=lambda: (load[0], 0, 0), cpus=lambda: 4)
+start_one(RL2)
+RL2.tick(); RL2.clk[0] += 10; load[0] = 1.0; RL2.tick(); RL2.clk[0] += 10; load[0] = 4.0; RL2.tick()
+check("high, low, high: not consecutive, no warning",
+      len([e for e in RL2.events(0) if e["kind"] == "busy_load"]), 0)
+# 0.9 * 4 = 3.6: exactly at the threshold is not over it
+RL3 = mk("b3", WM, park_=pkb, loadavg=lambda: (3.6, 0, 0), cpus=lambda: 4)
+start_one(RL3); RL3.tick(); RL3.clk[0] += 10; RL3.tick()
+check("exactly 90% is not over it", len([e for e in RL3.events(0) if e["kind"] == "busy_load"]), 0)
+RL4 = mk("b4", BIG, park_=pkb, loadavg=lambda: (9, 0, 0), cpus=lambda: 4)
+check("while_moving off: never sampled", RL4._busy_load(), False)
+
 print("\n  E3: only the head of the question FIFO is spoken")
 RQ3 = mk("e3", BIG)
 start_one(RQ3); start_one(RQ3)
