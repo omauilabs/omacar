@@ -112,6 +112,13 @@ REFUSE = [
     ("a hash inside quotes is no comment", bash('echo "# not a comment"; git push')),
     ("hash after a continued line is mid-word", bash("echo a\\\n#; git push")),
     ("hash after a continued line hides a read", bash("echo a\\\n#; ls ~/.ssh")),
+    # final wave D1: the text checks also run before the comment stripper,
+    # and ANSI-C / locale quoting is refused outright.
+    ("comment naming a protected place (checked before stripping too)", bash("echo hi # see ~/.ssh")),
+    ("device named only in a comment", bash("ls # /dev/ttyUSB0")),
+    ("workflow named only in a comment", bash("ls # .github/workflows/ci.yml")),
+    ("ANSI-C quoting", bash("echo $'\\x67it' push")),
+    ("locale quoting", bash('echo $"hi"')),
     ("matrix with a bare self-hosted", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
         "content": "jobs:\n  a:\n    strategy:\n      matrix:\n        os: [[self-hosted]]\n"
                    "    runs-on: ${{ matrix.os }}\n"})),
@@ -144,7 +151,6 @@ ALLOW = [
     ("a continued command", bash("ls \\\n  -la")),
     ("comment with an apostrophe", bash("ls # it's fine")),
     ("comment line first", bash("# don't do this\nls")),
-    ("comment naming a protected place", bash("echo hi # see ~/.ssh")),
     ("pinned matrix, inline", ("Write", {"file_path": WT + "/.github/workflows/x.yml",
         "content": "jobs:\n  a:\n    strategy:\n      matrix:\n"
                    "        os: [[self-hosted, Linux], [self-hosted, macOS, ARM64]]\n"
@@ -174,6 +180,10 @@ wf = {"file_path": TMP + "/.github/workflows/ci.yml"}
 a, why = g.judge("Edit", dict(wf, old_string="[self-hosted, Linux]", new_string="[self-hosted]"), CTX2)
 check("edit down to a bare self-hosted", (a, bool(why)), (False, True))
 check("edit that keeps the pin", g.judge("Edit", dict(wf, old_string="a:", new_string="b:"), CTX2), (True, ""))
+
+print("\n  D1: quoting the stripper does not model is unreadable")
+check("$' gives the unreadable sentence", g.judge("Bash", {"command": "echo $'a'"}, CTX), (False, "That command could not be read safely."))
+check('$" gives the unreadable sentence', g.judge("Bash", {"command": 'echo $"a"'}, CTX), (False, "That command could not be read safely."))
 
 print("\n  reasons are speakable")
 _, why = g.judge("Bash", {"command": "git push"}, CTX)

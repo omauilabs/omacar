@@ -477,18 +477,34 @@ def _judge_words(words, ctx, depth):
     return _package_reason(base, words)
 
 
-def _bash(command, ctx):
-    command = _strip_comments(_expand(command, ctx))
-    if DEVICE_RX.search(command):
+def _text_reason(text, ctx):
+    """The plain-text checks: a device, a workflow file, a protected place."""
+    if DEVICE_RX.search(text):
         return NO_DEVICE
-    if ".github/workflows" in command:
+    if ".github/workflows" in text:
         return "Workflow files are changed with the edit tools, not the shell."
     for p in _protected(ctx) + ["/share/assets/private"]:
         # A boundary after the path: /Projects/omacar must not catch the
         # sibling /Projects/omacar-work-src.
-        if re.search(re.escape(p) + r"(?![\w.-])", command):
+        if re.search(re.escape(p) + r"(?![\w.-])", text):
             return KEPT_OUT
-    return _judge_string(command, ctx, 0)
+    return ""
+
+
+def _bash(command, ctx):
+    expanded = _expand(command, ctx)
+    # ANSI-C ($'...') and locale ($"...") quoting are not modelled by the
+    # comment stripper or the tokenizer: refuse rather than misread them.
+    if "$'" in expanded or '$"' in expanded:
+        return UNREADABLE
+    # The text checks run before the comment stripper as well as after it, so
+    # a stripper that misreads a line can never hide a path: the cost is that
+    # a comment naming a protected place is refused too.
+    stripped = _strip_comments(expanded)
+    why = _text_reason(expanded, ctx) or _text_reason(stripped, ctx)
+    if why:
+        return why
+    return _judge_string(stripped, ctx, 0)
 
 
 def judge(tool, inp, ctx):
