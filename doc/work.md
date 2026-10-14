@@ -221,7 +221,8 @@ token too (it is not a plain curl).
   relay answers as soon as it holds the clip, before it transcribes it, so a
   slow transcription is never "No signal". The clip stays on disk until it is
   processed, so a relay restart picks it up again; the car's identifying
-  strings are never written, so such a clip is scrubbed by shape only. If
+  strings are never written, so such a clip is only held until the next
+  request that carries them, and is heard then. If
   transcribing fails you hear "Didn't catch that." and the clip can be resent).
   "Usage limit reached, sessions paused until <time>." (after a usage limit
   no new session starts for an hour).

@@ -404,17 +404,21 @@ ev, pushed, git = run_real([{".github/workflows/ci.yml": "jobs:\n  a:\n    runs-
                             {".github/workflows/ci.yml": "jobs:\n  a:\n    runs-on: [self-hosted, Linux]\n"}])
 check("E1: a hosted runner fixed by a later commit is clean", (ev[-1]["kind"], bool(pushed)), ("pr_opened", True))
 class MergeGit(AgentGit):
-    """The agent brings .netrc in on a side branch and merges it."""
+    """A double evil merge: one merge adds .netrc (neither parent has it), a
+    second merge removes it again. A plain log lists neither; the tip has no
+    .netrc."""
     def prepare(self, project, branch, sd):
         ws.Git.prepare(self, project, branch, sd)
-        sh("git", "checkout", "-q", "-b", "side", cwd=sd)
-        open(sd + "/.netrc", "w").write("machine github.com password x\n")
-        sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "side", cwd=sd)
+        def commit_file(name, text, msg):
+            open(sd + "/" + name, "w").write(text); sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", msg, cwd=sd)
+        sh("git", "checkout", "-q", "-b", "side", cwd=sd); commit_file("side.txt", "s\n", "side")
+        sh("git", "checkout", "-q", branch, cwd=sd); commit_file("main.txt", "m\n", "main")
+        sh("git", "merge", "-q", "--no-ff", "--no-commit", "side", cwd=sd)
+        commit_file(".netrc", "machine github.com password x\n", "merge")
+        sh("git", "checkout", "-q", "-b", "side2", "HEAD~1", cwd=sd); commit_file("s2.txt", "s\n", "side2")
         sh("git", "checkout", "-q", branch, cwd=sd)
-        open(sd + "/main.txt", "w").write("m\n")
-        sh("git", "add", "-A", cwd=sd); sh("git", "commit", "-qm", "main side", cwd=sd)
-        sh("git", "merge", "-q", "--no-ff", "-m", "merge", "side", cwd=sd)
-        sh("git", "rm", "-q", "-f", ".netrc", cwd=sd); sh("git", "commit", "-qm", "drop", cwd=sd)
+        sh("git", "merge", "-q", "--no-ff", "--no-commit", "side2", cwd=sd)
+        sh("git", "rm", "-q", "-f", ".netrc", cwd=sd); sh("git", "commit", "-qm", "merge2", cwd=sd)
 def run_merge():
     events = []
     async def ask(q): return "x"
@@ -424,7 +428,7 @@ def run_merge():
     asyncio.run(s.run())
     return events, sh("git", "branch", "--list", "work/merge*", cwd=T + "/origin.git").strip()
 ev, pushed = run_merge()
-check("K1: a merge commit that brings in .netrc: stuck, nothing pushed",
+check("K1: a double evil merge adds then removes .netrc: stuck, nothing pushed",
       (ev[-1]["kind"], ev[-1].get("why"), pushed), ("stuck", "the branch adds a credential file", ""))
 ev, pushed, git = run_real({"lib/fix.py": "x = 1\n"})
 check("a clean commit: pushed and opened", (ev[-1]["kind"], bool(pushed), len(git.prs)), ("pr_opened", True, 1))

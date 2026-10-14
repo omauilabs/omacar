@@ -134,6 +134,7 @@ class Relay:
         self.seen = collections.OrderedDict()    # client id -> reply, last SEEN_MAX
         self.accepted = collections.OrderedDict()   # client ids taken over HTTP, last SEEN_MAX
         self.inbox = queue.Queue()               # accepted clips, in arrival order
+        self.held = []                           # (cid, path, arrived): clips a crash left, waiting for the car's secrets
         self.inflight = {}                       # client id -> [Event, reply]
         self.arrived = {}                        # client id -> arrival time, while in flight
         self.sessions, self.queue = {}, []
@@ -328,9 +329,11 @@ class Relay:
 
     def _requeue_leftovers(self):
         """Clips accepted (202) before a crash. Each has a sidecar naming its
-        audio file and arrival time; the car's secrets were never written, so
-        they are reprocessed with none (the by-shape scrub still runs). Oldest
-        first. Audio with no sidecar is an upload that never finished: removed."""
+        audio file and arrival time. The car's secrets were never written, and
+        by-shape scrubbing misses a plate, so these are only held, oldest
+        first: nothing is transcribed or logged until the next request that
+        carries secrets (accept) moves them ahead of its own clip. Audio with
+        no sidecar is an upload that never finished: removed."""
         d = os.path.join(self.dir, "in")
         rows, known = [], set()
         for name in os.listdir(d):
@@ -353,8 +356,7 @@ class Relay:
                 continue
             with self.lock:
                 self.accepted[cid] = True
-                self.arrived[cid] = arrived
-                self.inbox.put((cid, path, [], arrived))
+                self.held.append((cid, path, arrived))
 
     def accept(self, client_id, audio_path, secrets):
         """Take a clip over HTTP: receipt is acknowledged before anything is
@@ -366,6 +368,11 @@ class Relay:
         lose it; the sidecar never holds the secrets."""
         arrived = self.clock()            # the receipt time is what F8's confirm window judges
         with self.lock:
+            if secrets and self.held:             # this request carries the car's secrets: the leftovers go first
+                for cid, path, was in self.held:
+                    self.arrived[cid] = was
+                    self.inbox.put((cid, path, secrets, was))
+                self.held = []
             dup = (client_id in self.accepted or client_id in self.seen
                    or client_id in self.inflight)
         if dup:

@@ -671,23 +671,41 @@ srvd.shutdown()
 
 print("\n  K2/I1: accepted clips survive a crash and an error")
 SD = os.path.join(SCRATCH, "k2")
+PLATE, VIN = "8ABC123", "1HGCM82633A004352"
 blocked = threading.Event(); heard_k2 = []
 def stuck_ears(path): blocked.wait(30); return "um", -0.2
 RK1 = workrelay.Relay(BIG, ears=stuck_ears, intent=intent, session_factory=EndingSession, park=FakePark(),
                       clock=lambda: 7000.0, state_dir=SD, render=lambda t, o: False)
-HEARD["k1"] = "um"
 pk2 = os.path.join(SD, "in", "k1.abcd1234.webm"); open(pk2, "wb").write(b"x")
-RK1.accept("k1", pk2, ["8ABC123"])
+RK1.accept("k1", pk2, [PLATE, VIN])
 side = open(os.path.join(SD, "in", "k1.json")).read()
-check("the sidecar holds no secrets", ("8ABC123" in side, '"client_id": "k1"' in side), (False, True))
-def ears_k2(path): heard_k2.append(os.path.basename(path)); return "the plate is 8ABC123", -0.2
+check("the sidecar holds no secrets", (PLATE in side, VIN in side, '"client_id": "k1"' in side), (False, False, True))
+def ears_k2(path):
+    heard_k2.append(os.path.basename(path))
+    return (f"the plate is {PLATE} and the vin is {VIN}" if path.split("/")[-1].startswith("k1.") else "um"), -0.2
 RK2 = workrelay.Relay(BIG, ears=ears_k2, intent=intent, session_factory=EndingSession, park=FakePark(),
                       clock=lambda: 7001.0, state_dir=SD, render=lambda t, o: False)
-wait_for(lambda: RK2.events(0) and RK2.events(0)[-1]["kind"] == "status")
-wait_for(lambda: os.listdir(os.path.join(SD, "in")) == [])
-check("crash: the new relay processes the clip once, then the clip and sidecar are gone",
-      (len(heard_k2), [e["kind"] for e in RK2.events(0)][:1], os.listdir(os.path.join(SD, "in"))),
-      (1, ["heard"], []))
+time.sleep(0.4)
+check("crash: the new relay holds the clip: ears not called, nothing logged",
+      (heard_k2, RK2.events(0), len(RK2.held)), ([], [], 1))
+pk8 = os.path.join(SD, "in", "k8.x.webm"); open(pk8, "wb").write(b"x"); HEARD["k8"] = "um"
+RK2.accept("k8", pk8, [])
+wait_for(lambda: len(heard_k2) == 1)
+check("a request with no secrets does not release it", (heard_k2[0].startswith("k8."), len(RK2.held)), (True, 1))
+HEARD["k9"] = "um"
+pk9 = os.path.join(SD, "in", "k9.x.webm"); open(pk9, "wb").write(b"x")
+RK2.accept("k9", pk9, [PLATE, VIN])
+wait_for(lambda: len(heard_k2) == 3 and os.listdir(os.path.join(SD, "in")) == [])
+check("a request with secrets: the leftover is processed first, once", [h.split(".")[0] for h in heard_k2[1:]], ["k1", "k9"])
+heard_text = [e["text"] for e in RK2.events(0) if e["kind"] == "heard"][0]
+check("its heard text has neither the plate nor the VIN", (PLATE in heard_text, VIN in heard_text), (False, False))
+leaks = []
+for root_, _d, files_ in os.walk(SD):
+    for f_ in files_:
+        if f_ == "token": continue
+        data_ = open(os.path.join(root_, f_), "rb").read()
+        if PLATE.encode() in data_ or VIN.encode() in data_: leaks.append(f_)
+check("neither string is anywhere in the state dir", leaks, [])
 def bad_ears(path): raise RuntimeError("whisper died")
 RK3 = mk("k3", BIG); RK3.ears = bad_ears
 HEARD["k3a"] = "um"; p3 = os.path.join(SCRATCH, "k3a.webm"); open(p3, "wb").write(b"x")
