@@ -4,6 +4,7 @@ The same two nets as lib/mcp.py: the vehicle record's identifying strings by
 value, and anything shaped like a VIN by shape.
 """
 import os
+import re
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mcp import IDENTIFIER, VEHICLE_SECRET, WITHHELD  # noqa: E402
@@ -21,5 +22,5 @@ def secrets_from(vehicle):
 def scrub(text, secrets):
     text = str(text or "")
     for s in secrets:
-        text = text.replace(s, "this car")
+        text = re.sub(re.escape(s), "this car", text, flags=re.I)
     return IDENTIFIER.sub(WITHHELD, text)

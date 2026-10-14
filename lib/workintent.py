@@ -68,20 +68,29 @@ def match_project(said, cfg):
                      if any(name.startswith(said) for name in p.names) and len(said) >= 2]
 
 
-def _answer(words, vocab):
-    """A yes (or a no) is the whole utterance, or a short one that starts with it:
-    "yeah, start it" is a yes; "what about omalens" is neither."""
-    return bool(words) and (" ".join(words) in vocab or (words[0] in vocab and len(words) <= 3))
+FILLER = {"please", "it", "now"}
+STOP = {"stop", "cancel", "never mind", "stop it", "cancel that"}
+NO_WORDS = {w for phrase in NO for w in phrase.split()}
+
+
+def _exact(said, vocab):
+    """The whole utterance is a phrase from vocab, plus at most one filler word."""
+    if said in vocab:
+        return True
+    w = said.split()
+    return len(w) > 1 and w[-1] in FILLER and " ".join(w[:-1]) in vocab
 
 
 def _claude(prompt):
     import ai
+    import records
     proc = subprocess.run(
         [ai.claude_bin() or "claude", "-p", "--output-format", "json",
-         "--model", "haiku", "--max-turns", "1",
+         "--model", "haiku", "--max-turns", "1", "--strict-mcp-config",
          "--disallowedTools", "Bash", "Read", "Write", "Edit", "Glob", "Grep",
          "WebSearch", "WebFetch", "Task", "Agent", "TodoWrite", "NotebookEdit"],
-        input=prompt, capture_output=True, text=True, timeout=30)
+        input=prompt, capture_output=True, text=True, timeout=30,
+        cwd=records.STATE)
     if proc.returncode != 0:
         raise RuntimeError("intent: claude failed")
     text = json.loads(proc.stdout).get("result", "")
@@ -92,14 +101,16 @@ def _claude(prompt):
 def parse(transcript, cfg, *, pending, ask_model=None):
     said = _phrase(transcript)
     if pending == "confirm":
-        if _answer(said.split(), YES):
-            return Intent("yes")
-        if _answer(said.split(), NO):
+        # Strict: a yes is an exact phrase (plus one filler) with no NO word
+        # anywhere. "ok cancel", "yes stop", "go to omalens" are never a yes.
+        if _exact(said, NO):
             return Intent("no")
+        if _exact(said, YES) and not NO_WORDS & set(said.split()):
+            return Intent("yes")
         return Intent("unclear")
     if pending == "question":
-        if said in NO:
-            return Intent("no")
+        if said in STOP:
+            return Intent("stop")
         return Intent("answer", answer=transcript.strip())
     if not said:
         return Intent("unclear")
@@ -118,6 +129,11 @@ def parse(transcript, cfg, *, pending, ask_model=None):
         return Intent("choose", choices=tuple(sorted(names)))
     if not names:
         return Intent("unclear")
+    # The transcript checks the model: if the driver's own words point at other
+    # projects than the one the model picked, ask rather than guess.
+    heard = match_project(transcript, cfg)
+    if heard and names[0] not in heard:
+        return Intent("choose", choices=tuple(sorted(set(heard) | {names[0]})))
     if kind == "new_task" and not str(got.get("instruction") or "").strip():
         return Intent("unclear")
     return Intent(kind, project=names[0], instruction=str(got.get("instruction") or "").strip())

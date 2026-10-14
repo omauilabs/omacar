@@ -26,7 +26,11 @@ def fake(reply):
     return ask
 
 print("\n  confirmation: only a spoken yes starts anything")
-for said, kind in [("yes", "yes"), ("Yeah, start it.", "yes"), ("no", "no"),
+for said, kind in [("yes", "yes"), ("Yeah.", "yes"), ("start it", "yes"), ("yes please", "yes"),
+                   ("Yeah, start it.", "unclear"), ("go to omalens", "unclear"),
+                   ("ok cancel", "unclear"), ("yes stop", "unclear"), ("yeah no", "unclear"),
+                   ("sure not", "unclear"), ("okay that's wrong", "unclear"),
+                   ("go away", "unclear"), ("yes cancel it", "unclear"), ("no thanks", "unclear"), ("no", "no"),
                    ("cancel that", "no"), ("", "unclear"), ("um", "unclear"),
                    ("what about omalens", "unclear")]:
     m = fake({})
@@ -36,6 +40,10 @@ for said, kind in [("yes", "yes"), ("Yeah, start it.", "yes"), ("no", "no"),
 print("\n  a pending question takes the words as the answer")
 i = wi.parse("make it configurable", CFG, pending="question", ask_model=fake({}))
 check("answer", (i.kind, i.answer), ("answer", "make it configurable"))
+for said, want in [("no", ("answer", "no")), ("don't", ("answer", "don't")),
+                   ("stop", ("stop", "")), ("never mind", ("stop", ""))]:
+    i = wi.parse(said, CFG, pending="question", ask_model=fake({}))
+    check(f"{said!r} while asked", (i.kind, i.answer), want)
 
 print("\n  new tasks are checked against the allowlist")
 i = wi.parse("in omacar fix the timeout", CFG, pending=None,
@@ -44,6 +52,9 @@ check("known project", (i.kind, i.project, i.instruction), ("new_task", "omacar"
 i = wi.parse("in omakar fix it", CFG, pending=None,
              ask_model=fake({"kind": "new_task", "project": "omakar", "instruction": "fix it"}))
 check("near-miss resolves", (i.kind, i.project), ("new_task", "omacar"))
+i = wi.parse("in omalens fix the timeout", CFG, pending=None,
+             ask_model=fake({"kind": "new_task", "project": "omacar", "instruction": "fix the timeout"}))
+check("transcript contradicts model", (i.kind, i.choices), ("choose", ("omacar", "omalens")))
 i = wi.parse("in the lab fix it", CFG, pending=None,
              ask_model=fake({"kind": "new_task", "project": "omalab", "instruction": "fix it"}))
 check("unlisted project", i.kind, "unclear")
@@ -65,6 +76,8 @@ check("vin and plate hunted", ("JHMZF1D60FS000000" in sec, "8ABC123" in sec), (T
 out = wp.scrub("plate 8ABC123 and JHMZF1D60FS000000 and 1HGCM82633A004352", sec)
 check("by value and by shape", ("8ABC123" in out, "JHMZF1D60FS000000" in out, "1HGCM82633A004352" in out),
       (False, False, False))
+
+check("case-insensitive", wp.scrub("plate 8abc123", sec), "plate this car")
 
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)
