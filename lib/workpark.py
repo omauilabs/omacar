@@ -37,9 +37,12 @@ class Park:
         except Exception:                                   # noqa: BLE001
             s = {}
         speed = (s.get("values") or {}).get("SPEED")
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+            speed = None                                    # unknown, not stopped
         known_stop = bool(s.get("connected")) and not s.get("handover") \
             and speed is not None and speed <= 3
-        if s.get("connected") and speed is not None and speed > 3:
+        # A hand-off latches motion, like the page (share/js/core.js).
+        if s.get("handover") or (s.get("connected") and speed is not None and speed > 3):
             self.ever_moved = True
         if not known_stop:
             self.still_since = None

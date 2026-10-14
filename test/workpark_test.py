@@ -29,5 +29,15 @@ check("link drop resets the clock", (at(94, {"connected": False}), at(100, STOP)
       (False, False, False, True))
 check("no SPEED is not stopped", at(200, {"connected": True, "values": {}}), False)
 
+# A hand-off latches motion: a fresh car, parked, then a hand-off needs a full settle.
+t = [0.0]; s = [{}]
+P = workpark.Park(read=lambda: s[0], clock=lambda: t[0])
+check("fresh car stopped: parked", at(0, STOP), True)
+check("hand-off: not parked", at(1, dict(STOP, handover=True)), False)
+check("after hand-off, stopped 0 s: not parked", at(2, STOP), False)
+check("after hand-off, stopped 59 s: not parked", at(61, STOP), False)
+check("after hand-off, stopped 60 s: parked", at(62, STOP), True)
+check("non-numeric SPEED is unknown, no raise", at(63, {"connected": True, "values": {"SPEED": "--"}}), False)
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)
