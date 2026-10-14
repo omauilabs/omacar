@@ -37,6 +37,7 @@ export default [
     const a = root.querySelector(".work-pr");
     ok(a && a.textContent.includes("41"), "PR 41 shown");
     eq(a.getAttribute("href"), "https://github.com/omauilabs/omacar/pull/41");
+    eq([a.getAttribute("target"), a.getAttribute("rel")], ["_blank", "noopener noreferrer"]);
   })],
   ["a pending question is shown large, with its own talk button", () => withWork({
     sessions: [{ ...SESSION, state: "question" }], events: [

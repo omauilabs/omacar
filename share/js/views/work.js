@@ -234,7 +234,13 @@ export default function workView(root) {
         h("span.work-line", s.line || ""));
       if (!store.moving && s.pr) {
         row.append(s.repo
-          ? h("a.work-pr", { href: `https://github.com/${s.repo}/pull/${s.pr}` }, `Draft PR #${s.pr}`)
+          // A new window, as documents.js opens a file: one tap must never
+          // replace the dashboard (and its drowsy alerts) in a kiosk with no
+          // back button. noopener: the opened page gets no handle on this one.
+          ? h("a.work-pr", {
+            href: `https://github.com/${s.repo}/pull/${s.pr}`, target: "_blank",
+            rel: "noopener noreferrer",
+          }, `Draft PR #${s.pr}`)
           : h("span.work-pr", `Draft PR #${s.pr}`));
       }
       list.append(row);
