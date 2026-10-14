@@ -35,6 +35,11 @@ def _first_sentence(s):
     return m.group(1) if m else s.strip()
 
 
+def _instruction(s):
+    """First sentence, at most 150 chars, no end mark: the confirm must keep 'Start it?'."""
+    return _first_sentence(str(s))[:150].strip().rstrip(".!?").strip()
+
+
 def _two(s):
     parts = re.split(r"(?<=[.?!])\s+", s.strip())
     return " ".join(parts[:2])[:220]
@@ -45,7 +50,7 @@ def line(e):
     if not tmpl:
         return ""
     ch = list(e.get("choices") or ("", ""))
-    text = tmpl.format(p=e.get("project", ""), instruction=e.get("instruction", ""),
+    text = tmpl.format(p=e.get("project", ""), instruction=_instruction(e.get("instruction", "")),
                        q=_first_sentence(str(e.get("question", ""))), n=e.get("pr", ""),
                        why=_first_sentence(str(e.get("why", ""))), a=ch[0],
                        b=ch[1] if len(ch) > 1 else "", t=e.get("until", ""),
@@ -63,6 +68,6 @@ def render(text, out_path, run=subprocess.run):
     try:
         r = run(["piper", "--model", VOICE, "--output_file", out_path],
                 input=text, text=True, capture_output=True, timeout=30)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return r.returncode == 0 and os.path.exists(out_path)

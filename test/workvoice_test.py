@@ -33,5 +33,14 @@ import tempfile; out = os.path.join(tempfile.mkdtemp(), "a.wav")
 check("render calls piper with the line on stdin", (v.render("Hi.", out, run=fake_run), os.path.exists(out)), (True, True))
 check("missing piper is False, not a crash", v.render("Hi.", out, run=lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError())), False)
 
+check("confirm cuts the instruction", v.line({"kind": "confirm", "project": "omacar",
+      "instruction": "Fix the retry bug. Then update the docs"}), "omacar: Fix the retry bug. Start it?")
+check("long instruction still asks", v.line({"kind": "confirm", "project": "omacar",
+      "instruction": "word " * 80}).endswith("Start it?"), True)
+check("trailing period not doubled", v.line({"kind": "confirm", "project": "omacar",
+      "instruction": "fix it."}), "omacar: fix it. Start it?")
+def deny(*a, **k): raise PermissionError()
+check("render OSError is False", v.render("Hi.", out, run=deny), False)
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.exit(1 if fails else 0)
