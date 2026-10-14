@@ -108,11 +108,14 @@ class Relay:
         self.ears_lock = threading.Lock()        # one transcription at a time
         self.seen = collections.OrderedDict()    # client id -> reply, last SEEN_MAX
         self.inflight = {}                       # client id -> [Event, reply]
+        self.arrived = {}                        # client id -> arrival time, while in flight
         self.sessions, self.queue = {}, []
         self.created = {}                        # session id -> start time, this process
         self.gates, self.last_line = {}, {}
         self.repos = {}
-        self.pending = None                      # only ("confirm", Intent, expires)
+        # Only ("confirm", Intent, expires). `expires` is None until the
+        # read-back clip exists: the driver's 20 s start when it can be heard.
+        self.pending = None
         self.questions = collections.deque()     # (session id, future), oldest first
         self.next_id = self._last_id() + 1
         self.pool = ThreadPoolExecutor(max_workers=1)   # session events, in order
@@ -248,6 +251,7 @@ class Relay:
 
     # ---- utterances -----------------------------------------------------------
     def utterance(self, client_id, audio_path, secrets):
+        arrived = self.clock()            # a yes is judged by when it was said, not parsed
         with self.lock:
             if client_id in self.seen:
                 self._rm(audio_path)
@@ -256,12 +260,13 @@ class Relay:
             mine = slot is None
             if mine:
                 slot = self.inflight[client_id] = [threading.Event(), None]
+                self.arrived[client_id] = arrived
         if not mine:                      # a duplicate waits for the first run's reply
             self._rm(audio_path)
             slot[0].wait(120)
             return slot[1] if slot[1] is not None else {"error": "busy"}
         try:
-            reply = self._utter(audio_path, secrets)
+            reply = self._utter(audio_path, secrets, arrived)
             with self.lock:
                 self.seen[client_id] = reply
                 while len(self.seen) > SEEN_MAX:
@@ -271,6 +276,7 @@ class Relay:
         finally:
             with self.lock:
                 self.inflight.pop(client_id, None)
+                self.arrived.pop(client_id, None)
             slot[0].set()
 
     @staticmethod
@@ -278,7 +284,7 @@ class Relay:
         try: os.remove(path)
         except OSError: pass
 
-    def _utter(self, audio_path, secrets):
+    def _utter(self, audio_path, secrets, arrived=None):
         try:
             with self.ears_lock:
                 text, sure = self.ears(audio_path)
@@ -295,10 +301,15 @@ class Relay:
         i = self.intent(text, self.cfg, pending=mode)         # may call a model: no lock
         evs = []
         with self.lock:
-            result = self._decide(i, mode, evs)
+            result = self._decide(i, mode, evs, self.clock() if arrived is None else arrived)
+            asked = self.pending if any(ev["kind"] == "confirm" for ev in evs) else None
         last = None
         for ev in evs:
             last = self.emit(ev)
+        if asked is not None:
+            with self.lock:                       # the clip exists now: start the 20 s
+                if self.pending is asked:
+                    self.pending = asked[:2] + (self.clock() + CONFIRM_S,)
         return result if result is not None else last
 
     def _mode(self):
@@ -313,9 +324,11 @@ class Relay:
     def _stop(self, s):
         asyncio.run_coroutine_threadsafe(s.stop("stopped"), self.loop)
 
-    def _decide(self, i, mode, evs):
+    def _decide(self, i, mode, evs, arrived):
         """State changes for one parsed utterance. Lock held; events go in `evs`
-        and are emitted (and rendered) after the lock is released."""
+        and are emitted (and rendered) after the lock is released. `arrived` is
+        when the utterance reached the relay: a yes said inside the window
+        counts even if transcribing it ran past the window's end."""
         if self._mode() != mode:                  # the world moved while we parsed
             evs.append({"kind": "didnt_catch"})
             return None
@@ -323,7 +336,7 @@ class Relay:
             p = self.pending
             if i.kind == "yes":
                 self.pending = None
-                if self.clock() > p[2]:
+                if p[2] is not None and arrived > p[2]:
                     evs.append({"kind": "not_started", "project": p[1].project})
                     return None
                 return self._start(p[1], evs)
@@ -353,7 +366,7 @@ class Relay:
             if not ok:
                 evs.append({"kind": kind, "project": i.project})
                 return None
-            self.pending = ("confirm", i, self.clock() + CONFIRM_S)
+            self.pending = ("confirm", i, None)          # timed once its clip exists
             evs.append({"kind": "confirm", "project": i.project, "instruction": i.instruction})
             return None
         if i.kind == "status":
@@ -472,6 +485,13 @@ class Relay:
         self.repos[project.path] = m.group(1) if m else ""
         return self.repos[project.path]
 
+    def _expired(self, p):
+        """The confirm's window is over, and no utterance that arrived inside it
+        is still being transcribed (it may be the yes). Lock held."""
+        if p[2] is None or self.clock() <= p[2]:
+            return False
+        return not any(t <= p[2] for t in self.arrived.values())
+
     def tick(self):
         """1 Hz. The only caller of Park.update()."""
         if self.park is not None:
@@ -479,7 +499,7 @@ class Relay:
         evs = []
         with self.lock:
             moving = self.cfg.host == "tablet" and not self._parked()
-            if self.pending and (moving or self.clock() > self.pending[2]):
+            if self.pending and (moving or self._expired(self.pending)):
                 evs.append({"kind": "not_started", "project": self.pending[1].project})
                 self.pending = None
             if moving:

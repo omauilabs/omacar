@@ -420,6 +420,37 @@ check("VIN not in the log", "1HGCM82633A004352" in raw9, False)
 check("rendered, without the VIN", (len(said9), any("1HGCM82633A004352" in t for t in said9)), (1, False))
 check("the line says withheld", "withheld" in R9.events(0)[-1]["line"], True)
 
+print("\n  F8: the confirm window is judged by when the yes arrived")
+def slow_yes(r, delay):
+    """ears that take `delay` seconds of relay time, ticking meanwhile."""
+    def ears8(path):
+        text = HEARD[os.path.basename(path).split(".")[0]]
+        if text == "yes":
+            for _ in range(int(delay)):
+                r.clk[0] += 1; r.tick()
+        return text, -0.2
+    return ears8
+R8 = mk("f8", BIG); R8.ears = slow_yes(R8, 5)
+tell(R8, "in omacar fix it")
+check("the window starts when the clip exists", R8.pending[2], R8.clk[0] + workrelay.CONFIRM_S)
+R8.clk[0] += 19; n = len(FakeSession.made)
+tell(R8, "yes")
+wait_for(lambda: len(FakeSession.made) > n)
+check("a yes at 19 s that takes 5 s to transcribe starts the task",
+      (len(FakeSession.made) - n, "not_started" in [e["kind"] for e in R8.events(0)]), (1, False))
+R8b = mk("f8b", BIG); R8b.ears = slow_yes(R8b, 5)
+tell(R8b, "in omacar fix it"); R8b.clk[0] += 21; n = len(FakeSession.made)
+tell(R8b, "yes")
+check("a yes arriving at 21 s starts nothing; the driver hears Not started",
+      (len(FakeSession.made) - n, [e["kind"] for e in R8b.events(0)].count("not_started")), (0, 1))
+slow_render = []
+R8c = mk("f8c", workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0)))
+def render8(t, o, r=R8c):
+    r.clk[0] += 10; slow_render.append(t); return False         # Piper takes 10 s
+R8c.render = render8
+tell(R8c, "in omacar fix it")
+check("a 10 s render does not eat the window", R8c.pending[2], R8c.clk[0] + workrelay.CONFIRM_S)
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()
 os._exit(1 if fails else 0)
