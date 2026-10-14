@@ -377,6 +377,38 @@ except SystemExit:
     refused = True
 check("box with no tablet_node refuses to start", refused, True)
 
+print("\n  round 2: the token survives a restart; _next never renders on the loop; handler timeout")
+R_a = mk("tok"); R_b = mk("tok")
+check("two relays on one state dir share a token", R_a.token == R_b.token and bool(R_a.token), True)
+os.chmod(workrelay.token_path(R_a.dir), 0o644)
+R_c = mk("tok")
+check("a looser file keeps its token and is fixed to 0600",
+      (R_c.token == R_a.token, oct(os.stat(workrelay.token_path(R_a.dir)).st_mode & 0o777)), (True, "0o600"))
+os.makedirs(os.path.join(SCRATCH, "tok2"), exist_ok=True)
+with open(workrelay.token_path(os.path.join(SCRATCH, "tok2")), "w") as f: f.write("preset-token")
+check("a pre-set token is used", mk("tok2").token, "preset-token")
+with open(workrelay.token_path(os.path.join(SCRATCH, "tok2")), "w") as f: f.write("")
+check("an empty file gets a new token", len(mk("tok2").token) > 20, True)
+
+renders = []
+def spy(text, out): renders.append((threading.get_ident(), text)); return False
+QT = workcfg.Config(host="tablet", daily_cap=6, projects=CFG.projects, quiet=(0, 0))
+pk = FakePark(); RN = mk("rn", QT, park_=pk, render=spy)
+loop_ident = asyncio.run_coroutine_threadsafe(asyncio.sleep(0, threading.get_ident()), RN.loop).result(3)
+start_one(RN); start_one(RN)
+tell(RN, "in omacar fix it"); tell(RN, "yes")
+check("third is queued", len(RN.queue), 1)
+del renders[:]
+pk.parked = False                      # cached value only: no tick, so the queue is not cleared
+first = list(RN.sessions.values())[0]
+asyncio.run_coroutine_threadsafe(first.stop(), RN.loop)
+wait_for(lambda: "parked_only" in [e["kind"] for e in RN.events(0)])
+refusal = "Work starts sessions here only while parked."
+spoken = [r for r in renders if r[1] == refusal]
+check("a refusal from _next is spoken, but not rendered on the loop thread",
+      (bool(spoken), any(r[0] == loop_ident for r in renders)), (True, False))
+check("handler has a socket timeout", srv.RequestHandlerClass.timeout, 15)
+
 print(f"\n  {fails} failed" if fails else "\n  all passed")
 sys.stdout.flush()
 os._exit(1 if fails else 0)

@@ -61,6 +61,13 @@ def read_token(state_dir=STATE):
 
 
 def _write_token(state_dir):
+    """Keep the token across restarts (the box's copy lives in the tablet's
+    work.toml); make a new one only when there is none."""
+    old = read_token(state_dir)
+    if old:
+        try: os.chmod(token_path(state_dir), 0o600)
+        except OSError: pass
+        return old
     tok = _secrets.token_urlsafe(32)
     fd = os.open(token_path(state_dir), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -425,7 +432,7 @@ class Relay:
             if self.queue and len(self._running()) < self.cfg.max_sessions:
                 self._start(self.queue.pop(0), evs)
         for ev in evs:
-            self.emit(ev)
+            self._emit_async(ev)           # runs on the loop thread: never render here
 
     # ---- status -------------------------------------------------------------------
     def _status_text(self):
@@ -523,6 +530,8 @@ def make_server(cfg, port, relay, host=None):
         host = "127.0.0.1" if cfg.host == "tablet" else _tailnet_ip()
 
     class H(BaseHTTPRequestHandler):
+        timeout = 15           # a client that under-sends cannot hold a thread
+
         def _json(self, obj, code=200):
             body = json.dumps(obj).encode()
             self.send_response(code)
