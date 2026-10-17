@@ -147,6 +147,24 @@ check("six built-ins, each a valid ten-band state",
       list(eq.BUILTIN_PRESETS) == ["Flat", "Car cabin", "Bass", "Vocal clarity", "Loudness", "Night"]
       and all(eq.clean_bands(p) for p in eq.BUILTIN_PRESETS.values()))
 
+print("\n  calibration data kept with a preset")
+fs_ = [20 * 1.26 ** i for i in range(20)]
+cal = {"freqs": fs_, "measured": [1.0] * 20, "target": [0.0] * 20, "predicted": [0.5] * 20,
+       "confidence": 0.8, "snr_db": 22.4, "label": "High", "at": "2026-10-17T15:40", "mic": "Built-in"}
+st = eq.default_state()
+st["user_presets"] = {"Auto \u00b7 Oct 17": {"bands": flat(), "preamp": None, "cal": cal}}
+got = eq.clean_state(st)["user_presets"]["Auto \u00b7 Oct 17"].get("cal")
+check("a preset keeps its calibration: curves, confidence, SNR, mic",
+      got and len(got["freqs"]) == 20 and got["confidence"] == 0.8 and got["label"] == "High" and got["mic"] == "Built-in")
+bad = dict(cal, measured=[1.0] * 3)
+st["user_presets"]["Auto \u00b7 Oct 17"]["cal"] = bad
+check("a calibration whose curves do not match its frequencies is refused", raises(lambda: eq.clean_state(st)))
+st["user_presets"]["Auto \u00b7 Oct 17"]["cal"] = dict(cal, measured=[999.0] * 20)
+check("calibration values are clamped to +-60 dB",
+      eq.clean_state(st)["user_presets"]["Auto \u00b7 Oct 17"]["cal"]["measured"][0] == 60.0)
+st["user_presets"]["Auto \u00b7 Oct 17"]["cal"] = dict(cal, freqs=[100.0] * 3, measured=[0] * 3, target=[0] * 3, predicted=[0] * 3)
+check("fewer than 8 calibration points are refused", raises(lambda: eq.clean_state(st)))
+
 print("\n  the generated config")
 conf = eq.generate_config(eq.default_state())
 check("it is a pipewire config with the filter-chain module",

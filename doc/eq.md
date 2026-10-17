@@ -60,6 +60,52 @@ hand-off). Controls are greyed, never hidden. Picking a saved preset, the Bypass
 toggle and hold-to-compare stay available at speed (one tap, nothing to aim).
 The lock is in the page; the server does not know whether the car is moving.
 
+## Auto: Calibrate
+
+"Calibrate..." (next to Save as...) measures the cabin and fits the bands. Parked
+only, and nothing plays until you tap **Start measuring** in its sheet ("Sit in
+the driver's seat, set the car radio to a normal listening level, keep the cabin
+quiet. It plays a 10-second sweep.").
+
+1. Pick a microphone (the Surface's built-in one is the default; a C920 is listed
+   if plugged in; your choice is remembered). `getUserMedia` is asked with
+   echo cancellation, noise suppression and auto gain all **off**.
+2. The equalizer is held flat (live, no restart) and the page plays a log sine
+   sweep, 20 Hz - 20 kHz, 8 s, peaking at -20 dBFS after a half-second fade in,
+   through the page's output to the AUX. About 1 s of silence is recorded first
+   (the noise floor) and 1.5 s after.
+3. `share/js/eqcal.js` divides the recording's spectrum by the sweep's (a plain
+   spectral ratio: a delay does not matter to a magnitude), smooths to 1/3
+   octave (25 Hz - 16 kHz), and works out the signal-to-noise of each band from
+   the silence. The curve is normalised to its mean between 250 Hz and 4 kHz, so
+   only its shape is used.
+4. Target ("car house curve", a default - change `TARGET` in `eqcal.js`): +4 dB
+   below 100 Hz, tapering to 0 at 300 Hz, flat to 10 kHz, then -2 dB from 12 kHz.
+5. Fit: greedy peaking filters on (target - measured), biggest deviation first, a
+   cut weighted 1 and a boost 0.6 (so it prefers cuts: the baseline is the 70th
+   percentile of what is wanted). Boosts are capped at +6 dB and Q <= 3; cuts at
+   -12 dB. Nothing is fitted below 40 Hz or above 12 kHz. A boost is never put
+   where the measurement was under 10 dB above the noise, and a null (a dip more
+   than 8 dB deep, and a third of an octave around it) is left alone: EQ cannot
+   fill one. The ten bands come back in frequency order; the usual auto preamp /
+   0 dB rule then applies to the result.
+6. The result is applied at once, drawn on the graph as **measured** (solid),
+   **target** (dotted) and **with this EQ** (thin; it follows your edits), and can
+   be kept as a preset "Auto - <date>" (with its room curves), or undone. Hold
+   Compare to hear the difference. Confidence is how far above the noise the
+   measurement was (High / Medium / Low). It refuses, with a reason, when it is
+   too quiet ("turn the radio up a little") or the microphone clipped.
+
+What it cannot know: the measured curve includes the microphone. A laptop mic can
+be several dB off at the ends, which is why corrections are bounded and stay in
+40 Hz - 12 kHz. It also measures one seat position.
+
+**Live auto is not built.** The next step would slowly adapt using the music as
+the test signal (the master analyser against the microphone, averaged over
+minutes, parked or under 20 mph, at most 0.5 dB a minute and within +-3 dB of the
+calibrated preset, off by default). It needs real-car data to tune; this change
+does not include it.
+
 ## Without PipeWire
 
 On a machine with no PipeWire (the Mac, CI) `GET /api/eq` says

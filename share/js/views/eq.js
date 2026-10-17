@@ -18,6 +18,7 @@
 
 import { h, clear, store, api, toast, confirmDialog } from "../core.js";
 import * as M from "../eqmath.js";
+import * as CAL from "../eqcal.js";
 import { meterIn, resume } from "../audiobus.js";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -44,6 +45,7 @@ export default function eqView(root) {
     state: { enabled: false, preset: "Flat", bands: M.defaultBands(), preamp: null, user_presets: {} },
     builtin: { Flat: M.defaultBands() },
     sel: 3, auto: 0, pre: 0,
+    cal: null, showRoom: true,        // the room measured by Calibrate, and whether it is drawn
   };
   let disp = null;          // bands as drawn while a preset is morphing
   let W = 0, H = 0;         // the plot's inner size
@@ -75,8 +77,11 @@ export default function eqView(root) {
     S.present = !!d.present; S.why = d.why || "";
     S.running = !!d.running; S.applied = !!d.applied;
     if (d.presets) S.builtin = d.presets.builtin;
-    if (withState && d.state) S.state = d.state;
-    else if (d.state) S.state.user_presets = d.state.user_presets;
+    if (withState && d.state) {
+      S.state = d.state;
+      const up = d.state.user_presets[d.state.preset];
+      S.cal = (up && up.cal) || null;
+    } else if (d.state) S.state.user_presets = d.state.user_presets;
   }
 
   let inflight = false, again = false, commitTimer = null;
@@ -176,6 +181,7 @@ export default function eqView(root) {
     S.state.bands = target;
     S.state.preset = name;
     S.state.preamp = user ? user.preamp : null;
+    S.cal = (user && user.cal) || null;
     recalc();
     morphTo(target);
     paintAll();
@@ -223,13 +229,16 @@ export default function eqView(root) {
   const gGrid = sv("g", { class: "eq-grid" });
   const gLabels = sv("g", { class: "eq-labels" });
   const pSpec = sv("path", { class: "eq-spec" });
+  const pTarg = sv("path", { class: "eq-cal eq-targ" });
+  const pMeas = sv("path", { class: "eq-cal eq-meas" });
+  const pPred = sv("path", { class: "eq-cal eq-pred" });
   const pOwnArea = sv("path", { class: "eq-own-area" });
   const pOwn = sv("path", { class: "eq-own" });
   const pArea = sv("path", { class: "eq-area", fill: `url(#${gradId})` });
   const pLine = sv("path", { class: "eq-line" });
   const gHandles = sv("g", { class: "eq-handles" });
   const gPlot = sv("g", { transform: `translate(${MARGIN.l} ${MARGIN.t})` });
-  gPlot.append(gGrid, pSpec, pOwnArea, pOwn, pArea, pLine, gHandles);
+  gPlot.append(gGrid, pSpec, pTarg, pMeas, pOwnArea, pOwn, pArea, pLine, pPred, gHandles);
   svg.append(defs, gLabels, gPlot);
   const handles = Array.from({ length: M.NBANDS }, (_, i) => {
     const hit = sv("circle", { class: "eq-hit", r: 26 });
@@ -242,7 +251,10 @@ export default function eqView(root) {
     return g;
   });
   const tip = h("div.eq-tip", { hidden: true });
-  const plot = h("div.eq-plot", svg, tip);
+  const legend = h("div.eq-legend", { hidden: true },
+    h("span.eq-lg.eq-lg-meas", "Measured"), h("span.eq-lg.eq-lg-targ", "Target"), h("span.eq-lg.eq-lg-pred", "With this EQ"),
+    h("button.eq-lg-hide", { type: "button", onclick: () => { S.showRoom = !S.showRoom; drawGraph(); } }, "Hide"));
+  const plot = h("div.eq-plot", svg, tip, legend);
   const graph = h("section.eq-graph", { "aria-label": "Frequency response" }, plot);
 
   function sizePlot() {
@@ -291,8 +303,32 @@ export default function eqView(root) {
       handles[i].classList.toggle("sel", i === S.sel);
       handles[i].classList.toggle("off", !b.on);
     });
+    drawRoom(bs);
     gHandles.appendChild(handles[S.sel]);        // the selected one on top
     graph.classList.toggle("eq-flat", flatHeld || !S.state.enabled);
+  }
+
+  // The room Calibrate measured, behind the curve: what it heard, what it was
+  // aiming at, and what it would sound like with the EQ as it is now (the
+  // measurement plus the EQ's own curve, so it follows an edit).
+  function predictedNow(bs) {
+    const f = S.cal.freqs, c = M.curveDb(bs, f);
+    const p = S.cal.measured.map((v, i) => v + c[i]);
+    let s = 0, n = 0;
+    f.forEach((x, i) => { if (x >= 250 && x <= 4000) { s += p[i]; n++; } });
+    return p.map((v) => v - (n ? s / n : 0));
+  }
+  function drawRoom(bs) {
+    const on = !!(S.cal && S.showRoom);
+    legend.hidden = !S.cal;
+    legend.classList.toggle("hidden", !on);
+    legend.querySelector(".eq-lg-hide").textContent = on ? "Hide" : "Room";
+    for (const p of [pTarg, pMeas, pPred]) p.setAttribute("d", "");
+    if (!on) return;
+    const f = S.cal.freqs;
+    pTarg.setAttribute("d", M.linePath(f, S.cal.target, W, H));
+    pMeas.setAttribute("d", M.linePath(f, S.cal.measured, W, H));
+    pPred.setAttribute("d", M.linePath(f, predictedNow(bs), W, H));
   }
 
   // Pointer: one finger drags a handle, two pinch the selected band's Q.
@@ -429,7 +465,9 @@ export default function eqView(root) {
     h("span.eq-k", "Your own"), h("span.eq-v2", "Save as…"));
   const manageBtn = h("button.eq-key.eq-save", { type: "button", onclick: () => openSave("manage") },
     h("span.eq-k", "Preset"), h("span.eq-v2", "Rename…"));
-  const presetRow = h("div.eq-prow", presetTrack, manageBtn, saveBtn);
+  const calBtn = h("button.eq-key.eq-save", { type: "button", onclick: () => openCal() },
+    h("span.eq-k", "Auto"), h("span.eq-v2", "Calibrate\u2026"));
+  const presetRow = h("div.eq-prow", presetTrack, calBtn, manageBtn, saveBtn);
   const nameIn = h("input.eq-name", { type: "text", maxlength: 24, "aria-label": "Preset name", autocomplete: "off" });
   const savePanel = h("div.eq-savepanel", { hidden: true });
   let saveMode = null;
@@ -492,9 +530,217 @@ export default function eqView(root) {
     h("p.eq-note", "Alerts play through this EQ too. It never boosts past 0 dB, so they keep their headroom."),
     noiseBtn);
 
+
+  // ---------------------------------------------------------------- calibrate
+  // One explicit button, parked only. It plays a quiet sweep (-20 dBFS, about 8 s)
+  // out through the page's output with the equalizer held flat, records the
+  // microphone, and hands both to eqcal.js. Nothing plays until "Start measuring".
+  const MIC_KEY = "omacar.eq.mic";
+  const sheet = h("div.eq-sheet", { hidden: true, role: "dialog", "aria-modal": "true", "aria-label": "Calibrate" });
+  let run = null, prev = null;
+  const dateName = () => {
+    const d = new Date(), base = "Auto · " + d.toLocaleString("en-US", { month: "short", day: "numeric" });
+    let name = base;
+    for (let n = 2; S.state.user_presets[name] && n < 99; n++) name = `${base} ${n}`;
+    return name.slice(0, 24);
+  };
+  const sheetBtn = (label, fn, cls = "") => h("button.eq-key.eq-go" + cls, { type: "button", onclick: fn }, h("span.eq-v2", label));
+  const closeSheet = () => { abortRun(); sheet.hidden = true; clear(sheet); };
+
+  async function listMics(askFirst = false) {
+    const md = navigator.mediaDevices;
+    if (!md || !md.enumerateDevices) return [];
+    if (askFirst) {
+      try { const st = await md.getUserMedia({ audio: true }); st.getTracks().forEach((t) => t.stop()); } catch { /* denied: the list stays as it is */ }
+    }
+    const all = (await md.enumerateDevices()).filter((d) => d.kind === "audioinput");
+    return all;
+  }
+  function pickMic(list) {
+    let saved = null;
+    try { saved = localStorage.getItem(MIC_KEY); } catch { /* private mode */ }
+    if (saved && list.some((d) => d.deviceId === saved)) return saved;
+    const builtin = list.find((d) => /built-?in|internal|microphone array|surface|intel|pch/i.test(d.label) && !/c920|webcam|usb/i.test(d.label));
+    return (builtin || list.find((d) => d.deviceId === "default") || list[0] || {}).deviceId || "";
+  }
+
+  async function openCal() {
+    if (locked()) return;
+    clear(sheet);
+    const sel = h("select.eq-select", { "aria-label": "Microphone" });
+    const fill = (list) => {
+      clear(sel);
+      if (!list.length) sel.appendChild(h("option", { value: "" }, "Default microphone"));
+      const want = pickMic(list);
+      for (const d of list) {
+        const o = h("option", { value: d.deviceId }, d.label || (d.deviceId === "default" ? "Default microphone" : "Microphone"));
+        if (d.deviceId === want) o.selected = true;
+        sel.appendChild(o);
+      }
+    };
+    fill(await listMics());
+    const blank = [...sel.options].every((o) => !o.textContent || /^(Default )?[Mm]icrophone$/.test(o.textContent));
+    const more = h("button.eq-link", { type: "button", onclick: async () => { fill(await listMics(true)); more.hidden = true; } },
+      "Show every microphone…");
+    more.hidden = !blank;
+    sel.addEventListener("change", () => { try { localStorage.setItem(MIC_KEY, sel.value); } catch { /* ok */ } });
+    const status = h("div.eq-sheet-status");
+    const bar = h("div.eq-bar", h("i"));
+    bar.hidden = true;
+    const start = sheetBtn("Start measuring", () => doRun(sel, status, bar, start, cancel));
+    const cancel = h("button.eq-key", { type: "button", onclick: closeSheet }, h("span.eq-v2", "Cancel"));
+    sheet.append(h("div.eq-sheet-card",
+      h("div.eq-k", "Auto · Calibrate"),
+      h("h2.eq-sheet-title", "Measure the cabin"),
+      h("p", "Sit in the driver's seat, set the car radio to a normal listening level, keep the cabin quiet. It plays a 10-second sweep."),
+      h("p.eq-fine", "Nothing plays until you tap Start. The equalizer is held flat while it listens, then fitted to what it heard."),
+      h("div.eq-k", "Microphone"), sel, more, bar, status,
+      h("div.eq-sp-row", start, cancel)));
+    sheet.hidden = false;
+  }
+
+  function abortRun() {
+    if (!run) return;
+    const r = run; run = null;
+    r.aborted = true;
+    try { r.src && r.src.stop(); } catch { /* not started */ }
+    try { r.node && r.node.disconnect(); r.mic && r.mic.disconnect(); r.gain && r.gain.disconnect(); r.sink && r.sink.disconnect(); } catch { /* ok */ }
+    if (r.stream) r.stream.getTracks().forEach((t) => t.stop());
+    if (r.flat) flat(false);
+    clearInterval(r.tick);
+  }
+
+  const WORKLET = "class R extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true;}}registerProcessor('eq-rec',R);";
+
+  async function doRun(sel, status, bar, start, cancel) {
+    if (locked()) return;
+    start.disabled = true;
+    const say = (m, tone) => { status.textContent = m; status.className = "eq-sheet-status" + (tone ? " " + tone : ""); };
+    const fail = (m) => {
+      abortRun();
+      say(m, "bad");
+      bar.hidden = true;
+      start.disabled = false;
+      start.querySelector(".eq-v2").textContent = "Try again";
+    };
+    const mine = run = { aborted: false };
+    try {
+      await resume();
+      const an = meterIn(), ctx = an.context;
+      if (ctx.state !== "running") return fail("The browser won't play sound until the screen is tapped once more.");
+      say("Opening the microphone…");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: Object.assign(
+        { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+        sel.value ? { deviceId: { exact: sel.value } } : {}) });
+      mine.stream = stream;
+      if (mine.aborted) return;
+      const fs = ctx.sampleRate, sweep = CAL.sweepSignal(fs);
+      const lead = Math.round(CAL.CAL.LEAD_SECS * fs), total = lead + sweep.length + Math.round(CAL.CAL.TAIL_SECS * fs);
+      const chunks = []; let got = 0, played = false;
+      const mic = ctx.createMediaStreamSource(stream), sink = ctx.createGain();
+      sink.gain.value = 0; sink.connect(ctx.destination);
+      mine.mic = mic; mine.sink = sink;
+      const onData = (c) => {
+        if (mine.aborted) return;
+        chunks.push(c); got += c.length;
+        if (!played && got >= lead) { played = true; startSweep(); }
+        const sec = got / fs;
+        bar.firstChild.style.width = Math.min(100, sec / (total / fs) * 100) + "%";
+        if (played) say(`Measuring… keep still and quiet (${Math.max(0, Math.ceil((total - got) / fs))} s)`);
+        if (got >= total) finish();
+      };
+      try {
+        await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" })));
+        const node = new AudioWorkletNode(ctx, "eq-rec", { numberOfOutputs: 1, outputChannelCount: [1] });
+        node.port.onmessage = (e) => onData(e.data);
+        mic.connect(node); node.connect(sink); mine.node = node;
+      } catch {
+        const node = ctx.createScriptProcessor(4096, 1, 1);          // an older engine: no worklets
+        node.onaudioprocess = (e) => onData(new Float32Array(e.inputBuffer.getChannelData(0)));
+        mic.connect(node); node.connect(sink); mine.node = node;
+      }
+      // The equalizer is held flat for the measurement (live, no restart).
+      if (S.present && S.state.enabled) { flat(true); mine.flat = true; }
+      bar.hidden = false; bar.firstChild.style.width = "0%";
+      cancel.querySelector(".eq-v2").textContent = "Stop";
+      say("Listening to the cabin… quiet please");
+      function startSweep() {
+        const buf = ctx.createBuffer(2, sweep.length, fs);
+        buf.copyToChannel(sweep, 0); buf.copyToChannel(sweep, 1);
+        const src = ctx.createBufferSource(), g = ctx.createGain();
+        src.buffer = buf; src.connect(g); g.connect(an);
+        mine.src = src; mine.gain = g;
+        src.start();
+      }
+      function finish() {
+        if (mine.aborted || run !== mine) return;
+        const rec = new Float32Array(got);
+        let o = 0; for (const c of chunks) { rec.set(c, o); o += c.length; }
+        abortRun();
+        const r = CAL.calibrate(rec, fs, sweep);
+        bar.hidden = true;
+        if (!r.ok) {
+          say(r.error, "bad");
+          start.disabled = false; start.querySelector(".eq-v2").textContent = "Try again";
+          cancel.querySelector(".eq-v2").textContent = "Close";
+          return;
+        }
+        const sel0 = sel.selectedOptions[0];
+        showResult(r, sel0 ? sel0.textContent : "");
+      }
+      mine.tick = setInterval(() => { if (locked()) { fail("Stopped: the car is moving."); } }, 500);
+    } catch (e) {
+      const m = e && e.name === "NotAllowedError" ? "The microphone is blocked. Allow it for this page and try again."
+              : e && e.name === "NotFoundError" ? "No microphone was found."
+              : "The measurement could not start: " + ((e && e.message) || e);
+      fail(m);
+    }
+  }
+
+  // The result is APPLIED at once (so it can be heard, and compared with Hold for
+  // flat) and can be undone or kept as a preset.
+  function showResult(r, micName) {
+    prev = { bands: clone(bands()), preamp: S.state.preamp, preset: S.state.preset, enabled: S.state.enabled, cal: S.cal };
+    disp = clone(bands());
+    S.state.bands = r.bands.map((b) => Object.assign({}, b));
+    S.state.preset = null; S.state.preamp = null; S.state.enabled = true;
+    S.cal = { freqs: r.freqs.map((f) => Math.round(f * 10) / 10), measured: r.measured.map((v) => Math.round(v * 100) / 100),
+              target: r.target.map((v) => Math.round(v * 100) / 100), predicted: r.predicted.map((v) => Math.round(v * 100) / 100),
+              confidence: Math.round(r.confidence * 100) / 100, snr_db: Math.round(r.snrDb * 10) / 10, label: r.label,
+              at: new Date().toISOString().slice(0, 16), mic: micName.slice(0, 60) };
+    S.showRoom = true;
+    recalc(); morphTo(S.state.bands); paintAll(); commitNow();
+    const used = r.fitted;
+    clear(sheet);
+    const name = dateName();
+    sheet.append(h("div.eq-sheet-card",
+      h("div.eq-k", "Auto · Calibrate"),
+      h("h2.eq-sheet-title", `Measured. ${used ? used + (used === 1 ? " band" : " bands") + " fitted." : "Nothing needed fixing."}`),
+      h("div.eq-facts",
+        h("div.eq-cap", h("div.eq-k", "Confidence"), h("div.eq-v", `${r.label} · ${Math.round(r.snrDb)} dB above the noise`)),
+        h("div.eq-cap", h("div.eq-k", "Headroom"), h("div.eq-v.eq-num", `${M.fmtDb(S.pre)} dB auto`))),
+      r.label === "Low" ? h("p.eq-warnline", "Low confidence: the measurement was close to the noise. Try again with the radio a little louder.") : null,
+      h("p", "The curves on the graph are what it heard, what it aimed for, and what it should sound like with this EQ. It is on now: hold Compare to hear the difference."),
+      h("div.eq-sp-row",
+        sheetBtn(`Keep as "${name}"`, () => {
+          S.state.user_presets[name] = { bands: clone(bands()), preamp: null, cal: clone(S.cal) };
+          S.state.preset = name; prev = null;
+          closeSheet(); paintPresets(); commitNow(); toast(`Saved "${name}"`);
+        }),
+        h("button.eq-key", { type: "button", onclick: () => { undoCal(); closeSheet(); } }, h("span.eq-v2", "Undo")),
+        h("button.eq-key", { type: "button", onclick: closeSheet }, h("span.eq-v2", "Close")))));
+  }
+  function undoCal() {
+    if (!prev) return;
+    const p = prev; prev = null;
+    disp = clone(bands());
+    S.state.bands = p.bands; S.state.preamp = p.preamp; S.state.preset = p.preset; S.state.enabled = p.enabled; S.cal = p.cal;
+    recalc(); morphTo(S.state.bands); paintAll(); commitNow();
+  }
+
   root.classList.add("eq-root");
   clear(root);
-  root.append(h("div.eqv", head, graph, keyTrack, insp, presetRow, savePanel, foot));
+  root.append(h("div.eqv", head, graph, keyTrack, insp, presetRow, savePanel, foot, sheet));
 
   // ---------------------------------------------------------------- painting
   function setSeg(btn, on) {
@@ -567,7 +813,7 @@ export default function eqView(root) {
     const user = !!(S.state.preset && S.state.user_presets[S.state.preset]);
     manageBtn.hidden = !user;
     const lk = locked();
-    for (const b of [saveBtn, manageBtn]) { b.disabled = lk; b.title = lk ? "Available when you stop" : ""; }
+    for (const b of [saveBtn, manageBtn, calBtn]) { b.disabled = lk; b.title = lk ? "Available when you stop" : ""; }
     const cur = presetTrack.querySelector(".on");
     if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
@@ -705,7 +951,7 @@ export default function eqView(root) {
     ro.disconnect(); offLive();
     document.removeEventListener("visibilitychange", onVis);
     window.removeEventListener("blur", onBlur);
-    stopNoise();
+    abortRun(); stopNoise();
     if (flatHeld) { flatHeld = false; api.eqLive({ flat: false }).catch(() => {}); }
     for (const t of timers) clearTimeout(t);
     clearTimeout(liveTimer);

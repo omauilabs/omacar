@@ -229,3 +229,61 @@
 
 /* The screen fills the stage: no run-out under the footer, as on Home. */
 .stage:has(.eq-root) { --stage-pad-b: 16px; }
+
+/* ---- the room Calibrate measured, behind the curve --------------------------
+   Three curves that do not depend on colour alone (the red-only night look
+   collapses hue to lightness): measured is solid, target is dotted, and "with
+   this EQ" is the thin bright one. */
+.eq-cal { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.eq-meas { stroke: var(--warn); stroke-width: 1.8; opacity: .9; }
+.eq-targ { stroke: var(--ok); stroke-width: 2; stroke-dasharray: 1 6; }
+.eq-pred { stroke: var(--ink); stroke-width: 1.4; opacity: .85; }
+.eq-legend {
+  position: absolute; left: 48px; top: 8px; z-index: 1; display: flex; align-items: center; gap: 4px 14px;
+  padding: 4px 6px 4px 12px; border-radius: 12px; font-size: .74rem; color: var(--ink-2);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+.eq-legend[hidden] { display: none; }
+.eq-legend.hidden .eq-lg { display: none; }
+.eq-lg { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.eq-lg::before { content: ""; width: 18px; height: 0; border-top: 2px solid currentColor; }
+.eq-lg-meas { color: var(--warn); } .eq-lg-meas::before { border-top-style: solid; }
+.eq-lg-targ { color: var(--ok); } .eq-lg-targ::before { border-top-style: dotted; }
+.eq-lg-pred { color: var(--ink); } .eq-lg-pred::before { border-top-width: 1.5px; }
+.eq-lg-hide {
+  min-height: 32px; padding: 0 12px; border: 0; border-radius: 10px; font: inherit; font-size: .74rem;
+  color: var(--ink-2); background: var(--raise); cursor: pointer; touch-action: manipulation;
+}
+
+/* ---- the calibrate sheet ----------------------------------------------------- */
+.eq-sheet {
+  position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 12px;
+  border-radius: 20px; background: color-mix(in srgb, var(--ground) 78%, transparent);
+  backdrop-filter: blur(3px);
+}
+.eq-sheet[hidden] { display: none; }
+.eq-sheet-card {
+  display: grid; gap: 10px; width: min(580px, 100%); padding: 22px 24px; border-radius: 22px;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 24px 60px -16px rgba(0, 0, 0, .75);
+}
+.eq-sheet-card p { margin: 0; color: var(--ink-2); line-height: 1.45; }
+.eq-sheet-card .eq-fine { font-size: .82rem; color: var(--dim); }
+.eq-sheet-title { margin: 0; font-family: var(--display); font-size: 1.35rem; font-weight: 600; color: var(--ink); }
+.eq-select {
+  min-height: var(--tap); padding: 0 12px; border: 0; border-radius: 14px; font: inherit; color: var(--ink);
+  background: var(--ground); box-shadow: inset 0 0 0 1px var(--hair); width: 100%;
+}
+.eq-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eq-link { justify-self: start; border: 0; background: none; font: inherit; font-size: .85rem; color: var(--accent);
+  min-height: 36px; padding: 0; cursor: pointer; }
+.eq-link[hidden] { display: none; }
+.eq-bar { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+.eq-bar[hidden] { display: none; }
+.eq-bar i { display: block; height: 100%; width: 0; border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-fill), var(--accent)); }
+.eq-sheet-status { min-height: 1.4em; color: var(--ink); font-size: .95rem; }
+.eq-sheet-status.bad, .eq-warnline { color: var(--warn); }
+.eq-facts { display: flex; flex-wrap: wrap; gap: 8px 32px; }
+.eq-key.eq-go::before { opacity: 1; }
+.eq-key.eq-go { color: var(--ink); }

@@ -160,6 +160,32 @@ def clean_preamp(v):
     return round(_num(v, PREAMP_MIN, 0.0, "preamp"), 1)
 
 
+def clean_cal(raw):
+    """What a calibration leaves with its preset, so the graph can show the room
+    that preset was fitted to: three curves on a shared frequency list, and a few
+    facts about how well it was measured. None when there is none."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("cal must be an object")
+    freqs = raw.get("freqs")
+    if not isinstance(freqs, list) or not 8 <= len(freqs) <= 64:
+        raise ValueError("cal.freqs must be a list of 8 to 64 frequencies")
+    out = {"freqs": [round(_num(f, 10.0, 30000.0, "cal freq"), 1) for f in freqs]}
+    for k in ("measured", "target", "predicted"):
+        v = raw.get(k)
+        if not isinstance(v, list) or len(v) != len(freqs):
+            raise ValueError(f"cal.{k} must have one value per frequency")
+        out[k] = [round(_num(x, -60.0, 60.0, f"cal {k}"), 2) for x in v]
+    out["confidence"] = round(_num(raw.get("confidence", 0.0), 0.0, 1.0, "cal confidence"), 2)
+    out["snr_db"] = round(_num(raw.get("snr_db", 0.0), -60.0, 200.0, "cal snr"), 1)
+    label = raw.get("label")
+    out["label"] = label if label in ("High", "Medium", "Low") else "Low"
+    out["at"] = str(raw.get("at", ""))[:40]
+    out["mic"] = str(raw.get("mic", ""))[:60]
+    return out
+
+
 def clean_state(raw):
     """A whole state from anything a client sent: clamped, and refused (ValueError)
     where it is not the shape of a state at all."""
@@ -182,6 +208,9 @@ def clean_state(raw):
         if not isinstance(p, dict):
             raise ValueError("a preset must be an object")
         out[name] = {"bands": clean_bands(p.get("bands")), "preamp": clean_preamp(p.get("preamp"))}
+        cal = clean_cal(p.get("cal"))
+        if cal:
+            out[name]["cal"] = cal
     st["user_presets"] = out
     return st
 
