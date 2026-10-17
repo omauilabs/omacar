@@ -13,9 +13,8 @@ import { h } from "./core.js";
 import { READINGS } from "./readings.js";
 import { makeGauge } from "./gauges.js";
 import { hybridNow } from "./hybrid.js";
-import { sparkPath } from "./spark.js";
+import { sparkPath, makeSpark } from "./spark.js";
 
-const NS = "http://www.w3.org/2000/svg";
 const KEEP_MS = 60000;
 const WHERE = "Not found yet — the parked IMA session (tools/ima-session.sh) will look for it.";
 const CELLS = [
@@ -32,15 +31,11 @@ export function makeHybridLive() {
   const cells = CELLS.map((c) => {
     const v = h("strong.hl-v", "—");
     const src = h("span.hl-src");
-    const svg = document.createElementNS(NS, "svg");
-    svg.setAttribute("viewBox", "0 0 120 28");
-    svg.setAttribute("preserveAspectRatio", "none");
-    svg.setAttribute("aria-hidden", "true");
-    const path = document.createElementNS(NS, "path");
-    svg.appendChild(path);
+    const spark = makeSpark(120, 28);
+    const svg = spark.svg;
     const note = h("p.hl-note.muted");
     const node = h("div.hl-cell", h("span.hl-k", c.label), h("div.hl-val", v, src), svg, note);
-    return { ...c, node, v, src, path, note, trail: [] };
+    return { ...c, node, v, src, spark, note, trail: [] };
   });
   const node = h("section.sect.hybrid-live",
     h("div.title", { style: { fontSize: "1.05rem" } }, "Live"),
@@ -62,7 +57,7 @@ export function makeHybridLive() {
         if (!found) {
           c.v.textContent = "—";
           c.src.textContent = "";
-          c.path.setAttribute("d", "");
+          c.spark.draw("");
           c.note.textContent = c.key === "charge" ? "Waiting for the car" : WHERE;
           c.trail.length = 0;
           continue;
@@ -72,7 +67,7 @@ export function makeHybridLive() {
         c.note.textContent = "";
         if (!s.handover) c.trail.push([now, Number(q.value)]);
         while (c.trail.length && now - c.trail[0][0] > KEEP_MS) c.trail.shift();
-        c.path.setAttribute("d", sparkPath(c.trail, 120, 28, null, null));
+        c.spark.draw(sparkPath(c.trail, 120, 28, null, null));
       }
     },
   };

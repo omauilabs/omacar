@@ -22,7 +22,7 @@
    exists to absorb. */
 .wrap:has(> .home) { max-width: none; display: block; height: 100%; }
 .home {
-  display: flex; flex-direction: column; gap: 12px; height: 100%;
+  display: flex; flex-direction: column; gap: 8px; height: 100%;
   /* position + isolation: the look's animated background (.home-fx, below)
      is the one thing on this screen that should sit behind everything else
      drawn here, and isolating the stacking context keeps that negative
@@ -45,15 +45,20 @@
   .home-grid { grid-template-columns: repeat(6, minmax(0, 1fr));
                grid-auto-rows: minmax(84px, 1fr); gap: 8px; }
   .hc.sig { padding: 10px 14px; gap: 4px; }
-  /* Home does not scroll, so it needs none of the stage's 40 px run-out
-     under the last row; the same 22 px as above it. */
-  .stage:has(> .wrap > .home) { padding-bottom: 22px; }
 }
+/* HOME DOES NOT SCROLL, so it needs no run-out under its last row at all: the
+   footer line sits 8 px above the dock and every other pixel goes to the
+   cards. In both orientations -- landscape kept the full run-out until
+   2026-10-17 and showed ~100 px of empty stage above the dock. */
+.stage:has(> .wrap > .home) { padding-bottom: 8px; }
 .hc { position: relative; min-width: 0; min-height: 0; overflow: hidden; margin: 0; padding: 16px; }
 .hc[role="button"] { cursor: pointer; }
 .home-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px;
              font-size: .75rem; color: var(--dim); }
-.home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap);
+/* A slim line, not a 56 px row: the editor is also one long press on any card
+   away, and it is parked-only, so this is never the target a moving thumb is
+   reaching for. 36 px still clears WCAG 2.2's 24 px target minimum. */
+.home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: 36px;
                padding: 0 12px; background: none; border: 0; color: var(--ink-2); font: inherit; }
 /* Greyed while driving, never hidden: the same treatment as a locked chip. */
 .home-custom:disabled { opacity: .45; cursor: default; }
@@ -147,8 +152,8 @@
 .sig-note { font-size: .78rem; color: var(--dim); }
 .sig-spark { flex: 1; min-width: 60px; }
 .sig-spark svg { width: 100%; height: 28px; display: block; }
-.sig-spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.sig[data-reading="charge"] .sig-spark path { stroke: var(--ok); }
+.sig-spark svg { color: var(--accent); }
+.sig[data-reading="charge"] .sig-spark svg { color: var(--ok); }
 .sig-scale { display: flex; justify-content: space-between; font-size: .62rem; color: var(--faint);
              font-variant-numeric: tabular-nums; }
 .sig[data-tone="warn"] .sig-v { color: var(--warn); }

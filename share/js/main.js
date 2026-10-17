@@ -663,7 +663,7 @@ function paintLead() {
   if (cameFrom) {
     lead.style.visibility = "visible";
     lead.dataset.go = cameFrom.id;
-    lead.textContent = "← " + cameFrom.label;
+    setLead(lead, "Back to", cameFrom.label);
     lead.classList.remove("chip-link");
     return;
   }
@@ -679,10 +679,23 @@ function paintLead() {
   lead.style.visibility = show ? "visible" : "hidden";
   if (show) {
     lead.dataset.go = HOME;
-    lead.textContent = auto.mode === "moving" ? "Car moving — open Home"
-                                              : "Car connected — open Home";
+    setLead(lead, auto.mode === "moving" ? "Car moving" : "Car connected", "Open Home");
     lead.classList.add("chip-link");
   }
+}
+
+// The lead's two lines -- what it is, then where it goes -- beside a chevron
+// in its own well. Rebuilt only when the words change, so a repaint every
+// poll never restarts the press animation under a thumb.
+function setLead(lead, kicker, label) {
+  const key = kicker + "\n" + label;
+  if (lead.dataset.words === key) return;
+  lead.dataset.words = key;
+  clear(lead);
+  lead.setAttribute("aria-label", `${kicker} ${label}`);
+  lead.append(
+    h("span.lead-well", { "aria-hidden": "true" }, icon(ICONS.chevron, 18)),
+    h("span.lead-txt", h("span.lead-k", kicker), h("span.lead-v", label)));
 }
 
 // ------------------------------------------------------------- the top bar

@@ -223,13 +223,20 @@ button { font: inherit; color: inherit; }
    moves the tab bar out from under a thumb already travelling towards it.
    Care has five chips and the row is 1368px wide, so this only ever matters
    on a narrower mount -- which is the case where it matters most. */
+/* The track: one rounded surface holding every chip, hugging them rather
+   than running the width of the screen. */
 .subbar-chips {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 0;
+  padding: 0 4px; border-radius: 16px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent);
   overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
   scrollbar-width: none;                 /* Firefox */
   -ms-overflow-style: none;
 }
 .subbar-chips::-webkit-scrollbar { width: 0; height: 0; }
+/* No chips, no track: an empty rounded sliver would read as a broken control. */
+.subbar-chips:not(:has(> .chip)) { background: none; box-shadow: none; }
 /* The label a screen that is off the navigation wears instead of lighting a
    tab it does not belong to. */
 .subbar-here {
@@ -248,10 +255,31 @@ button { font: inherit; color: inherit; }
   min-width: 64px; justify-content: center;
   touch-action: manipulation;
 }
-.chip[aria-current="page"] {
-  background: var(--raise); color: var(--ink); border-color: var(--faint);
+/* ONE SEGMENTED CONTROL, NOT A ROW OF CAPSULES (owner, 2026-10-17: "these
+   pills are horrid"). The chips lose their outlines and share a single soft
+   track (.subbar-chips below); the current one is lifted on the same accent
+   wash as the dock's lit key, so the two levels of navigation speak one
+   language. Every chip keeps the full row height as its target -- the thumb
+   is drawn INSET within it, so making it look lighter cost no tap area. */
+.chip { position: relative; isolation: isolate; border-color: transparent; border-radius: 14px;
+        color: var(--ink-2); }
+.chip::before {
+  content: ""; position: absolute; inset: 5px 2px; z-index: -1; border-radius: 11px;
+  pointer-events: none; opacity: 0; transition: opacity .22s ease, transform .18s ease;
+  transform: scale(.94);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-fill) 46%, transparent),
+    color-mix(in srgb, var(--accent-fill) 16%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent),
+              inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+              0 6px 16px -8px color-mix(in srgb, var(--accent) 65%, transparent);
 }
-.chip:active { background: var(--raise); border-color: var(--faint); }
+.chip[aria-current="page"] { color: var(--ink); font-weight: 600; background: transparent; }
+.chip[aria-current="page"]::before { opacity: 1; transform: none; }
+.chip:active { background: transparent; }
+.chip:active:not([aria-current="page"])::before {
+  opacity: .55; transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) { .chip::before { transition: none; } }
 /* Greyed, never hidden. A write-capable screen that vanishes while the car is
    moving is a screen somebody hunts for at 60 mph, which is worse than one
    they cannot press. */
@@ -277,14 +305,35 @@ button { font: inherit; color: inherit; }
    must not drag somebody off a fault code because the ELM327 re-linked at a
    set of lights. */
 .chip-lead {
-  display: block; width: 100%; line-height: calc(var(--tap) - 2px);
-  padding: 0 14px; overflow: hidden; text-overflow: ellipsis;
-  text-align: left;
+  width: 100%; justify-content: flex-start; gap: 12px;
+  padding: 0 14px 0 4px; border-color: transparent; background: transparent;
+  text-align: left; overflow: hidden;
 }
-.chip-lead.chip-link {
-  color: var(--info); background: var(--info-bg);
-  border-color: color-mix(in srgb, var(--info) 45%, var(--edge-2));
+/* The chevron sits in its own round well -- the part a thumb aims for -- and
+   the words beside it say what the button is before where it goes: "Back to"
+   over "Overview". No outline: a back control is furniture, not a choice
+   competing with the chips beside it. Pressing it sinks the well (scale) and
+   lights it, so the tap is answered before the screen changes. */
+.lead-well {
+  flex: none; display: grid; place-items: center;
+  width: calc(var(--tap) - 12px); height: calc(var(--tap) - 12px); border-radius: 50%;
+  background: var(--raise); color: var(--ink);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent),
+              0 1px 2px rgba(0, 0, 0, .35);
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4), background-color .14s, color .14s;
 }
+.chip-lead:not(.chip-link) .lead-well svg { rotate: 180deg; }
+.lead-txt { display: grid; min-width: 0; line-height: 1.2; }
+.lead-k { font-size: .68rem; color: var(--dim); letter-spacing: .02em; }
+.lead-v { font-size: .9rem; color: var(--ink); font-weight: 500;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip-lead:active { background: transparent; }
+.chip-lead:active .lead-well { transform: scale(.88); background: var(--accent-fill); color: var(--on-accent); }
+/* The car having connected is news, so its well carries the info colour. */
+.chip-lead.chip-link .lead-well { background: var(--info-bg); color: var(--info);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--info) 40%, transparent); }
+.chip-lead.chip-link .lead-k { color: var(--info); }
+@media (prefers-reduced-motion: reduce) { .lead-well { transition: none; } }
 
 /* ---- the tab bar ---- */
 /* THE DOCK. Ported from crz-cockpit's rail (doc/design/cockpit): 74-square
@@ -329,41 +378,45 @@ button { font: inherit; color: inherit; }
 /* THREE SIGNALS FOR THE CURRENT TAB, NOT A TINT.
    looks.js ships a red-only night palette in which every hue collapses to a
    lightness, so "the current one is the blue one" is not a statement that
-   survives to 2am on a dark road. The current tab is therefore the one with a
-   filled pill behind its icon and label, a 3px edge along the top of its
-   slot, and aria-current="page" for anything reading the page aloud. The edge
-   is a transparent border on every tab so that lighting it moves nothing --
-   the rail's version was an absolutely positioned bar at left:-10px inside an
-   overflow-x:hidden parent, and it was clipped away entirely. */
-/* The accent is a MARK OVER THE PILL, not a rule across the tab.
-   It was border-top-color on the whole 270px tab, in --ink, which is very
-   nearly white -- and it landed immediately under the sub-tab row's own
-   border, so the two read together as a stray divider someone had left in
-   rather than as an indicator of where you are. Sized to the pill and given a
-   radius, it reads as pointing at something. The 3px transparent border above
-   stays exactly as it was: it reserves the band so that lighting a tab moves
-   nothing, which was the right instinct and is why this is drawn into that
-   band rather than added to it. */
-.tab[aria-current="page"] { color: var(--ink); }
-.tab[aria-current="page"]::before {
-  content: ""; position: absolute; top: -3px; left: 50%;
-  transform: translateX(-50%);
-  width: 34px; height: 3px; border-radius: 0 0 3px 3px;
-  background: var(--ink);
-}
-.tab[aria-current="page"] .tab-in { background: var(--raise); }
+   survives to 2am on a dark road. The current tab is the one whose slot is
+   lit (a fill, which survives any palette), whose ink flips to --on-accent
+   and whose label is heavier -- plus aria-current="page" for anything reading
+   the page aloud. guards_test.py holds all of them in place. */
 .tab:active .tab-in { background: var(--hair); }
 
-.tab[aria-current="page"] { color: var(--accent); }
+/* THE CURRENT TAB IS LIT, NOT UNDERLINED (owner, 2026-10-17).
+   Its rounded square -- the 74px pill every tab already has -- fills with a
+   soft wash of the look's accent: strongest at the top, fading toward the
+   bottom, with a hairline of light along the top edge and a faint glow
+   beneath, so it reads as a lit key on the dock rather than a sticker on it.
+   Subtle on purpose (owner: "more rounded square than a circle with subtle
+   gradient fade"), so the icon and label stay in --ink, which every look sets
+   to read on its own panels; at a 30-60% wash that holds in Night-red and Day
+   alike.
+
+   The wash is a pseudo-element faded by opacity, because gradients do not
+   transition: a tap cross-fades the light from one key to the next instead of
+   snapping. */
+.tab-in { position: relative; isolation: isolate; }
+.tab-in::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  pointer-events: none; opacity: 0; transition: opacity .25s ease;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-fill) 58%, transparent) 0%,
+    color-mix(in srgb, var(--accent-fill) 30%, transparent) 55%,
+    color-mix(in srgb, var(--accent-fill) 12%, transparent) 100%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 55%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 8px 22px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.tab[aria-current="page"] { color: var(--ink); }
 .tab[aria-current="page"] .tab-in { background: transparent; }
-/* width and transform are reset here: the rule above sizes the mark to 34px
-   and pulls it back by half its width from left:50%, and inherited under
-   left:32% that put every tab's underline 17px left of its label. */
-.tab[aria-current="page"]::before {
-  top: auto; bottom: 6px; left: 32%; right: 32%; height: 3px; border-radius: 3px;
-  width: auto; transform: none;
-  background: var(--accent);
-  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--accent) 55%, transparent);
+.tab[aria-current="page"] .tab-in::before { opacity: 1; }
+.tab[aria-current="page"] .tab-in svg { color: var(--accent); }
+.tab[aria-current="page"] .tab-lbl { font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .tab-in::before { transition: none; }
 }
 
 /* Badges roll up from the sub-screens to the tab. */
@@ -388,7 +441,7 @@ button { font: inherit; color: inherit; }
 @media (hover: hover) {
   .tab:hover { color: var(--dim); }
   .tab:hover .tab-in { background: var(--hair); }
-  .chip:hover:not([disabled]) { color: var(--ink); border-color: var(--faint); }
+  .chip:hover:not([disabled]) { color: var(--ink); }
 }
 
 /* ONE FOCUS RULE, AND NO outline:none ANYWHERE NEAR IT.
@@ -421,12 +474,40 @@ button { font: inherit; color: inherit; }
             gap: 10px; min-width: 0; }
 .tb-car { font-size: .78rem; color: var(--ink-2); white-space: nowrap;
           overflow: hidden; text-overflow: ellipsis; }
-.tb-src { font-size: .68rem; letter-spacing: .12em; color: var(--dim);
-          padding: 4px 8px; border: 1px solid var(--edge-2); border-radius: 6px;
-          white-space: nowrap; }
-.tb-src.ok   { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
-.tb-src.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
-.tb-src.bad  { color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+/* THE READOUTS. The car link and the drowsy watch (drowsy.css) are one
+   console: two readouts sharing a single recessed well, joined at a hairline,
+   each a status light, a caption saying what it reports, and the state under
+   it -- the way an instrument cluster labels its telltales, instead of two
+   loose capsules that each said "no car" in different words. The caption is
+   CSS content, so the readout's text is still exactly its state for anything
+   that reads it. Flex order puts the console first and the car's name before
+   it, whatever order main.js and drowsyui.js append them in. */
+.tb-right { --console: linear-gradient(180deg, var(--raise), var(--panel-2)); --console-flat: var(--panel-2); }
+.tb-car { order: -2; }
+.tb-src {
+  order: 0; position: relative; display: grid; align-content: center;
+  height: 44px; padding: 0 16px 0 30px; white-space: nowrap;
+  background: var(--console); border-radius: 0 14px 14px 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+  font-size: .78rem; font-weight: 600; letter-spacing: .08em; color: var(--ink-2); line-height: 1.25;
+  --lamp: var(--faint);
+}
+.tb-src::before { content: "Car link"; font-size: .66rem; font-weight: 400; letter-spacing: .02em; color: var(--dim); }
+/* The lamp: a lit point with its own halo, drawn on the readout's left. */
+.tb-src::after {
+  content: ""; position: absolute; left: 13px; top: 50%; width: 8px; height: 8px; margin-top: -4px;
+  border-radius: 50%; background: var(--lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 16%, transparent), 0 0 10px color-mix(in srgb, var(--lamp) 60%, transparent);
+}
+.tb-src:not(.ok):not(.warn):not(.bad)::after { box-shadow: none; }
+.tb-src.ok   { color: var(--ok);   --lamp: var(--ok); }
+.tb-src.warn { color: var(--warn); --lamp: var(--warn); }
+.tb-src.bad  { color: var(--bad);  --lamp: var(--bad); }
+/* Only a fault breathes. Steady is fine; a lamp that pulses is asking. */
+.tb-src.bad::after { animation: lamp-ask 2.4s ease-in-out infinite; }
+@keyframes lamp-ask { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--lamp) 0%, transparent), 0 0 16px var(--lamp); } }
+@media (prefers-reduced-motion: reduce) { .tb-src.bad::after { animation: none; } }
+@media (pointer: coarse) { .tb-src { height: var(--tap); } }
 
 /* --------------------------------------------------- the segment row */
 .segbar { grid-area: segbar; display: flex; gap: 8px; padding: 8px 20px;
@@ -440,7 +521,10 @@ button { font: inherit; color: inherit; }
 .app[data-subbar="0"] .subbar { display: none; }
 
 /* ------------------------------------------------------- placeholders */
-.ph-card { max-width: 640px; margin: 8vh auto 0; padding: 40px; text-align: center; }
+/* A placeholder is the whole screen's content, so it sits in the middle of the
+   stage rather than hanging from the top with the bottom half empty. */
+.wrap:has(> .ph-card) { height: 100%; align-content: center; }
+.ph-card { max-width: 640px; margin: 0 auto; padding: 40px; text-align: center; }
 .ph-icon { color: var(--accent); }
 .ph-title { font-family: var(--display); font-size: 1.8rem; font-weight: 600;
             color: var(--ink); margin-top: 12px; }
@@ -460,17 +544,21 @@ button { font: inherit; color: inherit; }
 /* The way into the settings sheet, and the only icon-only control in the top
    bar -- so it gets min-WIDTH as well as min-height. Padding would not have
    helped it: there is no text in it to pad. */
+/* Round and borderless, after the console: icons the eye skips until the hand
+   wants one. A press sinks and lights the disc, so a gloved or glancing tap
+   is visibly taken. */
 .vbar-btn {
-  flex: none; min-width: var(--tap); min-height: var(--tap);
+  order: 2; flex: none; min-width: var(--tap); min-height: var(--tap);
   display: grid; place-items: center; cursor: pointer;
-  border: 1px solid var(--edge-2); border-radius: var(--r);
-  background: transparent; color: var(--dim);
-  transition: color .12s, background .12s, border-color .12s;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--ink-2);
+  transition: color .12s, background-color .12s, transform .14s cubic-bezier(.3, .7, .4, 1.4);
 }
-.vbar-btn:active { background: var(--raise); border-color: var(--faint); }
+.vbar-btn:active { background: var(--raise); color: var(--ink); transform: scale(.9); }
 @media (hover: hover) {
-  .vbar-btn:hover { color: var(--ink); border-color: var(--faint); }
+  .vbar-btn:hover { color: var(--ink); background: var(--console-flat); }
 }
+@media (prefers-reduced-motion: reduce) { .vbar-btn { transition: none; } }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); flex: none; }
 .dot.ok { background: var(--ok); box-shadow: 0 0 9px color-mix(in srgb, var(--ok) 55%, transparent); }
@@ -489,7 +577,11 @@ button { font: inherit; color: inherit; }
    without it a grid row refuses to shrink below its content and the bar gets
    pushed off the bottom of the screen by a long view. */
 .stage {
-  --stage-pad-t: 22px; --stage-pad-b: 40px;
+  /* 16 px under the last row, not 40. The 40 was a scroll run-out, and on
+     the screens that do not scroll (Home, Navigation, Agent) it read as a
+     dead band between the content and the dock -- the owner's "gap above the
+     navigation" (2026-10-17). 16 still clears a scrolled view's last card. */
+  --stage-pad-t: 22px; --stage-pad-b: 16px;
   grid-area: stage; padding: var(--stage-pad-t) 26px var(--stage-pad-b); overflow-y: auto; min-height: 0;
   overscroll-behavior: contain; transition: opacity .2s;
 }
@@ -1979,6 +2071,16 @@ ul.tight li { margin-bottom: 5px; }
 .hc-row > .muted { grid-column: 2 / -1; }
 .hc-k { color: var(--dim); font-size: .85rem; }
 .hc-spark svg { width: 120px; height: 28px; display: block; }
-.hc-spark path { fill: none; stroke: var(--info); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.hc-spark svg { color: var(--info); }
 .hc-v { font-variant-numeric: tabular-nums; }
 .hc-foot { font-size: .72rem; }
+
+/* ---- sparklines (share/js/spark.js makeSpark) ----------------------------
+   The line in the svg's own `color`, and under it a fade of that colour to
+   nothing at the floor, so a trail reads at a glance from the driver's seat
+   instead of as a hairline (owner, 2026-10-17). Each tile picks the colour by
+   setting `color` on its svg; the fade follows by itself. */
+svg.spark .spark-line { fill: none; stroke: currentColor; stroke-width: 1.5;
+                        vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+svg.spark .spark-stop-top { stop-color: currentColor; stop-opacity: .38; }
+svg.spark .spark-stop-bottom { stop-color: currentColor; stop-opacity: 0; }
