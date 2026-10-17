@@ -162,6 +162,9 @@ DEMO_ROUTES = {
     # The live page's volume pin (§2.6): it would hold the tablet's speakers at
     # 100% every 30 s. The demo never touches the volume.
     "/api/audio": {"managed": False, "demo": True},
+    # The equalizer would rewrite a PipeWire config and restart a user unit.
+    "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
+    "/api/eq/live": {"ok": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},
