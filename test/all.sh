@@ -50,6 +50,7 @@ python3 "$ROOT/test/guards_test.py" || fails=$((fails + 1))
 # real screen can go dark. Listed here on the day it was written.
 python3 "$ROOT/test/power_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/fridge_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/coach_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/env_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/ambient_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/v1_test.py" || fails=$((fails + 1))

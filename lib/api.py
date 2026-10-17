@@ -33,6 +33,7 @@ what the car said.
     GET  /api/home              Home's card layout
     POST /api/home              change it, or {action: "reset"}
     GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
+    GET  /api/coach             the last drive's hybrid score, its trend and its hint
     POST /api/fridge            {name: "power"|"z0_set", value}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
@@ -1168,6 +1169,11 @@ def handle_get(path, query):
         return 200, nursery.summary()
     if path == "/api/live":
         return 200, records.live()
+    if path == "/api/coach":
+        # Hybrid coaching (lib/coach.py): drives scored after they end, from
+        # the log, read-only. A simulated file says so (`source`).
+        import coach
+        return 200, coach.read_public(refresh_now=True)
     if path == "/api/fridge":
         # The CFX3 in the back (lib/fridge.py), as its link or the simulator
         # last wrote it. `source` says which, and the card always shows it.

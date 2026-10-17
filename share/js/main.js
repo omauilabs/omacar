@@ -30,6 +30,7 @@ import replayView from "./views/replay.js";
 import resetsView from "./views/resets.js";
 import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
+import coachScreen from "./views/coach.js";
 import launcherView from "./views/launcher.js";
 import effectsView from "./views/effects.js";
 import environmentView from "./views/environment.js";
@@ -222,6 +223,7 @@ const TABS = [
       // NOT BEHIND A TIER. "How is my battery" is an owner's question.
       { id: "hybrid", label: "Hybrid", views: [
         { id: "ima", label: "Battery", title: "Battery, motor and regen", mount: imaView },
+        { id: "coach", label: "Coach", title: "Hybrid coach", mount: coachScreen },
       ] },
       { id: "care", label: "Care", views: [
         { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
