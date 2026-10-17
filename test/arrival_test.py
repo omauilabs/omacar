@@ -333,6 +333,10 @@ def main():
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
+    print("\n  nothing starts unasked by default")
+    check("a fresh places.json does not auto-start pickup cooling (auto_pickup defaults to off)",
+          L.load_places().get("auto_pickup") is False)
+
     print(f"\n  {'all good' if not fails else f'{fails} failed'}\n")
     return 1 if fails else 0
 

@@ -217,7 +217,7 @@ def step(state, fix, places, fridge, now):
         if ended:
             st["last_pickup"] = ended
             st["suppressed"][ended["name"]] = now
-    elif f and places.get("auto_pickup", True):
+    elif f and places.get("auto_pickup", False):
         for p in places["pickups"]:
             if p["name"] in st["suppressed"]:
                 continue

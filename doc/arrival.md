@@ -86,6 +86,6 @@ false` to switch it off.
 ## Decisions for the owner
 
 - Eco default 5 C (41 F), just inside the usual food-safe limit; change it in Places.
-- The proximity auto-start (spec item 3) is on by default; `auto_pickup: false` turns it off.
+- The proximity auto-start is **off by default** (the lead's change, 2026-10-17): a pickup you choose cools the fridge; merely driving near a saved pickup does not, unless you set `"auto_pickup": true`. The rest of this feature never acts unasked, and this keeps it that way.
 - Where the arrival message goes: `lib/notify.py` records it; nothing pushes
   to the phone until omarchy-mobile reads the outbox (see notify.py).

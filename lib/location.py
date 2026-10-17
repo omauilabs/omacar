@@ -19,7 +19,7 @@ THE PLACES. ~/.config/omacar/places.json:
     {"home": {"lat": 37.77, "lon": -122.43, "radius_m": 150},
      "pickups": [{"name": "Target Marina", "lat": 37.80, "lon": -122.43}],
      "fridge_eco_c": 5.0,
-     "auto_pickup": true,
+     "auto_pickup": false,
      "house_command": ""}
 
 `house_command` is the owner's own hook for the "House" key on the arrival card
@@ -138,7 +138,7 @@ def clean_name(name):
 def load_places():
     """places.json as the app uses it; a missing or broken file is no places."""
     out = {"home": None, "pickups": [], "fridge_eco_c": DEFAULT_ECO_C, "house_command": "",
-           "auto_pickup": True}
+           "auto_pickup": False}
     try:
         with open(PLACES, encoding="utf-8") as f:
             raw = json.load(f)
@@ -166,7 +166,7 @@ def load_places():
     except ValueError:
         pass
     out["house_command"] = str(raw.get("house_command") or "")
-    out["auto_pickup"] = bool(raw.get("auto_pickup", True))
+    out["auto_pickup"] = bool(raw.get("auto_pickup", False))
     return out
 
 
