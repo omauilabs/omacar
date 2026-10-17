@@ -764,12 +764,12 @@ export async function connectCar(onStep) {
 }
 
 // ---------------------------------------------------------------- toasts
-export function toast(msg, tone) {
+export function toast(msg, tone, ms = 4200) {
   const host = document.getElementById("toasts");
   const el = h("div.toast" + (tone ? "." + tone : ""), msg);
   host.appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, 4200);
-  setTimeout(() => el.remove(), 4600);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, ms);
+  setTimeout(() => el.remove(), ms + 400);
 }
 
 export function confirmDialog({ title, body, confirm = "Confirm", tone = "danger" }) {

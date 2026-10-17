@@ -32,6 +32,8 @@ what the car said.
     POST /api/drive             change it
     GET  /api/home              Home's card layout
     POST /api/home              change it, or {action: "reset"}
+    GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
+    GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1153,6 +1155,14 @@ def handle_get(path, query):
         return 200, nursery.summary()
     if path == "/api/live":
         return 200, records.live()
+    if path == "/api/env":
+        # The cabin and outdoor nodes (lib/envnode.py), as its service or the
+        # simulator last wrote them. `source` says which, and the card shows it.
+        import envnode
+        return 200, envnode.read_public()
+    if path == "/api/env/history":
+        import envnode
+        return 200, envnode.history(qint(query, "hours", 24, 1, 24))
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")

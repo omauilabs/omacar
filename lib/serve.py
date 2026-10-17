@@ -162,6 +162,11 @@ DEMO_ROUTES = {
     # The live page's volume pin (§2.6): it would hold the tablet's speakers at
     # 100% every 30 s. The demo never touches the volume.
     "/api/audio": {"managed": False, "demo": True},
+    # The Environment card and screen poll these. The demo has no sensor nodes
+    # and must never open a serial port, so: not present, and the card says
+    # how to plug one in.
+    "/api/env": {"present": False, "demo": True},
+    "/api/env/history": {"present": False, "series": {}, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

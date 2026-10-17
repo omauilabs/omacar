@@ -2022,6 +2022,9 @@ print()
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # The cabin and outdoor sensor nodes on USB (lib/envnode.py). pyserial lives
+  # in the venv with the daemon's.
+  env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;
