@@ -1,0 +1,14 @@
+[Unit]
+Description=OmaCar tablet battery — a daily health sample and the heat word
+Documentation=file:__ROOT__/doc/tablet-battery.md
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python: it reads /sys/class/power_supply and writes two small files.
+ExecStart=/usr/bin/python3 __ROOT__/lib/tabletbatt.py run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

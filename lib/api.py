@@ -38,6 +38,7 @@ what the car said.
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
+    GET  /api/tabletbatt        the tablet's own battery: health, heat, whether the UEFI limit looks on
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
     GET  /api/assets            the private pictures, when they check out
@@ -1184,6 +1185,11 @@ def handle_get(path, query):
         # The owner's outbox (lib/notify.py): what a paired phone polls.
         import notify
         return 200, {"events": notify.since(qint(query, "since", 0, 0))}
+    if path == "/api/tabletbatt":
+        # The tablet's own battery (lib/tabletbatt.py), read-only: its sampler
+        # or the simulator wrote it. `source` says which.
+        import tabletbatt
+        return 200, tabletbatt.read_public()
     if path == "/api/ignition":
         # The parking countdown (lib/ignition.py), read by the app once a
         # second: the loop's last word, or {"phase": "off"} with no loop.

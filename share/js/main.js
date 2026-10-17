@@ -17,6 +17,7 @@ import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
 import fridgeScreen from "./views/fridge.js";
+import batteryScreen from "./views/battery.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -297,6 +298,9 @@ const OFF_NAV = [
     mount: musicView, fast: true, off: "opened from Home's phone card", askable: true },
   { id: "nursery", label: "Nursery", title: "The baby, from the road",
     mount: nurseryView, nursery: true, fast: true, off: "opened from Home's phone card", askable: true },
+  // The tablet's own battery: health, heat, the UEFI limit (lib/tabletbatt.py).
+  { id: "battery", label: "Tablet battery", title: "The tablet's battery, in a hot car",
+    mount: batteryScreen, off: "opened from Settings" },
 ];
 
 // Old addresses that still have to land somewhere: a bookmark, the dock card,
@@ -1054,6 +1058,9 @@ function openSettings() {
 
     rows.appendChild(row("Sound", "Equalizer for the AUX output",
       "Open", () => { close(); goto("eq"); }));
+
+    rows.appendChild(row("Tablet battery", "Health, heat, and the 50 % limit in the Surface firmware",
+      "Open", () => { close(); goto("battery"); }));
 
     rows.appendChild(row("Vehicle report", "The page you print for somebody else",
       "Open", () => { close(); goto("report"); }));
