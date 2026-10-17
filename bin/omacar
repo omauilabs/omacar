@@ -2124,6 +2124,8 @@ print()
       uninstall) ignition_uninstall ;;
       *) shift; exec python3 "$ROOT/lib/ignition.py" "$@" ;;
     esac ;;
+  # Valet mode: hand the car over, keep what is yours (lib/valet.py, doc/valet.md).
+  valet) shift; exec python3 "$ROOT/lib/valet.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;

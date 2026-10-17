@@ -10,6 +10,8 @@ import { h, icon, temp, withToken } from "../core.js";
 import { ICONS } from "../icons.js";
 import { fridgeCard } from "../fridgecard.js";
 import { BABY } from "../childalert.js";
+import { valet } from "../valet.js";
+import { turnOn as valetOn, leave as valetLeave } from "../valetui.js";
 
 // As Home does it: the hash is the router, so a view never imports main.js.
 const goto = (id) => { location.hash = "#" + id; };
@@ -29,6 +31,11 @@ const TILES = [
   { id: "garage", icon: ICONS.garage, title: "Garage",
     line: "Open and close the garage door from the dash, locally.",
     need: "Needs a ratgdo32 or Konnected blaQ", go: null },
+  // Valet mode's one tap. `act` is a tile action rather than a screen; the
+  // words come from valet.js's own state, not from a feed.
+  { id: "valet", icon: ICONS.valet, title: "Valet",
+    line: "Hand the car over: hides your history and documents, locks settings, logs how it is driven.",
+    need: "Turn on (parked only)", go: null, act: () => (valet.on ? valetLeave() : valetOn()) },
 ];
 
 // What a live tile says now, from its feature's own API. Pure, so it is
@@ -81,10 +88,19 @@ function tile(t) {
       t.go ? h("span.cb-chev", { "aria-hidden": "true" }, icon(ICONS.chevron, 18)) : null),
     line, need,
   ];
-  const node = t.go
-    ? h("button.card.cb-tile", { type: "button", data: { tile: t.id }, onclick: () => goto(t.go) }, ...body)
+  const node = (t.go || t.act)
+    ? h("button.card.cb-tile", { type: "button", data: { tile: t.id }, onclick: () => (t.act ? t.act() : goto(t.go)) }, ...body)
     : h("div.card.cb-tile", { data: { tile: t.id, state: "pending" } }, ...body);
   const paint = (d) => {
+    if (t.id === "valet") {
+      const on = valet.on;
+      line.textContent = on ? "On. Your history, documents and settings are out of sight, and the drive is being logged."
+                            : t.line;
+      needT.textContent = on ? (valet.logging ? "Tap to turn off (PIN)" : "On, but the log is not running")
+                             : t.need;
+      node.dataset.tone = on ? (valet.logging ? "ok" : "warn") : "";
+      return;
+    }
     const s = tileStatus(t.id, d, (c) => temp(c));
     line.textContent = s ? s.line : t.line;
     needT.textContent = s ? s.need : t.need;
@@ -106,12 +122,16 @@ export default function cabin(root) {
   fridgeSlot.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === fridgeSlot) { e.preventDefault(); goto("fridge"); }
   });
-  const tiles = TILES.map(tile);
+  // Hidden in valet mode: the garage door is the owner's, and so is its tile.
+  const tiles = TILES.filter((t) => !(valet.on && t.id === "garage")).map(tile);
   root.appendChild(h("div.cabin", fridgeSlot, h("div.cb-tiles", ...tiles.map((x) => x.node))));
   // Each live tile reads its own feature's API every few seconds; a feed that
   // fails keeps the tile's standing words rather than showing an error here.
   let timer = null, gone = false;
+  const vt = tiles.find((x) => x.node.dataset.tile === "valet");
+  if (vt) vt.paint(null);
   const tick = async () => {
+    if (vt) vt.paint(null);
     await Promise.all(tiles.filter((x) => x.feed).map(async (x) => {
       try {
         const r = await fetch(withToken(x.feed), { cache: "no-store" });

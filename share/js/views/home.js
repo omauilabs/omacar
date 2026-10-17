@@ -17,6 +17,7 @@ import { tyreState } from "../systems.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
 import { savedLook, mountLookEffect } from "../looks.js";
 import { startEditing } from "../homeedit.js";
+import { valet, hidesCard, lockReason } from "../valet.js";
 import { latestAdvice } from "../advice.js";
 import { carOrPicture } from "../car3d.js";
 import { firstPinnedStill, ageText } from "../roadcams.js";
@@ -253,6 +254,18 @@ function agentCard() {
   };
 }
 
+// What holds the place of a card Valet mode hides. The Agent's simply goes (it
+// sits last, so nothing is left with a hole); the Navigation card's slot is in
+// the first row and would leave a dead band, so it says what is going on.
+function valetStandIn(id) {
+  if (id !== "nav") return null;
+  return { node: h("div.card.hc.hc-valet",
+    h("div.hc-title", icon(ICONS.valet, 18), "Valet mode"),
+    h("p.hc-valet-t", "Your history, documents and settings are out of sight, and the drive is being logged."),
+    h("p.hc-valet-s", "Tap Valet at the top to turn it off.")),
+    paint() {} };
+}
+
 const MAKERS = {
   dial: dialCard,
   car: carCard,
@@ -393,9 +406,12 @@ export default function home(root) {
     const o = orientation();
     const want = [];
     for (const [id, size] of lay[o].cards) {
+      // Valet mode: the cards that carry personal data are not placed at all.
       let c = made.get(id);
       if (!c) {
-        c = makeCard(id, cat);
+        // The Navigation card keeps its place, so the stage stays filled, but
+        // says why it is quiet instead of showing the owner's pinned camera.
+        c = hidesCard(id) ? valetStandIn(id) : makeCard(id, cat);
         if (!c) continue;
         made.set(id, c);
       }
@@ -421,7 +437,7 @@ export default function home(root) {
     const moving = store.lockedAsMoving;
     if (custom.disabled !== moving) {
       custom.disabled = moving;
-      custom.title = moving ? "Available when you stop" : "";
+      custom.title = moving ? lockReason(valet.on, true) : "";
       custom.setAttribute("aria-disabled", moving ? "true" : "false");
     }
     if (!alive || !layout) return;

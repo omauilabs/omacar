@@ -187,6 +187,8 @@ DEMO_ROUTES = {
     "/api/child-alert": {"running": False, "phase": "off", "enabled": False, "demo": True},
     "/api/child-alert/seen": {"ok": False, "demo": True},
     "/api/child-alert/config": {"error": "not in the demo", "demo": True},
+    # Valet mode keeps a PIN in the real config. The demo has no valet.
+    "/api/valet": {"on": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

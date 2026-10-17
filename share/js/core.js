@@ -5,6 +5,8 @@
 // an element is simpler than anything that would replace it, and a diagnostic
 // tool should not stop working the day a dependency does.
 
+import { valet } from "./valet.js";
+
 // ---------------------------------------------------------------- DOM
 // h("div.card", {onclick}, child, child) — the terse constructor the views use.
 export function h(spec, props, ...kids) {
@@ -623,7 +625,11 @@ class Store extends EventTarget {
   //
   // SUPERSEDED ON MERGE: the red-light branch (safety/parked-confirm) replaces
   // these locks with lockOf(). Where the two meet, lockOf wins and this goes.
-  get lockedAsMoving() { return this.state === "driving" || !!this.sample.handover; }
+  //
+  // VALET MODE LOCKS THE SAME THINGS (share/js/valet.js): the controls that
+  // are only for a stopped car are, by the same reasoning, not for someone
+  // you handed the keys to.
+  get lockedAsMoving() { return this.state === "driving" || !!this.sample.handover || valet.on; }
 
   get state() {
     if (!this.connected) return "offline";

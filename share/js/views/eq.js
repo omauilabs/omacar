@@ -20,6 +20,7 @@ import { h, clear, store, api, toast, confirmDialog } from "../core.js";
 import * as M from "../eqmath.js";
 import * as CAL from "../eqcal.js";
 import { meterIn, resume } from "../audiobus.js";
+import { valet, lockReason } from "../valet.js";
 
 const SVGNS = "http://www.w3.org/2000/svg";
 const sv = (tag, attrs = {}, ...kids) => {
@@ -800,7 +801,7 @@ export default function eqView(root) {
     for (const x of [stG.minus, stG.plus, stG.range]) dis(x, lk || cut);
     stG.el.classList.toggle("na", cut);
     insp.classList.toggle("eq-locked", lk);
-    insp.title = lk ? "Available when you stop" : "";
+    insp.title = lk ? lockReason(valet.on, true) : "";
   }
   function paintPresets() {
     clear(presetTrack);
@@ -813,7 +814,7 @@ export default function eqView(root) {
     const user = !!(S.state.preset && S.state.user_presets[S.state.preset]);
     manageBtn.hidden = !user;
     const lk = locked();
-    for (const b of [saveBtn, manageBtn, calBtn]) { b.disabled = lk; b.title = lk ? "Available when you stop" : ""; }
+    for (const b of [saveBtn, manageBtn, calBtn]) { b.disabled = lk; b.title = lk ? lockReason(valet.on, true) : ""; }
     const cur = presetTrack.querySelector(".on");
     if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
   }

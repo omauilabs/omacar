@@ -63,6 +63,8 @@ export const ICONS = {
   // The Cabin tab: a seat, side on -- the things in the car that are not the car.
   cabin: ["M7.5 3.5h3.3a1.7 1.7 0 0 1 1.7 1.7V12h4.8a1.7 1.7 0 0 1 1.7 1.7V17H8.2a1.7 1.7 0 0 1-1.7-1.7V4.5a1 1 0 0 1 1-1z",
           "M9 17v3.5", "M17 17v3.5", "M6.5 20.5h12"],
+  // Valet: a key, because it is the thing you hand over.
+  valet: ["M8.5 11.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z", "M11 12.5 20 3.5", "M17 6.5l2.5 2.5", "M14.5 9l2 2"],
   air: ["M3 8h11a3 3 0 1 0-3-3", "M3 12h16a3 3 0 1 1-3 3", "M3 16h7"],
   sound: ["M4 9.5v5", "M8 6v12", "M12 3.5v17", "M16 7.5v9", "M20 10v4"],
   garage: ["M3 21V9.5L12 4l9 5.5V21", "M6.5 21v-9h11v9", "M6.5 15h11", "M6.5 18h11"],
