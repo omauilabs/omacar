@@ -172,6 +172,9 @@ DEMO_ROUTES = {
     # how to plug one in.
     "/api/env": {"present": False, "demo": True},
     "/api/env/history": {"present": False, "series": {}, "demo": True},
+    # The light sensor is a sysfs read, but the demo is siloed from the host's
+    # hardware: no sensor, so looks by the sun run on the sun alone.
+    "/api/ambient": {"present": False, "lux": None, "demo": True},
     # The equalizer would rewrite a PipeWire config and restart a user unit.
     "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
     "/api/eq/live": {"ok": False, "demo": True},

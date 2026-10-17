@@ -12,6 +12,7 @@ import { record } from "./trail.js";
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
 import { savedLook, saveLook, applyLook, nextLook, lookById } from "./looks.js";
+import { startSunLooks, sunSettingsBlock } from "./sunui.js";
 import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
@@ -995,6 +996,10 @@ function openSettings() {
         redraw();
       }));
 
+    // ---- looks by the sun (share/js/sunui.js, doc/night-mode.md) ----
+    rows.appendChild(sunSettingsBlock({ row, redraw, toast }));
+    // ---- end looks by the sun ----
+
     rows.appendChild(row("Units", "Shared with the dock card and the terminal",
       U.units.dist, async (e) => {
         // Written to the server rather than to this browser, because the CLI,
@@ -1256,6 +1261,7 @@ async function boot() {
   // Before the first paint. A night-red look that arrives a beat late is a
   // flash of full-brightness white at the exact moment it matters most.
   applyLook(savedLook());
+  startSunLooks();   // a no-op until the owner turns "Looks by the sun" on
   // The button is painted once the theme has been applied, not before: the
   // mode it shows comes from the theme, which is only known after it loads.
   document.addEventListener("omacar:look", async () => { await applyTheme(); paintDayNight(); });
