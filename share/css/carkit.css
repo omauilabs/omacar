@@ -60,7 +60,9 @@
 .ck-why { font-size: .68rem; color: var(--dim); }
 
 /* ---- media -------------------------------------------------------------------- */
-.ck-media { display: flex; align-items: center; gap: 16px; }
+.ck-media { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; container-type: inline-size; }
+/* A narrow tile puts the keys under the words rather than past the edge. */
+@container (max-width: 380px) { .ck-media-keys { width: 100%; justify-content: space-between; } }
 .ck-media-words { flex: 1; min-width: 0; }
 .ck-media-t { font-size: 1.15rem; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ck-media-a { font-size: .86rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -91,13 +93,24 @@
 /* ---- Cabin → Apps --------------------------------------------------------------- */
 .wrap:has(> .ck-apps), .wrap:has(> .ck-app) { max-width: none; display: block; height: 100%; }
 .stage:has(> .wrap > .ck-apps), .stage:has(> .wrap > .ck-app) { padding-bottom: 8px; }
-.ck-apps { height: 100%; }
-.ck-apps-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); align-content: start; }
+/* The grid fills the stage: rows stretch to share the height, so a few apps
+   are generous cards rather than a strip with a dead band under it. */
+.ck-apps { height: 100%; display: grid; grid-template-rows: minmax(0, 1fr); }
+.ck-apps-grid { display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); grid-auto-rows: minmax(220px, 1fr); }
+.ck-tile-body { min-height: 0; display: grid; align-content: center; }
+/* The last cell: how an app gets here, so the empty space says something. */
+.ck-add { display: grid; align-content: center; gap: 8px; padding: 20px; border-radius: var(--r);
+  background: transparent; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--ink) 10%, transparent); color: var(--ink-2); }
+.ck-add-t { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
+.ck-add code { font-family: var(--mono); font-size: .82rem; color: var(--accent); }
+.ck-add p { margin: 0; font-size: .82rem; line-height: 1.45; }
 .ck-tile { display: grid; gap: 10px; padding: 16px; cursor: pointer; align-content: start; }
 .ck-tile-head { display: flex; align-items: center; gap: 10px; color: var(--ink-2); }
 .ck-tile-head > svg { color: var(--accent); }
 .ck-tile-t { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
-.ck-tile-kind { margin-left: auto; font-size: .68rem; color: var(--dim); }
+.ck-tile-kind { margin-left: auto; font-size: .68rem; color: var(--dim); white-space: nowrap; flex: none; }
+.ck-tile { min-width: 0; overflow: hidden; grid-template-rows: auto 1fr auto auto; }
 .ck-tile-needs { font-size: .7rem; color: var(--dim); }
 .ck-tile-err { font-size: .76rem; color: var(--warn); }
 .ck-tile[data-state="broken"] { cursor: default; }
@@ -111,9 +124,22 @@
 .ck-app-ico { color: var(--accent); display: grid; }
 .ck-app-t { font-size: 1.3rem; font-weight: 600; color: var(--ink); }
 .ck-app-src { margin-left: auto; font-size: .76rem; color: var(--dim); }
-.ck-app-body { min-height: 0; overflow: auto; }
-.ck-app-body > .ck-stack { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-.ck-app-body .ck-num { font-size: 3rem; }
+/* A plugin's screen fills the stage: its top-level widgets share the height,
+   and the numbers grow to suit -- a car screen read at arm's length. */
+/* Pinned to the 1fr row: the error line above is `hidden` when there is no
+   error, and a hidden element is not a grid item -- without this the body
+   slides up into the `auto` row and stops filling the stage. */
+.ck-app-body { grid-row: 3; min-height: 0; overflow: auto; display: grid; grid-template-rows: minmax(0, 1fr); }
+.ck-app > .ck-tile-err { grid-row: 2; }
+.ck-app-body > .ck-stack, .ck-app-body > .ck-grid, .ck-app-body > .ck-row {
+  grid-auto-rows: minmax(160px, 1fr); align-content: stretch; }
+/* At most two columns on a plugin's screen: four readings become a 2 x 2 of
+   generous cards rather than four tall slivers. */
+.ck-app-body > .ck-stack, .ck-app-body > .ck-grid {
+  grid-template-columns: repeat(auto-fit, minmax(max(320px, 40%), 1fr)); }
+.ck-app-body .ck-metric, .ck-app-body .ck-gauge { display: grid; align-content: center; }
+.ck-app-body .ck-num { font-size: clamp(3rem, 9vh, 5.5rem); }
+.ck-app-body .ck-gauge svg { max-height: 50%; }
 
 /* Nothing new in motion (rule 4): with the car moving the kit's own transitions
    stop, so values change but nothing animates. */
@@ -121,3 +147,16 @@
 @media (prefers-reduced-motion: reduce) {
   .ck-key, .ck-li-b, .ck-toggle, .ck-knob, .ck-switch { transition: none; }
 }
+
+/* On a plugin's screen a short note is a caption under the content, not a
+   card of its own: it spans the width at the bottom and the rows above take
+   the height. And a media player is the screen's hero. */
+.ck-app-body > .ck-stack:has(> .ck-text:last-child) { grid-template-rows: minmax(0, 1fr) auto; grid-auto-rows: auto; }
+.ck-app-body > * > .ck-text { grid-column: 1 / -1; align-self: end; background: none; box-shadow: none; padding: 2px 4px; color: var(--dim); }
+.ck-app-body .ck-media { flex-direction: column; justify-content: center; text-align: center; gap: 28px; }
+.ck-app-body .ck-media-words { flex: none; }
+.ck-app-body .ck-media-t { font-size: clamp(1.6rem, 5vh, 2.6rem); white-space: normal; }
+.ck-app-body .ck-media-a { font-size: 1.15rem; }
+.ck-app-body .ck-media-keys { gap: 22px; }
+.ck-app-body .ck-media .ck-key.ck-round { width: 88px; height: 88px; font-size: 1.6rem; }
+.ck-app-body > * > .ck-media { grid-column: 1 / -1; }

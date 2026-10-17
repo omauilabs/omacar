@@ -74,7 +74,11 @@ export default function apps(root) {
       return tile;
     }));
     if (gone) return;
-    grid.replaceChildren(...tiles);
+    const add = h("div.ck-add",
+      h("div.ck-add-t", "Add a car app"),
+      h("p", "Any Omarchy app or plugin appears here when it ships a car.json beside its files."),
+      h("code", "omacar carkit new my-app"));
+    grid.replaceChildren(...tiles, ...(list.length ? [add] : []));
     empty.hidden = list.length > 0;
     timer = setTimeout(tick, 4000);
   };

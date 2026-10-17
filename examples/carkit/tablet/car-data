@@ -41,6 +41,8 @@ if cpu is not None:
     os.makedirs(os.path.dirname(STATE), exist_ok=True)
     with open(STATE, "w") as f:
         json.dump(trail, f)
-print(json.dumps({"cpu_c": cpu, "cpu_src": "thermal zone" if cpu is not None else None,
-                  "cpu_trail": trail, "batt": batt, "batt_src": "power_supply" if batt is not None else None,
+# A source is always said: "not readable here" is a source too, and tells the
+# driver the plugin works and the machine lacks the sensor.
+print(json.dumps({"cpu_c": cpu, "cpu_src": "thermal zone" if cpu is not None else "no thermal zone here",
+                  "cpu_trail": trail, "batt": batt, "batt_src": "power_supply" if batt is not None else "no battery here",
                   "disk_gb": disk, "load": load}))
