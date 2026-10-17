@@ -28,6 +28,7 @@ import launcherView from "./views/launcher.js";
 import effectsView from "./views/effects.js";
 import environmentView from "./views/environment.js";
 import eqView from "./views/eq.js";
+import tiresView from "./views/tires.js";
 import nurseryView from "./views/nursery.js";
 import { createOmaPlay } from "./omaplay/layer.js";
 import { mockSource, dongleSource } from "./omaplay/source.js";
@@ -220,6 +221,9 @@ const TABS = [
       { id: "care", label: "Care", views: [
         { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
         { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
+        // Four tyre sensors heard by an RTL-SDR (lib/tpms.py). Also opened
+        // from Home's tyre callout. Its learn panel is parked-only inside the view.
+        { id: "tpms",      label: "Tires",   title: "Tire pressures",                      mount: tiresView },
         { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
         { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
         { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },

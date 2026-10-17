@@ -43,6 +43,7 @@
 <link rel="stylesheet" href="css/roadcams.css">
 <link rel="stylesheet" href="css/env.css">
 <link rel="stylesheet" href="css/eq.css">
+<link rel="stylesheet" href="css/tires.css">
 <!-- The boot screen, last, so it can rely on every token above it and cover
      every layer below it. It is markup and CSS on purpose: a splash drawn by a
      module arrives after the frame it was meant to cover. -->
@@ -160,6 +161,8 @@
 <script type="module" src="js/bootscreen.js"></script>
 <!-- The radar banner: a strip over the stage while the detector has an alert. Its own module, like awake.js; no view knows it. -->
 <script type="module" src="js/radarbanner.js"></script>
+<!-- The tyre banner: only for a tyre losing air fast (share/js/tpmsbanner.js). Its own module; no view knows it. -->
+<script type="module" src="js/tpmsbanner.js"></script>
 <!-- ---- redesign/cameras ------------------------------------------------------
      The Cameras tab, Home's Dashcams card, the audio stage and drowsy mode
      (doc/design/2026-09-28-cameras-drowsy.md). One block at the end of the

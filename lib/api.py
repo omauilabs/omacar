@@ -34,6 +34,9 @@ what the car said.
     POST /api/home              change it, or {action: "reset"}
     GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
     POST /api/fridge            {name: "power"|"z0_set", value}
+    GET  /api/tpms              tyre pressures from the RTL-SDR (lib/tpms.py): four wheels, trends, alerts
+    GET  /api/tpms/heard        every tyre sensor id heard lately (strangers too): the learn list
+    POST /api/tpms/assign       {id, wheel: "FL"|"FR"|"RL"|"RR"} or {unassign: wheel}: a label, nothing else
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
@@ -1166,6 +1169,17 @@ def handle_get(path, query):
         # last wrote it. `source` says which, and the card always shows it.
         import fridge
         return 200, fridge.read_public()
+    if path == "/api/tpms":
+        # The four tyres (lib/tpms.py), as its service or the simulator last
+        # wrote them. Only sensors the owner has assigned are in this; `source`
+        # says which, and the screens always show it.
+        import tpms
+        return 200, tpms.read_public()
+    if path == "/api/tpms/heard":
+        # The learn list: every sensor heard lately, strangers included. Only
+        # the Tires screen's learn panel asks for this.
+        import tpms
+        return 200, tpms.read_heard()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1492,6 +1506,16 @@ def handle_post(path, body):
         import fridge
         try:
             return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/tpms/assign":
+        # Naming which wheel a sensor is on. A label in the owner's own config
+        # (~/.config/omacar/tpms.json); the radio is never asked to do anything.
+        import tpms
+        try:
+            if data.get("unassign"):
+                return 200, tpms.unassign(str(data.get("unassign")))
+            return 200, tpms.assign(str(data.get("id") or ""), str(data.get("wheel") or ""))
         except (TypeError, ValueError) as e:
             return 400, {"error": str(e)}
     if path == "/api/v1":

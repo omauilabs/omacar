@@ -1,0 +1,17 @@
+[Unit]
+Description=OmaCar tyre pressures — holds rtl_433 open on the RTL-SDR
+Documentation=file:__ROOT__/doc/tpms.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Plain python: rtl_433 is a system package (pacman -S rtl_433). When the
+# dongle is missing or rtl_433 is not installed, the service says so in
+# tpms.json and keeps trying; it does not crash-loop.
+ExecStart=/usr/bin/python3 __ROOT__/lib/tpms.py run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

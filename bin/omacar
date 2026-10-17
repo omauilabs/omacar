@@ -2091,6 +2091,9 @@ print()
         "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
       *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
     esac ;;
+  # Tyre pressures heard by an RTL-SDR running rtl_433 (lib/tpms.py). Plain
+  # python: it needs rtl_433 (a system package) and nothing from the venv.
+  tpms) shift; exec python3 "$ROOT/lib/tpms.py" "$@" ;;
   # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
   # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
   # radio, and run on any python.
