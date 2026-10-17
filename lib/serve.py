@@ -179,6 +179,11 @@ DEMO_ROUTES = {
     "/api/notify": {"events": [], "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
+    # A child left in the car: the demo has no camera, no charger to follow
+    # and nobody to tell. Off, so the page shows no card and watches nothing.
+    "/api/child-alert": {"running": False, "phase": "off", "enabled": False, "demo": True},
+    "/api/child-alert/seen": {"ok": False, "demo": True},
+    "/api/child-alert/config": {"error": "not in the demo", "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

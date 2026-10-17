@@ -40,6 +40,10 @@ what the car said.
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
+    GET  /api/child-alert       a child left in the car: the seat, the alert, the settings
+    POST /api/child-alert       {ask: "clear"|"snooze"|"aboard"}
+    POST /api/child-alert/seen  the page's camera watcher: {faces, state, luma, camera}
+    POST /api/child-alert/config {enabled, chime, heat_c, camera}; refused while moving
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1189,6 +1193,11 @@ def handle_get(path, query):
         # second: the loop's last word, or {"phase": "off"} with no loop.
         import ignition
         return 200, ignition.read_public()
+    if path == "/api/child-alert":
+        # A child left in the car (lib/childalert.py), read by the app once a
+        # second: the loop's last word, or {"running": False} with no loop.
+        import childalert
+        return 200, childalert.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")
@@ -1509,6 +1518,33 @@ def handle_post(path, body):
         import ignition
         try:
             return 200, ignition.ask(str(data.get("ask") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/child-alert":
+        # "I have my child", "Remind me in 2 min" or "Child aboard". Only a
+        # request, through a file the loop reads; the ignition loop also reads
+        # a "clear" here directly, so it is honoured even with this loop down.
+        import childalert
+        try:
+            return 200, childalert.ask(str(data.get("ask") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/child-alert/seen":
+        # What the page's camera watcher saw (share/js/childwatch.js).
+        import childalert
+        try:
+            return 200, childalert.report(data)
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/child-alert/config":
+        # Parked only: greyed on the screen while moving, and refused here too.
+        import childalert
+        import ignition
+        c = ignition.car()
+        if c["answering"] and (c["age"] or 99) < 15 and (c["speed"] or 0) > 0:
+            return 409, {"error": "the car is moving; change these when parked"}
+        try:
+            return 200, {"config": childalert.set_config(data)}
         except ValueError as e:
             return 400, {"error": str(e)}
     if path == "/api/scan":

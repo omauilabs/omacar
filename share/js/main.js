@@ -16,6 +16,7 @@ import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
+import childAlertView from "./views/childalert.js";
 import fridgeScreen from "./views/fridge.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
@@ -246,6 +247,10 @@ const TABS = [
       // view), so it is not `write`: presets and bypass stay one tap at speed.
       // Also opened from Settings and Music.
       { id: "eq", label: "Sound", title: "Equalizer", mount: eqView, fast: true },
+      // A child left in the car (lib/childalert.py). Its settings lock while
+      // the car moves (store.lockedAsMoving, read inside the view); "Child
+      // aboard" stays one tap, because it only ever makes the alert likelier.
+      { id: "child-alert", label: "Child seat", title: "Child seat", mount: childAlertView },
     ] },
   // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
   // no `claude` CLI, that it is not set up and what it needs -- an honest

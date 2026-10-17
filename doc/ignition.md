@@ -31,6 +31,7 @@ car can veto the countdown:
 | any speed in the last 2 min | a charger fault on the road | "Charger lost while moving", no buttons |
 | the car answering in the last 30 s, including while the recorder borrows the adapter | the ignition is still on | "Waiting for the car to switch off", no buttons |
 | Stay on was tapped | someone is using it parked | "Staying on", with Sleep now |
+| a child alert is running ([child-alert.md](child-alert.md)) | the car seat looked occupied at switch-off and nobody has answered | the child alert's own card; Sleep now is not offered and cannot pass it, and a low battery does not end it |
 
 When a hold lifts, the countdown starts again from 30 s; it does not pick up
 where it left off. Stay on ends when the charger comes back or the battery

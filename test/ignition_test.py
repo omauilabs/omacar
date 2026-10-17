@@ -14,6 +14,8 @@ The rules (doc/ignition.md):
   * after a hold lifts the countdown starts over, it does not resume;
   * Stay on holds until the charger returns, Sleep now skips the wait, and
     neither can override a moving or answering car;
+  * a running child alert holds it, and Sleep now and a flat battery cannot
+    end that;
   * a charger that cannot be read never starts a countdown;
   * the charger back after a sleep asks for the recorders to come back.
 """
@@ -116,6 +118,34 @@ def main():
     low_moving = {"powered": False, "battery": 3, "seen": []}
     _st, out = drive([(0, low_moving, moving, None), (100, low_moving, QUIET, None)])
     check(f"nor can a flat battery ({out})", all(o[1] is None for o in out))
+
+    print("\n  a child alert (lib/childalert.py)")
+
+    def drive_child(steps, st=None):
+        st = st or ignition.fresh_state()
+        out = []
+        for t, pw, car, ask, child in steps:
+            st, action = ignition.decide(st, pw, car, t, CFG, ask, child)
+            out.append((st["phase"], action, st.get("held")))
+        return st, out
+
+    _st, out = drive_child([(0, OFF, QUIET, None, "child alert"), (30, OFF, QUIET, None, "child alert"),
+                            (3600, OFF, QUIET, None, "child alert")])
+    check(f"a child alert holds the tablet awake, for as long as it runs ({out})",
+          all(o[0] == "held" and o[2] == "child alert" and o[1] is None for o in out))
+    _st, out = drive_child([(0, OFF, QUIET, None, "child alert"), (5, OFF, QUIET, "now", "child alert"),
+                            (6, OFF, QUIET, "now", "child alert")])
+    check(f"Sleep now cannot override it ({out})", all(o[1] is None for o in out))
+    flat = {"powered": False, "battery": 2, "seen": []}
+    _st, out = drive_child([(0, flat, QUIET, None, "child alert"), (60, flat, QUIET, None, "child alert")])
+    check(f"nor can a flat battery, which ends a Stay on ({out})",
+          all(o[1] is None and o[2] == "child alert" for o in out))
+    _st, out = drive_child([(0, OFF, QUIET, None, "child alert"), (40, OFF, QUIET, None, None),
+                            (69, OFF, QUIET, None, None), (70, OFF, QUIET, None, None)])
+    check(f"once answered, the full countdown starts over ({out})",
+          out[1][0] == "counting" and out[2][1] is None and out[3][1] == "sleep")
+    _st, out = drive_child([(0, OFF, moving, None, "child alert")])
+    check(f"a moving car still reads as moving, not as the alert ({out})", out[0][2] == "moving")
 
     print("\n  unknowns and waking")
     _st, out = drive([(0, UNKNOWN, QUIET, None), (100, UNKNOWN, QUIET, "now")])

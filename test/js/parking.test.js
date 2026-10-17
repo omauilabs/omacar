@@ -22,6 +22,10 @@ export default [
   ["a refused sleep says logind's reason", () =>
     eq(parkingView({ phase: "held", held: "cannot sleep: suspend.target is masked", running: true }).sub,
        "suspend.target is masked")],
+  ["a child alert holds with no Sleep now on offer", () => {
+    const v = parkingView({ phase: "held", held: "child alert", running: true });
+    eq([v.tone, v.kind, v.actions], ["bad", "child", []]);
+  }],
   ["an unreadable charger is not a card", () =>
     eq(parkingView({ phase: "on", held: "cannot read the charger", running: true }), null)],
 ];

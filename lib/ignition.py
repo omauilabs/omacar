@@ -25,6 +25,10 @@ car itself can veto it:
   * the person at the screen tapping STAY ON: held until the charger comes
     back -- unless the battery falls to the floor, which ends it anyway (still
     never while moving).
+  * a CHILD ALERT running (lib/childalert.py): the car seat looked occupied
+    when the car was switched off, and nobody has said "I have my child" yet.
+    Held, and neither Sleep now nor a low battery ends it -- a tablet asleep
+    cannot tell anybody anything.
 
 Anything unknown counts against sleeping: a charger this cannot read never
 starts a countdown.
@@ -173,11 +177,12 @@ def fresh_state():
             "stay": False, "last_moving": None, "last_answering": None}
 
 
-def decide(st, power, carnow, now, cfg, ask=None):
+def decide(st, power, carnow, now, cfg, ask=None, child=None):
     """(new state, action) from what is known now. Never touches anything.
 
     action is None, "sleep" or "wake" (the charger is back after a sleep;
     restart what was stopped). `ask` is the screen's request: "stay" or "now".
+    `child` is lib/childalert.py's ignition_hold(): a reason, or None.
     """
     st = dict(st)
     # What the car said, remembered: the vetoes are about the recent past, and
@@ -214,6 +219,8 @@ def decide(st, power, carnow, now, cfg, ask=None):
         held = "moving"            # a charger fault on the road: never sleep
     elif answering:
         held = "car answering"     # the ignition is still on
+    elif child:
+        held = "child alert"       # never asleep with a child maybe inside
     elif st["stay"] and not low:
         held = "stay on"
     if held:
@@ -314,6 +321,17 @@ def _cycle(rec):
         f.write(json.dumps(rec) + "\n")
 
 
+def child_hold(now=None):
+    """lib/childalert.py's word on sleeping. A module that will not even load
+    is logged and holds nothing -- it cannot have seen a child either."""
+    try:
+        import childalert
+        return childalert.ignition_hold(now)
+    except Exception as why:   # noqa: BLE001
+        _log(f"child alert unreadable: {why}")
+        return None
+
+
 def take_ask():
     """The screen's last request, consumed once: "stay", "now" or None."""
     try:
@@ -390,7 +408,7 @@ def run(tick=1.0):
             time.sleep(tick)
             continue
         was = st["phase"]
-        st, action = decide(st, pw, car(now=now), now, cfg, take_ask())
+        st, action = decide(st, pw, car(now=now), now, cfg, take_ask(), child_hold(now))
         if st["phase"] != was:
             _log(f"{was} -> {st['phase']}" + (f" ({st['held']})" if st.get("held") else ""))
         _write_json(STATE, public(st, pw, cfg, now))

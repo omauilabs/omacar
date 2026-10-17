@@ -9,6 +9,7 @@
 import { h, icon, temp, withToken } from "../core.js";
 import { ICONS } from "../icons.js";
 import { fridgeCard } from "../fridgecard.js";
+import { BABY } from "../childalert.js";
 
 // As Home does it: the hash is the router, so a view never imports main.js.
 const goto = (id) => { location.hash = "#" + id; };
@@ -22,6 +23,9 @@ const TILES = [
   { id: "sound", icon: ICONS.sound, title: "Sound",
     line: "The equalizer for the AUX output, and Calibrate.",
     need: "Open the equalizer", go: "eq" },
+  { id: "child", icon: BABY, title: "Child seat",
+    line: "Alerts you if the car is switched off with a child in the seat.",
+    need: "Open the child alert", go: "child-alert" },
   { id: "garage", icon: ICONS.garage, title: "Garage",
     line: "Open and close the garage door from the dash, locally.",
     need: "Needs a ratgdo32 or Konnected blaQ", go: null },
@@ -54,10 +58,19 @@ export function tileStatus(id, d, t = (c) => `${Math.round(c)}°`) {
     return { line: `On · ${st.preset || "Custom"}`, need: d.applied ? "Shaping the AUX output" : "Starting…",
              tone: d.applied ? "ok" : "" };
   }
+  if (id === "child") {
+    // Never a reassuring word it cannot back: a loop that is not running says so.
+    if (!d.running) return { line: "Not watching", need: "The child-alert service is not running", tone: "warn" };
+    if (!d.enabled) return { line: "Off", need: "Switched off in its settings", tone: "" };
+    const sim = d.source === "sim";
+    if (["alert", "snoozed"].includes(d.phase)) return { line: "Alerting now", need: sim ? "Simulated" : "Car off, seat occupied", tone: "warn" };
+    if (d.occupied) return { line: "Occupied", need: sim ? "Simulated" : "Armed: watching for the switch-off", tone: sim ? "warn" : "ok" };
+    return { line: "Nothing seen", need: d.config && d.config.camera ? "Watching the seat" : "No camera: Child aboard arms it", tone: "" };
+  }
   return null;
 }
 
-const FEEDS = { air: "/api/env", sound: "/api/eq" };
+const FEEDS = { air: "/api/env", sound: "/api/eq", child: "/api/child-alert" };
 
 function tile(t) {
   const line = h("p.cb-tile-line", t.line);
