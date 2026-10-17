@@ -175,6 +175,9 @@ DEMO_ROUTES = {
     # The light sensor is a sysfs read, but the demo is siloed from the host's
     # hardware: no sensor, so looks by the sun run on the sun alone.
     "/api/ambient": {"present": False, "lux": None, "demo": True},
+    # Looks by the sun probes this optional route (another feature's) for a GPS
+    # fix; the demo has none, so the sun is worked out from the time zone.
+    "/api/location": {"present": False, "demo": True},
     # The equalizer would rewrite a PipeWire config and restart a user unit.
     "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
     "/api/eq/live": {"ok": False, "demo": True},
