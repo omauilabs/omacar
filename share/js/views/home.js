@@ -275,6 +275,21 @@ const MAKERS = {
   // ---- end redesign/cameras ---------------------------------------------------
   phone: phoneCard,
   agent: agentCard,
+  // The Dometic CFX3 (share/js/fridgecard.js, lib/fridge.py). Loaded only when
+  // the card is on Home, like the dashcam card above.
+  fridge: () => {
+    const node = h("div.card.hc");
+    let card = null, gone = false;
+    import("../fridgecard.js").then((m) => {
+      if (gone) return;
+      card = m.fridgeCard(node);
+    }).catch((e) => {
+      console.warn("Fridge card:", e);
+      if (!gone) node.appendChild(h("div.hc-ph-s", "The fridge card could not load"));
+    });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
 };
 
 function makeCard(id, cat) {

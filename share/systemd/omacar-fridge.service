@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar fridge — holds the Bluetooth link to the Dometic CFX3
+Documentation=file:__ROOT__/lib/fridge.py
+After=bluetooth.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The venv's python: bleak lives there (omacar fridge setup).
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/fridge.py run'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
