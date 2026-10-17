@@ -142,6 +142,7 @@ import concernsView from "./views/concerns.js";
 import live from "./views/live.js";
 import navigationView from "./views/navigation.js";
 import roadcamsView from "./views/roadcams.js";
+import radarView from "./views/radar.js";
 import camerasView from "./views/cameras.js";
 import workView from "./views/work.js";
 import { badge } from "./provenance.js";
@@ -185,6 +186,8 @@ const TABS = [
     views: [
       { id: "roadcams",   label: "Road cameras", title: "Road cameras", mount: roadcamsView, fast: true },
       { id: "navigation", label: "Maps",         title: "Maps",         mount: navigationView },
+      // The Valentine One (lib/v1.py). Its own feed, so not FAST.
+      { id: "radar",      label: "Radar",        title: "Radar detector", mount: radarView },
     ] },
   { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [

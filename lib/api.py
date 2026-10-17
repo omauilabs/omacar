@@ -36,6 +36,8 @@ what the car said.
     POST /api/fridge            {name: "power"|"z0_set", value}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
+    GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
+    POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1170,6 +1172,12 @@ def handle_get(path, query):
     if path == "/api/env/history":
         import envnode
         return 200, envnode.history(qint(query, "hours", 24, 1, 24))
+    if path == "/api/v1":
+        # The Valentine One on the dash (lib/v1.py), as its link or the
+        # simulator last wrote it. `source` says which, and the screens always
+        # show it. An alert that has gone stale is already gone from this.
+        import v1
+        return 200, v1.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")
@@ -1473,6 +1481,15 @@ def handle_post(path, body):
         import fridge
         try:
             return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/v1":
+        # One request, and it is not a cockpit write: Mute on the detector,
+        # the tap its own button is. The detector's settings are not here and
+        # lib/esp.py cannot encode them.
+        import v1
+        try:
+            return 200, v1.ask(str(data.get("name") or ""), data.get("value"))
         except (TypeError, ValueError) as e:
             return 400, {"error": str(e)}
     if path == "/api/scan":
