@@ -1,0 +1,78 @@
+/* The parking countdown (share/js/parking.js): a card above the dock while
+   the car is off and the tablet is about to sleep.
+
+   The same language as the dock's lit key (app.css): a raised surface with a
+   hairline of light on top, no outline. The ring is the one moving thing, and
+   it moves because time is passing -- it drains a second at a time, linearly,
+   so it reads as a clock rather than an animation. The card rises in once,
+   in answer to the car going off; it never pulses. */
+.pk-card {
+  position: fixed; z-index: 260; left: 50%; bottom: calc(var(--nav) + 18px);
+  transform: translateX(-50%);
+  width: min(640px, calc(100vw - 32px));
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 20px;
+  padding: 18px 18px 18px 20px; border-radius: 24px;
+  background: linear-gradient(180deg, var(--raise), var(--panel));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent),
+              0 24px 60px -18px rgba(0, 0, 0, .7), 0 2px 8px rgba(0, 0, 0, .35);
+  animation: pk-in .26s cubic-bezier(.2, .8, .2, 1) both;
+}
+.pk-card[hidden] { display: none; }
+@keyframes pk-in { from { opacity: 0; transform: translate(-50%, 14px); } }
+
+.pk-ring { position: relative; width: 72px; height: 72px; display: grid; place-items: center; }
+.pk-ring[hidden] { display: none; }
+.pk-ring svg { position: absolute; inset: 0; rotate: -90deg; }
+.pk-track { fill: none; stroke: color-mix(in srgb, var(--ink) 9%, transparent); stroke-width: 5; }
+.pk-arc { fill: none; stroke: var(--accent); stroke-width: 5; stroke-linecap: round;
+          transition: stroke-dashoffset 1s linear;
+          filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent)); }
+.pk-num { font-size: 1.5rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.pk-words { min-width: 0; display: grid; gap: 4px; }
+.pk-title { font-size: 1.15rem; font-weight: 600; color: var(--ink); }
+.pk-sub { font-size: .86rem; color: var(--ink-2); line-height: 1.4; }
+/* A held card with no ring still keeps the card's rhythm: a lamp where the
+   ring would be, in the card's tone. */
+.pk-card:has(.pk-ring[hidden])::before {
+  content: ""; width: 10px; height: 10px; margin: 0 6px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent),
+              0 0 12px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.pk-card[data-tone="warn"]::before { background: var(--warn);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 12px var(--warn); }
+.pk-card[data-tone="bad"]::before { background: var(--bad);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 16%, transparent), 0 0 12px var(--bad); }
+.pk-card[data-tone="warn"] .pk-title { color: var(--warn); }
+.pk-card[data-tone="bad"] .pk-title { color: var(--bad); }
+
+.pk-acts { display: flex; gap: 8px; }
+.pk-acts:empty { display: none; }
+.pk-btn {
+  position: relative; isolation: isolate; min-height: var(--tap); min-width: 112px; padding: 0 18px;
+  border: 0; border-radius: 16px; background: transparent; color: var(--ink-2);
+  font: inherit; font-weight: 500; cursor: pointer;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4), color .14s;
+}
+.pk-btn:active { transform: scale(.94); color: var(--ink); }
+/* Stay on is the lit key: the same accent wash the current tab wears. */
+.pk-key { color: var(--ink); font-weight: 600; }
+.pk-key::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent-fill) 58%, transparent),
+    color-mix(in srgb, var(--accent-fill) 22%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 55%, transparent),
+              inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+              0 8px 22px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.pk-btn:disabled { opacity: .5; }
+@media (max-width: 700px) {
+  .pk-card { grid-template-columns: auto 1fr; }
+  .pk-acts { grid-column: 1 / -1; justify-content: flex-end; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pk-card { animation: none; }
+  .pk-arc, .pk-btn { transition: none; }
+}
