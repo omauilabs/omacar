@@ -1,0 +1,16 @@
+[Unit]
+Description=OmaCar child alert — a child left in the car when it is switched off
+Documentation=file:__ROOT__/doc/child-alert.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python: it reads sysfs, live.json and the page's camera reports, and
+# writes to the owner's outbox. The camera itself is watched in the page.
+ExecStart=/usr/bin/python3 __ROOT__/lib/childalert.py run
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

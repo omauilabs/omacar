@@ -14,6 +14,8 @@ The rules (doc/ignition.md):
   * after a hold lifts the countdown starts over, it does not resume;
   * Stay on holds until the charger returns, Sleep now skips the wait, and
     neither can override a moving or answering car;
+  * a running child alert holds it, and Sleep now and a flat battery cannot
+    end that;
   * a charger that cannot be read never starts a countdown;
   * the charger back after a sleep asks for the recorders to come back.
 """
@@ -117,6 +119,34 @@ def main():
     _st, out = drive([(0, low_moving, moving, None), (100, low_moving, QUIET, None)])
     check(f"nor can a flat battery ({out})", all(o[1] is None for o in out))
 
+    print("\n  a child alert (lib/childalert.py)")
+
+    def drive_child(steps, st=None):
+        st = st or ignition.fresh_state()
+        out = []
+        for t, pw, car, ask, child in steps:
+            st, action = ignition.decide(st, pw, car, t, CFG, ask, child)
+            out.append((st["phase"], action, st.get("held")))
+        return st, out
+
+    _st, out = drive_child([(0, OFF, QUIET, None, "child alert"), (30, OFF, QUIET, None, "child alert"),
+                            (3600, OFF, QUIET, None, "child alert")])
+    check(f"a child alert holds the tablet awake, for as long as it runs ({out})",
+          all(o[0] == "held" and o[2] == "child alert" and o[1] is None for o in out))
+    _st, out = drive_child([(0, OFF, QUIET, None, "child alert"), (5, OFF, QUIET, "now", "child alert"),
+                            (6, OFF, QUIET, "now", "child alert")])
+    check(f"Sleep now cannot override it ({out})", all(o[1] is None for o in out))
+    flat = {"powered": False, "battery": 2, "seen": []}
+    _st, out = drive_child([(0, flat, QUIET, None, "child alert"), (60, flat, QUIET, None, "child alert")])
+    check(f"nor can a flat battery, which ends a Stay on ({out})",
+          all(o[1] is None and o[2] == "child alert" for o in out))
+    _st, out = drive_child([(0, OFF, QUIET, None, "child alert"), (40, OFF, QUIET, None, None),
+                            (69, OFF, QUIET, None, None), (70, OFF, QUIET, None, None)])
+    check(f"once answered, the full countdown starts over ({out})",
+          out[1][0] == "counting" and out[2][1] is None and out[3][1] == "sleep")
+    _st, out = drive_child([(0, OFF, moving, None, "child alert")])
+    check(f"a moving car still reads as moving, not as the alert ({out})", out[0][2] == "moving")
+
     print("\n  unknowns and waking")
     _st, out = drive([(0, UNKNOWN, QUIET, None), (100, UNKNOWN, QUIET, "now")])
     check(f"a charger it cannot read never starts a countdown ({out})",
@@ -175,6 +205,34 @@ def main():
               ignition.car(os.path.join(scratch, "nope.json"))["answering"] is False)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
+
+    print("\n  a broken child-alert module still holds sleep")
+    import builtins
+    scratch2 = tempfile.mkdtemp(prefix="omacar-ign-child-")
+    try:
+        saved_dir = ignition.STATE_DIR
+        ignition.STATE_DIR = scratch2
+        with open(os.path.join(scratch2, "child-alert.json"), "w") as f:
+            json.dump({"pub": {"hold_sleep": True, "source": "live", "at": 1}}, f)
+        real_import = builtins.__import__
+        def broken(name, *a, **k):
+            if name == "childalert":
+                raise SyntaxError("simulated broken module")
+            return real_import(name, *a, **k)
+        builtins.__import__ = broken
+        sys.modules.pop("childalert", None)
+        try:
+            check("its last recorded hold is read from the state file", ignition.child_hold() == "child alert")
+            with open(os.path.join(scratch2, "child-alert.json"), "w") as f:
+                json.dump({"pub": {"hold_sleep": True, "source": "sim"}}, f)
+            check("but a simulated one never holds the real tablet", ignition.child_hold() is None)
+            os.unlink(os.path.join(scratch2, "child-alert.json"))
+            check("and no file at all holds nothing", ignition.child_hold() is None)
+        finally:
+            builtins.__import__ = real_import
+            ignition.STATE_DIR = saved_dir
+    finally:
+        shutil.rmtree(scratch2, ignore_errors=True)
 
     print(f"\n  {'all good' if not fails else f'{fails} failed'}\n")
     return 1 if fails else 0

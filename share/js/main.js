@@ -16,6 +16,7 @@ import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
+import childAlertView from "./views/childalert.js";
 import fridgeScreen from "./views/fridge.js";
 import appsView from "./views/apps.js";
 import appView from "./views/app.js";
@@ -252,6 +253,10 @@ const TABS = [
       // (share/js/carkit.js; doc/design/2026-10-17-car-widget-kit.md). FAST,
       // so glance mode applies the moment the car moves.
       { id: "apps", label: "Apps", title: "Car apps", mount: appsView, fast: true },
+      // A child left in the car (lib/childalert.py). Its settings lock while
+      // the car moves (store.lockedAsMoving, read inside the view); "Child
+      // aboard" stays one tap, because it only ever makes the alert likelier.
+      { id: "child-alert", label: "Child seat", title: "Child seat", mount: childAlertView },
     ] },
   // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
   // no `claude` CLI, that it is not set up and what it needs -- an honest

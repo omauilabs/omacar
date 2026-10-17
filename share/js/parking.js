@@ -33,6 +33,14 @@ export function parkingView(pub) {
              sub: "Its computers are still answering, so OmaCar stays awake until they stop.",
              ring: null, actions: [] };
   }
+  if (pub.held === "child alert") {
+    // lib/childalert.py is holding it: a child may be in the car. Its own card
+    // (childalert.js) says so in full and this one steps aside for it; this
+    // is what shows if that card cannot, and it offers no Sleep now.
+    return { tone: "bad", kind: "child", title: "Staying awake: child alert",
+             sub: "Until you say the car seat is empty (Cabin → Child seat).",
+             ring: null, actions: [] };
+  }
   if (pub.held === "stay on") {
     const floor = pub.battery !== null && pub.battery !== undefined ? ` Battery ${pub.battery}%.` : "";
     return { tone: "", title: "Staying on",
@@ -85,6 +93,7 @@ export function mountParking({ host = document.getElementById("app"), poll = 100
     card.hidden = !v;
     if (!v) { shownActs = ""; return; }
     card.dataset.tone = v.tone;
+    card.dataset.kind = v.kind || "";
     if (title.textContent !== v.title) title.textContent = v.title;
     if (sub.textContent !== v.sub) sub.textContent = v.sub;
     ring.hidden = !v.ring;
