@@ -238,6 +238,14 @@ const TABS = [
     views: [
       { id: "cabin",  label: "Overview", title: "Cabin",  mount: cabinView },
       { id: "fridge", label: "Fridge",   title: "Fridge", mount: fridgeScreen },
+      // The cabin and outdoor sensors' day (lib/envnode.py). Slow data (a
+      // point a minute), so not `fast`. Also opened from Home's card.
+      { id: "environment", label: "Air", title: "Environment", mount: environmentView, askable: true },
+      // The AUX equalizer. Its editing locks while the car moves by the same
+      // rule Home's Customize uses (store.lockedAsMoving, read inside the
+      // view), so it is not `write`: presets and bypass stay one tap at speed.
+      // Also opened from Settings and Music.
+      { id: "eq", label: "Sound", title: "Equalizer", mount: eqView, fast: true },
     ] },
   // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
   // no `claude` CLI, that it is not set up and what it needs -- an honest
@@ -274,15 +282,6 @@ const OFF_NAV = [
     mount: themesView, off: "opened from Settings" },
   { id: "effects", label: "Effects", title: "Scanner and Leviathan",
     mount: effectsView, off: "opened from Settings", askable: true },
-  // The cabin and outdoor sensors' day (lib/envnode.py): Home's Environment
-  // card is the way in. Slow data (a point a minute), so not `fast`.
-  { id: "environment", label: "Environment", title: "Environment",
-    mount: environmentView, off: "opened from Home's Environment card", askable: true },
-  // The AUX equalizer. Its editing locks while the car moves by the same rule
-  // Home's Customize uses (store.lockedAsMoving, read inside the view), so it is
-  // not `write`: the preset keys and the bypass stay one tap at speed.
-  { id: "eq", label: "Equalizer", title: "Equalizer",
-    mount: eqView, fast: true, off: "opened from Settings and Music" },
   // The power-on screen: a destination the tablet is pointed at, and Home's
   // "Begin" button when the car is off. Never something to browse to mid-drive.
   //

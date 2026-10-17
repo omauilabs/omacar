@@ -302,6 +302,9 @@ const MAKERS = {
       console.warn("Fridge card:", e);
       if (!gone) node.appendChild(h("div.hc-ph-s", "The fridge card could not load"));
     });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
   // card is on Home. Tapping it opens the full Radar screen.
   radar: () => {

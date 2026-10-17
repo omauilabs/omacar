@@ -6,7 +6,7 @@
 // The fridge gets the hero slot because it is the one with something to say
 // right now; a tile is a door to its own screen.
 
-import { h, icon } from "../core.js";
+import { h, icon, temp, withToken } from "../core.js";
 import { ICONS } from "../icons.js";
 import { fridgeCard } from "../fridgecard.js";
 
@@ -18,24 +18,66 @@ const goto = (id) => { location.hash = "#" + id; };
 const TILES = [
   { id: "air", icon: ICONS.air, title: "Air",
     line: "Cabin and outside: temperature, humidity, CO₂ and particulates.",
-    need: "Needs the environment sensors", go: null },
+    need: "Open the last 24 hours", go: "environment" },
   { id: "sound", icon: ICONS.sound, title: "Sound",
-    line: "An equalizer for the AUX output, with automatic calibration.",
-    need: "Arriving with the equalizer", go: null },
+    line: "The equalizer for the AUX output, and Calibrate.",
+    need: "Open the equalizer", go: "eq" },
   { id: "garage", icon: ICONS.garage, title: "Garage",
     line: "Open and close the garage door from the dash, locally.",
     need: "Needs a ratgdo32 or Konnected blaQ", go: null },
 ];
 
+// What a live tile says now, from its feature's own API. Pure, so it is
+// tested (test/js/cabin.test.js). null: say the tile's standing line instead.
+// `t` formats a Celsius temperature in the user's units.
+export function tileStatus(id, d, t = (c) => `${Math.round(c)}°`) {
+  if (!d) return null;
+  if (id === "air") {
+    if (!d.present) return null;
+    const cab = d.cabin || {}, out = d.outside || {};
+    const cv = cab.values || {}, ov = out.values || {};
+    const parts = [];
+    if (cab.state !== "absent" && typeof cv.t_c === "number") parts.push(`Cabin ${t(cv.t_c)}`);
+    if (cab.state !== "absent" && typeof cv.co2 === "number") parts.push(`CO₂ ${Math.round(cv.co2).toLocaleString("en-US")}`);
+    if (out.state !== "absent" && typeof ov.t_c === "number") parts.push(`Outside ${t(ov.t_c)}`);
+    if (!parts.length) return null;
+    const sim = d.source === "sim";
+    const stale = cab.state === "stale" || out.state === "stale";
+    return { line: parts.join(" · "), need: sim ? "Simulated" : stale ? "Last reading" : "Live",
+             tone: sim ? "warn" : stale ? "" : "ok" };
+  }
+  if (id === "sound") {
+    const st = d.state || {};
+    if (!d.present) return { line: st.enabled ? `On · ${st.preset || "Custom"}` : "Bypassed",
+                             need: "Not applied here: no PipeWire", tone: "" };
+    if (!st.enabled) return { line: "Bypassed", need: "Flat to the AUX output", tone: "" };
+    return { line: `On · ${st.preset || "Custom"}`, need: d.applied ? "Shaping the AUX output" : "Starting…",
+             tone: d.applied ? "ok" : "" };
+  }
+  return null;
+}
+
+const FEEDS = { air: "/api/env", sound: "/api/eq" };
+
 function tile(t) {
+  const line = h("p.cb-tile-line", t.line);
+  const needT = h("span", t.need);
+  const need = h("div.cb-tile-need", h("span.cb-lamp", { "aria-hidden": "true" }), needT);
   const body = [
-    h("div.cb-tile-head", h("span.cb-tile-ico", icon(t.icon, 22)), h("span.cb-tile-t", t.title)),
-    h("p.cb-tile-line", t.line),
-    h("div.cb-tile-need", h("span.cb-lamp", { "aria-hidden": "true" }), t.need),
+    h("div.cb-tile-head", h("span.cb-tile-ico", icon(t.icon, 22)), h("span.cb-tile-t", t.title),
+      t.go ? h("span.cb-chev", { "aria-hidden": "true" }, icon(ICONS.chevron, 18)) : null),
+    line, need,
   ];
-  return t.go
+  const node = t.go
     ? h("button.card.cb-tile", { type: "button", data: { tile: t.id }, onclick: () => goto(t.go) }, ...body)
     : h("div.card.cb-tile", { data: { tile: t.id, state: "pending" } }, ...body);
+  const paint = (d) => {
+    const s = tileStatus(t.id, d, (c) => temp(c));
+    line.textContent = s ? s.line : t.line;
+    needT.textContent = s ? s.need : t.need;
+    node.dataset.tone = s ? s.tone : "";
+  };
+  return { node, feed: FEEDS[t.id], paint };
 }
 
 export default function cabin(root) {
@@ -51,6 +93,20 @@ export default function cabin(root) {
   fridgeSlot.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === fridgeSlot) { e.preventDefault(); goto("fridge"); }
   });
-  root.appendChild(h("div.cabin", fridgeSlot, h("div.cb-tiles", ...TILES.map(tile))));
-  return () => card.destroy();
+  const tiles = TILES.map(tile);
+  root.appendChild(h("div.cabin", fridgeSlot, h("div.cb-tiles", ...tiles.map((x) => x.node))));
+  // Each live tile reads its own feature's API every few seconds; a feed that
+  // fails keeps the tile's standing words rather than showing an error here.
+  let timer = null, gone = false;
+  const tick = async () => {
+    await Promise.all(tiles.filter((x) => x.feed).map(async (x) => {
+      try {
+        const r = await fetch(withToken(x.feed), { cache: "no-store" });
+        x.paint(r.ok ? await r.json() : null);
+      } catch { x.paint(null); }
+    }));
+    if (!gone) timer = setTimeout(tick, 5000);
+  };
+  tick();
+  return () => { gone = true; clearTimeout(timer); card.destroy(); };
 }

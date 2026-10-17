@@ -43,6 +43,15 @@ button.cb-tile { cursor: pointer; border: 0; }
 .cb-tile[data-state="pending"] .cb-tile-ico { color: var(--dim);
   background: color-mix(in srgb, var(--ink) 5%, transparent); box-shadow: none; }
 button.cb-tile:active { transform: scale(.985); }
+.cb-chev { margin-left: auto; color: var(--dim); }
+/* A live tile's line is a reading, so it reads like one. */
+button.cb-tile .cb-tile-line { font-size: 1.05rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.cb-tile[data-tone="ok"] .cb-lamp { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.cb-tile[data-tone="ok"] .cb-tile-need { color: var(--ok); }
+.cb-tile[data-tone="warn"] .cb-lamp { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+.cb-tile[data-tone="warn"] .cb-tile-need { color: var(--warn); }
 
 @media (orientation: portrait) {
   .cabin { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1.3fr) minmax(0, 1fr); }
