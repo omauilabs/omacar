@@ -21,27 +21,41 @@ secs=${1:-300}
 label=${2:-run}
 out="$HOME/.local/share/omacar/footprint/${label}-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$out"
-ncpu=$(nproc)
+ncpu=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN)
 echo "  sampling ${secs}s into $out (cpu% is of ONE core; $ncpu cores)"
-{
-  echo "t,group,pid,cpu,rss_kb,cmd"
-  for ((i = 0; i < secs; i++)); do
-    t=$(date +%s)
-    ps -eo pid=,pcpu=,rss=,args= | while read -r pid cpu rss args; do
-      case "$args" in
-        *chromium*|*chrome*) g=chromium ;;
-        *python*omacar*|*python*lib/*.py*)
-          m=$(sed -E 's#.*lib/([a-z_]+)\.py.*#\1#' <<<"$args"); g="py:$m" ;;
-        *ffmpeg*|*gst-launch*) g=video ;;
-        *Hyprland*|*hyprland*) g=compositor ;;
-        *pipewire*|*wireplumber*) g=audio ;;
-        *) continue ;;
-      esac
-      printf '%s,%s,%s,%s,%s,"%s"\n' "$t" "$g" "$pid" "$cpu" "$rss" "${args:0:80}"
-    done
-    sleep 1
-  done
-} > "$out/samples.csv"
+# Sampled in Python, so a command line with quotes or commas in it is quoted
+# properly in the CSV rather than breaking it.
+python3 - "$out" "$secs" <<'PY'
+import csv, os, re, subprocess, sys, time
+out, secs = sys.argv[1], int(sys.argv[2])
+def group(args):
+    if "chromium" in args or "chrome" in args:
+        return "chromium"
+    m = re.search(r"lib/([a-z_]+)\.py", args)
+    if m and "python" in args:
+        return "py:" + m.group(1)
+    if "ffmpeg" in args or "gst-launch" in args:
+        return "video"
+    if "Hyprland" in args or "hyprland" in args:
+        return "compositor"
+    if "pipewire" in args or "wireplumber" in args:
+        return "audio"
+    return None
+with open(os.path.join(out, "samples.csv"), "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["t", "group", "pid", "cpu", "rss_kb", "cmd"])
+    for _ in range(secs):
+        t = int(time.time())
+        ps = subprocess.run(["ps", "-eo", "pid=,pcpu=,rss=,args="], capture_output=True, text=True).stdout
+        for line in ps.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) < 4:
+                continue
+            g = group(parts[3])
+            if g:
+                w.writerow([t, g, parts[0], parts[1], parts[2], parts[3][:80]])
+        time.sleep(1)
+PY
 python3 - "$out" "$ncpu" <<'PY'
 import csv, sys, statistics as st, collections, os
 out, ncpu = sys.argv[1], int(sys.argv[2])
