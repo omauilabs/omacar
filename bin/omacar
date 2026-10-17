@@ -2104,6 +2104,8 @@ print()
   # The cabin and outdoor sensor nodes on USB (lib/envnode.py). pyserial lives
   # in the venv with the daemon's.
   env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
+  # The owner's outbox, shared by every alert that has to reach a phone.
+  notify) shift; exec python3 "$ROOT/lib/notify.py" "$@" ;;
   # Asleep when the car is parked, awake when it starts (doc/ignition.md).
   ignition)
     case "${2:-status}" in

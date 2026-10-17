@@ -175,6 +175,8 @@ DEMO_ROUTES = {
     # The equalizer would rewrite a PipeWire config and restart a user unit.
     "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
     "/api/eq/live": {"ok": False, "demo": True},
+    # The owner's outbox: the demo has nothing to tell anybody.
+    "/api/notify": {"events": [], "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and

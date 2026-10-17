@@ -1180,6 +1180,10 @@ def handle_get(path, query):
         # show it. An alert that has gone stale is already gone from this.
         import v1
         return 200, v1.read_public()
+    if path == "/api/notify":
+        # The owner's outbox (lib/notify.py): what a paired phone polls.
+        import notify
+        return 200, {"events": notify.since(qint(query, "since", 0, 0))}
     if path == "/api/ignition":
         # The parking countdown (lib/ignition.py), read by the app once a
         # second: the loop's last word, or {"phase": "off"} with no loop.
