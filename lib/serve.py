@@ -55,7 +55,7 @@ LOOPBACK_ONLY = True
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
 # Naming a tyre sensor's wheel is a label in a config file: it is on the list.
-COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins", "/api/tpms/assign"}
+COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
 
 
 # ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
