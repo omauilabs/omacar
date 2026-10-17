@@ -331,6 +331,19 @@ const MAKERS = {
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };
   },
+  // Arriving home and the fridge for a pickup (share/js/arrivalcard.js,
+  // lib/arrival.py). Loaded only when the card is on Home.
+  arrival: () => {
+    const node = h("div.card.hc");   // not tappable: it holds keys of its own
+    let card = null, gone = false;
+    import("../arrivalcard.js").then((m) => { if (!gone) card = m.arrivalCard(node); })
+      .catch((e) => {
+        console.warn("Arrival card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The arrival card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
   // card is on Home. Tapping it opens the full Radar screen.
   radar: () => {

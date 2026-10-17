@@ -175,6 +175,12 @@ DEMO_ROUTES = {
     "/api/pretrip": {"trip_km": None, "ticks": {}, "trip_started": None,
                      "checklist": [], "gaps": [], "tpms": None,
                      "simulated": True, "demo": True},
+    # Arrival and pickup pre-cool would run the owner's House command and move
+    # the fridge; places is the owner's real home address. None of it in a demo.
+    "/api/arrival": {"demo": True, "location": {"source": "none", "fix": False},
+                     "arrival": {"phase": "no_home"}, "places": {"home": None, "pickups": []},
+                     "actions": {}, "pickup": None, "watching": False},
+    "/api/places": {"home": None, "pickups": [], "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

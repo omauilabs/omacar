@@ -2106,6 +2106,12 @@ print()
         "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
       *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
     esac ;;
+  # Where the car is (lib/location.py) and what that means: arriving home,
+  # pre-cooling the fridge for a pickup (lib/arrival.py). Stdlib only, so any
+  # python; no radio and no car.
+  location) shift; exec python3 "$ROOT/lib/location.py" "$@" ;;
+  places) exec python3 "$ROOT/lib/location.py" "$@" ;;
+  arrival) shift; exec python3 "$ROOT/lib/arrival.py" "$@" ;;
   # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
   # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
   # radio, and run on any python.
