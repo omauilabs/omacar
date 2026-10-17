@@ -2082,6 +2082,8 @@ print()
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # Hybrid coaching: scores drives from the log, read-only (lib/coach.py).
+  coach) shift; exec python3 "$ROOT/lib/coach.py" "$@" ;;
   # The Dometic CFX3 over Bluetooth (lib/fridge.py). Under the venv, where
   # bleak lives; `setup` puts it there.
   fridge)

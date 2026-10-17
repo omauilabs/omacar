@@ -16,6 +16,7 @@
     "fridge":   { "label": "Fridge",        "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "env":      { "label": "Environment",   "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "radar":    { "label": "Radar",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
+    "coach":    { "label": "Hybrid coach",  "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "agent":    { "label": "Oma Agent",     "sizes": { "m": { "land": [4, 2], "port": [6, 2] } } }
   },
   "default": {

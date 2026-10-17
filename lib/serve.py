@@ -165,6 +165,8 @@ DEMO_ROUTES = {
     # The live page's volume pin (§2.6): it would hold the tablet's speakers at
     # 100% every 30 s. The demo never touches the volume.
     "/api/audio": {"managed": False, "demo": True},
+    # The coach scores drives from the car's log; the demo has none of its own.
+    "/api/coach": {"present": False, "demo": True},
     # The fridge would send Bluetooth writes to a real Dometic.
     "/api/fridge": {"present": False, "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes

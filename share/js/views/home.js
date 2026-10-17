@@ -305,6 +305,19 @@ const MAKERS = {
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };
   },
+  // Hybrid coach (share/js/coachcard.js, lib/coach.py). Loaded only when the
+  // card is on Home; tapping it opens Vehicle -> Hybrid -> Coach.
+  coach: () => {
+    const node = tappable(h("div.card.hc"), "coach");
+    let card = null, gone = false;
+    import("../coachcard.js").then((m) => { if (!gone) card = m.coachCard(node); })
+      .catch((e) => {
+        console.warn("Coach card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The coach card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
   // card is on Home. Tapping it opens the full Radar screen.
   radar: () => {
