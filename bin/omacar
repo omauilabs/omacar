@@ -2022,6 +2022,15 @@ print()
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # The Dometic CFX3 over Bluetooth (lib/fridge.py). Under the venv, where
+  # bleak lives; `setup` puts it there.
+  fridge)
+    case "${2:-status}" in
+      setup)
+        omacar_need_env
+        "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
+    esac ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;

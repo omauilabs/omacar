@@ -32,6 +32,8 @@ what the car said.
     POST /api/drive             change it
     GET  /api/home              Home's card layout
     POST /api/home              change it, or {action: "reset"}
+    GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
+    POST /api/fridge            {name: "power"|"z0_set", value}
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1153,6 +1155,11 @@ def handle_get(path, query):
         return 200, nursery.summary()
     if path == "/api/live":
         return 200, records.live()
+    if path == "/api/fridge":
+        # The CFX3 in the back (lib/fridge.py), as its link or the simulator
+        # last wrote it. `source` says which, and the card always shows it.
+        import fridge
+        return 200, fridge.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")
@@ -1450,6 +1457,14 @@ def handle_post(path, body):
             return 400, {"error": f"no screen called {want!r}",
                          "screens": sorted(seen)}
         return 200, screen.ask(want, str(data.get("who") or "somebody")[:40])
+    if path == "/api/fridge":
+        # One setting: {"name": "z0_set", "value": 3.5} or {"name": "power",
+        # "value": false}. Validated and bounded here; sent by the link.
+        import fridge
+        try:
+            return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
     if path == "/api/scan":
         return 200, scan()
     if path == "/api/record":
