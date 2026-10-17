@@ -6,7 +6,7 @@
 // readings catalogue drive mode uses and says where it came from: a tile that
 // has no value draws words, never a zero.
 
-import { h, clear, icon, store, api } from "../core.js";
+import { h, clear, icon, store, api, U } from "../core.js";
 import { ICONS } from "../icons.js";
 import { READINGS, readingState, pausedNote } from "../readings.js";
 import { makeGauge } from "../gauges.js";
@@ -14,6 +14,8 @@ import { makeSignalTile } from "../sigtile.js";
 import { footerLine, sourceKey } from "../provenance.js";
 import { asset } from "../assets.js";
 import { tyreState } from "../systems.js";
+import { tpmsFeed } from "../tpmsfeed.js";
+import { homeTyre, mergeTyre } from "../tpmsview.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
 import { savedLook, mountLookEffect } from "../looks.js";
 import { startEditing } from "../homeedit.js";
@@ -151,14 +153,24 @@ function carCard() {
     tyre.style.top = (at[1] * 100) + "%";
   });
   const unmount3d = carOrPicture(stage3d, (on) => { threeD = on; show(); });
+  // The four tyre sensors (lib/tpms.py), when there are any heard; the car's
+  // own deflation warning otherwise, and whichever is worse if both speak.
+  // Tapping the callout opens the Tires screen.
+  let radio = null;
+  const offTpms = tpmsFeed.subscribe((s) => { radio = s; });
+  tyre.setAttribute("role", "button");
+  tyre.tabIndex = 0;
+  tyre.style.cursor = "pointer";
+  tyre.addEventListener("click", () => go("tpms"));
+  tyre.addEventListener("keydown", (e) => { if (e.key === "Enter") go("tpms"); });
   return {
     node,
     paint() {
-      const st = tyreState(store.car);
+      const st = mergeTyre(homeTyre(radio, { imperial: U.imperial }), tyreState(store.car));
       tyre.dataset.tone = st.tone;
       text(tyre.querySelector(".co-v"), st.text);
     },
-    destroy() { unmount3d(); },
+    destroy() { unmount3d(); offTpms(); },
   };
 }
 

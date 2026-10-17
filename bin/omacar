@@ -2122,6 +2122,9 @@ print()
   # The fuel log (lib/fuel.py, doc/fuel-log.md): fill-ups, real economy. Reads
   # live.json and the record; no radio, no serial port, no network.
   fuel) shift; exec "$OMACAR_PY" "$ROOT/lib/fuel.py" "$@" ;;
+  # Tyre pressures heard by an RTL-SDR running rtl_433 (lib/tpms.py). Plain
+  # python: it needs rtl_433 (a system package) and nothing from the venv.
+  tpms) shift; exec python3 "$ROOT/lib/tpms.py" "$@" ;;
   # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
   # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
   # radio, and run on any python.

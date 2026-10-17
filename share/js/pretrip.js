@@ -164,6 +164,9 @@ export function tyrePressures(t) {
   const psi = [];
   for (const w of raw) {
     const o = isNum(w) ? { psi: w } : w || {};
+    // lib/tpms.py marks a wheel's last reading `fresh: false` once it is old:
+    // a pressure from days ago is not this morning's, so it is not counted.
+    if (o.fresh === false) continue;
     if (isNum(o.psi)) psi.push(o.psi);
     else if (isNum(o.kpa)) psi.push(o.kpa * 0.145038);
     else if (isNum(o.pressure_kpa)) psi.push(o.pressure_kpa * 0.145038);

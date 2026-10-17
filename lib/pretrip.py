@@ -158,9 +158,14 @@ def tpms():
     if not callable(fn):
         return None
     try:
-        return fn()
+        got = fn()
     except Exception:  # noqa: BLE001 -- a broken tyre source must not break the check
         return None
+    # lib/tpms.py answers {"present": False} when nothing was ever heard: that
+    # is "Not measured", the same as no module at all.
+    if not isinstance(got, dict) or got.get("present") is False:
+        return None
+    return got
 
 
 def read_public():

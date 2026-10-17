@@ -54,6 +54,7 @@ LOOPBACK_ONLY = True
 
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
+# Naming a tyre sensor's wheel is a label in a config file: it is on the list.
 COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
 
 
@@ -187,6 +188,11 @@ DEMO_ROUTES = {
     # write a fill-up into the real record.
     "/api/fuel": {"present": False, "demo": True, "fills": [], "intervals": [],
                   "pending": None},
+    # The tyre sensors: the demo has no radio, and assigning a sensor would
+    # write the owner's config.
+    "/api/tpms": {"present": False, "demo": True},
+    "/api/tpms/heard": {"present": False, "heard": [], "demo": True},
+    "/api/tpms/assign": {"ok": False, "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

@@ -1,0 +1,172 @@
+/* Tires: four tyre sensors on a car from above (share/js/views/tires.js), and
+   the banner for a tyre losing air fast (share/js/tpmsbanner.js).
+
+   The same language as the rest of the redesign: raised surfaces lit from
+   above, captions over values, status lamps with halos, no outlines. A wheel's
+   tone (--tn) is carried three ways at once, so no look has to rely on hue
+   alone: the lamp, the number's colour, and a word ("Good", "Low", "Very
+   low"). Where the number came from is always on the card. */
+
+.wrap:has(> .tr) { max-width: none; display: block; height: 100%; }
+.stage:has(> .wrap > .tr) { padding-bottom: 8px; }
+
+.tr [data-tone="ok"]   { --tn: var(--ok); }
+.tr [data-tone="warn"] { --tn: var(--warn); }
+.tr [data-tone="bad"]  { --tn: var(--bad); }
+
+.tr { position: relative; height: 100%; display: grid; gap: 14px;
+      grid-template-columns: minmax(0, 1fr) minmax(190px, 270px) minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) auto;
+      grid-template-areas: "head head head" "fl car fr" "rl car rr" "foot foot foot"; }
+.tr-head { grid-area: head; display: flex; align-items: center; gap: 10px; color: var(--info); padding: 0 4px; }
+.tr-title { margin: 0; font-size: 1.15rem; font-weight: 600; color: var(--ink); }
+.tr-src { display: inline-flex; align-items: center; gap: 7px; font-size: .72rem; letter-spacing: .02em;
+          color: var(--dim); white-space: nowrap; min-width: 0; }
+.tr-src-top { margin-left: auto; font-size: .8rem; }
+.tr-lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.tr-src[data-tone="ok"] { color: var(--ok); }
+.tr-src[data-tone="ok"] .tr-lamp { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.tr-src[data-tone="warn"] { color: var(--warn); }
+.tr-src[data-tone="warn"] .tr-lamp { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+
+/* ---- a wheel ------------------------------------------------------------ */
+.tr-w { position: relative; min-height: 0; min-width: 0; overflow: hidden; display: grid; align-content: space-between;
+        gap: 8px; padding: 16px 20px 14px; border-radius: var(--r);
+        background: radial-gradient(120% 100% at 0 0, color-mix(in srgb, var(--tn, transparent) 13%, transparent), transparent 62%), var(--panel);
+        box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.tr-w[data-wheel="FL"] { grid-area: fl; } .tr-w[data-wheel="FR"] { grid-area: fr; }
+.tr-w[data-wheel="RL"] { grid-area: rl; } .tr-w[data-wheel="RR"] { grid-area: rr; }
+.tr-w-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.tr-cap { font-size: .8rem; color: var(--ink-2); }
+.tr-lamp { transition: background .3s, box-shadow .3s; }
+.tr-w[data-tone] .tr-cap::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  margin-right: 9px; vertical-align: 0; background: var(--tn);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tn) 17%, transparent), 0 0 14px color-mix(in srgb, var(--tn) 65%, transparent); }
+.tr-w-main { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; min-width: 0; }
+.tr-big { display: flex; align-items: baseline; gap: 6px; line-height: .9; }
+.tr-num { font-size: clamp(3.1rem, 9.6vh, 5.6rem); font-weight: 400; letter-spacing: -.035em; color: var(--ink);
+          text-shadow: 0 0 36px color-mix(in srgb, var(--tn, var(--info)) 30%, transparent); }
+.tr-unit { font-size: 1.15rem; color: var(--ink-2); }
+.tr-side { display: grid; justify-items: end; gap: 3px; text-align: right; min-width: 0; }
+.tr-word { font-size: 1.05rem; font-weight: 600; color: var(--tn, var(--dim)); }
+.tr-vs { font-size: .74rem; color: var(--dim); }
+.tr-facts { display: flex; gap: 22px; }
+.tr-fact { display: grid; gap: 2px; }
+.tr-fact-k { font-size: .66rem; color: var(--dim); letter-spacing: .02em; }
+.tr-fact-v { font-size: .95rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.tr-fact-v[data-low="1"] { color: var(--warn); font-weight: 600; }
+.tr-spark { position: relative; height: 46px; min-width: 0; }
+.tr-spark svg { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--tn, var(--info)); }
+.tr-rule { stroke: color-mix(in srgb, var(--ink) 38%, transparent); stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+.tr-trend { font-size: .76rem; color: var(--dim); min-height: 1em; }
+.tr-trend[data-tone="warn"] { color: var(--warn); font-weight: 600; }
+.tr-trend[data-tone="ok"] { color: var(--ok); }
+.tr-w[data-state="unassigned"], .tr-w[data-state="quiet"] { background: var(--panel); }
+.tr-w[data-state="unassigned"] .tr-num, .tr-w[data-state="quiet"] .tr-num { color: var(--faint); text-shadow: none; }
+.tr-w[data-dim="1"] .tr-num { color: var(--dim); text-shadow: none; }
+.tr-w[data-dim="1"] .tr-spark svg { color: var(--faint); }
+.tr-w[data-tone="warn"] .tr-num { color: color-mix(in srgb, var(--warn) 60%, var(--ink)); }
+.tr-w[data-tone="bad"] .tr-num { color: color-mix(in srgb, var(--bad) 62%, var(--ink)); }
+
+/* ---- the car -------------------------------------------------------------- */
+.tr-carbox { grid-area: car; display: grid; place-items: center; min-height: 0; min-width: 0; }
+.tr-car { height: 100%; width: 100%; max-height: 100%; overflow: visible; }
+.tr-b0 { stop-color: color-mix(in srgb, var(--raise) 100%, var(--ink) 4%); } .tr-b1 { stop-color: var(--panel-2); }
+.tr-g0 { stop-color: color-mix(in srgb, var(--info) 22%, var(--ground)); } .tr-g1 { stop-color: var(--ground); }
+.tr-body { fill: url(#tr-body); stroke: color-mix(in srgb, var(--ink) 8%, transparent); stroke-width: 1; }
+.tr-glass { fill: url(#tr-glass); }
+.tr-roof { fill: color-mix(in srgb, var(--ink) 4%, var(--panel-2)); }
+.tr-line { fill: none; stroke: color-mix(in srgb, var(--ink) 10%, transparent); stroke-width: 1.5; stroke-linecap: round; }
+.tr-hl { fill: color-mix(in srgb, var(--ink) 16%, var(--panel-2)); }
+.tr-mirror { fill: var(--panel-2); }
+.tr-axle { stroke: color-mix(in srgb, var(--ink) 7%, transparent); stroke-width: 3; stroke-linecap: round; }
+.tr-wh rect:first-child { fill: color-mix(in srgb, var(--tn, var(--faint)) 38%, var(--ground)); transition: fill .3s;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--tn, transparent) 55%, transparent)); }
+.tr-tread { fill: var(--ground); }
+.tr-wh[data-state="unassigned"] rect:first-child, .tr-wh[data-state="quiet"] rect:first-child { fill: var(--panel); filter: none; }
+
+/* ---- the foot ------------------------------------------------------------- */
+.tr-foot { grid-area: foot; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 0 2px; }
+.tr-key { position: relative; isolation: isolate; display: inline-flex; align-items: center; gap: 10px;
+  min-height: var(--tap-lg); padding: 0 22px; border: 0; border-radius: 18px; background: transparent;
+  color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4); }
+.tr-key::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+.tr-key:not(.tr-key-quiet):not(:disabled)::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 46%, transparent), color-mix(in srgb, var(--accent-fill) 16%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 45%, transparent), 0 8px 22px -12px color-mix(in srgb, var(--accent) 70%, transparent); }
+.tr-key:active:not(:disabled) { transform: scale(.95); }
+.tr-key:disabled { opacity: .45; cursor: default; }
+.tr-lock { font-size: .8rem; color: var(--dim); }
+.tr-lock:empty { display: none; }
+.tr-note { font-size: .82rem; color: var(--warn); }
+.tr-note:empty { display: none; }
+.tr-placard { margin-left: auto; font-size: .74rem; color: var(--dim); }
+
+/* ---- learn sensors -------------------------------------------------------- */
+.tr-learn { position: absolute; inset: 0; z-index: 5; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px; padding: 22px 26px; border-radius: var(--r); overflow: hidden;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 60%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent), 0 24px 60px -20px #000; }
+.tr-learn[hidden] { display: none; }
+.tr-l-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tr-l-title { margin: 0; font-size: 1.15rem; font-weight: 600; }
+.tr-hint { margin: 0; color: var(--ink-2); font-size: .92rem; max-width: 70ch; }
+.tr-rows { display: grid; align-content: start; gap: 8px; overflow-y: auto; min-height: 0; padding-right: 2px; }
+.tr-row { display: grid; grid-template-columns: minmax(150px, 1.3fr) repeat(3, minmax(80px, .7fr)) auto; align-items: center;
+  gap: 14px; padding: 10px 14px; border-radius: 14px; background: var(--panel);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent); }
+.tr-row[data-dropped="1"] { background: linear-gradient(90deg, color-mix(in srgb, var(--accent-fill) 24%, var(--panel)), var(--panel) 70%); }
+.tr-r-id { display: grid; gap: 2px; min-width: 0; }
+.tr-r-idv { font-family: var(--mono); font-size: .98rem; color: var(--ink); }
+.tr-r-model { font-size: .72rem; color: var(--dim); }
+.tr-r-sig, .tr-r-p, .tr-r-d { display: grid; gap: 2px; }
+.tr-r-k { font-size: .66rem; color: var(--dim); }
+.tr-r-v { font-size: .95rem; font-variant-numeric: tabular-nums; color: var(--ink); }
+.tr-row[data-dropped="1"] .tr-r-d .tr-r-v { color: var(--accent); font-weight: 700; }
+.tr-seg { display: inline-flex; gap: 0; padding: 3px; border-radius: 15px;
+  background: linear-gradient(180deg, var(--ground), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent); }
+.tr-seg button { min-width: 58px; min-height: var(--tap); border: 0; border-radius: 12px; background: transparent;
+  color: var(--ink-2); font: inherit; font-size: .86rem; cursor: pointer; touch-action: manipulation; }
+.tr-seg button[aria-pressed="true"] { color: var(--on-accent); font-weight: 700;
+  background: linear-gradient(180deg, var(--accent), var(--accent-fill)); box-shadow: 0 6px 16px -8px var(--accent); }
+.tr-seg button:disabled { opacity: .5; }
+.tr-empty { color: var(--dim); font-size: .9rem; }
+.tr-empty:empty { display: none; }
+
+/* ---- the banner ------------------------------------------------------------ */
+.tp-banner { position: fixed; z-index: 79; display: flex; align-items: center; gap: 18px; padding: 10px 10px 10px 18px;
+  border-radius: 18px; pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bad) 28%, var(--panel-2)), var(--panel-2) 72%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent),
+              0 12px 30px -12px color-mix(in srgb, var(--bad) 70%, black), 0 0 0 1px color-mix(in srgb, var(--bad) 22%, transparent); }
+.tp-banner[hidden] { display: none; }
+.tp-banner .tb2-key { pointer-events: auto; }
+.tb2-lamp { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--bad);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 18%, transparent), 0 0 14px color-mix(in srgb, var(--bad) 70%, transparent); }
+.tb2-id { display: grid; gap: 2px; min-width: 0; flex: 1; line-height: 1.15; }
+.tb2-cap { font-size: .68rem; color: var(--ink-2); }
+.tb2-head { font-size: 1.3rem; font-weight: 700; color: var(--ink); }
+.tb2-sub { font-size: .84rem; color: var(--ink-2); }
+.tb2-key { min-height: var(--tap); padding: 0 20px; border: 0; border-radius: 14px; font: inherit; font-weight: 600; cursor: pointer;
+  color: var(--on-accent); background: linear-gradient(180deg, var(--accent), var(--accent-fill)); touch-action: manipulation; }
+.tb2-quiet { color: var(--ink); background: linear-gradient(180deg, var(--raise), var(--panel-2)); }
+
+@media (orientation: portrait) {
+  .tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+        grid-template-areas: "head head" "car car" "fl fr" "rl rr" "foot foot"; }
+  .tr-carbox { max-height: 30vh; }
+  .tr-w { padding: 12px 14px; }
+  .tr-spark { height: 34px; }
+  .tr-row { grid-template-columns: 1fr 1fr; }
+  .tr-seg { grid-column: 1 / -1; }
+  .tr-seg button { flex: 1; }
+  .tr-placard { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .tr-key, .tr-lamp, .tr-wh rect { transition: none; } }

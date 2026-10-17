@@ -51,6 +51,7 @@
 <link rel="stylesheet" href="css/eq.css">
 <link rel="stylesheet" href="css/valet.css">
 <link rel="stylesheet" href="css/coach.css">
+<link rel="stylesheet" href="css/tires.css">
 <!-- The boot screen, last, so it can rely on every token above it and cover
      every layer below it. It is markup and CSS on purpose: a splash drawn by a
      module arrives after the frame it was meant to cover. -->
@@ -170,6 +171,8 @@
 <script type="module" src="js/radarbanner.js"></script>
 <!-- The arrival prompt: a calm strip while the car is nearly home, with three one-tap keys and nothing automatic. -->
 <script type="module" src="js/arrivalbanner.js"></script>
+<!-- The tyre banner: only for a tyre losing air fast (share/js/tpmsbanner.js). Its own module; no view knows it. -->
+<script type="module" src="js/tpmsbanner.js"></script>
 <!-- ---- redesign/cameras ------------------------------------------------------
      The Cameras tab, Home's Dashcams card, the audio stage and drowsy mode
      (doc/design/2026-09-28-cameras-drowsy.md). One block at the end of the

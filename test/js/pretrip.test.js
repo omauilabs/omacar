@@ -213,4 +213,6 @@ export default [
     eq(stepTrip(100, +1, 1), 125);
     eq(stepTrip(7990, +1, 1), 8000);
   }],
+  ["the real tyre module's wheels: kPa, and a stale one is not counted", () =>
+    eq(tyrePressures({ present: true, wheels: [{ kpa: 248, fresh: true }, { kpa: 250, fresh: false }, { kpa: null }] }).map(Math.round), [36])],
 ];
