@@ -42,8 +42,12 @@ export function lampOf(side) {
   if (side.state === "stale") return { text: `Last seen ${ago(side.age || 0)}`, tone: "" };
   if (side.source === "sim") return { text: "Simulated", tone: "warn" };
   if (side.source === "car") return { text: "From the car", tone: "info" };
+  // A ready-made monitor heard over Bluetooth (lib/envble.py) is named, so the
+  // lamp says which device the cabin's numbers are from.
+  if (BLE_NAMES.has(side.port)) return { text: side.port, tone: "ok" };
   return { text: "Sensor", tone: "ok" };
 }
+const BLE_NAMES = new Set(["Qingping Air Monitor Lite", "Aranet4"]);
 
 function cabinView(c, imperial) {
   const v = (c && c.values) || {};

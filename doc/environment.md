@@ -109,3 +109,33 @@ moving**, the app says, once:
 - The calm prompt has been seen in a browser against the simulator, not in a moving car.
 - The CO₂ thresholds and the 5 minute rule are the owner's; the 1,400 clear line and
   the 30 s grace are choices to check.
+
+## A ready-made cabin monitor instead of the cabin node
+
+The cabin side can come from a monitor you buy rather than build. OmaCar
+hears it over Bluetooth, with no pairing, no app link and no cloud
+(`lib/envble.py`):
+
+| Monitor | Gives the cabin | Notes |
+|---|---|---|
+| Qingping Air Monitor Lite, **CGDN1** | temperature, humidity, PM2.5, PM10, CO₂ | USB-powered; buy the original CGDN1, because support for the 2026 "Lite 2" is unconfirmed |
+| Aranet4 | CO₂, temperature, humidity (its pressure is not used for the cabin) | Runs on AA batteries; turn on **Smart Home integrations** in the Aranet Home app (firmware 1.2.0+) |
+
+1. `omacar fridge setup` (installs bleak, the Bluetooth library) if it is not
+   already installed.
+2. `omacar env scan` lists the monitors it hears, nearest first.
+3. `omacar env use AA:BB:CC:DD:EE:FF` pins yours.
+4. `systemctl --user restart omacar-env`.
+
+**Only the pinned monitor is believed.** Every one in range broadcasts the
+same way, including the car in the next bay. Readings go through the same
+range checks as a USB node's, and the card's lamp names the device.
+
+**Heat:** a parked car in the sun far exceeds what these are built for. Mount
+the monitor low and out of direct sun, not on the dash.
+
+The decoders are ported from qingping-ble and Aranet4-Python (both MIT). The
+Qingping decoder is tested against qingping-ble's own captured Air Monitor
+Lite advertisement. The Aranet4 decoder is tested against a frame built to
+Aranet4-Python's layout, not against a real device.
+
