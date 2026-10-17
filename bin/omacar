@@ -2112,6 +2112,9 @@ print()
   location) shift; exec python3 "$ROOT/lib/location.py" "$@" ;;
   places) exec python3 "$ROOT/lib/location.py" "$@" ;;
   arrival) shift; exec python3 "$ROOT/lib/arrival.py" "$@" ;;
+  # The posted speed limit from an offline OpenStreetMap database
+  # (lib/speedlimit.py). Stdlib only; the database is built on a desktop.
+  speedlimits) shift; exec python3 "$ROOT/lib/speedlimit.py" "$@" ;;
   # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
   # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
   # radio, and run on any python.

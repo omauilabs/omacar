@@ -130,3 +130,14 @@ projects, for the ready-made cabin monitors in `lib/envble.py`:
   https://github.com/Bluetooth-Devices/qingping-ble
 - **Aranet4-Python**, © Anrijs Jargans and contributors: the Aranet4
   advertisement layout and scaling. https://github.com/Anrijs/Aranet4-Python
+
+## OpenStreetMap — posted speed limits
+
+<https://www.openstreetmap.org/copyright> · **ODbL 1.0**, © OpenStreetMap contributors
+
+The speed-limit sign (`doc/speed-limits.md`) reads a small database built from
+an OpenStreetMap extract (Geofabrik's `california-latest.osm.pbf`). The database
+is a derived database under the ODbL: it is never committed here, it carries its
+attribution in its own `meta` table, and the sign credits OpenStreetMap on the
+screen. `test/fixtures/speedlimits.osm` is made up by hand and is not
+OpenStreetMap data. Building uses `pyosmium` (osmium on PyPI, BSD-2-Clause).

@@ -50,6 +50,11 @@ function dialCard() {
   const begin = h("button.btn.dial-begin", { type: "button", style: { visibility: "hidden" },
     onclick: (e) => { e.stopPropagation(); go("launcher"); } }, "Begin");
   const node = tappable(h("div.card.hc.hc-dial", g.el, h("div.dial-words", rpm, mode, begin)), "drive");
+  // The posted limit beside the speed, and the speed's tone when over it
+  // (share/js/speedlimit.js, lib/speedlimit.py). Loaded on its own so a fault
+  // there can never take the dial with it.
+  let lim = null, limGone = false;
+  import("../speedlimit.js").then((m) => { if (!limGone) lim = { m, mount: m.mountSign(node) }; }).catch(() => {});
   const paintMode = (m) => {
     mode.hidden = !m;
     if (m) { text(mode, String(m).toUpperCase()); mode.dataset.mode = m; }
@@ -79,6 +84,8 @@ function dialCard() {
       g.el.dataset.state = speedState;
       if (speedState === "live") g.el.dataset.src = sourceKey(car, s);
       else delete g.el.dataset.src;
+      if (lim && speedState === "live" && lim.m.overNow()) g.el.dataset.over = "1";
+      else delete g.el.dataset.over;
       const rpmState = readingState(rpmReading, s);
       rpm.dataset.state = rpmState;
       if (rpmState === "live") rpm.dataset.src = sourceKey(car, s);
@@ -110,7 +117,11 @@ function dialCard() {
         api.driveMode().then((d) => paintMode(d && d.mode)).catch(() => {});
       }
     },
-    destroy() { document.removeEventListener("omacar:drivemode", onMode); },
+    destroy() {
+      document.removeEventListener("omacar:drivemode", onMode);
+      limGone = true;
+      if (lim) lim.mount.destroy();
+    },
   };
 }
 

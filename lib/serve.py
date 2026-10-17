@@ -181,6 +181,8 @@ DEMO_ROUTES = {
                      "arrival": {"phase": "no_home"}, "places": {"home": None, "pickups": []},
                      "actions": {}, "pickup": None, "watching": False},
     "/api/places": {"home": None, "pickups": [], "demo": True},
+    # The speed limit would read the real position; the demo has none.
+    "/api/speedlimit": {"present": False, "limit": None, "confidence": "none", "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

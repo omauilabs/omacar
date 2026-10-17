@@ -115,6 +115,8 @@
 .rb-band { font-size: 2rem; font-weight: 700; color: var(--ink); }
 .rb-freq { font-size: 1.3rem; font-weight: 600; color: var(--tn, var(--info)); font-variant-numeric: tabular-nums; }
 .rb-others { font-size: .9rem; color: var(--ink); font-weight: 600; }
+/* "Over the limit" (share/js/speedlimit.js): words in the warn tone, never a sound. */
+.rb-over { font-size: .95rem; font-weight: 600; color: var(--warn); letter-spacing: .02em; }
 .rd-banner .rd-bar { height: 40px; }
 
 /* ---- the Radar view --------------------------------------------------- */

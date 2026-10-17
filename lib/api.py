@@ -40,6 +40,7 @@ what the car said.
     GET  /api/arrival           arriving home and the pickup pre-cool (lib/arrival.py)
     POST /api/arrival           {do: "fridge_eco"|"house"|"garage"|"dismiss"|"pickup"|"pickup_cancel"}
     GET  /api/places            home and saved pickups (lib/location.py)
+    GET  /api/speedlimit        the posted limit under the car, offline (lib/speedlimit.py)
     POST /api/places            {home}, {add_pickup}, {remove_pickup}, {fridge_eco_c}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
@@ -1197,6 +1198,12 @@ def handle_get(path, query):
     if path == "/api/places":
         import location
         return 200, location.public_places()
+    if path == "/api/speedlimit":
+        # The posted limit under the car, from the offline map (lib/speedlimit.py).
+        # `limit` is null unless the match is confident; `source` is "posted" or
+        # "default"; `location_source` says gpsd or Simulated.
+        import speedlimit
+        return 200, speedlimit.read_public()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
