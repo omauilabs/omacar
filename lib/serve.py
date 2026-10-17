@@ -183,6 +183,10 @@ DEMO_ROUTES = {
     "/api/places": {"home": None, "pickups": [], "demo": True},
     # The speed limit would read the real position; the demo has none.
     "/api/speedlimit": {"present": False, "limit": None, "confidence": "none", "demo": True},
+    # The fuel log is the real car's: the demo has none, and a POST must not
+    # write a fill-up into the real record.
+    "/api/fuel": {"present": False, "demo": True, "fills": [], "intervals": [],
+                  "pending": None},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

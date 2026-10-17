@@ -1,0 +1,17 @@
+[Unit]
+Description=OmaCar fuel log — notices a fill-up when the tank level jumps while parked
+Documentation=file:__ROOT__/doc/fuel-log.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Reads live.json and the record. No radio, no serial port, and it never
+# transmits to the car: any python will do, but the venv's is already there.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/fuel.py run'
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target

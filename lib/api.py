@@ -42,6 +42,8 @@ what the car said.
     GET  /api/places            home and saved pickups (lib/location.py)
     GET  /api/speedlimit        the posted limit under the car, offline (lib/speedlimit.py)
     POST /api/places            {home}, {add_pickup}, {remove_pickup}, {fridge_eco_c}
+    GET  /api/fuel              the fuel log: fill-ups, real economy, the question waiting
+    POST /api/fuel              {op: "answer"|"skip"|"add"|"remove", ...}: the log only
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/ambient           the tablet's light sensor: lux, or {present: false} (read-only)
@@ -1207,6 +1209,11 @@ def handle_get(path, query):
         # "default"; `location_source` says gpsd or Simulated.
         import speedlimit
         return 200, speedlimit.read_public()
+    if path == "/api/fuel":
+        # The fuel log (lib/fuel.py): fill-ups the watcher noticed, what the
+        # owner said they took, and the economy worked out from the two.
+        import fuel
+        return 200, fuel.read_public()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1602,6 +1609,27 @@ def handle_post(path, body):
         import arrival
         code, body = arrival.places_post(data)
         return code, body
+    if path == "/api/fuel":
+        # The fuel log's own file and nothing else: it never reaches the car.
+        # `answer` and `add` carry litres and the total cost (the app converts
+        # from gallons and $/gal at the edge); `skip` and `remove` an id.
+        import fuel
+        op = str(data.get("op") or "")
+        try:
+            if op == "answer":
+                fuel.answer(data.get("id"), data.get("litres"), data.get("cost"),
+                            bool(data.get("full", True)))
+            elif op == "skip":
+                fuel.skip(data.get("id"))
+            elif op == "add":
+                fuel.add(data.get("litres"), data.get("cost"), bool(data.get("full", True)))
+            elif op == "remove":
+                fuel.remove(data.get("id"))
+            else:
+                return 400, {"error": "op is answer, skip, add or remove"}
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+        return 200, fuel.read_public()
     if path == "/api/v1":
         # One request, and it is not a cockpit write: Mute on the detector,
         # the tap its own button is. The detector's settings are not here and
