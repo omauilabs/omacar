@@ -2091,6 +2091,9 @@ print()
         "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
       *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
     esac ;;
+  # The Work dashboard's window on the Work relay (lib/workclient.py): `status`
+  # prints what the screen is told; `sim` writes a SIMULATED relay's answers.
+  workdash) shift; exec python3 "$ROOT/lib/workclient.py" "$@" ;;
   # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
   # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
   # radio, and run on any python.
