@@ -483,5 +483,23 @@ except ValueError:
     check("an unknown action is refused", True)
 
 shutil.rmtree(SCRATCH, ignore_errors=True)
+print("\n  a child alert holds an update (lib/childalert.py's state, read directly)")
+import json as _j, tempfile as _t
+_d = _t.mkdtemp(prefix="omacar-upd-child-")
+_saved = update.STATE_DIR
+update.STATE_DIR = _d
+try:
+    import sys as _s
+    _s.modules["childalert"] = None          # as on a release without the module
+    with open(os.path.join(_d, "child-alert.json"), "w") as _f:
+        _j.dump({"pub": {"hold_sleep": True, "source": "live"}}, _f)
+    check("an active child alert is an alert", "child" in update.active_alerts(1e9))
+    with open(os.path.join(_d, "child-alert.json"), "w") as _f:
+        _j.dump({"pub": {"hold_sleep": True, "source": "sim"}}, _f)
+    check("a simulated one is not", "child" not in update.active_alerts(1e9))
+finally:
+    update.STATE_DIR = _saved
+    _s.modules.pop("childalert", None)
+
 print(f"\n  {'all good' if not fails else f'{fails} failed'}\n")
 sys.exit(1 if fails else 0)

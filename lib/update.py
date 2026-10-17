@@ -65,7 +65,6 @@ MOVING_WINDOW = 120             # s: speed this recently means moving
 ANSWERING_WINDOW = 30           # s: a live sample this recent means ignition on
 FRESH_LIVE = 60                 # s: how old "word from the car" may be
 ALERT_RECENT = 120              # s: a drowsy alert this recent is still active
-CHILD_AWAKE = ("awake", "crying", "fussing", "stirring")
 
 
 # ---- where things are --------------------------------------------------------
@@ -537,15 +536,26 @@ def active_alerts(now):
             out.append("radar")
     except Exception:
         pass
+    # THE CHILD ALERT is lib/childalert.py (PR #57), not the nursery feed (a
+    # baby monitor at home, which says nothing about the car). Its own word on
+    # whether a child may be in the car is what holds sleep in ignition.py, so
+    # it holds an update too. If the module is not here (an older release) or
+    # will not load, its state file is read directly -- the same fail-safe
+    # ignition.child_hold() uses -- and only no file means no alert.
+    child = None
     try:
-        import nursery
-        s = nursery.read() or {}
-        if str(s.get("state") or "").lower() in CHILD_AWAKE:
-            sent = float(s.get("fetched") or 0)
-            if sent and now - sent < nursery.STALE:
-                out.append("child")
+        import childalert
+        child = childalert.ignition_hold(now)
     except Exception:
-        pass
+        try:
+            with open(os.path.join(STATE_DIR, "child-alert.json"), encoding="utf-8") as f:
+                pub = (json.load(f) or {}).get("pub") or {}
+            if pub.get("hold_sleep") and pub.get("source") != "sim":
+                child = "child alert"
+        except (OSError, ValueError):
+            child = None
+    if child:
+        out.append("child")
     try:
         import records
         db = records.connect()
