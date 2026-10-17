@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""What any MPRIS player on the tablet is playing, via playerctl (an Omarchy
+staple). Prints one JSON object; nothing playing is said in words."""
+import json, shutil, subprocess
+
+def pc(*a):
+    try:
+        r = subprocess.run(["playerctl", *a], capture_output=True, text=True, timeout=1.5)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+if not shutil.which("playerctl"):
+    print(json.dumps({"title": "playerctl is not installed", "artist": "", "playing": False,
+                      "player_line": "Install playerctl to see what is playing."}))
+else:
+    status = pc("status")
+    print(json.dumps({
+        "title": pc("metadata", "title") or ("Nothing playing" if not status else "Untitled"),
+        "artist": pc("metadata", "artist"),
+        "playing": status == "Playing",
+        "player_line": f"From {pc('metadata', '--format', '{{playerName}}') or 'no player'}",
+    }))

@@ -1180,6 +1180,16 @@ def handle_get(path, query):
         # show it. An alert that has gone stale is already gone from this.
         import v1
         return 200, v1.read_public()
+    if path == "/api/carkit":
+        # The car widget kit (lib/carkit.py): every car plugin, valid or not.
+        import carkit
+        return 200, carkit.public_list()
+    if path.startswith("/api/carkit/") and path.count("/") == 3:
+        # One plugin's spec, needs and current data (its data command runs
+        # here, with a timeout, at most every `every_s`).
+        import carkit
+        d = carkit.data_for(path.rsplit("/", 1)[1])
+        return (200, d) if d else (404, {"error": "no such car plugin"})
     if path == "/api/notify":
         # The owner's outbox (lib/notify.py): what a paired phone polls.
         import notify
@@ -1503,6 +1513,12 @@ def handle_post(path, body):
             return 200, v1.ask(str(data.get("name") or ""), data.get("value"))
         except (TypeError, ValueError) as e:
             return 400, {"error": str(e)}
+    m = re.fullmatch(r"/api/carkit/([a-z0-9-]{1,40})/action/([A-Za-z0-9_-]{1,40})", path)
+    if m:
+        # A car plugin's action. lib/carkit.py re-checks motion and refuses
+        # writes to the car while it moves, whatever the page asked.
+        import carkit
+        return carkit.run_action(m.group(1), m.group(2), arg=data.get("arg"))
     if path == "/api/ignition":
         # Stay on, or sleep now. Only a request: the loop still refuses to
         # sleep a car that is moving or answering, whatever the screen says.

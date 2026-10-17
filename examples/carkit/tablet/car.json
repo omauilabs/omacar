@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "id": "tablet",
+  "name": "Tablet",
+  "icon": "data",
+  "needs": { "network": false },
+  "data": { "command": ["./car-data"], "every_s": 5, "timeout_s": 2 },
+  "card": { "type": "row", "children": [
+    { "type": "metric", "label": "CPU", "value": "$.cpu_c", "unit": "°C", "source": "$.cpu_src", "trail": "$.cpu_trail" },
+    { "type": "metric", "label": "Battery", "value": "$.batt", "unit": "%", "source": "$.batt_src" }
+  ] },
+  "screen": { "type": "grid", "children": [
+    { "type": "metric", "label": "CPU temperature", "value": "$.cpu_c", "unit": "°C", "source": "$.cpu_src", "trail": "$.cpu_trail" },
+    { "type": "gauge", "label": "Battery", "value": "$.batt", "min": 0, "max": 100, "unit": "%", "source": "$.batt_src" },
+    { "type": "metric", "label": "Free disk", "value": "$.disk_gb", "unit": "GB", "source": "statvfs /" },
+    { "type": "metric", "label": "Load", "value": "$.load", "source": "/proc/loadavg" }
+  ] }
+}

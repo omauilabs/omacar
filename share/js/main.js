@@ -17,6 +17,8 @@ import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
 import fridgeScreen from "./views/fridge.js";
+import appsView from "./views/apps.js";
+import appView from "./views/app.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -246,6 +248,10 @@ const TABS = [
       // view), so it is not `write`: presets and bypass stay one tap at speed.
       // Also opened from Settings and Music.
       { id: "eq", label: "Sound", title: "Equalizer", mount: eqView, fast: true },
+      // Omarchy apps and plugins with a car.json, drawn by the car widget kit
+      // (share/js/carkit.js; doc/design/2026-10-17-car-widget-kit.md). FAST,
+      // so glance mode applies the moment the car moves.
+      { id: "apps", label: "Apps", title: "Car apps", mount: appsView, fast: true },
     ] },
   // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
   // no `claude` CLI, that it is not set up and what it needs -- an honest
@@ -276,6 +282,9 @@ for (const t of TABS) {
 // voice assistant may still open (see `screens()`). Anything reachable only
 // from inside another screen belongs in this list and nowhere else.
 const OFF_NAV = [
+  // One car app's own screen, #app/<id>; opened from Cabin → Apps.
+  { id: "app", label: "App", title: "Car app", mount: appView, fast: true,
+    off: "opened from Cabin → Apps" },
   { id: "learn",  label: "Learn",  title: "Learn the car, and the app",
     mount: learnView, off: "opened from Settings" },
   { id: "themes", label: "Themes", title: "Build a palette of your own",

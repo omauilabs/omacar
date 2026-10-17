@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""The tablet itself, read from /sys and /proc. Anything unreadable is null,
+which the kit draws as words, never as zero."""
+import glob, json, os, time
+
+STATE = os.path.join(os.path.expanduser(os.environ.get("XDG_STATE_HOME", "~/.local/state")), "omacar", "carkit-tablet.json")
+
+def read(p):
+    try:
+        with open(p) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+cpu = None
+for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
+    if (read(z + "/type") or "").startswith(("x86_pkg_temp", "acpitz", "cpu")):
+        v = read(z + "/temp")
+        if v and v.lstrip("-").isdigit():
+            cpu = round(int(v) / 1000, 1)
+            break
+batt = None
+for b in glob.glob("/sys/class/power_supply/BAT*"):
+    v = read(b + "/capacity")
+    if v and v.isdigit():
+        batt = int(v)
+try:
+    st = os.statvfs("/")
+    disk = round(st.f_bavail * st.f_frsize / 1e9, 1)
+except OSError:
+    disk = None
+load = (read("/proc/loadavg") or "").split(" ")[0] or None
+# A short CPU trail, kept between runs.
+try:
+    with open(STATE) as f:
+        trail = json.load(f)
+except (OSError, ValueError):
+    trail = []
+if cpu is not None:
+    trail = (trail + [cpu])[-30:]
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as f:
+        json.dump(trail, f)
+print(json.dumps({"cpu_c": cpu, "cpu_src": "thermal zone" if cpu is not None else None,
+                  "cpu_trail": trail, "batt": batt, "batt_src": "power_supply" if batt is not None else None,
+                  "disk_gb": disk, "load": load}))
