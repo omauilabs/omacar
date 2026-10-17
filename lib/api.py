@@ -2036,3 +2036,35 @@ def handle_post(path, body):  # noqa: F811
             return 400, {"error": str(e)}
     return _eq_post(path, body)
 # ---- end aux equalizer ---------------------------------------------------------
+
+
+# ---- rear screen ---------------------------------------------------------------
+# The FRONT screen's side of the back-seat screen (lib/rear.py), loopback only:
+# GET /api/rear                the note to draw, whether an alert is up, a skip to apply
+# POST /api/rear/dismiss       the driver dismissed the note
+# POST /api/rear/nowplaying    what the player is playing, for the rear screen to show
+# POST /api/rear/music/done    a skip was applied
+# None of these is in serve.py's COCKPIT_WRITES. The rear screen itself is served
+# by `serve.py --rear`, which never imports this module.
+_rear_get, _rear_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/rear":
+        import rear
+        return 200, rear.front_get()
+    return _rear_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/rear/dismiss", "/api/rear/nowplaying", "/api/rear/music/done"):
+        import rear
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        if not isinstance(data, dict):
+            return 400, {"error": "the body must be an object"}
+        return rear.front_post(path, data)
+    return _rear_post(path, body)
+# ---- end rear screen -----------------------------------------------------------

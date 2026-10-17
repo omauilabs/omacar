@@ -55,6 +55,10 @@ python3 "$ROOT/test/v1_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/envble_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/ignition_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/notify_test.py" || fails=$((fails + 1))
+# The back-seat screen: the rear token's route allow-list (every other route
+# 403s), the note's rate limit, and ETA honesty. A real --rear server on a
+# scratch port. The page's words are test/js/rear.test.js, run by js_test.py.
+python3 "$ROOT/test/rear_test.py" || fails=$((fails + 1))
 
 python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/shaders_test.py" || fails=$((fails + 1))

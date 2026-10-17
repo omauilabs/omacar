@@ -256,6 +256,7 @@ async function req(path, opts) {
 export const api = {
   snapshot: () => req("/api/snapshot"),
   nursery: () => req("/api/nursery"),
+  rear: () => req("/api/rear"),
   live: () => req("/api/live"),
   // The two routes the Connect button rests on. Everything that knows their
   // shape is in the "connecting" section below, so a change on the server side
