@@ -81,7 +81,13 @@ export default function drive(root, { arg } = {}) {
   // A slot rather than two fixed children: the big number is one rendering of
   // the hero readout, and a dial is another.
   const heroSlot = h("div.drive-hero-slot");
-  wrap.appendChild(h("div.drive-hero", heroSlot, stateEl));
+  const heroBox = h("div.drive-hero", heroSlot, stateEl);
+  wrap.appendChild(heroBox);
+  // The posted limit beside the speed, and the speed's tone when over it
+  // (share/js/speedlimit.js). Its own module: a fault there never takes the
+  // gauges with it.
+  let lim = null, limGone = false;
+  import("../speedlimit.js").then((m) => { if (!limGone) lim = { m, mount: m.mountSign(heroBox) }; }).catch(() => {});
 
   const row = h("div.drive-row");
   wrap.appendChild(row);
@@ -273,6 +279,8 @@ export default function drive(root, { arg } = {}) {
       heroV.className = "drive-speed" + (hv.tone ? " " + hv.tone : "");
       heroU.textContent = hv.n;
     }
+    if (lim && hero === catalogue.speed && heroState === "live" && lim.m.overNow()) heroSlot.dataset.over = "1";
+    else delete heroSlot.dataset.over;
     stateEl.textContent = store.connected
       ? (moving ? "" : running ? "idling" : "parked")
       : store.paused ? pausedNote(store.pausedSince, true) : "no link";
@@ -521,6 +529,8 @@ export default function drive(root, { arg } = {}) {
 
   return () => {
     alive = false;
+    limGone = true;
+    if (lim) lim.mount.destroy();
     off();
     offCar();
     clearInterval(t);

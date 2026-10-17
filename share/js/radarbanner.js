@@ -27,11 +27,16 @@ function start() {
   const arrows = arrowGlyph(34);
   const bar = strengthBar();
   const others = h("span.rb-others");
+  // "Over the limit" (share/js/speedlimit.js): read-only, and only while this
+  // banner has an alert. Its own module, so a fault there never costs the banner.
+  const over = h("span.rb-over", { hidden: true }, "Over the limit");
+  let lim = null, limOff = null;
+  import("./speedlimit.js").then((m) => { lim = m; }).catch(() => {});
   const mute = muteKey(() => ctl.tap());
   const node = h("div.rd-banner", { role: "status", "aria-live": "polite", hidden: true },
     h("span.rb-lamp", { "aria-hidden": "true" }),
     h("div.rb-id", capK, h("div.rb-head", band, freq)),
-    arrows.el, bar.el, others, mute.el);
+    arrows.el, bar.el, others, over, mute.el);
   document.body.appendChild(node);
 
   let last = null, lastActive = null, shown = null;
@@ -71,6 +76,10 @@ function start() {
     others.textContent = s.others ? `+${s.others}` : "";
     others.hidden = !s.others;
     mute.set(v.muted, v.canMute && active);
+    if (lim && active && !limOff) limOff = lim.limitFeed.subscribe(() => {});   // keeps the feed polling; the 500 ms tick repaints
+    if (limOff && !active) { limOff(); limOff = null; }
+    const by = lim && active ? lim.overBy() : null;
+    over.hidden = !(by !== null && by > lim.OVER_MARGIN_MPH);
   }
 
   radarFeed.subscribe((st) => { last = st; ctl.settle(st); paint(); });
