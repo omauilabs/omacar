@@ -34,6 +34,8 @@ what the car said.
     POST /api/home              change it, or {action: "reset"}
     GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
     POST /api/fridge            {name: "power"|"z0_set", value}
+    GET  /api/calls             hands-free calls: phase, caller, duration, recent calls
+    POST /api/calls             {action: answer|reject|hangup|mute|volume|dial, value, id}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
@@ -1166,6 +1168,11 @@ def handle_get(path, query):
         # last wrote it. `source` says which, and the card always shows it.
         import fridge
         return 200, fridge.read_public()
+    if path == "/api/calls":
+        # The phone as heard by lib/calls.py (the oFono link or `omacar calls
+        # sim`). A file older than a few seconds shows no call at all.
+        import calls
+        return 200, calls.read_public()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1492,6 +1499,17 @@ def handle_post(path, body):
         import fridge
         try:
             return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/calls":
+        # Answer, decline, hang up, mute, volume: one tap each, allowed while
+        # moving (that is the point of hands-free). `dial` takes the id of an
+        # entry in the recent list, never a number, and only when parked.
+        import calls
+        try:
+            return 200, calls.ask(str(data.get("action") or ""), data.get("value"), data.get("id"))
+        except PermissionError as e:
+            return 403, {"error": str(e)}
         except (TypeError, ValueError) as e:
             return 400, {"error": str(e)}
     if path == "/api/v1":

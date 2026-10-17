@@ -16,7 +16,7 @@
 // (alertplayer.js), the gate opens only when the next sound starts at
 // silence, and it closes only after the last sound has faded to silence.
 
-import { dbAt, planOnto } from "./ramps.js";
+import { dbAt, planOnto, glidePlan } from "./ramps.js";
 
 export const MUSIC_DB = -12;
 export const ALERT_MAX_DB = 0;
@@ -62,7 +62,15 @@ function ensure() {
   // limiter. THE LIVE APP DOES NOT USE IT: nothing the live app plays goes
   // into it, so there it carries silence and changes nothing the stage does.
   node.voice = ctx.createGain();
-  node.music.connect(node.limit);
+  // A second music-side gain at unity, for calls (callsui.js): a phone call
+  // takes the whole AUX feed, so the music steps aside under it on a bus of its
+  // own. An alert's duck and swell (alertplayer.js) keep scheduling `music`
+  // and can never bring the music back up under a call.
+  node.callduck = ctx.createGain();
+  node.callduck.gain.value = 1;
+  planned.callduck = [[0, 0]];
+  node.music.connect(node.callduck);
+  node.callduck.connect(node.limit);
   node.alert.connect(node.limit);
   node.voice.connect(node.limit);
   node.limit.connect(node.meter);
@@ -147,6 +155,16 @@ export function gateAlerts(openAt, closeAt) {
   g.cancelScheduledValues(openAt);
   g.setValueAtTime(1, openAt);
   if (Number.isFinite(closeAt)) g.setValueAtTime(0, closeAt);
+}
+
+// The music steps aside under a phone call and comes back after it: down to
+// the floor over 1.5 s, back to where it was over 3 s, on the call bus only
+// (never the music bus the alerts schedule). Says whether it ran.
+export function callDuck(on) {
+  ensure();
+  const now = ctx.currentTime;
+  const plan = glidePlan(levelAt("callduck", now), on ? FLOOR_DB : 0, on ? 1.5 : 3);
+  return schedule("callduck", plan.points, now);
 }
 
 // The output's level in dBFS, to check the stage is carrying anything.

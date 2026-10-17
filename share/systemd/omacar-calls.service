@@ -1,0 +1,14 @@
+[Unit]
+Description=OmaCar calls — follows the phone's hands-free calls through oFono
+Documentation=file:__ROOT__/doc/calls.md
+After=bluetooth.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 __ROOT__/lib/calls.py run
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
