@@ -74,3 +74,12 @@ and the **Face Landmarker** model, by Google, under the Apache License 2.0.
 `omacar assets fetch` downloads them into `share/js/vendor/mediapipe/` and
 checks them against the pins in `share/assets/manifest.json`. Drowsy mode reads
 the cabin camera with them, in the page, with nothing fetched on the road.
+
+Protocol knowledge ported (no code copied verbatim) from two MIT-licensed
+projects, for the ready-made cabin monitors in `lib/envble.py`:
+
+- **qingping-ble**, © Bluetooth-Devices contributors (itself from Ernst79's
+  bleparser): the Qingping Air Monitor Lite advertisement layout.
+  https://github.com/Bluetooth-Devices/qingping-ble
+- **Aranet4-Python**, © Anrijs Jargans and contributors: the Aranet4
+  advertisement layout and scaling. https://github.com/Anrijs/Aranet4-Python

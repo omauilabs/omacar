@@ -677,20 +677,46 @@ def _reader(rec, port, label, stop, opener=None):
             pass
 
 
+def ble_ingest(rec, label, values, now=None):
+    """A pinned Bluetooth monitor's reading, as the cabin node. The same range
+    checks as a USB line; what the cabin does not track (an Aranet4's
+    pressure) is dropped. Returns what was kept."""
+    vals = {}
+    for k in NODES["cabin"]:
+        if k in values:
+            v = clean_value(k, values[k])
+            if v is not None:
+                vals[k] = v
+    if vals:
+        rec.ingest("cabin", None, vals, time.time() if now is None else now, port=label)
+    return vals
+
+
 def run():
     try:
         import serial                                    # noqa: F401
+        have_serial = True
     except ImportError:
+        have_serial = False
+    import envble
+    address = envble.pinned(_config())
+    if not have_serial and not address:
         print("  pyserial is not installed in this interpreter: omacar setup", file=sys.stderr)
         return 1
     rec = Record("sensor")
+    if address:
+        # A ready-made cabin monitor (lib/envble.py), pinned by address.
+        bstop = threading.Event()
+        threading.Thread(target=envble.listen,
+                         args=(lambda label, v: ble_ingest(rec, label, v), address, bstop),
+                         daemon=True).start()
     rec.restore(_load_state(), time.time())
     prune("sensor")
     held = {}                                            # real path -> (thread, stop)
     last_scan = last_prune = 0.0
     while True:
         now = time.time()
-        if now - last_scan > 10:
+        if have_serial and now - last_scan > 10:
             last_scan = now
             for p in [p for p, (t, _s) in held.items() if not t.is_alive()]:
                 held.pop(p)
@@ -725,13 +751,57 @@ def _load_state():
         return None
 
 
+def scan_ble():
+    """List the cabin monitors heard over Bluetooth, nearest first."""
+    import envble
+    try:
+        heard = envble.scan()
+    except ImportError:
+        print("  bleak is not installed: omacar fridge setup installs it")
+        return 0
+    except Exception as e:                               # noqa: BLE001 -- no adapter, adapter off
+        print(f"  Bluetooth: {e}")
+        return 0
+    pin = envble.pinned(_config())
+    for address, label, rssi, vals in heard:
+        mark = "  pinned " if address == pin else "  heard  "
+        shown = ", ".join(f"{k} {v}" for k, v in vals.items())
+        print(f"{mark} {address}  {label}  {rssi} dBm  {shown}")
+    if heard and not pin:
+        print(f"\n  To use the nearest: omacar env use {heard[0][0]}")
+    elif not heard:
+        print("  no Qingping Air Monitor Lite or Aranet4 heard"
+              " (an Aranet4 needs Smart Home integrations on in its app)")
+    return len(heard)
+
+
+def use(address):
+    """Pin one Bluetooth monitor as the cabin's, in env-nodes.json."""
+    import re
+    if not re.fullmatch(r"[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}", address or ""):
+        print("  that is not a Bluetooth address (AA:BB:CC:DD:EE:FF)", file=sys.stderr)
+        return 2
+    c = _config()
+    c["cabin_ble"] = {"address": address.upper()}
+    os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+    tmp = CONFIG + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(c, f, indent=2)
+    os.replace(tmp, CONFIG)
+    print(f"  the cabin is now {address.upper()}. Restart: systemctl --user restart omacar-env")
+    return 0
+
+
 def scan():
+    print("  over Bluetooth:")
+    ble = scan_ble()
+    print("\n  over USB:")
     ok, no = candidates()
     for name, why in no:
         print(f"  skipped   {name}: {why}")
     if not ok:
         print("  no candidate ports. Plug a node in (USB), then try again.")
-        return 1
+        return 0 if ble else 1
     try:
         import serial                                    # noqa: F401
     except ImportError:
@@ -846,6 +916,8 @@ def main(argv):
         return 0
     if what == "scan":
         return scan()
+    if what == "use":
+        return use(argv[1] if len(argv) > 1 else "")
     if what == "run":
         return run()
     if what == "sim":
@@ -856,7 +928,7 @@ def main(argv):
         sim(drive="--drive" in opts, co2=co2, outdoor="--no-outdoor" not in opts)
         return 0
     print(f"  omacar env: no such thing as '{what}'.\n"
-          "  status | scan | run | sim [--drive] [--co2 N] [--no-outdoor]", file=sys.stderr)
+          "  status | scan | use <address> | run | sim [--drive] [--co2 N] [--no-outdoor]", file=sys.stderr)
     return 2
 
 

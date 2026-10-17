@@ -34,6 +34,9 @@ export default [
   }],
   ["the simulator always says Simulated", () =>
     eq(lampOf(cabin({ source: "sim" })), { text: "Simulated", tone: "warn" })],
+  ["a Bluetooth monitor is named on the lamp; a USB port is not", () =>
+    eq([lampOf(cabin({ source: "sensor", port: "Aranet4" })).text,
+        lampOf(cabin({ source: "sensor", port: "usb-Adafruit_QT_Py-if00" })).text], ["Aranet4", "Sensor"])],
   ["the car's thermometer is labelled From the car, and has no air sensor to quote", () => {
     const v = envView(st({ outside: outside({ source: "car", t_source: "car", values: { t_c: 12 }, aqi: null }) }));
     eq([v.outside.lamp.text, v.outside.temp, v.outside.air.v, v.outside.air.label],
