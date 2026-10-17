@@ -6,6 +6,7 @@
 #   omacar setup              build the Python environment (python-obd + emulator)
 #   omacar bench start|stop|status
 #                             the ELM327 bench emulator — develop without a car
+#   omacar ambient            the tablet's light sensor, read-only (lux, or none)
 #   omacar doctor             adapter, protocol, supported PIDs, stored faults
 #   omacar live [PID...]      stream readings to the terminal
 #   omacar prospect [opts]    hunt for manufacturer-specific PIDs (read-only)
@@ -2128,6 +2129,8 @@ print()
   env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
   # The car widget kit: Omarchy apps and plugins on the car screen.
   carkit) shift; exec python3 "$ROOT/lib/carkit.py" "$@" ;;
+  # The tablet's ambient light sensor, read-only (lib/ambient.py).
+  ambient) shift; exec python3 "$ROOT/lib/ambient.py" "$@" ;;
   # The owner's outbox, shared by every alert that has to reach a phone.
   notify) shift; exec python3 "$ROOT/lib/notify.py" "$@" ;;
   # Asleep when the car is parked, awake when it starts (doc/ignition.md).

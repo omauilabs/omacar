@@ -2084,3 +2084,42 @@ svg.spark .spark-line { fill: none; stroke: currentColor; stroke-width: 1.5;
                         vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 svg.spark .spark-stop-top { stop-color: currentColor; stop-opacity: .38; }
 svg.spark .spark-stop-bottom { stop-color: currentColor; stop-opacity: 0; }
+
+/* ---- looks by the sun (share/js/sunui.js, doc/night-mode.md) ---------------------- */
+/* The crossfade between two looks. Only while a look is changing on its own:
+   the dissolve is slow on purpose (a car at dusk should not flash), and the
+   page stays tappable underneath it. */
+html.look-xfade::view-transition { pointer-events: none; }
+html.look-xfade::view-transition-group(root) { animation-duration: 4s; }
+html.look-xfade::view-transition-old(root),
+html.look-xfade::view-transition-new(root) { animation-duration: 4s; animation-timing-function: ease-in-out; }
+@media (prefers-reduced-motion: reduce) {
+  html.look-xfade::view-transition-group(root),
+  html.look-xfade::view-transition-old(root),
+  html.look-xfade::view-transition-new(root) { animation: none; }
+}
+
+.sun-block { display: grid; gap: 8px; }
+/* The day, drawn: raised from above like the rest of the redesign's surfaces,
+   no outline. The arc is stretched to the card's width on purpose. */
+.sun-card {
+  display: grid; gap: 10px; padding: 12px 12px 10px;
+  border-radius: var(--r); background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 1px 3px rgba(0, 0, 0, .35);
+}
+.sun-arc-wrap { line-height: 0; border-radius: 10px; overflow: hidden; background: var(--ground); }
+.sun-arc { width: 100%; height: auto; display: block; }
+.sun-map { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sun-cell {
+  display: grid; gap: 3px; text-align: left; min-height: var(--tap-lg);
+  padding: 8px 12px; border: 0; border-radius: 12px; font: inherit; color: var(--ink); cursor: pointer;
+  background: var(--panel-2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.sun-cell:active { background: var(--raise); }
+.sun-cell[disabled] { opacity: .55; cursor: default; }
+.sun-cap { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.sun-val { font-size: .95rem; }
+.sun-cell[data-phase="day"] .sun-cap { color: var(--warn); }
+.sun-cell[data-phase="twilight"] .sun-cap { color: var(--info); }
+.sun-ambient { font-size: .82rem; color: var(--faint); padding: 0 4px; }

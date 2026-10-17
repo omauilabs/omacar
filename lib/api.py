@@ -36,6 +36,7 @@ what the car said.
     POST /api/fridge            {name: "power"|"z0_set", value}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
+    GET  /api/ambient           the tablet's light sensor: lux, or {present: false} (read-only)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
@@ -1177,6 +1178,12 @@ def handle_get(path, query):
         # simulator last wrote them. `source` says which, and the card shows it.
         import envnode
         return 200, envnode.read_public()
+    if path == "/api/ambient":
+        # The tablet's ambient light sensor (lib/ambient.py), read straight
+        # from sysfs. Absent is a normal answer: the app then runs on the sun
+        # alone (share/js/sunlook.js).
+        import ambient
+        return 200, ambient.read_public()
     if path == "/api/env/history":
         import envnode
         return 200, envnode.history(qint(query, "hours", 24, 1, 24))
