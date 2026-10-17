@@ -54,7 +54,7 @@ LOOPBACK_ONLY = True
 
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
-COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins", "/api/valet"}
+COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
 
 
 # ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
