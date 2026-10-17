@@ -20,6 +20,7 @@
 #   omacar profile [cmd]      list, show, check, merge, promote, refute, correlate
 #   omacar candlog            log candidate PIDs against trusted channels
 #   omacar discover [status]  map identifiers automatically, safely, over time
+#   omacar fuel [cmd]         the fuel log: status | list | add | run | sim
 #   omacar plugins            what extends this install, and what each provides
 #   omacar mcp                serve the car to an agent harness over MCP
 #   omacar mode [tier]        simplified | power | technician | god
@@ -2091,6 +2092,9 @@ print()
         "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
       *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
     esac ;;
+  # The fuel log (lib/fuel.py, doc/fuel-log.md): fill-ups, real economy. Reads
+  # live.json and the record; no radio, no serial port, no network.
+  fuel) shift; exec "$OMACAR_PY" "$ROOT/lib/fuel.py" "$@" ;;
   # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
   # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
   # radio, and run on any python.

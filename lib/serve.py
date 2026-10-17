@@ -167,6 +167,10 @@ DEMO_ROUTES = {
     "/api/audio": {"managed": False, "demo": True},
     # The fridge would send Bluetooth writes to a real Dometic.
     "/api/fridge": {"present": False, "demo": True},
+    # The fuel log is the real car's: the demo has none, and a POST must not
+    # write a fill-up into the real record.
+    "/api/fuel": {"present": False, "demo": True, "fills": [], "intervals": [],
+                  "pending": None},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

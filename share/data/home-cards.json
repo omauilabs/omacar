@@ -13,6 +13,7 @@
     "econ_now": { "label": "Economy",       "reading": "econ_now", "sizes": { "s": { "land": [3, 1], "port": [3, 1] }, "m": { "land": [6, 1], "port": [6, 1] } } },
     "phone":    { "label": "Phone",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "dashcam":  { "label": "Dashcams",      "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
+    "fuel-log": { "label": "Fuel log",      "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "fridge":   { "label": "Fridge",        "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "env":      { "label": "Environment",   "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "radar":    { "label": "Radar",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
