@@ -34,6 +34,8 @@ what the car said.
     POST /api/home              change it, or {action: "reset"}
     GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
     POST /api/fridge            {name: "power"|"z0_set", value}
+    GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
+    GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1160,6 +1162,14 @@ def handle_get(path, query):
         # last wrote it. `source` says which, and the card always shows it.
         import fridge
         return 200, fridge.read_public()
+    if path == "/api/env":
+        # The cabin and outdoor nodes (lib/envnode.py), as its service or the
+        # simulator last wrote them. `source` says which, and the card shows it.
+        import envnode
+        return 200, envnode.read_public()
+    if path == "/api/env/history":
+        import envnode
+        return 200, envnode.history(qint(query, "hours", 24, 1, 24))
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")

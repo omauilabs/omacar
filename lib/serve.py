@@ -164,6 +164,11 @@ DEMO_ROUTES = {
     "/api/audio": {"managed": False, "demo": True},
     # The fridge would send Bluetooth writes to a real Dometic.
     "/api/fridge": {"present": False, "demo": True},
+    # The Environment card and screen poll these. The demo has no sensor nodes
+    # and must never open a serial port, so: not present, and the card says
+    # how to plug one in.
+    "/api/env": {"present": False, "demo": True},
+    "/api/env/history": {"present": False, "series": {}, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

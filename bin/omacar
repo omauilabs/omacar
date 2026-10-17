@@ -2031,6 +2031,9 @@ print()
         "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
       *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
     esac ;;
+  # The cabin and outdoor sensor nodes on USB (lib/envnode.py). pyserial lives
+  # in the venv with the daemon's.
+  env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;

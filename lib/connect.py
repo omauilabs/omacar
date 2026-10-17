@@ -254,6 +254,14 @@ def bench_port():
 # nobody has listed, is still offered exactly as before.
 NOT_ADAPTERS = {
     ("1209", "6668"),       # Proffieboard (ProffieOS), hubbe.net
+    # The environment nodes (firmware/envnode/, lib/envnode.py): a Raspberry
+    # Pi Pico (RP2040) or an ESP32-S3 on its own USB port is a CDC ACM device
+    # that lands on /dev/ttyACM0, which sorts BEFORE ttyUSB0, so resolve() would
+    # have offered the weather station to the ELM327 probe first. Neither
+    # vendor makes OBD adapters.
+    ("2e8a", "000a"),       # Raspberry Pi Pico, arduino-pico's default CDC
+    ("2e8a", "000b"),       # Raspberry Pi Pico 2 family default
+    ("303a", "1001"),       # Espressif ESP32-S3 built-in USB serial/JTAG
 }
 
 

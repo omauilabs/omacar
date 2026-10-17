@@ -274,6 +274,21 @@ const MAKERS = {
   },
   // ---- end redesign/cameras ---------------------------------------------------
   phone: phoneCard,
+  // The cabin and outdoor sensors (share/js/envcard.js, lib/envnode.py).
+  // Loaded only when the card is on Home; a tap opens the day's charts.
+  env: () => {
+    const node = tappable(h("div.card.hc"), "environment");
+    let card = null, gone = false;
+    import("../envcard.js").then((m) => {
+      if (gone) return;
+      card = m.envCard(node);
+    }).catch((e) => {
+      console.warn("Environment card:", e);
+      if (!gone) node.appendChild(h("div.hc-ph-s", "The environment card could not load"));
+    });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   agent: agentCard,
   // The Dometic CFX3 (share/js/fridgecard.js, lib/fridge.py). Loaded only when
   // the card is on Home, like the dashcam card above.
