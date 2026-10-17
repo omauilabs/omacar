@@ -322,13 +322,27 @@ def _cycle(rec):
 
 
 def child_hold(now=None):
-    """lib/childalert.py's word on sleeping. A module that will not even load
-    is logged and holds nothing -- it cannot have seen a child either."""
+    """lib/childalert.py's word on sleeping.
+
+    FAIL SAFE IF THE MODULE ITSELF IS BROKEN. If childalert.py will not import
+    (a bad merge, a syntax error), its loop is not running either -- but the
+    state file it last wrote is still on disk, and a hold it recorded there
+    must still hold. So the fallback reads that file directly: an alert that
+    asked to hold sleep keeps the tablet awake until the file says otherwise.
+    Only no file at all, or a simulated one, means no hold.
+    """
     try:
         import childalert
         return childalert.ignition_hold(now)
     except Exception as why:   # noqa: BLE001
-        _log(f"child alert unreadable: {why}")
+        _log(f"child alert module unreadable, reading its state file: {why}")
+        try:
+            with open(os.path.join(STATE_DIR, "child-alert.json"), encoding="utf-8") as f:
+                pub = (json.load(f) or {}).get("pub") or {}
+        except (OSError, ValueError):
+            return None
+        if pub.get("hold_sleep") and pub.get("source") != "sim":
+            return "child alert"
         return None
 
 

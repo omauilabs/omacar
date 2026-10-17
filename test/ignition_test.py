@@ -206,6 +206,34 @@ def main():
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
+    print("\n  a broken child-alert module still holds sleep")
+    import builtins
+    scratch2 = tempfile.mkdtemp(prefix="omacar-ign-child-")
+    try:
+        saved_dir = ignition.STATE_DIR
+        ignition.STATE_DIR = scratch2
+        with open(os.path.join(scratch2, "child-alert.json"), "w") as f:
+            json.dump({"pub": {"hold_sleep": True, "source": "live", "at": 1}}, f)
+        real_import = builtins.__import__
+        def broken(name, *a, **k):
+            if name == "childalert":
+                raise SyntaxError("simulated broken module")
+            return real_import(name, *a, **k)
+        builtins.__import__ = broken
+        sys.modules.pop("childalert", None)
+        try:
+            check("its last recorded hold is read from the state file", ignition.child_hold() == "child alert")
+            with open(os.path.join(scratch2, "child-alert.json"), "w") as f:
+                json.dump({"pub": {"hold_sleep": True, "source": "sim"}}, f)
+            check("but a simulated one never holds the real tablet", ignition.child_hold() is None)
+            os.unlink(os.path.join(scratch2, "child-alert.json"))
+            check("and no file at all holds nothing", ignition.child_hold() is None)
+        finally:
+            builtins.__import__ = real_import
+            ignition.STATE_DIR = saved_dir
+    finally:
+        shutil.rmtree(scratch2, ignore_errors=True)
+
     print(f"\n  {'all good' if not fails else f'{fails} failed'}\n")
     return 1 if fails else 0
 
