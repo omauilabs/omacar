@@ -34,6 +34,8 @@ what the car said.
     POST /api/home              change it, or {action: "reset"}
     GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
     POST /api/fridge            {name: "power"|"z0_set", value}
+    GET  /api/learncar          the guided "learn my car" session: steps, the live step, results
+    POST /api/learncar          {action: start|go|confirm|next|retry|skip|abort, sim?, transmission?}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
@@ -1166,6 +1168,12 @@ def handle_get(path, query):
         # last wrote it. `source` says which, and the card always shows it.
         import fridge
         return 200, fridge.read_public()
+    if path == "/api/learncar":
+        # The guided, parked, passive CAN-labelling session (lib/learncar.py),
+        # as its runner last wrote it. `source` says "sim" or "car"; the screen
+        # always shows which.
+        import learncar
+        return 200, learncar.read_public()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1493,6 +1501,18 @@ def handle_post(path, body):
         try:
             return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
         except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/learncar":
+        # Taps on the session: start it, begin a step, confirm the parking
+        # brake, move on, stop. Passive end to end (it only listens), and a
+        # start is refused with the reason unless the car is provably parked.
+        import learncar
+        try:
+            return 200, learncar.ask(str(data.get("action") or ""), sim=bool(data.get("sim")),
+                                     transmission=str(data.get("transmission") or "manual"))
+        except PermissionError as e:
+            return 409, {"error": str(e)}
+        except ValueError as e:
             return 400, {"error": str(e)}
     if path == "/api/v1":
         # One request, and it is not a cockpit write: Mute on the detector,
