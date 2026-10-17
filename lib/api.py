@@ -2006,6 +2006,31 @@ def handle_post(path, body):  # noqa: F811
 # ---- end redesign/cameras -----------------------------------------------------
 
 
+# ---- incident clips -------------------------------------------------------------
+# lib/clipsroutes.py: the list, one incident, Save clip, delete (parked only)
+# and export. One block, tried before everything above it.
+_clips_get, _clips_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path.startswith("/api/clips"):
+        import clipsroutes
+        out = clipsroutes.handle_get(path, query)
+        if out is not None:
+            return out
+    return _clips_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path.startswith("/api/clips"):
+        import clipsroutes
+        out = clipsroutes.handle_post(path, body)
+        if out is not None:
+            return out
+    return _clips_post(path, body)
+# ---- end incident clips ---------------------------------------------------------
+
+
 # ---- aux equalizer -------------------------------------------------------------
 # GET /api/eq        the saved state, whether PipeWire runs it, the curve
 # POST /api/eq       the whole state, validated and clamped (lib/eq.py)

@@ -144,6 +144,7 @@ import navigationView from "./views/navigation.js";
 import roadcamsView from "./views/roadcams.js";
 import radarView from "./views/radar.js";
 import camerasView from "./views/cameras.js";
+import clipsView from "./views/clips.js";
 import workView from "./views/work.js";
 import { badge } from "./provenance.js";
 
@@ -192,6 +193,8 @@ const TABS = [
   { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [
       { id: "cameras", label: "Cameras", title: "Cameras", mount: camerasView },
+      // Incident clips (lib/clips.py): hard braking, a jolt or a tap, kept.
+      { id: "clips",   label: "Clips",   title: "Incident clips", mount: clipsView },
     ] },
   { id: "vehicle", label: "Vehicle", icon: ICONS.vehicle,
     groups: [

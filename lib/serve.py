@@ -109,6 +109,12 @@ DEMO_ROUTES = {
     # clips into the demo's own locked/.
     "/api/cams": ALLOW,
     "/api/cams/*": ALLOW,
+    # Incident clips: the demo has no clip service, so the list is empty and
+    # the toast's poll is quiet; everything else (Save, delete, export, the
+    # video) is refused.
+    "/api/clips": {"running": False, "incidents": [], "totals": {"count": 0, "bytes": 0}, "demo": True},
+    "/api/clips/last": {"running": False, "last": None, "demo": True},
+    "/api/clips/*": REFUSE,
     # Drowsy mode: its settings in the demo's config, its events and measures in
     # the demo's state.
     "/api/drowsy": ALLOW,
@@ -861,6 +867,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if f is None:
                     return self._json({"error": "no such clip"}, 404)
                 return self._ranged(f, "video/mp4")
+        m = re.fullmatch(r"/api/clips/media/(\d{8}-\d{6}-[a-z]+)/([a-z]+(?:-\d{8}-\d{6})?\.mp4)", path)
+        if m:
+            import camstore
+            import clips
+            real = clips.media_path(m.group(1), m.group(2))
+            f = camstore.open_clip(real) if real is not None else None
+            if f is None:
+                return self._json({"error": "no such clip"}, 404)
+            return self._ranged(f, "video/mp4")
         if path.startswith("/api/"):
             out = api.handle_get(path, query)
             if out is None:

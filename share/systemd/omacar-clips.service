@@ -1,0 +1,20 @@
+[Unit]
+Description=OmaCar incident clips — keeps the minute around a hard stop, a jolt or a tap
+Documentation=file:__ROOT__/doc/clips.md
+After=graphical-session.target
+PartOf=graphical-session.target
+# Same lesson as the recorder's unit: never park in `failed`.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+# Stdlib only. A separate process from omacar-cams.service on purpose: this
+# one reads and hard-links, and can crash or restart without a camera noticing.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/clips.py run'
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=default.target
