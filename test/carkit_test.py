@@ -75,6 +75,9 @@ def main():
         check("an argument is one argv element", carkit.run_action("demo", "say", roots, live, arg="a b; rm -rf ~")[0] == 200)
         check("an action that takes none refuses one", carkit.run_action("demo", "hi", roots, live, arg="x")[0] == 400)
         check("a control character is refused", carkit.run_action("demo", "say", roots, live, arg="a\nb")[0] == 400)
+        check("a value that would read as a flag is refused",
+              [carkit.run_action("demo", "say", roots, live, arg=a)[0] for a in ("--force", "-rf", "-")] == [400, 400, 400])
+        check("a negative number is refused too (it reads as a flag)", carkit.run_action("demo", "say", roots, live, arg=-3)[0] == 400)
         check("an unknown action is 404", carkit.run_action("demo", "nope", roots, live)[0] == 404)
 
         print("\n  what a plugin cannot do")

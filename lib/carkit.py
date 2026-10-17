@@ -282,6 +282,12 @@ def clean_arg(arg):
     a = str(arg)
     if not a or len(a) > 100 or any(ord(c) < 32 for c in a):
         raise ValueError("arg must be 1 to 100 printable characters")
+    # NEVER A FLAG. The value is appended to the plugin's argv, so "--force"
+    # or "-rf" would reach its command as an option, not a value (security
+    # review, 2026-10-17). A list item's value has no business starting with
+    # '-'; `--` is not used instead because not every command honours it.
+    if a.startswith("-"):
+        raise ValueError("arg must not start with '-'")
     return a
 
 
