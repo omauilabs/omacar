@@ -38,7 +38,10 @@ Plantower datasheet and is flagged as such in the sketch.
    (<https://github.com/earlephilhower/arduino-pico>), board "Raspberry Pi Pico".
 2. Libraries: cabin node "Sensirion I2C SEN66" (pulls "Sensirion Core");
    outdoor node "Adafruit BME280 Library" and "Adafruit Unified Sensor".
-3. Open `cabin/cabin.ino` or `outdoor/outdoor.ino`, upload.
+3. Board "Adafruit QT Py RP2040" for the recommended build (below), or "Raspberry
+   Pi Pico" for the bare-Pico wiring, with `BUS` set to `Wire` in the sketch.
+   The outdoor node also needs "Adafruit PM25 AQI Sensor".
+4. Open `cabin/cabin.ino` or `outdoor/outdoor.ino`, upload.
 
 An ESP32-S3 (native USB) will also work with small changes (`Wire.begin(SDA, SCL)`,
 a hardware UART for the PMS5003, no `ignoreFlowControl`). Prefer a board with
@@ -103,14 +106,40 @@ cable must be a real data-and-power one.
   are not valid yet are omitted), and its temperature includes some self-heating:
   trust the trend more than the decimal.
 
-## Parts (no prices)
+## Parts: the recommended, solder-free build
 
-- Raspberry Pi Pico (RP2040), two (or one Pico 2 / ESP32-S3 per node)
-- Sensirion SEN66 (T, RH, CO2 NDIR, PM1/2.5/4/10, VOC index, NOx index) with its
-  matching connector/cable, or a breakout that carries it
-- Bosch BME280 breakout (with pull-ups, 3.3 V)
-- Plantower PMS5003 with its 8-pin cable/adapter
-- Ventilated radiation shield (stacked-plate), small outdoor-rated pod
-- USB data cables (micro-USB or USB-C as the board needs), strain relief, cable grommet
-- Optional: a powered USB hub if the Surface's ports are short; heat-shrink,
-  Wago/JST connectors, conformal coating on the outdoor board
+Every part plugs together with STEMMA QT / Qwiic cables. Product numbers were
+checked on adafruit.com on 2026-10-17.
+
+**Cabin node:**
+
+| Part | Where | Notes |
+|---|---|---|
+| Sensirion **SEN66** | DigiKey or Mouser (Sensirion part SEN66-SIN-T) | Adafruit does not sell the sensor itself |
+| Adafruit SEN6x Breakout | Adafruit **#6331** | Adds a 3.3 V regulator, level shifting and STEMMA QT; comes with neither the sensor nor the cable |
+| JST GH 6-pin cable, 100 mm | Adafruit **#5754** | Joins the SEN66 to the breakout |
+| Adafruit **QT Py RP2040** | Adafruit **#4900** | USB-C to the tablet; the STEMMA QT port is `Wire1` |
+| STEMMA QT cable | Adafruit | Joins the breakout to the QT Py |
+
+**Outdoor node:**
+
+| Part | Where | Notes |
+|---|---|---|
+| Adafruit **BME280** (STEMMA QT) | Adafruit **#2652** | Address 0x77; the sketch also tries 0x76 |
+| Adafruit **PMSA003I** air-quality breakout | Adafruit **#4632** | The I²C Plantower, with two STEMMA QT ports: no UART or level shifting |
+| Adafruit **QT Py RP2040** | Adafruit **#4900** | |
+| Two STEMMA QT cables | Adafruit | QT Py to BME280 to PMSA003I, daisy-chained |
+| A small stacked-plate radiation shield | any weather-station supplier | For the BME280. Without one, sun on the car reads as heat |
+| A small vented outdoor box | | For the PMSA003I: openings face down, and the fan inlet away from the exhaust and the engine bay |
+| A long USB-C data cable, a flat door-seal pass-through or grommet, and strain relief | | The QT Py stays dry inside the box; only USB comes in |
+
+**Shared:** a **powered USB hub**. The Surface has two ports and the OBD adapter
+and cameras already use them. Powered from the ignition-switched inverter, it
+also becomes a possible way to wake the tablet when the car starts (see
+doc/ignition.md).
+
+**Already in the car:** the car's own outdoor temperature over OBD. It stands
+in until the outdoor node exists, and stays as a cross-check after.
+
+The older wiring (a bare Pico, a UART PMS5003 on GP1) still works: set `BUS` to
+`Wire` and `PM_UART` to 1 in the sketches.

@@ -7,9 +7,12 @@
 // seconds after power-up) is OMITTED, never printed as zero. lib/envnode.py on
 // the tablet drops anything outside the quantity's physical range too.
 //
-// Target: Raspberry Pi Pico (RP2040) with the arduino-pico core
-// (https://github.com/earlephilhower/arduino-pico). I2C0 on its default pins,
-// SDA GP4 and SCL GP5. Library: "Sensirion I2C SEN66" (Library Manager), which
+// Target: an RP2040 with the arduino-pico core
+// (https://github.com/earlephilhower/arduino-pico). The recommended build is an
+// Adafruit QT Py RP2040 + Adafruit SEN6x breakout on a STEMMA QT cable, which
+// is I2C1 = Wire1 on that board (Adafruit's pinout page: "In Arduino, it is
+// Wire1"). A bare Pico with the SEN66 on GP4/GP5 uses Wire: change BUS.
+// Library: "Sensirion I2C SEN66" (Library Manager), which
 // pulls in "Sensirion Core".
 //
 // UNVERIFIED: this was written without a compiler or the hardware. Build it
@@ -19,6 +22,8 @@
 #include <SensirionI2cSen66.h>
 #include <Wire.h>
 #include <math.h>
+
+#define BUS Wire1          // QT Py RP2040's STEMMA QT port; Wire on a bare Pico
 
 static const int FW = 1;
 
@@ -37,8 +42,8 @@ void setup() {
   Serial.begin(115200);
   // Do not wait for a host: the node must run with the tablet asleep.
   Serial.ignoreFlowControl(true);
-  Wire.begin();
-  sensor.begin(Wire, SEN66_I2C_ADDR_6B);
+  BUS.begin();
+  sensor.begin(BUS, SEN66_I2C_ADDR_6B);
   sensor.deviceReset();
   delay(1200);                                   // the reset takes ~1.1 s (Sensirion's example waits 1200 ms)
   sensor.startContinuousMeasurement();

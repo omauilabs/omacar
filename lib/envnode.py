@@ -90,6 +90,7 @@ TRACKED = {
 # USB vendors whose boards are plausibly a node. A DENY-by-default list: the
 # adapters (FTDI 0403, CH340 1a86, CP210x 10c4, PL2303 067b) are not here.
 NODE_VENDORS = {
+    "239a": "Adafruit (QT Py RP2040, the recommended board)",
     "2e8a": "Raspberry Pi (RP2040)",
     "303a": "Espressif (ESP32-S3 native USB)",
     "239a": "Adafruit",
