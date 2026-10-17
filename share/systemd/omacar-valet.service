@@ -1,0 +1,16 @@
+[Unit]
+Description=OmaCar valet log — top speed, hard stops and distance while Valet mode is on
+Documentation=file:__ROOT__/doc/valet.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python: it reads live.json and writes one small file, and only while
+# Valet mode is on. No location is read or kept.
+ExecStart=/usr/bin/python3 __ROOT__/lib/valet.py run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

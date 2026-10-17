@@ -1,0 +1,91 @@
+/* Valet mode (share/js/valetui.js, doc/valet.md).
+
+   The lamp is a readout in the top bar's console, standing alone to the left of
+   the car's name; the PIN pad and the report card are sheets, anchored to the
+   bottom like Settings because the thumb that opened them is there. Only the
+   existing tokens, so every look carries it. A lamp is calm: steady, never
+   pulsing; a log that is not running is the one thing that earns amber. */
+
+/* ---- the lamp ---------------------------------------------------------- */
+.tb-valet {
+  order: -3; flex: none; position: relative; display: grid; align-content: center; text-align: left;
+  height: 44px; padding: 0 16px 0 30px; white-space: nowrap; border: 0;
+  border-radius: 14px; background: var(--console);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+  font: inherit; font-size: .78rem; font-weight: 600; letter-spacing: .08em; line-height: 1.25;
+  color: var(--info); --lamp: var(--info); cursor: pointer;
+}
+.tb-valet::before { content: "Valet"; font-size: .66rem; font-weight: 400; letter-spacing: .02em; color: var(--dim); }
+.tb-valet-dot {
+  position: absolute; left: 13px; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%;
+  background: var(--lamp);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 16%, transparent), 0 0 10px color-mix(in srgb, var(--lamp) 60%, transparent);
+}
+.tb-valet[data-tone="warn"] { color: var(--warn); --lamp: var(--warn); }
+.tb-valet:active { background: var(--raise); }
+.tb-valet:focus-visible { outline: 2px solid var(--info); outline-offset: -3px; }
+@media (pointer: coarse) { .tb-valet { height: var(--tap); } }
+
+/* ---- sheets ------------------------------------------------------------ */
+.sheet.vp { max-width: 440px; gap: 16px; justify-items: stretch; }
+.vp-head { display: flex; align-items: center; gap: 12px; }
+.vp-head .title { flex: 1; }
+.vp-ico {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; color: var(--accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 30%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 8%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.vp-note { margin: 0; font-size: .86rem; line-height: 1.5; color: var(--ink-2); }
+.vp-cancel { min-height: var(--tap); justify-self: stretch; display: flex; align-items: center; justify-content: center; }
+.vp-nopin .sheet-v { color: var(--warn); }
+.vp-sim { font-size: .74rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--warn); }
+
+/* ---- the PIN pad ------------------------------------------------------- */
+.vp-dots { display: flex; justify-content: center; gap: 18px; padding: 6px 0 2px; }
+.vp-dot { width: 16px; height: 16px; border-radius: 50%; background: var(--track, var(--panel-2));
+          box-shadow: inset 0 1px 2px rgba(0, 0, 0, .35); transition: background-color .12s, box-shadow .12s; }
+.vp-dot.on { background: var(--ink);
+             box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 14%, transparent); }
+.vp-msg { margin: 0; min-height: 1.3em; text-align: center; font-size: .84rem; color: var(--warn); }
+.vp-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.vp-key {
+  min-height: calc(var(--tap-lg) + 6px); border: 0; border-radius: var(--r);
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink); font: inherit; font-size: 1.6rem; font-weight: 500;
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.vp-key:active { background: var(--raise); transform: scale(.97); }
+.vp-key:disabled { opacity: .4; cursor: default; transform: none; }
+.vp-key:focus-visible { outline: 2px solid var(--info); outline-offset: -3px; }
+.vp-back { font-size: 1.3rem; color: var(--ink-2); }
+
+/* ---- "While you were away" --------------------------------------------- */
+.vp-rows { display: grid; gap: 10px; }
+.vp-row {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; column-gap: 14px; row-gap: 2px;
+  padding: 12px 16px; border-radius: var(--r);
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.vp-cap { grid-column: 1; font-size: .74rem; letter-spacing: .02em; color: var(--dim); }
+.vp-val { grid-column: 2; grid-row: 1 / span 2; align-self: center; text-align: right;
+          font-size: 1.7rem; font-weight: 600; letter-spacing: -.02em; color: var(--ink);
+          font-variant-numeric: tabular-nums; }
+.vp-sub { grid-column: 1; font-size: .78rem; color: var(--ink-2); }
+.vp-row[data-tone="warn"] .vp-val { color: var(--warn); }
+.vp-row[data-tone="ok"] .vp-val { color: var(--ok); }
+
+.cb-tile[data-tile="valet"] .cb-tile-line { font-size: .9rem; }
+
+/* Home's stand-in for the card Valet mode hides: the slot stays filled. */
+.hc-valet { align-content: center; gap: 10px; }
+.hc-valet-t { margin: 0; font-size: 1rem; line-height: 1.5; color: var(--ink); max-width: 30ch; }
+.hc-valet-s { margin: 0; font-size: .84rem; color: var(--dim); }
+
+/* Portrait: the right half of the top bar is already full, and a clock that is
+   half covered is worse than none. While valet is on, the lamp has the room. */
+@media (max-width: 1000px) {
+  .vbar:has(.tb-valet:not([hidden])) .tb-clock { display: none; }
+}

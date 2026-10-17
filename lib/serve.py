@@ -54,7 +54,7 @@ LOOPBACK_ONLY = True
 
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
-COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
+COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins", "/api/valet"}
 
 
 # ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
@@ -179,6 +179,8 @@ DEMO_ROUTES = {
     "/api/notify": {"events": [], "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
+    # Valet mode keeps a PIN in the real config. The demo has no valet.
+    "/api/valet": {"on": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

@@ -40,6 +40,8 @@ what the car said.
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
+    GET  /api/valet             Valet mode: on or off, the PIN lockout, the last report
+    POST /api/valet             {action: "on"|"off"|"ack"|"set_pin", pin}; off checks the PIN here
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1189,6 +1191,11 @@ def handle_get(path, query):
         # second: the loop's last word, or {"phase": "off"} with no loop.
         import ignition
         return 200, ignition.read_public()
+    if path == "/api/valet":
+        # Valet mode (lib/valet.py): on or off, the PIN lockout, the report of
+        # the last session. Never the PIN's hash.
+        import valet
+        return 200, valet.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")
@@ -1511,6 +1518,15 @@ def handle_post(path, body):
             return 200, ignition.ask(str(data.get("ask") or ""))
         except ValueError as e:
             return 400, {"error": str(e)}
+    if path == "/api/valet":
+        # Not a write to the car: it changes what the app shows. "on" refuses a
+        # moving car and "off" checks the PIN, both HERE, so the browser's
+        # opinion is not the boundary.
+        import valet
+        try:
+            return 200, valet.ask(data)
+        except valet.ValetError as e:
+            return e.status, e.body
     if path == "/api/scan":
         return 200, scan()
     if path == "/api/record":

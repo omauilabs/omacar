@@ -27,10 +27,16 @@
 // which is why the masked form still looks like a field with a value rather
 // than an empty space.
 
+import { valet } from "./valet.js";
+
 const KEY = "omacar.privacy";
 
 export const privacy = {
+  // VALET IMPLIES PRIVACY. Somebody handed the keys is somebody who can
+  // photograph the screen; the owner's own setting is untouched underneath and
+  // comes back when valet goes off.
   get on() {
+    if (valet.on) return true;
     try { return localStorage.getItem(KEY) === "1"; } catch { return false; }
   },
   set on(v) {

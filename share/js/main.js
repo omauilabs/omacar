@@ -13,6 +13,8 @@ import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
 import { savedLook, saveLook, applyLook, nextLook, lookById } from "./looks.js";
 import { privacy } from "./privacy.js";
+import { valet, hidesView, landing, lockReason } from "./valet.js";
+import { refreshValet, turnOn as valetOn, leave as valetLeave, showReport, valetLamp } from "./valetui.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
@@ -399,8 +401,16 @@ let fastTimer = null;
 function route() {
   const asked = (location.hash || "#" + HOME).slice(1).split("/")[0];
   const id = ALIASES[asked] || asked;
+  // VALET MODE: a hidden screen is not routable either. A bookmark, a deep
+  // link or a stale hash lands on Home, and go() says why, quietly.
+  const land = landing(id, valet.on, HOME);
+  if (land.notice) {
+    if (VIEWS.some((v) => v.id === id)) valetNotice = land.notice;
+    return VIEWS.find((v) => v.id === HOME);
+  }
   return VIEWS.find((v) => v.id === id) || VIEWS.find((v) => v.id === HOME);
 }
+let valetNotice = null;
 
 const tabOf = (v) => (v && v.tab) || null;
 const hiddenView = (v) => !!(v.nursery && !store.nurseryOn)
@@ -409,7 +419,9 @@ const hiddenView = (v) => !!(v.nursery && !store.nurseryOn)
                        // a tab for it mid-drive is a button that stops the car
                        // being read in order to check whether it can be read.
                        || !!v.hidden
-                       || !tierAllows(v);
+                       || !tierAllows(v)
+                       // Valet mode (share/js/valet.js): personal screens vanish.
+                       || hidesView(v.id);
 
 // The one piece of history the app keeps.
 //
@@ -442,6 +454,13 @@ function go() {
   // re-running `omacar begin` mid-drive -- which stops the drive recorder.
   cameFrom = (!barTap && from && !from.hidden && tabOf(from) !== tabOf(view)) ? from : null;
   barTap = false;
+
+  if (valetNotice) {
+    // Put the address right without a navigation, then say why, once.
+    try { window.history.replaceState(null, "", "#" + view.id); } catch { /* kiosk with no history */ }
+    toast(valetNotice);
+    valetNotice = null;
+  }
 
   const stage = document.getElementById("stage");
   if (unmount) { try { unmount(); } catch { /* a view that fails to clean up must not block the next one */ } }
@@ -655,7 +674,7 @@ function paintNavState() {
     c.disabled = block;
     c.classList.toggle("chip-locked", block);
     c.setAttribute("aria-disabled", block ? "true" : "false");
-    const why = block ? "Available when you stop" : "";
+    const why = block ? lockReason(valet.on, true) : "";
     if (c.title !== why) c.title = why;
   }
   // Only when the current chip actually changed. This runs four times a
@@ -752,6 +771,9 @@ function buildBar() {
     onclick: () => { privacy.on = false; paintBar(); go(); },
   }, "VIN hidden");
   right.append(els.name, els.src, els.priv);
+  // Valet mode's lamp, in the console's style; hidden unless valet is on.
+  els.valet = valetLamp();
+  right.appendChild(els.valet.node);
 
   els.daynight = h("button.vbar-btn", {
     type: "button", id: "btn-daynight", hidden: true,
@@ -880,7 +902,9 @@ function paintBar() {
   const who = car ? (car.title || car.name || "") : "";
   els.name.hidden = onHome || !who;
   if (els.name.textContent !== who) els.name.textContent = who;
-  els.priv.hidden = !privacy.on;
+  // Valet implies privacy; its own lamp says so, so the pill steps aside.
+  els.priv.hidden = !privacy.on || valet.on;
+  els.valet.paint();
   if (DEMO && DEMO.afterBar) DEMO.afterBar(document.getElementById("vbar"));
 }
 
@@ -921,6 +945,9 @@ function applyTextSize() {
 }
 
 function openSettings() {
+  // LOCKED IN VALET MODE. Settings are not for the person holding the keys;
+  // the one thing here is the way out, which asks for the PIN.
+  if (valet.on) { valetLeave(); return; }
   const host = document.getElementById("modal-host");
   const close = () => {
     host.hidden = true; clear(host); host.onclick = null;
@@ -985,6 +1012,10 @@ function openSettings() {
           toast("Could not change mode: " + (e.message || e), "bad");
         }
       }));
+
+    // VALET MODE, first, because it is the one a person reaches for in a hurry.
+    rows.appendChild(row("Valet mode", "Hides your history and documents, locks settings, and logs how the car is driven. Parked only.",
+      "Turn on", () => { close(); valetOn(); }));
 
     // THE LOOK, which lived on the hub and would otherwise have gone with it.
     rows.appendChild(row("Look", lookById(savedLook()).note || "",
@@ -1241,6 +1272,8 @@ async function boot() {
   // The mode before the first paint, so a simplified tablet never flashes the
   // technician screens on its way to hiding them.
   await loadMode();
+  // And valet's, for the same reason: a hidden screen must never flash.
+  await refreshValet();
 
   window.addEventListener("hashchange", go);
 
@@ -1300,6 +1333,20 @@ async function boot() {
   }
 
   setInterval(() => store.refreshCar(), 20000);
+  // Valet mode is decided by the server (and can be turned off from another
+  // window or the terminal), so it is re-read. A change rebuilds the chip row,
+  // redraws the screen (a hidden one is left for Home) and tells the voice
+  // assistant which screens exist.
+  valet.onChange((on) => {
+    chipsFor = null; segFor = undefined;
+    paintBar(); paintNavState(); go(); screens();
+    // Turned off, by whatever route: the owner is shown how the car was driven.
+    if (!on && valet.report && !valet.report.seen) showReport(valet.report);
+  });
+  setInterval(async () => { if (await refreshValet()) paintBar(); }, 4000);
+  if (!valet.on && valet.report && !valet.report.seen) showReport(valet.report);
+  // Valet is on at boot (the tablet restarted mid-handover): nothing to do,
+  // the first paint below already respects it.
   // Cheap: one stat on the server and a no-op unless the theme actually moved.
   setInterval(applyTheme, 5000);
 
