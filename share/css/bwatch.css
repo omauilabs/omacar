@@ -1,0 +1,133 @@
+/* The 12 V battery while parked: Home's card (js/bwatchcard.js) and the screen
+   at Vehicle → Care → 12 V (js/views/bwatch.js).
+
+   The voltage is the thing; the parks are a filled line behind it, the floor a
+   dashed rule through it, and a dashed stretch where nothing was measured
+   because the tablet was asleep. Tone (ok / warn / bad) colours the number and
+   its lamp only; every colour is a token so each look keeps its own. */
+
+.bw-stop-top { stop-color: var(--info); stop-opacity: .34; }
+.bw-stop-bot { stop-color: var(--info); stop-opacity: 0; }
+.bw-svg { display: block; width: 100%; height: 100%; }
+.bw-band { fill: color-mix(in srgb, var(--ink) 3.5%, transparent); }
+.bw-line { fill: none; stroke: var(--info); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round;
+           vector-effect: non-scaling-stroke; }
+.bw-dash { fill: none; stroke: color-mix(in srgb, var(--info) 55%, transparent); stroke-width: 1.5;
+           stroke-dasharray: 2 6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.bw-floor { stroke: var(--warn); stroke-width: 1.25; stroke-dasharray: 5 5; opacity: .85;
+            vector-effect: non-scaling-stroke; }
+.bw-crit { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 2 5; opacity: .55; vector-effect: non-scaling-stroke; }
+.bw-dot { vector-effect: non-scaling-stroke; }
+.bw-dot-start { fill: var(--panel); stroke: var(--dim); stroke-width: 1.5; }
+.bw-dot-end { fill: var(--info); stroke: var(--panel); stroke-width: 2; }
+
+/* ---- Home's card ------------------------------------------------------- */
+.hc-bwatch { display: grid; grid-template-rows: auto 1fr auto; gap: 6px; padding: 14px 16px 12px;
+             container-type: inline-size; cursor: pointer; }
+.hc-bwatch .fr-head > svg { color: var(--info); }
+.bwc-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: end; min-height: 0; }
+.bwc-now { display: grid; gap: 3px; align-content: end; min-width: 0; }
+.bwc-bigrow { display: flex; align-items: flex-start; gap: 3px; line-height: .9; }
+.bwc-big { font-size: 3rem; font-weight: 600; letter-spacing: -.03em; color: var(--ink);
+           text-shadow: 0 0 24px color-mix(in srgb, var(--info) 35%, transparent); }
+.bwc-unit { font-size: 1rem; color: var(--ink-2); margin-top: .25em; }
+.bwc-line { font-size: .78rem; color: var(--ink-2); max-width: 22ch; line-height: 1.3; }
+.bwc-sub { font-size: .7rem; color: var(--dim); max-width: 26ch; line-height: 1.3; }
+.bwc-plot { min-width: 0; align-self: stretch; min-height: 54px; position: relative; }
+.bwc-plot .bw-svg { position: absolute; inset: 0; }
+.bwc-bottom { display: flex; justify-content: flex-end; font-size: .72rem; color: var(--dim);
+              font-variant-numeric: tabular-nums; }
+.hc-bwatch[data-tone="ok"] .bwc-big { text-shadow: 0 0 24px color-mix(in srgb, var(--ok) 40%, transparent); }
+.hc-bwatch[data-tone="warn"] .bwc-big { color: var(--warn); text-shadow: 0 0 24px color-mix(in srgb, var(--warn) 45%, transparent); }
+.hc-bwatch[data-tone="bad"] .bwc-big { color: var(--bad); text-shadow: 0 0 24px color-mix(in srgb, var(--bad) 50%, transparent); }
+.hc-bwatch[data-tone="warn"] .bwc-line, .hc-bwatch[data-tone="bad"] .bwc-line { color: var(--ink); font-weight: 600; }
+.hc-bwatch[data-state="stale"] .bw-line, .hc-bwatch[data-chart=""] .bwc-plot { opacity: .6; }
+.hc-bwatch[data-state="absent"] .bwc-big { color: var(--faint); text-shadow: none; }
+
+/* ---- the screen -------------------------------------------------------- */
+.wrap:has(> .bw) { max-width: none; display: block; height: 100%; }
+.stage:has(> .wrap > .bw) { padding-bottom: 8px; }
+.bw { height: 100%; display: grid; gap: 14px; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+.bw-l, .bw-r { display: flex; flex-direction: column; gap: 14px; min-height: 0; min-width: 0; }
+.bw > div > section { border-radius: var(--r); background: var(--panel); min-height: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.bw-hero { flex: none; display: grid; gap: 8px; padding: 22px 26px 18px; align-content: start; }
+.bw-head { display: flex; align-items: center; gap: 10px; color: var(--ink-2); }
+.bw-head > svg { color: var(--info); }
+.bw-name { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--ink); }
+.bw-head .fr-src { margin-left: auto; font-size: .76rem; }
+.bw-bigrow { display: flex; align-items: flex-start; gap: 6px; line-height: .85; margin-top: 4px; }
+.bw-big { font-size: clamp(4rem, 12vh, 7.5rem); font-weight: 600; letter-spacing: -.04em; color: var(--ink);
+          text-shadow: 0 0 40px color-mix(in srgb, var(--info) 35%, transparent); }
+.bw-unit { font-size: 1.6rem; color: var(--ink-2); margin-top: .3em; }
+.bw-line { font-size: 1.1rem; color: var(--ink); }
+.bw-sub { font-size: .9rem; color: var(--ink-2); }
+.bw[data-tone="ok"] .bw-big { text-shadow: 0 0 40px color-mix(in srgb, var(--ok) 40%, transparent); }
+.bw[data-tone="warn"] .bw-big { color: var(--warn); text-shadow: 0 0 40px color-mix(in srgb, var(--warn) 45%, transparent); }
+.bw[data-tone="bad"] .bw-big { color: var(--bad); text-shadow: 0 0 40px color-mix(in srgb, var(--bad) 50%, transparent); }
+.bw[data-state="stale"] .bw-big { opacity: .75; }
+.bw[data-state="absent"] .bw-big { color: var(--faint); text-shadow: none; }
+.bw-projbox { display: grid; gap: 5px; margin-top: 8px; padding: 12px 16px; border-radius: 14px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.bw-k { font-size: .68rem; color: var(--dim); }
+.bw-proj { font-size: .98rem; color: var(--ink); line-height: 1.4; }
+.bw-proj[data-state="not-enough"] { color: var(--ink-2); }
+.bw-also { font-size: .8rem; color: var(--dim); line-height: 1.4; }
+.bw-also:empty { display: none; }
+
+.bw-chart { flex: 1; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 8px; padding: 20px 24px 14px; }
+.bw-chart-k { font-size: .82rem; color: var(--ink-2); }
+.bw-plot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; min-height: 0; }
+.bw-y { display: flex; flex-direction: column; justify-content: space-between; font-size: .7rem;
+        color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+.bw-svgbox { position: relative; min-height: 120px; }
+.bw-svgbox .bw-svg { position: absolute; inset: 0; }
+.bw-floortag { position: absolute; left: 4px; transform: translateY(-125%); font-size: .68rem; color: var(--warn);
+               padding: 1px 6px; border-radius: 6px; background: color-mix(in srgb, var(--panel) 80%, transparent); }
+.bw-floortag[hidden] { display: none; }
+.bw-xl { position: relative; height: 2.5em; }
+.bw-xt { position: absolute; top: 0; transform: translateX(-50%); display: grid; justify-items: center;
+         font-size: .7rem; color: var(--dim); white-space: nowrap; line-height: 1.25; }
+.bw-xd { color: var(--faint); }
+.bw-note { font-size: .74rem; color: var(--dim); line-height: 1.4; max-width: 90ch; }
+
+.bw-tab { flex: none; display: grid; gap: 8px; padding: 18px 22px; align-content: start; }
+.bw-tabk { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--ink-2); }
+.bw-tabk > svg { color: var(--accent); }
+.bw-tabrow { display: flex; align-items: baseline; gap: 4px; }
+.bw-pct { font-size: 3rem; font-weight: 600; letter-spacing: -.03em; color: var(--ink); line-height: 1; }
+.bw-pctu { font-size: 1.1rem; color: var(--ink-2); }
+.bw-bar { display: block; height: 8px; border-radius: 4px; overflow: hidden;
+          background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.bw-bar-i { display: block; height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent-fill) 70%, var(--accent)), var(--accent));
+  transition: width .6s cubic-bezier(.3, .7, .4, 1); }
+.bw-bar[data-low="1"] .bw-bar-i { background: var(--warn); }
+.bw-tline { font-size: .8rem; color: var(--dim); line-height: 1.4; }
+
+.bw-side { flex: 1; display: grid; grid-auto-rows: max-content; align-content: start; gap: 10px; padding: 16px 18px; overflow: hidden; }
+.bw-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; }
+.bw-fact { display: grid; gap: 3px; padding: 9px 10px; border-radius: 10px; min-width: 0; }
+.bw-fk { font-size: .66rem; color: var(--dim); }
+.bw-fv { font-size: .92rem; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden;
+         text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.bw-pk { display: flex; justify-content: space-between; font-size: .78rem; color: var(--ink-2); margin-top: 4px; padding: 0 10px; }
+.bw-pk span:last-child { color: var(--faint); font-size: .68rem; }
+.bw-parks { display: grid; gap: 2px; }
+.bw-prow { display: grid; grid-template-columns: 5.2em 5.6em minmax(0, 1fr); gap: 8px; align-items: baseline;
+           padding: 8px 10px; border-radius: 10px; font-size: .84rem; font-variant-numeric: tabular-nums; }
+.bw-prow:nth-child(odd) { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+.bw-pd { color: var(--ink-2); }
+.bw-pl { color: var(--dim); }
+.bw-pv { color: var(--ink); text-align: right; }
+.bw-none { color: var(--dim); display: block; }
+
+@media (orientation: portrait) {
+  .bw { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; }
+  .bw-r { flex-direction: row; }
+  .bw-r > section { flex: 1; }
+  .bw-r > .bw-tab { align-self: start; }
+  .bw-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { .bw-bar-i { transition: none; } }

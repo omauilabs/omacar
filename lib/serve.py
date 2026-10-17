@@ -179,6 +179,8 @@ DEMO_ROUTES = {
     "/api/notify": {"events": [], "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
+    # The parked 12 V record is the real car's; the demo has none.
+    "/api/battery-watch": {"present": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

@@ -69,6 +69,9 @@
 #   omacar battery [rebuild|report]
 #                             the hybrid battery's verdict, from the drives
 #                             already recorded; reads the database only
+#   omacar battery-watch [status|read|run|sim|install]
+#                             the 12 V while parked and the tablet's own battery:
+#                             readings, a projection to the 12.2 V floor
 #   omacar cheatsheet [--set]
 #                             every command as a picture, for the wallpaper
 #   omacar board [stop]       the same commands, behind your windows, tappable
@@ -2076,6 +2079,18 @@ print()
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
   # Reads the database and nothing else: no serial port, no adapter.
   battery) shift; exec "$OMACAR_PY" "$ROOT/lib/battery_health.py" "$@" ;;
+  # The 12 V while parked (lib/batterywatch.py, doc/battery-watch.md). Under the
+  # venv, where pyserial lives, for the one ATRV it asks the adapter.
+  battery-watch)
+    case "${2:-status}" in
+      install)
+        mkdir -p "$HOME/.config/systemd/user"
+        sed "s|__ROOT__|$ROOT|g" "$ROOT/share/systemd/omacar-batterywatch.service" \
+          > "$HOME/.config/systemd/user/omacar-batterywatch.service"
+        systemctl --user daemon-reload
+        systemctl --user enable --now omacar-batterywatch.service 2>&1 | sed 's/^/  /' ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/batterywatch.py" "$@" ;;
+    esac ;;
   cheatsheet|wallpaper) shift; exec python3 "$ROOT/lib/cheatsheet.py" "$@" ;;
   # SHUTTING DOWN IS A COMMAND, not two words buried in a button. The board
   # ran `systemctl poweroff` itself and looked at neither the exit code nor

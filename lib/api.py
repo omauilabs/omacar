@@ -40,6 +40,7 @@ what the car said.
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
+    GET  /api/battery-watch     the 12 V while parked: readings, projection to the floor, the tablet's battery
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1189,6 +1190,12 @@ def handle_get(path, query):
         # second: the loop's last word, or {"phase": "off"} with no loop.
         import ignition
         return 200, ignition.read_public()
+    if path == "/api/battery-watch":
+        # The 12 V while parked (lib/batterywatch.py), from the readings kept
+        # at ignition-off, ignition-on and while awake. `source` says "sim"
+        # when the simulator is running, and the screens always show it.
+        import batterywatch
+        return 200, batterywatch.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")

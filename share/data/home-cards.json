@@ -14,6 +14,7 @@
     "phone":    { "label": "Phone",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "dashcam":  { "label": "Dashcams",      "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "fridge":   { "label": "Fridge",        "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
+    "battery":  { "label": "12 V parked",   "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "env":      { "label": "Environment",   "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "radar":    { "label": "Radar",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "agent":    { "label": "Oma Agent",     "sizes": { "m": { "land": [4, 2], "port": [6, 2] } } }
