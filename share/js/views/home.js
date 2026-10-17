@@ -275,6 +275,19 @@ const MAKERS = {
   // ---- end redesign/cameras ---------------------------------------------------
   phone: phoneCard,
   agent: agentCard,
+  // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
+  // card is on Home. Tapping it opens the full Radar screen.
+  radar: () => {
+    const node = tappable(h("div.card.hc"), "radar");
+    let card = null, gone = false;
+    import("../radarcard.js").then((m) => { if (!gone) card = m.radarCard(node); })
+      .catch((e) => {
+        console.warn("Radar card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The radar card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
 };
 
 function makeCard(id, cat) {

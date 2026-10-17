@@ -37,6 +37,7 @@
 <link rel="stylesheet" href="css/ima.css">
 <link rel="stylesheet" href="css/omaplay.css">
 <link rel="stylesheet" href="css/home.css">
+<link rel="stylesheet" href="css/radar.css">
 <link rel="stylesheet" href="css/vehicle.css">
 <link rel="stylesheet" href="css/roadcams.css">
 <!-- The boot screen, last, so it can rely on every token above it and cover
@@ -154,6 +155,8 @@
      only decides when the boot screen goes away and what it says while it is
      there. -->
 <script type="module" src="js/bootscreen.js"></script>
+<!-- The radar banner: a strip over the stage while the detector has an alert. Its own module, like awake.js; no view knows it. -->
+<script type="module" src="js/radarbanner.js"></script>
 <!-- ---- redesign/cameras ------------------------------------------------------
      The Cameras tab, Home's Dashcams card, the audio stage and drowsy mode
      (doc/design/2026-09-28-cameras-drowsy.md). One block at the end of the
