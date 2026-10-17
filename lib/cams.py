@@ -5,6 +5,10 @@
     omacar cams on | off    enable and start, or stop and disable, omacar-cams.service
     omacar cams sim         the recorder, here, with lavfi test pictures for
                             every role that has no camera (SIMULATED in the app)
+    omacar cams rotate [ROLE DEGREES]
+                            turn a camera's picture 90, 180 or 270 degrees
+                            clockwise (0 to undo); with no arguments, says how
+                            each is turned
     omacar cams run [--sim] the recorder itself; what the unit runs
     omacar cams demo [--from DIR]
                             the meetup demo's cameras: footage on a loop, in
@@ -54,6 +58,9 @@ CAPS = camstore.DEFAULT_CAPS
 BITRATE = {"front": "6M", "rear": "6M", "cabin": "1M"}
 FORMAT_ORDER = ("MJPG", "H264", "YUYV")
 INPUT_FORMAT = {"MJPG": "mjpeg", "H264": "h264", "YUYV": "yuyv422"}
+# Clockwise degrees -> the filter that turns the picture, before the split, so
+# the clips and the live picture agree.
+ROTATE_FILTER = {90: "transpose=clock,", 180: "hflip,vflip,", 270: "transpose=cclock,"}
 # What `sim` stands up for a role with no camera. 720p rather than 1080p, so
 # three test pictures cost the box no more than real cameras would.
 SIM_MODE = {"front": {"fmt": "SIM", "w": 1280, "h": 720, "fps": 30.0},
@@ -304,7 +311,7 @@ def probe_modes(device):
 # ---- the command ------------------------------------------------------------
 
 def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
-                duration=None, vaapi=VAAPI):
+                duration=None, vaapi=VAAPI, rotate=0):
     """One ffmpeg for one camera: decode once, split two ways.
 
       recording  hwupload -> h264_vaapi. -fps_mode passthrough, so a camera
@@ -318,7 +325,8 @@ def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
                  into files.
 
     With `device` None, the input is a test picture (lavfi testsrc2) in the
-    role's mode, at real time. `duration` stops it (tests only).
+    role's mode, at real time. `duration` stops it (tests only). `rotate`
+    turns the picture clockwise, on the CPU, before it is split.
     """
     w, h, fps = mode["w"], mode["h"], mode["fps"]
     rate = f"{fps:g}"
@@ -333,7 +341,7 @@ def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats",
         "-progress", "pipe:2", "-vaapi_device", vaapi, *src,
         "-filter_complex",
-        f"[0:v]split=2[rec][live];[rec]format=nv12,hwupload[recv];"
+        f"[0:v]{ROTATE_FILTER.get(rotate, '')}split=2[rec][live];[rec]format=nv12,hwupload[recv];"
         f"[live]fps={LIVE_FPS},scale={LIVE_WIDTH}:-2[livev]",
         "-map", "[recv]", "-c:v", "h264_vaapi", "-b:v", BITRATE[role],
         "-maxrate", BITRATE[role], "-g", gop, "-fps_mode", "passthrough",
@@ -397,8 +405,9 @@ class Camera:
     instance the stalled one; that would need a live frame it has not had
     the chance to send."""
 
-    def __init__(self, role, device, mode, sim=False, restarted=None):
+    def __init__(self, role, device, mode, sim=False, restarted=None, rotate=0):
         self.role, self.device, self.mode, self.sim = role, device, mode, sim
+        self.rotate = rotate
         self.proc = None
         self.error = None
         self.started = None
@@ -411,7 +420,7 @@ class Camera:
         os.makedirs(clip_dir, exist_ok=True)
         os.makedirs(run_dir(), exist_ok=True)
         args = ffmpeg_args(self.role, self.mode, clip_dir,
-                           device=None if self.sim else self.device)
+                           device=None if self.sim else self.device, rotate=self.rotate)
         self.proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.started = time.time()
@@ -547,6 +556,14 @@ class Recorder:
         now = time.time()
         for role in ROLES:
             cam = self.cams.get(role)
+            # A NEW ROTATION RESTARTS THE CAMERA, so `omacar cams rotate` takes
+            # effect within two seconds, without restarting the recorder.
+            # Stopped cleanly, so the clip it was writing stays playable.
+            if cam and cam.alive() and cam.rotate != cfg["rotate"][role]:
+                cam.stop()
+                self.cams.pop(role, None)
+                self.retry_at.pop(role, None)
+                cam = None
             if cam and cam.alive():
                 continue
             replacing = cam is not None       # a Camera existed here and died: this is a restart
@@ -583,9 +600,11 @@ class Recorder:
                     self.notes[role] = "no mode at or under 1080p30"
                     self.cams.pop(role, None)
                     continue
-                new = Camera(role, dev, mode, restarted=restart_note)
+                new = Camera(role, dev, mode, restarted=restart_note,
+                             rotate=cfg["rotate"][role])
             elif self.sim:
-                new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note)
+                new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note,
+                             rotate=cfg["rotate"][role])
             else:
                 # A by-id match that exists but was refused (an IPU6 node, a
                 # non-USB one, or one below the floor with no way to tell)
@@ -1439,6 +1458,27 @@ def demo_main(args):
     return 0
 
 
+def rotate_main(args):
+    if not args:
+        rot = camstore.load_config()["rotate"]
+        for role in ROLES:
+            print(f"  {role:<6} {rot[role]}°")
+        return 0
+    role, deg = args[0], None
+    try:
+        deg = int(args[1]) if len(args) == 2 else None
+    except ValueError:
+        pass
+    if role not in ROLES or deg not in camstore.ROTATIONS:
+        print("usage: omacar cams rotate [front|rear|cabin 0|90|180|270]", file=sys.stderr)
+        return 2
+    camstore.set_rotate(role, deg)
+    st = _read_status()
+    when = "now" if running(st) else "when the recorder starts"
+    print(f"  {role} turned {deg}° clockwise; it takes effect {when}")
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "status"
     if cmd == "status":
@@ -1448,6 +1488,8 @@ def main(argv):
         return subprocess.run(["systemctl", "--user", *how, "omacar-cams.service"]).returncode
     if cmd == "demo":
         return demo_main(argv[2:])
+    if cmd == "rotate":
+        return rotate_main(argv[2:])
     if cmd in ("run", "sim"):
         st = _read_status()
         if running(st) and st.get("pid") != os.getpid():
