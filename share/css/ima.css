@@ -233,7 +233,7 @@
 .hl-v { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
 .hl-src { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ghost); }
 .hl-cell svg { width: 100%; height: 28px; }
-.hl-cell svg path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.hl-cell svg { color: var(--accent); }
 .hl-note { margin: 0; font-size: .78rem; }
 .hl-cell[data-found="no"] { opacity: .55; }
 .hybrid-live[data-state="paused"] .hl-v { color: var(--ghost); }

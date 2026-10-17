@@ -53,7 +53,7 @@ import { lookup, decode } from "../knowledge.js";
 import { makeGauge } from "../gauges.js";
 import { pausedNote } from "../readings.js";
 import { sparkline } from "../charts.js";
-import { sparkPath } from "../spark.js";
+import { sparkPath, makeSpark } from "../spark.js";
 import { healthLine } from "../health.js";
 import { makeHybridLive } from "../hybridlive.js";
 export { healthLine };
@@ -179,13 +179,9 @@ function measureRow(name, m) {
   const pts = key ? series.filter((r) => typeof r[key] === "number")
                          .map((r) => [r.t, r[key]]) : [];
   const last = pts.length ? pts[pts.length - 1][1] : null;
-  const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svgEl.setAttribute("viewBox", "0 0 120 28");
-  svgEl.setAttribute("preserveAspectRatio", "none");
-  svgEl.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", sparkPath(pts, 120, 28));
-  svgEl.appendChild(path);
+  const spark = makeSpark(120, 28);
+  spark.draw(sparkPath(pts, 120, 28));
+  const svgEl = spark.svg;
   return h("li.hc-row", { data: { state: m.state } },
     h("span.hc-k", label),
     h("span.hc-spark", svgEl),

@@ -2319,12 +2319,15 @@ _css = open(os.path.join(ROOT, "share", "css", "app.css"), encoding="utf-8").rea
 # every hue collapses to a lightness, so "the current one is the blue one" does
 # not survive to 2am on a dark road. Restyling the dock is exactly the kind of
 # change that quietly takes one of these away.
-check("the current tab still takes the ink colour",
+#
+# Since 2026-10-17 the signals are a lit key (a fill, not a hue), the full
+# ink colour, and a heavier label.
+check("the current tab's key is lit",
+      '.tab[aria-current="page"] .tab-in::before { opacity: 1; }' in _css, True)
+check("it takes the ink colour",
       '.tab[aria-current="page"] { color: var(--ink); }' in _css, True)
-check("it still carries its own edge",
-      '.tab[aria-current="page"]::before' in _css, True)
-check("and its pill is still filled",
-      '.tab[aria-current="page"] .tab-in { background: var(--raise); }' in _css, True)
+check("and its label is heavier",
+      '.tab[aria-current="page"] .tab-lbl { font-weight: 600; }' in _css, True)
 _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
 check("and it is still announced to a screen reader",
       'setAttribute("aria-current", "page")' in _main, True)

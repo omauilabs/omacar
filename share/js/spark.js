@@ -18,3 +18,42 @@ export function sparkPath(points, w, h, lo = null, hi = null) {
     return (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
   }).join("");
 }
+
+// The same line closed down to the floor, for the colour under it. Empty when
+// the line is: a fill with no line over it would read as a reading.
+export function sparkArea(line, w, h) {
+  return line ? `${line}L${w.toFixed(1)} ${h.toFixed(1)}L0.0 ${h.toFixed(1)}Z` : "";
+}
+
+// A sparkline's SVG: a fade of the line's own colour under the line, then the
+// line. The colour is `currentColor`, so a tile recolours both by setting
+// `color` on the svg (home.css), and the fade needs no per-look rule. Each
+// svg owns its gradient, because ids are document-wide and a shared one would
+// take the colour of whichever tile defined it first.
+const NS = "http://www.w3.org/2000/svg";
+let seq = 0;
+export function makeSpark(w = 120, h = 28) {
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    return n;
+  };
+  const id = `spark-fade-${++seq}`;
+  const svg = el("svg", { viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none",
+                          "aria-hidden": "true", class: "spark" });
+  const grad = el("linearGradient", { id, x1: "0", y1: "0", x2: "0", y2: "1" });
+  grad.append(el("stop", { offset: "0", class: "spark-stop-top" }),
+              el("stop", { offset: "1", class: "spark-stop-bottom" }));
+  const defs = el("defs", {});
+  defs.appendChild(grad);
+  const area = el("path", { class: "spark-area", fill: `url(#${id})` });
+  const line = el("path", { class: "spark-line" });
+  svg.append(defs, area, line);
+  return {
+    svg,
+    draw(d) {
+      line.setAttribute("d", d);
+      area.setAttribute("d", sparkArea(d, w, h));
+    },
+  };
+}
