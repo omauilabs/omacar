@@ -292,11 +292,22 @@ def usb_ids(name, sysfs="/sys"):
     return None
 
 
+# Whole vendors that make no OBD adapters, for boards whose product id moves
+# with the firmware on them. Adafruit: the QT Py RP2040 the environment nodes
+# are built on (firmware/envnode/) reports a different product id under
+# arduino-pico than under CircuitPython, so listing one id would miss the other.
+NOT_ADAPTER_VENDORS = {"239a"}
+
+
+def _not_adapter(ids):
+    return ids in NOT_ADAPTERS or (ids is not None and ids[0] in NOT_ADAPTER_VENDORS)
+
+
 def wired_ports(dev="/dev", sysfs="/sys"):
     ports = sorted(glob.glob(os.path.join(dev, "ttyUSB*"))
                    + glob.glob(os.path.join(dev, "ttyACM*")))
     return [p for p in ports
-            if usb_ids(os.path.basename(p), sysfs) not in NOT_ADAPTERS]
+            if not _not_adapter(usb_ids(os.path.basename(p), sysfs))]
 
 
 def resolve():

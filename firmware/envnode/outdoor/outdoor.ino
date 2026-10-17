@@ -1,60 +1,44 @@
-// OmaCar outdoor node: Bosch BME280 (T, RH, pressure) + Plantower PMS5003
-// (PM1.0 / PM2.5 / PM10) -> one JSON line per second on USB serial.
+// OmaCar outdoor node: Bosch BME280 (T, RH, pressure) + a Plantower particulate
+// sensor (PM1.0 / PM2.5 / PM10) -> one JSON line per second on USB serial.
 //
-//   {"node":"outdoor","fw":1,"t_c":17.9,"rh":63.0,"hpa":1012.6,"pm1":3.0,"pm25":6.1,"pm10":9.4}
+//   {"node":"outdoor","fw":2,"t_c":17.9,"rh":63.0,"hpa":1012.6,"pm1":3,"pm25":6,"pm10":9}
 //
 // A sensor that is missing or not answering is OMITTED, never printed as zero.
 //
-// Target: Raspberry Pi Pico (RP2040), arduino-pico core. BME280 on I2C0
-// (SDA GP4, SCL GP5, address 0x76 with SDO to GND, 0x77 with SDO to 3V3).
-// PMS5003 on UART0 (Serial1): Pico TX GP0 -> PMS RX, Pico RX GP1 <- PMS TX.
-// The PMS5003 is POWERED from 5 V (Pico VBUS) but its logic is 3.3 V, so its
-// TX can go straight to the Pico RX and no level shifter is needed.
-// Library: "Adafruit BME280 Library" (+ "Adafruit Unified Sensor").
+// THE RECOMMENDED BUILD IS SOLDER-FREE (firmware/envnode/README.md): an Adafruit
+// QT Py RP2040, an Adafruit BME280 and an Adafruit PMSA003I, all daisy-chained
+// on STEMMA QT cables. On the QT Py RP2040 that connector is I2C1, which the
+// arduino-pico core calls Wire1 (Adafruit's pinout page: "In Arduino, it is
+// Wire1"). A bare Raspberry Pi Pico with the sensors on GP4/GP5 uses Wire:
+// change BUS below.
 //
-// UNVERIFIED: written without a compiler or the hardware. The PMS5003 frame
-// layout below is from memory of Plantower's datasheet: check it against the
-// datasheet for the exact module you buy before trusting the numbers.
+// The particulate sensor is read through Adafruit's PM25AQI library, which
+// speaks both the I2C PMSA003I and the UART PMS5003 (set PM_UART to 1 for the
+// latter, on Serial1, GP1 = RX). API checked against Adafruit_PM25AQI
+// src/Adafruit_PM25AQI.h on 2026-10-17: begin_I2C(TwoWire*), begin_UART(Stream*),
+// read(PM25_AQI_Data*), fields pm10_env / pm25_env / pm100_env -- the
+// "environmental" (atmospheric) numbers, which are what the AQI is defined on.
+//
+// Libraries: "Adafruit BME280 Library", "Adafruit Unified Sensor",
+// "Adafruit PM25 AQI Sensor". Board: arduino-pico, "Adafruit QT Py RP2040".
+//
+// UNVERIFIED: not yet compiled or run on hardware.
 
 #include <Adafruit_BME280.h>
+#include <Adafruit_PM25AQI.h>
 #include <Adafruit_Sensor.h>
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
 
-static const int FW = 1;
-static const uint8_t BME_ADDR = 0x76;
+#define BUS Wire1          // QT Py RP2040's STEMMA QT port; Wire on a bare Pico
+#define PM_UART 0          // 1: a PMS5003 on Serial1 instead of an I2C PMSA003I
+
+static const int FW = 2;
 
 Adafruit_BME280 bme;
-bool haveBme = false;
-
-// PMS5003 active-mode frame: 32 bytes. 0x42 0x4D, length (28), then 13 big-endian
-// words, then the checksum (sum of the first 30 bytes). Words 3..5 (bytes 10..15)
-// are PM1.0 / PM2.5 / PM10 "atmospheric environment" in ug/m3, which is what the
-// AQI is defined on (the "CF=1" words before them are a factory-calibration number).
-struct Pms { bool ok; uint16_t pm1, pm25, pm10; uint32_t at; };
-static Pms pms = {false, 0, 0, 0, 0};
-
-static void pmsPoll() {
-  static uint8_t buf[32];
-  static uint8_t n = 0;
-  while (Serial1.available()) {
-    uint8_t b = Serial1.read();
-    if (n == 0 && b != 0x42) continue;
-    if (n == 1 && b != 0x4D) { n = (b == 0x42) ? 1 : 0; continue; }
-    buf[n++] = b;
-    if (n < 32) continue;
-    n = 0;
-    uint16_t sum = 0;
-    for (int i = 0; i < 30; i++) sum += buf[i];
-    if (sum != (uint16_t)((buf[30] << 8) | buf[31])) continue;   // torn frame: wait for the next
-    pms.pm1 = (buf[10] << 8) | buf[11];
-    pms.pm25 = (buf[12] << 8) | buf[13];
-    pms.pm10 = (buf[14] << 8) | buf[15];
-    pms.ok = true;
-    pms.at = millis();
-  }
-}
+Adafruit_PM25AQI aqi;
+bool haveBme = false, haveAqi = false;
 
 static void kv(const char* key, float v, float lo, float hi, int decimals) {
   if (!isfinite(v) || v < lo || v > hi) return;
@@ -66,16 +50,21 @@ static void kv(const char* key, float v, float lo, float hi, int decimals) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.ignoreFlowControl(true);               // run with the tablet asleep
-  Wire.begin();
-  haveBme = bme.begin(BME_ADDR, &Wire);
+  Serial.ignoreFlowControl(true);               // keep running with the tablet asleep
+  BUS.begin();
+  // Adafruit's breakout answers at 0x77; most others at 0x76.
+  haveBme = bme.begin(0x77, &BUS) || bme.begin(0x76, &BUS);
+  delay(3000);                                   // the PM sensor's fan needs a moment
+#if PM_UART
   Serial1.setRX(1);
-  Serial1.setTX(0);
-  Serial1.begin(9600);                          // PMS5003's fixed rate
+  Serial1.begin(9600);
+  haveAqi = aqi.begin_UART(&Serial1);
+#else
+  haveAqi = aqi.begin_I2C(&BUS);
+#endif
 }
 
 void loop() {
-  pmsPoll();
   static uint32_t next = 0;
   if ((int32_t)(millis() - next) < 0) return;
   next = millis() + 1000;
@@ -87,11 +76,12 @@ void loop() {
     kv("rh", bme.readHumidity(), 0, 100, 1);
     kv("hpa", bme.readPressure() / 100.0F, 300, 1100, 2);
   }
-  // A PMS reading older than 5 s (fan stopped, cable off) is not a reading.
-  if (pms.ok && millis() - pms.at < 5000) {
-    kv("pm1", pms.pm1, 0, 1000, 0);
-    kv("pm25", pms.pm25, 0, 1000, 0);
-    kv("pm10", pms.pm10, 0, 1000, 0);
+  PM25_AQI_Data d;
+  // A failed read (fan stopped, cable off, torn frame) prints nothing for PM.
+  if (haveAqi && aqi.read(&d)) {
+    kv("pm1", d.pm10_env, 0, 1000, 0);
+    kv("pm25", d.pm25_env, 0, 1000, 0);
+    kv("pm10", d.pm100_env, 0, 1000, 0);
   }
   Serial.println("}");
 }

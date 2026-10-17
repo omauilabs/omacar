@@ -256,6 +256,14 @@ def main():
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
+    print("\n  the OBD probe never takes a sensor node")
+    import connect
+    check("an Adafruit QT Py RP2040, whatever its product id, is not an adapter",
+          connect._not_adapter(("239a", "80f7")) and connect._not_adapter(("239a", "00f7")))
+    check("nor a bare Pico", connect._not_adapter(("2e8a", "000a")))
+    check("but an FTDI adapter (the OBDLink) still is",
+          not connect._not_adapter(("0403", "6015")) and not connect._not_adapter(None))
+
     print(f"\n  {'all good' if not fails else f'{fails} failed'}\n")
     return 1 if fails else 0
 
