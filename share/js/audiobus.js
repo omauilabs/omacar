@@ -73,6 +73,10 @@ export function audioContext() { ensure(); return ctx; }
 export function musicIn() { ensure(); return node.music; }
 export function alertIn() { ensure(); return node.alert; }
 export function voiceIn() { ensure(); return node.voice; }
+// The master output's analyser (after the limiter, before the speakers), for
+// anything that wants to draw what is actually playing. Reading it changes
+// nothing; an extra source connected into it is heard (the equalizer's pink noise).
+export function meterIn() { ensure(); return node.meter; }
 
 // A context made without a tap starts suspended; the kiosk's autoplay flag
 // lets it run, and Begin's tap resumes it everywhere else.

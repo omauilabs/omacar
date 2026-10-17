@@ -24,6 +24,7 @@ import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
 import launcherView from "./views/launcher.js";
 import effectsView from "./views/effects.js";
+import eqView from "./views/eq.js";
 import nurseryView from "./views/nursery.js";
 import { createOmaPlay } from "./omaplay/layer.js";
 import { mockSource, dongleSource } from "./omaplay/source.js";
@@ -258,6 +259,11 @@ const OFF_NAV = [
     mount: themesView, off: "opened from Settings" },
   { id: "effects", label: "Effects", title: "Scanner and Leviathan",
     mount: effectsView, off: "opened from Settings", askable: true },
+  // The AUX equalizer. Its editing locks while the car moves by the same rule
+  // Home's Customize uses (store.lockedAsMoving, read inside the view), so it is
+  // not `write`: the preset keys and the bypass stay one tap at speed.
+  { id: "eq", label: "Equalizer", title: "Equalizer",
+    mount: eqView, fast: true, off: "opened from Settings and Music" },
   // The power-on screen: a destination the tablet is pointed at, and Home's
   // "Begin" button when the car is off. Never something to browse to mid-drive.
   //
@@ -1014,6 +1020,9 @@ function openSettings() {
 
     rows.appendChild(row("Effects", "Scanner and Leviathan, full screen",
       "Open", () => { close(); goto("effects"); }));
+
+    rows.appendChild(row("Sound", "Equalizer for the AUX output",
+      "Open", () => { close(); goto("eq"); }));
 
     rows.appendChild(row("Vehicle report", "The page you print for somebody else",
       "Open", () => { close(); goto("report"); }));

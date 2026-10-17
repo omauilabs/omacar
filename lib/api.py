@@ -1943,3 +1943,35 @@ def handle_post(path, body):  # noqa: F811
     out = camroutes.handle_post(path, body)
     return out if out is not None else _base_post(path, body)
 # ---- end redesign/cameras -----------------------------------------------------
+
+
+# ---- aux equalizer -------------------------------------------------------------
+# GET /api/eq        the saved state, whether PipeWire runs it, the curve
+# POST /api/eq       the whole state, validated and clamped (lib/eq.py)
+# POST /api/eq/live  a slider moving: parameters only, never a restart
+# Not in serve.py's COCKPIT_WRITES, so a read-only cockpit cannot change the sound.
+_eq_get, _eq_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/eq":
+        import eq
+        return 200, eq.describe()
+    return _eq_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/eq", "/api/eq/live"):
+        import eq
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        try:
+            if path == "/api/eq/live":
+                return 200, eq.live(data)
+            return 200, eq.write_state(data)
+        except (ValueError, TypeError) as e:
+            return 400, {"error": str(e)}
+    return _eq_post(path, body)
+# ---- end aux equalizer ---------------------------------------------------------
