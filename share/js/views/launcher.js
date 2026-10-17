@@ -38,6 +38,10 @@ export default function launcher(root) {
   const title = h("div.launch-title", {}, "OmaCar");
   const sub = h("div.launch-sub", {}, "Ready when you are");
   const btn = h("button.launch-go", { onclick: press }, "Begin");
+  // One tap to "Ready for a long drive?" (views/pretrip.js). It does not start
+  // anything, so it stays a plain link even while Begin is greyed.
+  const pretrip = h("button.launch-pretrip", { type: "button",
+    onclick: () => { location.hash = "#pretrip"; } }, "Ready for a long drive?");
   const steps = h("div.launch-steps");
   const foot = h("div.launch-foot");
   // THE CAR CANNOT BE ASKED WHICH SOURCE ITS RADIO IS ON, so this says it.
@@ -49,7 +53,7 @@ export default function launcher(root) {
   const unplugged = h("div.aux-warn", { hidden: true });
 
   clear(root);
-  root.appendChild(h("div.launch", {}, title, sub, btn, aux, unplugged, steps, foot));
+  root.appendChild(h("div.launch", {}, title, sub, btn, pretrip, aux, unplugged, steps, foot));
   const offAux = showAux(unplugged);
 
   function press() {

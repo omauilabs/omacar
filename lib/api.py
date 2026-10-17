@@ -10,6 +10,8 @@ what the car said.
     POST /api/daemon            start or stop the process that reads the car
     GET  /api/history           samples over a span, decimated to fit a graph
     GET  /api/service-history   what has actually been done, newest first
+    GET  /api/pretrip           ready for a long drive: trip, checklist ticks, maintenance gaps, tyres if any
+    POST /api/pretrip           {trip_km} | {tick, value} | {new_trip: true}
     GET  /api/documents         the document library for this vehicle
     POST /api/document          add, update, remove or parse one
     GET  /api/trips             drives, newest first, for replay
@@ -1383,6 +1385,12 @@ def handle_get(path, query):
         # key rather than letting a hand-edited drive log become a 500.
         import ima
         return 200, ima.summary()
+    if path == "/api/pretrip":
+        # The pre-trip check's stored half (lib/pretrip.py): the trip
+        # distance, the manual ticks, the maintenance gaps and, if another
+        # feature has landed a tyre source, the tyre pressures.
+        import pretrip
+        return 200, pretrip.read_public()
     if path == "/api/battery":
         # Same pattern as /api/ima: lazy import, and summary() is contracted
         # never to raise -- it carries an "error" key instead of a 500.
@@ -1525,6 +1533,22 @@ def handle_post(path, body):
             return 400, {"error": f"no screen called {want!r}",
                          "screens": sorted(seen)}
         return 200, screen.ask(want, str(data.get("who") or "somebody")[:40])
+    if path == "/api/pretrip":
+        # Harmless bookkeeping about the owner's own trip: no cockpit write,
+        # nothing near the car.
+        import pretrip
+        try:
+            if data.get("new_trip"):
+                pretrip.new_trip()
+            elif "tick" in data:
+                pretrip.set_tick(str(data.get("tick") or ""), bool(data.get("value")))
+            elif "trip_km" in data:
+                pretrip.set_trip_km(data.get("trip_km"))
+            else:
+                return 400, {"error": "trip_km, tick or new_trip"}
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+        return 200, pretrip.read_public()
     if path == "/api/fridge":
         # One setting: {"name": "z0_set", "value": 3.5} or {"name": "power",
         # "value": false}. Validated and bounded here; sent by the link.
@@ -1884,6 +1908,22 @@ def handle_post(path, body):
                 interval_km=float(data.get("interval_km") or 0),
                 interval_days=int(data.get("interval_days") or 0),
                 note=data.get("note") or "")}
+        if act == "record":
+            # "Never recorded -- tap to set": a date for an item the schedule
+            # has only a placeholder for. The odometer at that date is not
+            # known, so the distance interval waits for the next "Done today"
+            # and the time interval counts from the date given.
+            try:
+                ago = int(data.get("days_ago"))
+            except (TypeError, ValueError):
+                return 400, {"error": "days_ago must be a whole number"}
+            if not 0 <= ago <= 3650:
+                return 400, {"error": "days_ago out of range"}
+            done = book.log_service(data.get("item") or "", km=0.0,
+                                    when=time.time() - ago * 86400)
+            if not done:
+                return 404, {"error": "no such item"}
+            return 200, {"logged": done}
         if act == "forget":
             return 200, {"removed": book.forget_item(data.get("item") or "")}
         if act == "start":
