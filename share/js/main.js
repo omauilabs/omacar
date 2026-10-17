@@ -15,6 +15,8 @@ import { savedLook, saveLook, applyLook, nextLook, lookById } from "./looks.js";
 import { privacy } from "./privacy.js";
 import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
+import cabinView from "./views/cabin.js";
+import fridgeScreen from "./views/fridge.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -222,6 +224,15 @@ const TABS = [
         { id: "dash",   label: "Summary", title: "Overview",          mount: dash, fast: true },
         { id: "report", label: "Report",  title: "Vehicle report",    mount: report },
       ] },
+    ] },
+  // THE CABIN: what is in and around the car that is not the car -- the
+  // fridge now; air, sound and the garage door as their screens land. Kept
+  // out of Vehicle on purpose: Vehicle is the car's own systems, and a fridge
+  // among the trouble codes would make both harder to find.
+  { id: "cabin", label: "Cabin", icon: ICONS.cabin,
+    views: [
+      { id: "cabin",  label: "Overview", title: "Cabin",  mount: cabinView },
+      { id: "fridge", label: "Fridge",   title: "Fridge", mount: fridgeScreen },
     ] },
   // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
   // no `claude` CLI, that it is not set up and what it needs -- an honest
