@@ -1723,6 +1723,63 @@ tablet_sleep() {
   echo
 }
 
+# --- ignition ---------------------------------------------------------------
+#
+# The tablet follows the car (lib/ignition.py, doc/ignition.md). `tablet awake`
+# masked every sleep target after the 8 September mid-drive suspend; this
+# unmasks exactly the one the ignition loop uses -- suspend -- and leaves the
+# rest of that setup alone: logind still ignores the power key, the lid and
+# idle, and the power button still belongs to the screensaver. So nothing but
+# a parked car with its charger off for 30 s ever asks for sleep.
+
+IGNITION_UDEV=/etc/udev/rules.d/71-omacar-charger-wake.rules
+
+ignition_install() {
+  echo
+  echo "  Letting the tablet follow the car: asleep 30 s after the charger goes"
+  echo "  off with the car parked, awake again when the charger comes back."
+  echo
+  echo "  It will:"
+  echo "    · unmask suspend (only suspend; the power key, lid and idle stay"
+  echo "      ignored, so nothing else can put it to sleep)"
+  echo "    · let the person at the screen suspend without a password prompt"
+  echo "    · mark the charger as a wakeup source, where the kernel allows it"
+  echo "    · start omacar-ignition at login"
+  echo
+  echo "  Undo with: omacar ignition uninstall"
+  echo
+  read -r -p "  Set it up? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
+  echo
+  echo "  This needs sudo."
+  sudo systemctl unmask sleep.target suspend.target 2>&1 | sed 's/^/  /'
+  # Whether the charger can wake a Surface from suspend is the question the
+  # driveway test answers; this only makes sure the kernel is not refusing it.
+  sudo tee "$IGNITION_UDEV" >/dev/null <<'RULE'
+# Written by `omacar ignition install`. Remove with `omacar ignition uninstall`.
+# The car's charger coming back is what wakes the tablet when the car starts.
+ACTION=="add|change", SUBSYSTEM=="power_supply", ATTR{type}=="Mains", TEST=="device/power/wakeup", ATTR{device/power/wakeup}="enabled"
+RULE
+  sudo udevadm control --reload 2>/dev/null
+  sudo udevadm trigger --subsystem-match=power_supply 2>/dev/null
+  python3 "$ROOT/lib/power.py" allow | sed 's/^/  /'
+  systemctl --user daemon-reload
+  systemctl --user enable --now omacar-ignition.service 2>&1 | sed 's/^/  /'
+  echo
+  python3 "$ROOT/lib/ignition.py" probe
+}
+
+ignition_uninstall() {
+  systemctl --user disable --now omacar-ignition.service 2>&1 | sed 's/^/  /'
+  sudo rm -f "$IGNITION_UDEV"
+  sudo udevadm control --reload 2>/dev/null
+  # Back to `tablet awake`'s state, if that is what this machine had.
+  if [[ -f "$SLEEP_DROPIN" ]]; then
+    sudo systemctl mask sleep.target suspend.target 2>&1 | sed 's/^/  /'
+  fi
+  echo "  done: the tablet no longer follows the car"
+}
+
 tablet_off() {
   systemctl --user disable --now omacar-kiosk.service 2>&1 | sed 's/^/  /'
   echo "  kiosk will no longer start at login (the watchdog is left alone)"
@@ -2022,6 +2079,13 @@ print()
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # Asleep when the car is parked, awake when it starts (doc/ignition.md).
+  ignition)
+    case "${2:-status}" in
+      install) ignition_install ;;
+      uninstall) ignition_uninstall ;;
+      *) shift; exec python3 "$ROOT/lib/ignition.py" "$@" ;;
+    esac ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;

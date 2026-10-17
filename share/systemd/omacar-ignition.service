@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar ignition — sleep 30 s after the car is parked, wake when it starts
+Documentation=file:__ROOT__/doc/ignition.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python: it reads sysfs and live.json and calls systemctl, nothing more.
+ExecStart=/usr/bin/python3 __ROOT__/lib/ignition.py run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -32,6 +32,8 @@ what the car said.
     POST /api/drive             change it
     GET  /api/home              Home's card layout
     POST /api/home              change it, or {action: "reset"}
+    GET  /api/ignition          the parking countdown: phase, seconds left, why held
+    POST /api/ignition          {ask: "stay"} or {ask: "now"}
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1153,6 +1155,11 @@ def handle_get(path, query):
         return 200, nursery.summary()
     if path == "/api/live":
         return 200, records.live()
+    if path == "/api/ignition":
+        # The parking countdown (lib/ignition.py), read by the app once a
+        # second: the loop's last word, or {"phase": "off"} with no loop.
+        import ignition
+        return 200, ignition.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")
@@ -1450,6 +1457,14 @@ def handle_post(path, body):
             return 400, {"error": f"no screen called {want!r}",
                          "screens": sorted(seen)}
         return 200, screen.ask(want, str(data.get("who") or "somebody")[:40])
+    if path == "/api/ignition":
+        # Stay on, or sleep now. Only a request: the loop still refuses to
+        # sleep a car that is moving or answering, whatever the screen says.
+        import ignition
+        try:
+            return 200, ignition.ask(str(data.get("ask") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
     if path == "/api/scan":
         return 200, scan()
     if path == "/api/record":
