@@ -185,6 +185,9 @@ DEMO_ROUTES = {
     "/api/notify": {"events": [], "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
+    # Where the car was parked: the owner's real places and photographs. Never in a demo.
+    "/api/parking": {"present": False, "last": None, "history": [], "demo": True},
+    "/api/parking/*": {"present": False, "last": None, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},
@@ -850,6 +853,20 @@ class Handler(SimpleHTTPRequestHandler):
             kind = {"jpg": "image/jpeg", "png": "image/png",
                     "webp": "image/webp"}.get(real.rsplit(".", 1)[-1], "application/octet-stream")
             return self._send(blob, kind)
+        if path.startswith("/api/parking/photo/"):
+            # A saved parking still (lib/parkspot.py): the id and role are
+            # matched and looked up in its own list, never joined into a path.
+            m = re.fullmatch(r"/api/parking/photo/([0-9]{1,9})/(front|rear)", path)
+            import parkspot
+            real = parkspot.photo_path(m.group(1), m.group(2)) if m else None
+            if real is None:
+                return self._json({"error": "no such photograph"}, 404)
+            try:
+                with open(real, "rb") as f:
+                    blob = f.read()
+            except OSError:
+                return self._json({"error": "unreadable"}, 404)
+            return self._send(blob, "image/jpeg")
         if path.startswith("/api/cams/"):
             # THE TWO CAMERA ROUTES THAT ARE NOT JSON. The others go through
             # api.handle_get like everything else (lib/camroutes.py).

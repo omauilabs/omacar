@@ -42,6 +42,9 @@ what the car said.
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
+    GET  /api/parking           where the car was parked: the last park and the last ten (lib/parkspot.py)
+    GET  /api/parking/last      the last park alone: place, level estimate, photo URLs (paired client)
+    GET  /api/parking/photo/<id>/<front|rear>   one saved still (binary, served by serve.py)
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
     GET  /api/assets            the private pictures, when they check out
@@ -1197,6 +1200,15 @@ def handle_get(path, query):
         # The owner's outbox (lib/notify.py): what a paired phone polls.
         import notify
         return 200, {"events": notify.since(qint(query, "since", 0, 0))}
+    if path == "/api/parking":
+        # Where the car was parked (lib/parkspot.py). The coordinates are in
+        # here and nowhere else: the phone's notification carries none.
+        import parkspot
+        return 200, parkspot.read_public()
+    if path == "/api/parking/last":
+        import parkspot
+        pub = parkspot.read_public()
+        return 200, {"present": pub["present"], "last": pub["last"]}
     if path == "/api/ignition":
         # The parking countdown (lib/ignition.py), read by the app once a
         # second: the loop's last word, or {"phase": "off"} with no loop.

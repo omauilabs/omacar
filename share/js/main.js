@@ -144,6 +144,7 @@ import navigationView from "./views/navigation.js";
 import roadcamsView from "./views/roadcams.js";
 import radarView from "./views/radar.js";
 import placesView from "./views/places.js";
+import parkedView from "./views/parked.js";
 import camerasView from "./views/cameras.js";
 import workView from "./views/work.js";
 import { badge } from "./provenance.js";
@@ -192,6 +193,8 @@ const TABS = [
       // Home, the pickup places, and the one-tap "heading to a pickup"
       // (lib/arrival.py). Editing is parked-only inside the view.
       { id: "places",     label: "Places",       title: "Places",         mount: placesView },
+      // Where the car was left: the stills, the level, the place (lib/parkspot.py).
+      { id: "parked",     label: "Parked",       title: "Where I parked", mount: parkedView },
     ] },
   { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [

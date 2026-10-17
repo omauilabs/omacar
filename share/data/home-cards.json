@@ -17,6 +17,7 @@
     "env":      { "label": "Environment",   "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "radar":    { "label": "Radar",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "arrival":  { "label": "Arrival",       "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
+    "parking":  { "label": "Parking",       "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "agent":    { "label": "Oma Agent",     "sizes": { "m": { "land": [4, 2], "port": [6, 2] } } }
   },
   "default": {

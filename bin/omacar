@@ -2119,6 +2119,8 @@ print()
       uninstall) ignition_uninstall ;;
       *) shift; exec python3 "$ROOT/lib/ignition.py" "$@" ;;
     esac ;;
+  # Where did I park? (lib/parkspot.py, doc/parking.md.) Stdlib only.
+  parked) shift; exec python3 "$ROOT/lib/parkspot.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;
