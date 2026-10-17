@@ -282,6 +282,10 @@ export const api = {
   procedures: () => req("/api/procedures"),
   documents: (kind) => req("/api/documents" + (kind ? "?kind=" + kind : "")),
   serviceHistory: () => req("/api/service-history"),
+  // The pre-trip check's stored half (lib/pretrip.py): the trip distance, the
+  // ticks and the maintenance gaps. Bookkeeping only; nothing reaches the car.
+  pretrip: () => req("/api/pretrip"),
+  setPretrip: (body) => req("/api/pretrip", { method: "POST", body: JSON.stringify(body) }),
   plugins: () => req("/api/plugins"),
   // No timeout wrapper: a parse OCRs a page and then asks the advisor.
   document: (body) => req("/api/document", { method: "POST", body: JSON.stringify(body) }),

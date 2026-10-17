@@ -2082,6 +2082,9 @@ print()
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # Ready for a long drive? The stored half of the pre-trip check and the
+  # maintenance gaps (lib/pretrip.py). Reads only; stdlib.
+  pretrip) shift; exec python3 "$ROOT/lib/pretrip.py" "$@" ;;
   # The Dometic CFX3 over Bluetooth (lib/fridge.py). Under the venv, where
   # bleak lives; `setup` puts it there.
   fridge)

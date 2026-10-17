@@ -778,6 +778,15 @@ def seed(verbose=True):
         db.execute("INSERT OR REPLACE INTO service VALUES (?,?,?,?,?,?,?)",
                    (s["item"], s["code"], s["last_km"], s["last_at"],
                     s["interval_km"], s["interval_days"], s["note"]))
+    # Everything on the simulated book was "done" on a date, except the 12 V
+    # battery, left unrecorded so the pre-trip check has a maintenance gap to
+    # show (lib/pretrip.py).
+    db.execute("CREATE TABLE IF NOT EXISTS service_recorded (item TEXT PRIMARY KEY, at REAL)")
+    db.execute("DELETE FROM service_recorded")
+    for s in service_for(today):
+        if s["item"] != "12 V battery":
+            db.execute("INSERT OR REPLACE INTO service_recorded VALUES (?,?)",
+                       (s["item"].lower(), s["last_at"]))
 
     db.execute("DELETE FROM modules")
     for i, m in enumerate(MODULES):

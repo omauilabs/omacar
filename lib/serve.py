@@ -167,6 +167,12 @@ DEMO_ROUTES = {
     "/api/audio": {"managed": False, "demo": True},
     # The fridge would send Bluetooth writes to a real Dometic.
     "/api/fridge": {"present": False, "demo": True},
+    # The pre-trip check's stored half: the demo keeps no trip, no ticks and
+    # no maintenance gaps (its service book is read-only), and has no tyre
+    # source, so the tyres say "Not measured".
+    "/api/pretrip": {"trip_km": None, "ticks": {}, "trip_started": None,
+                     "checklist": [], "gaps": [], "tpms": None,
+                     "simulated": True, "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

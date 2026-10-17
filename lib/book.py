@@ -63,6 +63,11 @@ def open_db():
     db.execute("""CREATE TABLE IF NOT EXISTS service (
         item TEXT PRIMARY KEY, code TEXT, last_km REAL, last_at REAL,
         interval_km REAL, interval_days REAL, note TEXT)""")
+    # Which items somebody has ever said were done (lib/pretrip.py lists the
+    # rest as maintenance gaps). A separate table, not a column: the simulator
+    # and older books insert seven values positionally.
+    db.execute("""CREATE TABLE IF NOT EXISTS service_recorded (
+        item TEXT PRIMARY KEY, at REAL)""")
     return db
 
 
@@ -161,6 +166,8 @@ def log_service(item, km=None, when=None, note=None):
                    "WHERE item = ?",
                    (odo, when or time.time(), note if note is not None else row[3],
                     row[0]))
+        db.execute("INSERT OR REPLACE INTO service_recorded VALUES (?,?)",
+                   (row[0].lower(), time.time()))
         db.commit()
         return row[0]
     finally:
@@ -173,6 +180,9 @@ def add_item(item, code="", interval_km=0.0, interval_days=0, note=""):
         db.execute("INSERT OR REPLACE INTO service VALUES (?,?,?,?,?,?,?)",
                    (item, code, odometer(db)[0] or 0.0, time.time(),
                     interval_km, interval_days, note))
+        # An item added by hand starts counting from today, which is a guess
+        # until somebody says when it was last done.
+        db.execute("DELETE FROM service_recorded WHERE item = ?", (item.lower(),))
         db.commit()
     finally:
         db.close()

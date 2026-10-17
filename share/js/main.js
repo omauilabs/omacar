@@ -17,6 +17,7 @@ import { onboard, showOnboarding } from "./onboard.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
 import fridgeScreen from "./views/fridge.js";
+import pretripView from "./views/pretrip.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -219,6 +220,8 @@ const TABS = [
       ] },
       { id: "care", label: "Care", views: [
         { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
+        // Parked-only: the view itself says "Available when you stop".
+        { id: "pretrip",   label: "Pre-trip", title: "Ready for a long drive?",            mount: pretripView },
         { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
         { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
         { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
