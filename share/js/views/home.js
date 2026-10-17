@@ -344,6 +344,19 @@ const MAKERS = {
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };
   },
+  // Where the car was left (share/js/parkspotcard.js, lib/parkspot.py). Loaded
+  // only when the card is on Home. Tapping it opens Navigation -> Parked.
+  parking: () => {
+    const node = tappable(h("div.card.hc"), "parked");
+    let card = null, gone = false;
+    import("../parkspotcard.js").then((m) => { if (!gone) card = m.parkspotCard(node); })
+      .catch((e) => {
+        console.warn("Parking card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The parking card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
   // card is on Home. Tapping it opens the full Radar screen.
   radar: () => {

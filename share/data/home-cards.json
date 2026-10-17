@@ -18,6 +18,7 @@
     "radar":    { "label": "Radar",         "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
     "coach":    { "label": "Hybrid coach",  "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "arrival":  { "label": "Arrival",       "sizes": { "m": { "land": [4, 2], "port": [3, 2] }, "l": { "land": [6, 2], "port": [6, 2] } } },
+    "parking":  { "label": "Parking",       "sizes": { "m": { "land": [4, 2], "port": [3, 2] } } },
     "agent":    { "label": "Oma Agent",     "sizes": { "m": { "land": [4, 2], "port": [6, 2] } } }
   },
   "default": {

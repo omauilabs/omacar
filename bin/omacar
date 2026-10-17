@@ -2153,6 +2153,8 @@ print()
     esac ;;
   # Valet mode: hand the car over, keep what is yours (lib/valet.py, doc/valet.md).
   valet) shift; exec python3 "$ROOT/lib/valet.py" "$@" ;;
+  # Where did I park? (lib/parkspot.py, doc/parking.md.) Stdlib only.
+  parked) shift; exec python3 "$ROOT/lib/parkspot.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;
