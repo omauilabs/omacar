@@ -3331,9 +3331,12 @@ _OLD = ["hub", "drive", "live", "ima", "launcher", "omaplay", "music", "effects"
         "nursery", "advisor", "report", "learn", "themes"]
 check("every old view still routes, itself or through an alias",
       [v for v in _OLD if v not in _ids and _alias.get(v) not in _ids], [])
-check("the tabs are the mockups' five, in their order",
+# The mockups' five, plus Cabin (owner, 2026-10-17: "build another tab for the
+# extra stuff such as the fridge, environment sensors data"), between Vehicle
+# and Agent. A seventh still has to come through here on purpose.
+check("the tabs are the mockups' five plus Cabin, in their order",
       _re_nav.findall(r'^  \{ id: "([a-z]+)", label: "[A-Za-z]+", icon:', _main, _re_nav.M),
-      ["home", "navigation", "cameras", "vehicle", "agent"])
+      ["home", "navigation", "cameras", "vehicle", "cabin", "agent"])
 # `=(?!=)`: an assignment, not the `===` comparisons in goto() and honourAsk().
 # One writer today (a623a17: goto()), and it must stay one.
 check("nothing but a tap writes the hash: goto() is the only writer in main.js",

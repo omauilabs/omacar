@@ -20,6 +20,7 @@ const SNOW = ["M12 2.5v19", "M3.8 7.25l16.4 9.5", "M3.8 16.75l16.4-9.5",
 const POWER = ["M12 3.5v8", "M7.1 6.6a7 7 0 1 0 9.8 0"];
 const STEP_C = 0.5;   // the CFX3 panel's own step
 
+export { SNOW, POWER };
 export const fmt = (c, imperial) => {
   if (c === null || c === undefined) return "—";
   const v = imperial ? c * 9 / 5 + 32 : c;
@@ -75,10 +76,24 @@ export function fridgeView(st, { imperial = true, locked = false, pending = null
   };
 }
 
-function post(name, value) {
+// One request each way, shared by the card and the full screen (views/fridge.js)
+// so the two can never disagree about what the fridge said.
+export function post(name, value) {
   return fetch(withToken("/api/fridge"), {
     method: "POST", cache: "no-store", body: JSON.stringify({ name, value }),
   }).then((r) => r.json());
+}
+
+export async function readFridge() {
+  const r = await fetch(withToken("/api/fridge"), { cache: "no-store" });
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+// The next set point one step colder or warmer, inside the fridge's range.
+export function stepSet(v, dir) {
+  const [lo, hi] = v.range;
+  return Math.max(lo, Math.min(hi, Math.round((v.setC + dir * STEP_C) * 2) / 2));
 }
 
 export function fridgeCard(host = null) {
@@ -117,8 +132,7 @@ export function fridgeCard(host = null) {
   const bump = (dir) => {
     const v = last && fridgeView(last, { imperial: U.imperial, pending });
     if (!v || !v.canSet) return;
-    const [lo, hi] = v.range;
-    const next = Math.max(lo, Math.min(hi, Math.round((v.setC + dir * STEP_C) * 2) / 2));
+    const next = stepSet(v, dir);
     pending = next; pendingAt = Date.now();
     paint();
     post("z0_set", next).catch(() => { pending = null; paint(); });
@@ -169,10 +183,7 @@ export function fridgeCard(host = null) {
 
   let timer = null, gone = false;
   const tick = async () => {
-    try {
-      const r = await fetch(withToken("/api/fridge"), { cache: "no-store" });
-      if (r.ok) last = await r.json();
-    } catch { /* keep the last reading; its age will show */ }
+    try { last = await readFridge(); } catch { /* keep the last reading; its age will show */ }
     if (!gone) { paint(); timer = setTimeout(tick, 2000); }
   };
   tick();
