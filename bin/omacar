@@ -43,7 +43,7 @@
 #   omacar kiosk              fullscreen drive mode, for a tablet in the car
 #   omacar cockpit [--control]
 #                             serve the gauge to any tablet on the network
-#   omacar cams status|on|off|sim
+#   omacar cams status|on|off|sim|rotate
 #                             the dashcams: front, rear and cabin, in clips that loop
 #   omacar audio status|on|off|pin
 #                             hold the tablet at 100% so alerts keep their headroom
