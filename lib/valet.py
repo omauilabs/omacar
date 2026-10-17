@@ -305,27 +305,37 @@ def _report(s, now):
     return base
 
 
+def verify_pin_or_raise(c, pin, now, wrong="That is not the PIN."):
+    """The ONE place a PIN is checked, with the lockout. Every path that asks
+    for the PIN (turning valet off, changing the PIN) goes through here, so a
+    path without the lockout cannot exist: an earlier set_pin() checked the old
+    PIN with no counting, and could have been used to guess the PIN 10,000
+    times (security review, 2026-10-17)."""
+    if not c["pin"]:
+        return
+    if c["locked_until"] > now:
+        raise ValetError("Too many tries. Wait, then try again.", 429,
+                         retry_in=int(round(c["locked_until"] - now)))
+    if not check_pin(pin, c["pin"]):
+        c["fails"] += 1
+        left = MAX_TRIES - c["fails"]
+        if left <= 0:
+            c["fails"], c["locked_until"] = 0, now + COOLDOWN
+            _save_config(c)
+            raise ValetError("Too many tries. Wait five minutes.", 429, retry_in=COOLDOWN)
+        _save_config(c)
+        raise ValetError(wrong, 403, tries_left=left)
+    if c["fails"]:
+        c["fails"] = 0
+        _save_config(c)
+
+
 def turn_off(pin=None, now=None):
     now = time.time() if now is None else now
     s, c = state(), config()
     if not s["on"]:
         return read_public(now)
-    if c["pin"]:
-        if c["locked_until"] > now:
-            raise ValetError("Too many tries. Wait, then try again.", 429,
-                             retry_in=int(round(c["locked_until"] - now)))
-        if not check_pin(pin, c["pin"]):
-            c["fails"] += 1
-            left = MAX_TRIES - c["fails"]
-            if left <= 0:
-                c["fails"], c["locked_until"] = 0, now + COOLDOWN
-                _save_config(c)
-                raise ValetError("Too many tries. Wait five minutes.", 429, retry_in=COOLDOWN)
-            _save_config(c)
-            raise ValetError("That is not the PIN.", 403, tries_left=left)
-        if c["fails"]:
-            c["fails"] = 0
-            _save_config(c)
+    verify_pin_or_raise(c, pin, now)
     rep = _report(s, now)
     _save_state({"on": False, "since": None, "token": None, "last_report": rep})
     return read_public(now)
@@ -346,12 +356,7 @@ def set_pin(old=None, new=None, no_pin=False, now=None):
     s, c = state(), config()
     if s["on"]:
         raise ValetError("Turn Valet mode off first.", 409)
-    if c["pin"]:
-        if c["locked_until"] > now:
-            raise ValetError("Too many tries. Wait, then try again.", 429,
-                             retry_in=int(round(c["locked_until"] - now)))
-        if not check_pin(old, c["pin"]):
-            raise ValetError("That is not the current PIN.", 403)
+    verify_pin_or_raise(c, old, now, wrong="That is not the current PIN.")
     if new is not None:
         if not valid_pin(new):
             raise ValetError("The PIN is four digits.", 400)

@@ -229,6 +229,22 @@ def main():
 
         print("\n  the files")
         check("the log file holds no coordinates", all(f'"{k}"' not in open(valet.LOG).read() for k in ("lat", "lon", "gps", "path", "route")))
+
+        print("\n  one lockout for every path that asks for the PIN")
+        for f in (valet.CONFIG, valet.STATE):
+            if os.path.exists(f):
+                os.unlink(f)
+        t0 = 5_000_000.0
+        valet.set_pin(None, "2468", now=t0)
+        codes = [getattr(raises(lambda: valet.set_pin("0000", "1111", now=t0 + i), None), "status", None) for i in range(5)]
+        check(f"changing the PIN with a wrong old one counts towards the lockout ({codes})", codes == [403, 403, 403, 403, 429])
+        check("and the lockout holds even with the right PIN",
+              raises(lambda: valet.set_pin("2468", "1111", now=t0 + 10), 429) is not None)
+        valet.turn_on(None, False, t0 + 400)
+        check("turning valet off is locked by the same counter after it",
+              raises(lambda: valet.turn_off("0000", now=t0 + 401), 403) is not None
+              and valet.config()["fails"] == 1)
+        check("after the cooldown the right PIN works", valet.turn_off("2468", now=t0 + 402)["on"] is False)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     print()
