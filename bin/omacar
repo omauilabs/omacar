@@ -22,6 +22,7 @@
 #   omacar discover [status]  map identifiers automatically, safely, over time
 #   omacar plugins            what extends this install, and what each provides
 #   omacar mcp                serve the car to an agent harness over MCP
+#   omacar update [cmd]       status|check|apply|rollback|history|adopt: self-update, parked only
 #   omacar mode [tier]        simplified | power | technician | god
 #   omacar write arm|disarm   allow writes (clear codes, tests, settings)
 #   omacar write log          every write that left this machine, and what answered
@@ -2113,6 +2114,8 @@ print()
       uninstall) ignition_uninstall ;;
       *) shift; exec python3 "$ROOT/lib/ignition.py" "$@" ;;
     esac ;;
+  # Self-update: fetch, build beside, prove, switch, watch, undo (doc/update.md).
+  update) shift; exec python3 "$ROOT/lib/update.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;

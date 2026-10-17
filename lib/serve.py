@@ -179,6 +179,9 @@ DEMO_ROUTES = {
     "/api/notify": {"events": [], "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
+    # Self-update would fetch, switch releases and restart the real units.
+    "/api/update": {"present": False, "adopted": False, "demo": True},
+    "/api/update/booted": {"ok": True, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

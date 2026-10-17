@@ -40,6 +40,8 @@ what the car said.
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
+    GET  /api/update            self-update: what runs, what waits, what blocks it now
+    POST /api/update            {action: "check"|"apply"|"rollback"} (lib/update.py)
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -2036,3 +2038,35 @@ def handle_post(path, body):  # noqa: F811
             return 400, {"error": str(e)}
     return _eq_post(path, body)
 # ---- end aux equalizer ---------------------------------------------------------
+
+
+# ---- self-update -----------------------------------------------------------------
+# GET  /api/update         what runs, what waits, and what stops an update now
+# POST /api/update         {action: "check" | "apply" | "rollback"}, started detached
+# POST /api/update/booted  the page says it finished booting (the health check reads it)
+# Not in serve.py's COCKPIT_WRITES: a read-only cockpit cannot change what runs.
+_update_get, _update_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/update":
+        import update
+        return 200, update.read_public()
+    return _update_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/update", "/api/update/booted"):
+        import update
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        if path == "/api/update/booted":
+            return 200, update.record_boot(update.Paths(), os.path.realpath(update.ROOT))
+        try:
+            return update.request(str(data.get("action") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    return _update_post(path, body)
+# ---- end self-update -------------------------------------------------------------

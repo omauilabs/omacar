@@ -350,7 +350,11 @@ export default function home(root) {
   const prov = h("span.home-prov");
   const custom = h("button.home-custom", { type: "button" },
     icon(ICONS.layout, 18), "Customize layout");
-  root.appendChild(h("div.home", fx, editBar, grid, h("div.home-foot", prov, custom)));
+  // A quiet note when an update is waiting (share/js/updateui.js); hidden otherwise.
+  const upNote = h("button.up-note", { type: "button", hidden: true });
+  let upStop = null;
+  import("../updateui.js").then((m) => { if (alive) upStop = m.mountHomeNote(upNote); }).catch(() => {});
+  root.appendChild(h("div.home", fx, editBar, grid, h("div.home-foot", prov, upNote, custom)));
 
   // ---- the look's background, behind the grid, while parked -----------------
   //
@@ -489,6 +493,7 @@ export default function home(root) {
   return () => {
     if (editor) editor.finish(false);
     alive = false;
+    if (upStop) upStop();
     offLive();
     offCar();
     mq.removeEventListener("change", onTurn);
