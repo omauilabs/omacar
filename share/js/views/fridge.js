@@ -7,6 +7,8 @@
 
 import { h, icon, store, U } from "../core.js";
 import { sparkPath, makeSpark } from "../spark.js";
+import { arrivalFeed, arrivalView } from "../arrival.js";
+import { pickupPanel } from "../arrivalui.js";
 import { fridgeView, readFridge, post, stepSet, fmt, SNOW, POWER } from "../fridgecard.js";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -43,6 +45,7 @@ export default function fridgeScreen(root) {
     kind: fact("Model"), updated: fact("Reading"),
   };
 
+  const pickup = pickupPanel({ title: "Heading to a pickup" });
   const node = h("div.fz",
     h("section.fz-hero",
       h("div.fz-head", icon(SNOW, 22), name, src),
@@ -56,6 +59,8 @@ export default function fridgeScreen(root) {
       h("div.fz-chart-k", "The last hour"),
       h("div.fz-plot", h("div.fz-y", yHi, yLo), h("div.fz-svg", spark.svg)),
       h("div.fz-x", xL, xR)),
+    // Heading to a pickup: lib/arrival.py cools the fridge ahead of you.
+    h("section.fz-pickup", pickup.el),
     h("section.fz-facts", ...Object.values(facts).map((f) => f.node)));
   root.appendChild(node);
 
@@ -128,5 +133,6 @@ export default function fridgeScreen(root) {
     if (!gone) { paint(); timer = setTimeout(tick, 1500); }
   };
   tick();
-  return () => { gone = true; clearTimeout(timer); };
+  const offArrival = arrivalFeed.subscribe((st) => pickup.paint(arrivalView(st, { imperial: U.imperial })));
+  return () => { gone = true; clearTimeout(timer); offArrival(); };
 }

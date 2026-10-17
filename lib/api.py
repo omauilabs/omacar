@@ -34,6 +34,10 @@ what the car said.
     POST /api/home              change it, or {action: "reset"}
     GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
     POST /api/fridge            {name: "power"|"z0_set", value}
+    GET  /api/arrival           arriving home and the pickup pre-cool (lib/arrival.py)
+    POST /api/arrival           {do: "fridge_eco"|"house"|"garage"|"dismiss"|"pickup"|"pickup_cancel"}
+    GET  /api/places            home and saved pickups (lib/location.py)
+    POST /api/places            {home}, {add_pickup}, {remove_pickup}, {fridge_eco_c}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
@@ -1166,6 +1170,15 @@ def handle_get(path, query):
         # last wrote it. `source` says which, and the card always shows it.
         import fridge
         return 200, fridge.read_public()
+    if path == "/api/arrival":
+        # Arrival and pickup pre-cool (lib/arrival.py), read from the files the
+        # location source and the arrival loop wrote. `location.source` says
+        # whether the position is gpsd, simulated or absent.
+        import arrival
+        return 200, arrival.read_public()
+    if path == "/api/places":
+        import location
+        return 200, location.public_places()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1494,6 +1507,16 @@ def handle_post(path, body):
             return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
         except (TypeError, ValueError) as e:
             return 400, {"error": str(e)}
+    if path == "/api/arrival":
+        # One tap each: nothing here runs by itself (lib/arrival.py).
+        import arrival
+        code, body = arrival.do(str(data.get("do") or ""), data)
+        return code, body
+    if path == "/api/places":
+        # Home and pickups only. The House command is never settable from here.
+        import arrival
+        code, body = arrival.places_post(data)
+        return code, body
     if path == "/api/v1":
         # One request, and it is not a cockpit write: Mute on the detector,
         # the tap its own button is. The detector's settings are not here and
