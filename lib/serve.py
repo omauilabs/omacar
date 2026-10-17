@@ -54,7 +54,7 @@ LOOPBACK_ONLY = True
 
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
-COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
+COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins", "/api/journal/note"}
 
 
 # ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
@@ -172,6 +172,10 @@ DEMO_ROUTES = {
     # how to plug one in.
     "/api/env": {"present": False, "demo": True},
     "/api/env/history": {"present": False, "series": {}, "demo": True},
+    # The trip journal: the demo has no drives of its own to annotate.
+    "/api/journal": {"present": False, "entries": [], "demo": True},
+    "/api/journal/note": {"ok": False, "demo": True},
+    "/api/journal/settings": {"ok": False, "demo": True},
     # The equalizer would rewrite a PipeWire config and restart a user unit.
     "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
     "/api/eq/live": {"ok": False, "demo": True},

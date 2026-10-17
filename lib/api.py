@@ -38,6 +38,9 @@ what the car said.
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
     POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
+    GET  /api/journal           one entry per drive, enriched from whatever else was running (?n=&imperial=)
+    POST /api/journal/note      {t0, text}: the owner's own words about a drive
+    POST /api/journal/settings  {places: bool}: place names, opt-in, off
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
     GET  /api/assets            the private pictures, when they check out
@@ -2036,3 +2039,35 @@ def handle_post(path, body):  # noqa: F811
             return 400, {"error": str(e)}
     return _eq_post(path, body)
 # ---- end aux equalizer ---------------------------------------------------------
+
+
+# ---- trip journal --------------------------------------------------------------
+# GET /api/journal            one entry per drive (lib/journal.py)
+# POST /api/journal/note      a typed note on one drive (a cockpit write: harmless)
+# POST /api/journal/settings  the places switch (not a cockpit write)
+_jr_get, _jr_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/journal":
+        import journal
+        return 200, journal.read_public(qstr(query, "imperial", "1") != "0",
+                                        qint(query, "n", 60, 1, 200))
+    return _jr_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/journal/note", "/api/journal/settings"):
+        import journal
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        try:
+            if path == "/api/journal/note":
+                return 200, journal.set_note_any(data.get("t0"), data.get("text"))
+            return 200, journal.set_places(bool(data.get("places")))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    return _jr_post(path, body)
+# ---- end trip journal ----------------------------------------------------------
