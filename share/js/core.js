@@ -323,6 +323,11 @@ export const api = {
   roadcams: () => req("/api/roadcams"),
   saveRoadcamPins: (pins) => req("/api/roadcams/pins", { method: "POST", body: JSON.stringify({ pins }) }),
   roadcamImage: (id, cached) => roadcamStill(id, cached),
+  // The AUX equalizer (lib/eq.py). The whole state is written when a gesture
+  // ends; eqLive carries a slider on its way, parameters only.
+  eq: () => req("/api/eq"),
+  saveEq: (state) => req("/api/eq", { method: "POST", body: JSON.stringify(state) }),
+  eqLive: (body) => req("/api/eq/live", { method: "POST", body: JSON.stringify(body) }),
   aiAvailable: () => req("/api/ai/available"),
   aiStart: (body) => req("/api/ai", { method: "POST", body: JSON.stringify(body) }),
   aiPoll: (id) => req("/api/ai?job=" + encodeURIComponent(id)),

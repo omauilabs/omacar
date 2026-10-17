@@ -169,6 +169,9 @@ DEMO_ROUTES = {
     # how to plug one in.
     "/api/env": {"present": False, "demo": True},
     "/api/env/history": {"present": False, "series": {}, "demo": True},
+    # The equalizer would rewrite a PipeWire config and restart a user unit.
+    "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
+    "/api/eq/live": {"ok": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},
