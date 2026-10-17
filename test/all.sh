@@ -58,6 +58,7 @@ python3 "$ROOT/test/notify_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/carkit_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/childalert_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/valet_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/voice_test.py" || fails=$((fails + 1))
 
 python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/shaders_test.py" || fails=$((fails + 1))

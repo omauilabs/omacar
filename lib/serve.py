@@ -172,6 +172,8 @@ DEMO_ROUTES = {
     # how to plug one in.
     "/api/env": {"present": False, "demo": True},
     "/api/env/history": {"present": False, "series": {}, "demo": True},
+    # The voice service config: the demo has no microphone and never listens.
+    "/api/voice": {"present": False, "enabled": False, "demo": True},
     # The equalizer would rewrite a PipeWire config and restart a user unit.
     "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
     "/api/eq/live": {"ok": False, "demo": True},

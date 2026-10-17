@@ -2104,3 +2104,34 @@ def handle_post(path, body):  # noqa: F811
             return 400, {"error": str(e)}
     return _eq_post(path, body)
 # ---- end aux equalizer ---------------------------------------------------------
+
+
+# ---- voice commands ------------------------------------------------------------
+# GET /api/voice   the config, whether the service is listening, what it last
+#                  heard and said (lib/voice.py)
+# POST /api/voice  {enabled, phrase, speak, threshold, quiet: {on, start, end}}:
+#                  settings only. Commands are never sent here: they are spoken
+#                  to the microphone. Not in serve.py's COCKPIT_WRITES.
+_voice_get, _voice_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/voice":
+        import voice
+        return 200, voice.read_public()
+    return _voice_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path == "/api/voice":
+        import voice
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        try:
+            return 200, voice.save_config(data)
+        except (ValueError, TypeError) as e:
+            return 400, {"error": str(e)}
+    return _voice_post(path, body)
+# ---- end voice commands --------------------------------------------------------

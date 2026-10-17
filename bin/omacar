@@ -2110,6 +2110,19 @@ print()
         "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
       *) shift; exec "$OMACAR_PY" "$ROOT/lib/v1.py" "$@" ;;
     esac ;;
+  # Offline voice commands (lib/voice.py). Under the venv, where openwakeword
+  # and faster-whisper live; `setup` puts them there. `status`, `say` and `sim`
+  # need neither.
+  voice)
+    case "${2:-status}" in
+      setup)
+        omacar_need_env
+        "$OMACAR_VENV/bin/pip" install -q openwakeword faster-whisper numpy \
+          && "$OMACAR_PY" -c 'import openwakeword; openwakeword.utils.download_models()' \
+          && "$OMACAR_PY" -c 'from faster_whisper import WhisperModel; WhisperModel("tiny.en", device="cpu", compute_type="int8")' \
+          && echo "  openwakeword, its models and faster-whisper tiny.en installed in $OMACAR_VENV" ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/voice.py" "$@" ;;
+    esac ;;
   # The cabin and outdoor sensor nodes on USB (lib/envnode.py). pyserial lives
   # in the venv with the daemon's.
   env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
