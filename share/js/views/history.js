@@ -19,6 +19,11 @@ export default function history(root) {
     h("div.head", h("div", h("div.eyebrow", "Records"), h("div.title", "Drive log")),
       h("span.muted.right", `since ${isoDate(perf.since)}`))));
 
+  // The same drives, one card each, with what else was noticed on them.
+  root.appendChild(h("button.rowitem", { type: "button", onclick: () => { location.hash = "#journal"; } },
+    h("span.desc", "Trip journal: each drive with its notes, day by day"),
+    h("span.muted", "open →")));
+
   // ---- the four windows ----
   const tiles = h("div.grid.g4");
   for (const [label, key] of [["Today", "day"], ["Last 7 days", "week"],

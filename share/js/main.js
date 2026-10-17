@@ -140,6 +140,7 @@ import data from "./views/data.js";
 import health from "./views/health.js";
 import service from "./views/service.js";
 import history from "./views/history.js";
+import journalView from "./views/journal.js";
 import advisor from "./views/advisor.js";
 import tests from "./views/tests.js";
 import writeView from "./views/write.js";
@@ -240,6 +241,8 @@ const TABS = [
         { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
         { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
         { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
+        // One card per drive, days as sections (lib/journal.py). Slow data.
+        { id: "journal",   label: "Journal", title: "Trip journal",                        mount: journalView },
         { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },
       ] },
       { id: "car", label: "Car", views: [

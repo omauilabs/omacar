@@ -196,6 +196,10 @@ DEMO_ROUTES = {
     # Looks by the sun probes this optional route (another feature's) for a GPS
     # fix; the demo has none, so the sun is worked out from the time zone.
     "/api/location": {"present": False, "demo": True},
+    # The trip journal: the demo has no drives of its own to annotate.
+    "/api/journal": {"present": False, "entries": [], "demo": True},
+    "/api/journal/note": {"ok": False, "demo": True},
+    "/api/journal/settings": {"ok": False, "demo": True},
     # The equalizer would rewrite a PipeWire config and restart a user unit.
     "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
     "/api/eq/live": {"ok": False, "demo": True},
