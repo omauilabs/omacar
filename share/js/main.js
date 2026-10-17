@@ -1055,6 +1055,9 @@ function openSettings() {
     rows.appendChild(row("Sound", "Equalizer for the AUX output",
       "Open", () => { close(); goto("eq"); }));
 
+    rows.appendChild(row("Voice", "Wake phrase, quiet hours, spoken replies",
+      "Open", () => { close(); import("./voiceui.js").then((m) => m.openVoiceSheet()); }));
+
     rows.appendChild(row("Vehicle report", "The page you print for somebody else",
       "Open", () => { close(); goto("report"); }));
 
