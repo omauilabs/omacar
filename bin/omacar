@@ -49,6 +49,8 @@
 #                             serve the gauge to any tablet on the network
 #   omacar cams status|on|off|sim
 #                             the dashcams: front, rear and cabin, in clips that loop
+#   omacar clips status|list|save|run|sim
+#                             incident clips: the minute around a hard stop, a jolt or a tap
 #   omacar audio status|on|off|pin
 #                             hold the tablet at 100% so alerts keep their headroom
 #   omacar eq status|on|off|preset NAME|apply
@@ -1960,6 +1962,13 @@ case "${1:-open}" in
   drivemode) shift; exec python3 "$ROOT/lib/drivemode.py" "$@" ;;
   assets) shift; exec python3 "$ROOT/lib/assets.py" "$@" ;;
   cams) shift; exec python3 "$ROOT/lib/cams.py" "$@" ;;
+  # Incident clips (lib/clips.py): a second process beside the recorder.
+  clips)
+    case "${2:-status}" in
+      on)  systemctl --user daemon-reload; systemctl --user enable --now omacar-clips.service 2>&1 | sed 's/^/  /' ;;
+      off) systemctl --user disable --now omacar-clips.service 2>&1 | sed 's/^/  /' ;;
+      *) shift; exec python3 "$ROOT/lib/clips.py" "$@" ;;
+    esac ;;
   audio) shift; exec python3 "$ROOT/lib/audio.py" "$@" ;;
   eq) shift; exec python3 "$ROOT/lib/eq.py" "$@" ;;
   daemon)

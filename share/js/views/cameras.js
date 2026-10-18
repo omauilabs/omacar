@@ -28,6 +28,7 @@ import { h, clear, icon, toast } from "../core.js";
 import { ICONS } from "../icons.js";
 import { getJSON, postJSON, liveUrl, clipUrl } from "../camapi.js";
 import { LIVE_TIMEOUT_MS } from "../drowsyrun.js";
+import { saveClipNow } from "../clipsapi.js";
 import { ROLES, ROLE_LABEL, camBadge, feedState, storageLine, timelineModel, clipAt,
          stepAcross, hhmm, hhmmss } from "../camlogic.js";
 
@@ -339,7 +340,12 @@ export default function camerasView(root, { get = getJSON, post = postJSON,
   });
 
   async function saveClip() {
-    const t = playing ? playing.start + video.currentTime : Date.now() / 1000;
+    // LIVE, it is an incident clip: the clip service keeps the minute around
+    // now with the car's numbers (lib/clips.py), and its toast says so. Only
+    // when a past minute is playing does the playhead matter, and that is the
+    // recorder's own lock, as before.
+    if (!playing) { await saveClipNow(); refreshClips(); return; }
+    const t = playing.start + video.currentTime;
     try {
       await post("/api/cams/lock", { t });
       toast(`Saved: the minute around ${hhmmss(t)} is kept, on every camera.`);

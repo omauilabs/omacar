@@ -7,12 +7,13 @@
 //
 // home.js makes the card's node (a tap opens Cameras) and imports this module
 // where the card is made: see the redesign/cameras block in its MAKERS.
-import { h } from "./core.js";
+import { h, icon } from "./core.js";
 import { getJSON, liveUrl } from "./camapi.js";
 import { dashState } from "./camlogic.js";
 import { LIVE_TIMEOUT_MS, CAMS_MISSES, drowsy } from "./drowsyrun.js";
 import { chipTone, chipHint } from "./drowsyui.js";
 import { showAux } from "./audiostate.js";
+import { saveClipNow } from "./clipsapi.js";
 
 export const POLL_MS = 3000;
 // What the card says while it does not yet know: before its first answer, and
@@ -37,7 +38,20 @@ export function dashcamCard(node, {
   const dz = h("span.dc-drowsy");
   const top = h("div.dc-top", h("span.dc-title", "Dashcams"), sim, rec, dz);
   const aux = h("div.dc-aux", { hidden: true });
-  node.append(h("div.dc-stage", img, why), top, aux);
+  // SAVE CLIP, ONE TAP (lib/clips.py): keeps the minute around now from every
+  // camera. Allowed while moving: it is one tap and it takes nothing off the
+  // road. The card itself opens Cameras when tapped, so the key stops that.
+  const save = h("button.dc-save", { type: "button", "aria-label": "Save clip",
+    title: "Keep the minute around now, from every camera" },
+    icon(["M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z", "M17 21v-8H7v8", "M7 3v5h8"], 22),
+    h("span", "Save clip"));
+  save.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    save.disabled = true;
+    await saveClipNow();
+    later(() => { save.disabled = false; }, 1200);
+  });
+  node.append(h("div.dc-stage", img, why), top, aux, save);
 
   // THE TOP BAR'S CHIP, NOT A SECOND OPINION OF IT. Its text is the engine's;
   // its tone and its title are drowsyui.js's, the very ones the top bar's chip
