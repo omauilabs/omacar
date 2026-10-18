@@ -147,7 +147,10 @@ async function pollGps() {
     const r = await fetch(withToken("/api/location"), { cache: "no-store" });
     if (!r.ok) { gps = null; return; }
     const j = await r.json();
-    const f = (j && (j.fix || j)) || {};
+    // lib/location.py answers {fix: true|false, lat, lon}; an object under
+    // `fix` is accepted too. A boolean `fix: false` is no fix.
+    if (j && j.fix === false) { gps = null; return; }
+    const f = (j && (typeof j.fix === "object" && j.fix ? j.fix : j)) || {};
     const lat = f.lat ?? f.latitude, lon = f.lon ?? f.lng ?? f.longitude;
     gps = validLatLon(lat, lon) && j.present !== false ? { lat, lon, at: Date.now() } : null;
   } catch { gps = null; }

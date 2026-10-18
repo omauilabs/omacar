@@ -1277,6 +1277,12 @@ def handle_get(path, query):
         import carkit
         d = carkit.data_for(path.rsplit("/", 1)[1])
         return (200, d) if d else (404, {"error": "no such car plugin"})
+    if path == "/api/location":
+        # The car's position for other features (looks by the sun), or honestly
+        # none: lib/location.py's fix, without the recent trail.
+        import location
+        p = location.read_public()
+        return 200, {k: p.get(k) for k in ("present", "fix", "lat", "lon", "age", "source")}
     if path == "/api/notify":
         # The owner's outbox (lib/notify.py): what a paired phone polls.
         import notify

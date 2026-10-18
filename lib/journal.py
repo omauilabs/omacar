@@ -475,10 +475,12 @@ def gather(t0, t1, now=None):
     except Exception:                                          # noqa: BLE001
         pass
     try:
-        import fuellog
-        fn = getattr(fuellog, "journal_items", None)
-        if fn:
-            out["fuel"] = {"items": list(fn())}
+        # lib/fuel.py (#53): every logged fill-up; simulated and skipped ones
+        # are not this car's news.
+        import fuel
+        out["fuel"] = {"items": [{"t": f.get("at"), "litres": f.get("litres")}
+                                 for f in fuel.all_fills()
+                                 if not f.get("simulated") and f.get("status") != "skipped"]}
     except Exception:                                          # noqa: BLE001
         pass
     return out

@@ -193,7 +193,10 @@ export function mountChildAlert({
     h("div.ca-head", h("span.ca-ico", icon(BABY, 30)), h("span.ca-kicker", "Child alert"), sim),
     h("div.ca-q", title, urgent, why), facts, acts, next);
   title.id = "ca-title";
-  const layer = h("div.ca-layer", { hidden: true }, card);
+  // data-alert="child": calls (share/js/calls.js) shrink their card beneath
+  // it, and other features find it by this mark.
+  const layer = h("div.ca-layer", { hidden: true, data: { alert: "child" } }, card);
+  let announced = false;
   // The snoozed card, above the dock.
   const snT = h("div.ca-sn-title"), snS = h("div.ca-sn-sub");
   const snActs = h("div.ca-sn-acts");
@@ -234,6 +237,13 @@ export function mountChildAlert({
     const v = Date.now() < hiddenUntil ? null : alertView(pub, t);
     const full = !!v && v.mode === "card";
     layer.hidden = !full;
+    // Announced once per change, so features that must hold still during an
+    // alert (the looks-by-the-sun scheduler, share/js/sunui.js) know.
+    const active = !!v && !v.sim;
+    if (active !== announced) {
+      announced = active;
+      document.dispatchEvent(new CustomEvent("omacar:alert", { detail: { source: "child", active } }));
+    }
     snooze.hidden = !(v && v.mode === "snoozed");
     if (v) {
       sim.hidden = !v.sim;
