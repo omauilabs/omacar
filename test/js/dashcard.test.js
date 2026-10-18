@@ -409,7 +409,9 @@ export default [
       await withHome((root) => {
         const card = root.querySelector('[data-card="dashcam"]');
         eq([[...card.children].map((c) => c.className), card.textContent, warned.length],
-           [["dc-why"], "The Dashcams card could not load", 1]);
+           [["hc-go", "dc-why"], "The Dashcams card could not load", 1]);
+        // and the keyboard's way in survives the failure
+        eq(card.querySelector(".hc-go").getAttribute("aria-label"), "Open Dashcams");
       }, '[data-card="dashcam"] .dc-why');
     } finally { drowsy.on = real; console.warn = warn; }
   }],
@@ -422,8 +424,11 @@ export default [
       card.click();
       const went = location.hash;
       location.hash = was;
-      eq([card.classList.contains("hc-cam"), card.getAttribute("role"), q(card, ".dc-why").textContent, went,
+      // Not itself a button (it holds buttons); its open button is the first
+      // child, named for where it goes (home.js tappable()).
+      eq([card.classList.contains("hc-cam"), card.getAttribute("role"),
+          card.firstElementChild.getAttribute("aria-label"), q(card, ".dc-why").textContent, went,
           q(card, ".hc-ph"), card.querySelectorAll("[data-state]").length, card.hasAttribute("data-state")],
-         [true, "button", "Checking the front camera…", "#cameras", null, 0, false]);
+         [true, null, "Open Dashcams", "Checking the front camera…", "#cameras", null, 0, false]);
     })],
 ];

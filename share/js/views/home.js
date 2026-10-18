@@ -28,11 +28,23 @@ const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
 const go = (id) => { location.hash = "#" + id; };
 
-function tappable(node, id) {
-  node.setAttribute("role", "button");
-  node.tabIndex = 0;
-  node.addEventListener("click", () => { if (!node.closest(".editing")) go(id); });
-  node.addEventListener("keydown", (e) => { if (e.key === "Enter") go(id); });
+// A card opens its screen when tapped. It is not itself a button: some cards
+// hold their own buttons (the dial's Begin, the dashcam's), and a button inside
+// a button is announced as nonsense and one of them cannot be reached (WCAG
+// 4.1.2, axe "nested-interactive"). So a real <button> lies over the card for
+// keyboard and screen-reader users, invisible until it has focus, and a tap
+// anywhere on the card that is not one of its own controls still opens it.
+const OPENS = {
+  drive: "Drive", roadcams: "Road cameras", advisor: "Oma Agent", cameras: "Dashcams",
+  environment: "Cabin air and weather", coach: "Hybrid coach", parked: "Where I parked",
+  fuel: "Fuel log", radar: "Radar detector", fridge: "Fridge",
+};
+
+function tappable(node, id, label) {
+  const open = () => { if (!node.closest(".editing")) go(id); };
+  node.prepend(h("button.hc-go", { type: "button", "aria-label": `Open ${label || OPENS[id] || id}`,
+    onclick: (e) => { e.stopPropagation(); open(); } }));
+  node.addEventListener("click", (e) => { if (!e.target.closest("button, a, input, select, [role=button]")) open(); });
   return node;
 }
 
@@ -225,7 +237,7 @@ function roadCard() {
 
 function soonCard(ico, title, line, id) {
   const node = tappable(h("div.card.hc",
-    h("div.hc-ph", icon(ico, 28), h("div.hc-ph-t", title), h("div.hc-ph-s", line))), id);
+    h("div.hc-ph", icon(ico, 28), h("div.hc-ph-t", title), h("div.hc-ph-s", line))), id, title);
   return { node, paint() {} };
 }
 
@@ -303,7 +315,7 @@ const MAKERS = {
       .catch((e) => {
         // Words, never a black card: whatever it had drawn is replaced.
         console.warn("Dashcams card:", e);
-        if (!gone) { clear(node); node.appendChild(h("div.dc-why", "The Dashcams card could not load")); }
+        if (!gone) node.replaceChildren(node.querySelector(".hc-go"), h("div.dc-why", "The Dashcams card could not load"));
       });
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };

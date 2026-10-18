@@ -268,7 +268,7 @@ export default function tests(root) {
     const tbody = h("tbody");
     const table = h("table.tbl",
       h("thead", h("tr", h("th", "Cylinder"), h("th.num", "Idle before"),
-        h("th.num", "Idle with it off"), h("th.num", "Drop"), h("th", ""))),
+        h("th.num", "Idle with it off"), h("th.num", "Drop"), h("th", h("span.sr-only", "Verdict")))),
       tbody);
     const verdict = h("div", { style: { marginTop: "12px" } });
     const btn = h("button.btn.primary", "Run the sequence");

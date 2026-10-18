@@ -52,7 +52,8 @@
    2026-10-17 and showed ~100 px of empty stage above the dock. */
 .stage:has(> .wrap > .home) { padding-bottom: 8px; }
 .hc { position: relative; min-width: 0; min-height: 0; overflow: hidden; margin: 0; padding: 16px; }
-.hc[role="button"] { cursor: pointer; }
+.hc:has(> .hc-go) { cursor: pointer; }
+/* Its open button (.hc-go) is styled in access.css, with the car apps' tiles. */
 .home-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px;
              font-size: .75rem; color: var(--dim); }
 /* A slim line, not a 56 px row: the editor is also one long press on any card

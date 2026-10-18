@@ -209,6 +209,13 @@ DEMO_ROUTES = {
     # The tablet battery screen reads this; the demo has no tablet battery.
     "/api/tabletbatt": {"present": False, "demo": True},
     # The Work dashboard would ask the owner's real Work relay about real sessions.
+    # Accessibility: the defaults, read-only. The demo never runs `omaaccess
+    # set` on the machine it is shown on, and never speaks.
+    "/api/access": {"source": "omacar", "demo": True, "settings": {
+        "scale": 1.0, "contrast": False, "still": False, "dyslexia": False, "big": False,
+        "flash": False, "captions": False, "reader": False, "speak": False,
+        "filter": "none", "lang": "auto"}},
+    "/api/access/speak": {"spoken": False, "why": "not in the demo", "demo": True},
     "/api/workdash": {"present": False, "demo": True, "sessions": [], "actions": []},
     "/api/workdash/diff": {"error": "demo", "demo": True},
     "/api/workdash/action": {"error": "demo", "demo": True, "actions": []},

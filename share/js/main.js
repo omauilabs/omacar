@@ -17,6 +17,8 @@ import { privacy } from "./privacy.js";
 import { valet, hidesView, landing, lockReason } from "./valet.js";
 import { refreshValet, turnOn as valetOn, leave as valetLeave, showReport, valetLamp } from "./valetui.js";
 import { onboard, showOnboarding } from "./onboard.js";
+import { startAccess, accessScale, onAccess, say } from "./a11y.js";
+import { accessSettingsBlock } from "./a11yui.js";
 import home from "./views/home.js";
 import cabinView from "./views/cabin.js";
 import childAlertView from "./views/childalert.js";
@@ -549,8 +551,17 @@ function go() {
   // keyboard user at the top of what they just asked for. When the tap came
   // from the tab bar the button survives, and stealing focus off it would
   // stop anybody tabbing along the bar.
+  //
+  // Every screen has one level-one heading, its title (WCAG 1.3.1, 2.4.6), so
+  // a screen reader can say where you are and jump back to the top. A view
+  // that draws its own <h1> keeps it; the rest get one only the reader sees.
+  // Focus lands on that heading, which also announces it.
+  let heading = wrap.querySelector("h1");
+  if (!heading) { heading = h("h1.sr-only", view.title); wrap.prepend(heading); }
+  heading.tabIndex = -1;
   const bar = document.getElementById("navbar");
-  if (!bar || !bar.contains(document.activeElement)) stage.focus();
+  if (!bar || !bar.contains(document.activeElement)) heading.focus({ preventScroll: true });
+  else say(view.title);
 
   // Only poll fast for views that show a live value.
   //
@@ -997,9 +1008,11 @@ function setTextSize(name) {
   document.documentElement.style.fontSize = px + "px";
 }
 
+// OmaCar's own size, times OmaAccess's text size (share/js/a11y.js): a person
+// who made the whole desktop bigger gets a bigger dashboard too.
 function applyTextSize() {
   document.documentElement.style.fontSize =
-    (TEXT_SIZES[textSize()] || TEXT_SIZES.normal) + "px";
+    Math.round((TEXT_SIZES[textSize()] || TEXT_SIZES.normal) * accessScale()) + "px";
 }
 
 function openSettings() {
@@ -1070,6 +1083,10 @@ function openSettings() {
           toast("Could not change mode: " + (e.message || e), "bad");
         }
       }));
+
+    // ACCESSIBILITY, near the top: somebody who needs it should not have to
+    // read past six rows they cannot read to find it (share/js/a11yui.js).
+    rows.appendChild(accessSettingsBlock({ row, redraw, toast }));
 
     // VALET MODE, first, because it is the one a person reaches for in a hurry.
     rows.appendChild(row("Valet mode", "Hides your history and documents, locks settings, and logs how the car is driven. Parked only.",
@@ -1399,6 +1416,8 @@ async function boot() {
   } catch { /* no plugins, or the endpoint is unavailable */ }
 
   // Before the first paint that anybody measures a target against.
+  startAccess();
+  onAccess(() => applyTextSize());
   applyTextSize();
   paintBar();
   go();
