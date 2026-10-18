@@ -161,6 +161,7 @@ import parkedView from "./views/parked.js";
 import camerasView from "./views/cameras.js";
 import clipsView from "./views/clips.js";
 import workView from "./views/work.js";
+import workDashView from "./views/workdash.js";
 import { badge } from "./provenance.js";
 
 
@@ -298,6 +299,7 @@ const TABS = [
     views: [
       { id: "advisor", label: "Car",  title: "Oma Agent", mount: advisor },
       { id: "work",    label: "Work", title: "Work",      mount: workView },
+      { id: "workdash", label: "Sessions", title: "Work sessions", mount: workDashView },
     ] },
 ];
 

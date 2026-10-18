@@ -208,6 +208,10 @@ DEMO_ROUTES = {
     "/api/tpms/assign": {"ok": False, "demo": True},
     # The tablet battery screen reads this; the demo has no tablet battery.
     "/api/tabletbatt": {"present": False, "demo": True},
+    # The Work dashboard would ask the owner's real Work relay about real sessions.
+    "/api/workdash": {"present": False, "demo": True, "sessions": [], "actions": []},
+    "/api/workdash/diff": {"error": "demo", "demo": True},
+    "/api/workdash/action": {"error": "demo", "demo": True, "actions": []},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

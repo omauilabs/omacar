@@ -2387,3 +2387,31 @@ def handle_post(path, body):  # noqa: F811
         return rear.front_post(path, data)
     return _rear_post(path, body)
 # ---- end rear screen -----------------------------------------------------------
+
+
+# ---- work dashboard --------------------------------------------------------------
+# GET  /api/workdash         read-only aggregate of the Work relay's sessions
+# GET  /api/workdash/diff    ?id=<session>: the relay's diffstat and summary
+# POST /api/workdash/action  the relay offers none over HTTP; says so
+# The relay is optional (lib/workclient.py); down is an honest "not running".
+# Not in serve.py's COCKPIT_WRITES: nothing here writes anything.
+_wd_get, _wd_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/workdash":
+        import workclient
+        return 200, workclient.read_public()
+    if path == "/api/workdash/diff":
+        import workclient
+        sid = next((p[3:] for p in str(query or "").split("&") if p.startswith("id=")), "")
+        return workclient.read_diff(sid)
+    return _wd_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path == "/api/workdash/action":
+        import workclient
+        return workclient.act({})
+    return _wd_post(path, body)
+# ---- end work dashboard ----------------------------------------------------------
