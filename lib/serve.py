@@ -212,6 +212,8 @@ DEMO_ROUTES = {
     "/api/workdash": {"present": False, "demo": True, "sessions": [], "actions": []},
     "/api/workdash/diff": {"error": "demo", "demo": True},
     "/api/workdash/action": {"error": "demo", "demo": True, "actions": []},
+    # Calls would answer a real phone: the demo has none.
+    "/api/calls": {"present": False, "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

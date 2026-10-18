@@ -27,6 +27,7 @@ import pretripView from "./views/pretrip.js";
 import fuelLogView from "./views/fuel.js";
 import bwatchView from "./views/bwatch.js";
 import batteryScreen from "./views/battery.js";
+import callsScreen from "./views/calls.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -274,6 +275,9 @@ const TABS = [
     views: [
       { id: "cabin",  label: "Overview", title: "Cabin",  mount: cabinView },
       { id: "fridge", label: "Fridge",   title: "Fridge", mount: fridgeScreen },
+      // The phone as a hands-free car kit (lib/calls.py). The call itself is
+      // drawn over every screen by callsui.js; this is the rest of the time.
+      { id: "calls", label: "Calls", title: "Hands-free calls", mount: callsScreen, fast: true },
       // The cabin and outdoor sensors' day (lib/envnode.py). Slow data (a
       // point a minute), so not `fast`. Also opened from Home's card.
       { id: "environment", label: "Air", title: "Environment", mount: environmentView, askable: true },

@@ -47,6 +47,8 @@ what the car said.
     GET  /api/tpms              tyre pressures from the RTL-SDR (lib/tpms.py): four wheels, trends, alerts
     GET  /api/tpms/heard        every tyre sensor id heard lately (strangers too): the learn list
     POST /api/tpms/assign       {id, wheel: "FL"|"FR"|"RL"|"RR"} or {unassign: wheel}: a label, nothing else
+    GET  /api/calls             hands-free calls: phase, caller, duration, recent calls
+    POST /api/calls             {action: answer|reject|hangup|mute|volume|dial, value, id}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/ambient           the tablet's light sensor: lux, or {present: false} (read-only)
@@ -1232,6 +1234,11 @@ def handle_get(path, query):
         # the Tires screen's learn panel asks for this.
         import tpms
         return 200, tpms.read_heard()
+    if path == "/api/calls":
+        # The phone as heard by lib/calls.py (the oFono link or `omacar calls
+        # sim`). A file older than a few seconds shows no call at all.
+        import calls
+        return 200, calls.read_public()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1667,6 +1674,17 @@ def handle_post(path, body):
             if data.get("unassign"):
                 return 200, tpms.unassign(str(data.get("unassign")))
             return 200, tpms.assign(str(data.get("id") or ""), str(data.get("wheel") or ""))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/calls":
+        # Answer, decline, hang up, mute, volume: one tap each, allowed while
+        # moving (that is the point of hands-free). `dial` takes the id of an
+        # entry in the recent list, never a number, and only when parked.
+        import calls
+        try:
+            return 200, calls.ask(str(data.get("action") or ""), data.get("value"), data.get("id"))
+        except PermissionError as e:
+            return 403, {"error": str(e)}
         except (TypeError, ValueError) as e:
             return 400, {"error": str(e)}
     if path == "/api/v1":
