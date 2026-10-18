@@ -2124,6 +2124,9 @@ print()
   # Ready for a long drive? The stored half of the pre-trip check and the
   # maintenance gaps (lib/pretrip.py). Reads only; stdlib.
   pretrip) shift; exec python3 "$ROOT/lib/pretrip.py" "$@" ;;
+  # The tablet's own battery: health, heat, the UEFI limit (doc/tablet-battery.md).
+  # Reads sysfs only; any python.
+  tabletbatt) shift; exec python3 "$ROOT/lib/tabletbatt.py" "$@" ;;
   # The Dometic CFX3 over Bluetooth (lib/fridge.py). Under the venv, where
   # bleak lives; `setup` puts it there.
   fridge)

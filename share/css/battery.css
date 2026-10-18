@@ -1,0 +1,75 @@
+/* Settings → Tablet battery (views/battery.js). Mirrors the fridge screen's
+   anatomy (cabin.css .fz): raised sections lit from above, captions over
+   values, status lamps with halos, no outlined capsules. */
+.stage:has(> .wrap > .bt) { padding-bottom: 8px; }
+.wrap:has(> .bt) { height: 100%; max-width: none; }
+.bt { height: 100%; display: grid; gap: 14px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+      grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+      grid-template-areas: "hero chart" "limit side"; }
+.bt > section { border-radius: var(--r); background: var(--panel);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); min-height: 0; }
+.bt-hero { grid-area: hero; display: grid; align-content: space-between; gap: 8px; padding: 22px 26px; }
+.bt-head { display: flex; align-items: center; gap: 10px; color: var(--ink-2); }
+.bt-head > svg { color: var(--info); }
+.bt-name { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--ink); }
+.bt-head .fr-src { margin-left: auto; font-size: .76rem; }
+.bt-bigrow { display: flex; align-items: baseline; gap: 6px; line-height: .85; }
+.bt-big { font-size: clamp(4.5rem, 14vh, 8.5rem); font-weight: 600; letter-spacing: -.04em; color: var(--ink);
+          text-shadow: 0 0 24px color-mix(in srgb, var(--info) 35%, transparent); }
+.bt-unit { font-size: 1.8rem; color: var(--ink-2); }
+.bt-cap { font-size: .9rem; color: var(--dim); margin-left: 6px; }
+.bt-line { font-size: 1.02rem; color: var(--info); }
+.bt-caps { display: flex; gap: 28px; font-size: 1rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bt-caps > div { display: grid; gap: 2px; }
+.bt-ck { font-size: .68rem; color: var(--dim); }
+.bt-heat { padding: 10px 14px; border-radius: 12px; font-weight: 600; font-size: .92rem; color: var(--warn);
+           background: color-mix(in srgb, var(--warn) 12%, var(--panel-2)); }
+.bt-heat[hidden], .bt-proj[hidden] { display: none; }
+.bt-proj { font-size: .84rem; color: var(--ink-2); }
+.bt[data-tone="warn"] .bt-big { color: var(--warn); }
+.bt[data-tone="bad"] .bt-big { color: var(--bad); }
+.bt[data-state="absent"] .bt-big, .bt[data-state="stale"] .bt-big { color: var(--dim); text-shadow: none; }
+
+.bt-chart { grid-area: chart; display: grid; grid-template-rows: auto 1fr auto; gap: 10px; padding: 22px 24px 16px; }
+.bt-chart-k { font-size: .82rem; color: var(--ink-2); }
+.bt-plot { display: grid; grid-template-columns: auto 1fr; gap: 10px; min-height: 0; }
+.bt-y { display: flex; flex-direction: column; justify-content: space-between; font-size: .7rem;
+        color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; min-width: 28px; }
+.bt-svg { min-height: 0; position: relative; }
+.bt-svg svg { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--info); }
+.bt-x { display: flex; justify-content: space-between; padding-left: 38px; font-size: .7rem; color: var(--faint); }
+.bt[data-state="stale"] .bt-svg svg, .bt[data-state="absent"] .bt-svg svg { color: var(--faint); }
+
+.bt-limit { grid-area: limit; display: grid; align-content: start; gap: 10px; padding: 20px 26px 16px; overflow: hidden; }
+.bt-lhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bt-lbadge { display: inline-flex; align-items: center; gap: 8px; font-size: .86rem; font-weight: 600; color: var(--ink); }
+.bt-llamp { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
+.bt-llamp[data-tone="ok"] { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 10px color-mix(in srgb, var(--ok) 60%, transparent); }
+.bt-llamp[data-tone="info"] { background: var(--info); box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 16%, transparent), 0 0 10px color-mix(in srgb, var(--info) 60%, transparent); }
+.bt-lwhy { font-size: .84rem; color: var(--ink-2); min-height: 1.2em; }
+.bt-how { font-size: .84rem; color: var(--dim); line-height: 1.4; }
+.bt-how p { margin: 0 0 6px; }
+.bt-steps { display: grid; gap: 5px; color: var(--ink-2); }
+.bt-step { display: grid; grid-template-columns: 22px 1fr; align-items: start; gap: 8px; }
+.bt-n { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: .7rem; font-weight: 600;
+        color: var(--ink); background: linear-gradient(180deg, var(--raise), var(--panel-2)); }
+.bt-fine { font-size: .72rem; color: var(--faint); }
+
+.bt-side { grid-area: side; display: grid; grid-template-rows: auto auto 1fr; gap: 10px; padding: 14px 18px 14px; }
+.bt-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; }
+.bt-fact { display: grid; gap: 4px; padding: 8px 10px; border-radius: 12px; min-width: 0; }
+.bt-fk { font-size: .68rem; color: var(--dim); }
+.bt-fv { font-size: .98rem; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden;
+         text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.bt-fact[data-hot="1"] .bt-fv { color: var(--warn); }
+.bt-plot-s .bt-svg svg { color: var(--accent); }
+.bt-rule { stroke: color-mix(in srgb, var(--ink) 45%, transparent); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
+.bt-empty { position: absolute; inset: 0; display: grid; place-items: center; font-size: .8rem; color: var(--faint); }
+
+@media (orientation: portrait) {
+  .bt { grid-template-columns: 1fr; grid-template-rows: auto minmax(180px, 1fr) auto auto;
+        grid-template-areas: "hero" "chart" "limit" "side"; overflow-y: auto; }
+  .bt-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bt-side .bt-plot { min-height: 120px; }
+}

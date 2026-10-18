@@ -206,6 +206,8 @@ DEMO_ROUTES = {
     "/api/tpms": {"present": False, "demo": True},
     "/api/tpms/heard": {"present": False, "heard": [], "demo": True},
     "/api/tpms/assign": {"ok": False, "demo": True},
+    # The tablet battery screen reads this; the demo has no tablet battery.
+    "/api/tabletbatt": {"present": False, "demo": True},
     # The Environment card and screen poll these. The demo has no sensor nodes
     # and must never open a serial port, so: not present, and the card says
     # how to plug one in.

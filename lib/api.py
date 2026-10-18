@@ -58,6 +58,7 @@ what the car said.
     GET  /api/journal           one entry per drive, enriched from whatever else was running (?n=&imperial=)
     POST /api/journal/note      {t0, text}: the owner's own words about a drive
     POST /api/journal/settings  {places: bool}: place names, opt-in, off
+    GET  /api/tabletbatt        the tablet's own battery: health, heat, whether the UEFI limit looks on
     GET  /api/ignition          the parking countdown: phase, seconds left, why held
     POST /api/ignition          {ask: "stay"} or {ask: "now"}
     GET  /api/child-alert       a child left in the car: the seat, the alert, the settings
@@ -1272,6 +1273,11 @@ def handle_get(path, query):
         import parkspot
         pub = parkspot.read_public()
         return 200, {"present": pub["present"], "last": pub["last"]}
+    if path == "/api/tabletbatt":
+        # The tablet's own battery (lib/tabletbatt.py), read-only: its sampler
+        # or the simulator wrote it. `source` says which.
+        import tabletbatt
+        return 200, tabletbatt.read_public()
     if path == "/api/ignition":
         # The parking countdown (lib/ignition.py), read by the app once a
         # second: the loop's last word, or {"phase": "off"} with no loop.
