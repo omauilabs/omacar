@@ -1,0 +1,14 @@
+[Unit]
+Description=OmaCar — look for an update, and apply it only if the owner turned auto on and the car is parked
+Documentation=file:__ROOT__/doc/update.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+# System python: stdlib and git only. `tick` finishes an update that was
+# interrupted, fetches the branch (changing nothing that runs), and applies
+# only when auto is on in ~/.config/omacar/update.json, inside its window,
+# with every condition in lib/update.py may_apply() satisfied.
+ExecStart=/usr/bin/python3 __ROOT__/lib/update.py tick
+Nice=10
+# A failed fetch (no signal in a garage) is just a check that did not happen.

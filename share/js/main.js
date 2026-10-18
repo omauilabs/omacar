@@ -1148,6 +1148,11 @@ function openSettings() {
     rows.appendChild(row("Vehicle report", "The page you print for somebody else",
       "Open", () => { close(); goto("report"); }));
 
+    // Updates (share/js/updateui.js, lib/update.py): the updater decides; the
+    // sheet shows it, and its buttons are parked-only.
+    rows.appendChild(row("Updates", "What runs, what is waiting, and the last result",
+      "Open", () => { close(); import("./updateui.js").then((m) => m.openUpdateSheet()); }));
+
     // Plugin screens that did not say where they belong. Dropping them
     // silently into a tab would be guessing on the plugin author's behalf;
     // listing them here means they are reachable and honest about being
@@ -1355,6 +1360,10 @@ async function boot() {
 
   await Promise.all([store.boot(), applyTheme(), loadAuto()]);
   document.getElementById("app").dataset.booting = "0";
+  // Tell the updater this release's page finished booting: its 90-second
+  // health check after a switch waits for exactly this (lib/update.py).
+  fetch(withToken("/api/update/booted"), { method: "POST", headers: { "Content-Type": "application/json" },
+    body: "{}" }).catch(() => { /* no server, no updater. Nothing depends on it. */ });
   // Plugin screens, loaded at boot.
   //
   // Dynamically imported rather than bundled, because there is no bundler and
