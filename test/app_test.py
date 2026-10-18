@@ -596,10 +596,12 @@ def roadcams_check(exe):
               _first is not None and _card[0] == _first.get("name")
               and str(_card[1]).startswith("Caltrans") and g.get("cardOpens") == "roadcams")
         # Radar joined Navigation on 2026-10-17 (the owner asked for the
-        # Valentine One there); Road cameras is still the tab's root.
-        check(f"{orient}: the Navigation tab opens Road cameras, with Maps and Radar beside it "
-              f"(view {g.get('view')!r}, chips {g.get('chips')})",
-              g.get("view") == "roadcams" and g.get("chips") == ["Road cameras", "Maps", "Radar"])
+        # Valentine One there), and Places and Parked (find my car) joined it
+        # in the same integration; Road cameras is still the tab's root.
+        check(f"{orient}: the Navigation tab opens Road cameras, with Maps, Radar, Places and Parked "
+              f"beside it (view {g.get('view')!r}, chips {g.get('chips')})",
+              g.get("view") == "roadcams"
+              and g.get("chips") == ["Road cameras", "Maps", "Radar", "Places", "Parked"])
         check(f"{orient}: the commute is pinned first, then the Imjin Parkway cameras "
               f"(got {g.get('pinned')})",
               g.get("pinned") == ["sr1imjinparkway", "sr1lightfighterdrive",
@@ -900,7 +902,8 @@ def agent_check(exe):
             continue
         check(f"{label}: the Agent tab opens a screen its chip row lists, with "
               f"Work reachable (chips {g.get('chips')}, opened {g.get('view')!r})",
-              g.get("chips") == ["Car", "Work"] and g.get("view") == "advisor")
+              # Sessions: the work dashboard (lib/workclient.py), 2026-10-17.
+              g.get("chips") == ["Car", "Work", "Sessions"] and g.get("view") == "advisor")
         if prefix or g.get("ai") is False:
             check(f"{label}: and it says the advisor is not set up "
                   f"(got {g.get('text')[:90]!r})",
