@@ -84,15 +84,16 @@ before each check, because a fade half done is not the colour a person reads.
 | AAA contrast 7:1, default look | not measured | 51 elements between 4.76 and 6.75:1 (all pass AA) |
 | AAA contrast 7:1, high contrast on | not measured | 0 |
 | Touch targets ≥ 44 px (AAA 2.5.5), 1,094 controls, tablet density | ~40 under | 0 |
+| Text clipped on Home at 150% / 200% | yes | 0 / 0 |
 
 The default look keeps its quieter caption tone (`--faint`, 5.35:1) on
 purpose: it is the visual hierarchy the dashboard is designed around, and it
 passes AA. A person who needs more turns on high contrast, and gets AAA.
 
-Known gap (WCAG 1.4.4, AA): at 150% text and above, some Home cards clip
-their last line (Phone integration's second row, at 1368×912). The other
-screens scroll and lose nothing; Home is a fixed grid. Owed: let Home's grid
-grow to a scrolling column when the text is scaled.
+Large text (WCAG 1.4.4, AA): at 20 px and up (OmaCar's Huge, or OmaAccess at
+130% and more), Home's fixed grid lets its rows grow and the screen scrolls.
+Measured at 150% and 200%: no text on Home ends outside its card. Before
+this, 150% clipped the Phone integration card.
 
 Not measured yet, and owed:
 

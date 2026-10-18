@@ -15,6 +15,7 @@ target sizes, focus order) is test/app_test.py's and test/design_test.py's.
   * a Home card is not a button with buttons inside it;
   * access.css switches off every animation when reduce motion is on;
   * the flash for sounds can never strobe (WCAG 2.3.1);
+  * at large text Home grows and scrolls rather than clipping (WCAG 1.4.4);
   * no outline:none without a focus ring to replace it.
 """
 
@@ -99,6 +100,9 @@ def main():
     check("every screen gets a level-one heading, and focus goes to it",
           'h("h1.sr-only", view.title)' in main_js and "heading.focus(" in main_js)
     check("OmaAccess's text size multiplies OmaCar's own", "* accessScale()" in main_js)
+    check("large text marks the page, so fixed layouts can grow (WCAG 1.4.4)",
+          'toggleAttribute("data-a11y-large"' in main_js
+          and ":root[data-a11y-large] .home-grid { flex: none; grid-auto-rows: minmax(120px, auto); }" in access)
 
     home = read("js", "views", "home.js")
     tap = home[home.index("function tappable("):home.index("// ---- the cards")]

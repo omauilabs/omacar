@@ -995,6 +995,8 @@ const GEAR = [
 // --tap tokens, so moving this moves the targets with the type rather than
 // leaving small buttons wearing big labels.
 const TEXT_SIZES = { small: 15, normal: 16, large: 18, huge: 20 };
+// From here up, the text is too big for a screen that does not scroll.
+const LARGE_TEXT_PX = 20;
 const TEXT_LABEL = { small: "Small", normal: "Normal", large: "Large", huge: "Huge" };
 
 function textSize() {
@@ -1011,8 +1013,11 @@ function setTextSize(name) {
 // OmaCar's own size, times OmaAccess's text size (share/js/a11y.js): a person
 // who made the whole desktop bigger gets a bigger dashboard too.
 function applyTextSize() {
-  document.documentElement.style.fontSize =
-    Math.round((TEXT_SIZES[textSize()] || TEXT_SIZES.normal) * accessScale()) + "px";
+  const px = Math.round((TEXT_SIZES[textSize()] || TEXT_SIZES.normal) * accessScale());
+  document.documentElement.style.fontSize = px + "px";
+  // Large text: fixed-height layouts (Home's grid) let their rows grow and
+  // the stage scroll, so nothing is cut off (WCAG 1.4.4; access.css).
+  document.documentElement.toggleAttribute("data-a11y-large", px >= LARGE_TEXT_PX);
 }
 
 function openSettings() {

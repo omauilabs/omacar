@@ -120,3 +120,13 @@ h1[tabindex="-1"]:focus { outline: none; }
   outline: 3px solid var(--info); outline-offset: 2px;
 }
 .ck-tile:has(> .hc-go) { cursor: pointer; }
+
+/* ---- large text: nothing is cut off (WCAG 1.4.4, AA) ----
+   main.js sets data-a11y-large once the page's text is 20 px or more (OmaCar's
+   Huge, or OmaAccess at 130%+). Home is otherwise a fixed grid that never
+   scrolls (home.css), and its cards clip; here its rows grow to fit what is in
+   them and the stage scrolls, as every other screen already does. */
+:root[data-a11y-large] .wrap:has(> .home),
+:root[data-a11y-large] .home { height: auto; }
+:root[data-a11y-large] .home-grid { flex: none; grid-auto-rows: minmax(120px, auto); }
+:root[data-a11y-large] .home-grid > .hc { overflow: visible; }
