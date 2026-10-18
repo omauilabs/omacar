@@ -910,6 +910,37 @@ def agent_check(exe):
                   "needs the Claude CLI" in (g.get("text") or ""))
 
 
+def live_dom(exe, url, done_js, timeout=40):
+    """The page's DOM once `done_js` is true in it, or at `timeout` seconds.
+
+    IN REAL TIME, NOT VIRTUAL. `--virtual-time-budget` with `--dump-dom` does
+    not wait for the app's ES modules to arrive: on Chrome 141 the dump came
+    back about a second after launch with the boot screen still up, whatever
+    the budget (measured 2026-10-17, 12 s and 25 s alike), so a check on what
+    the app says with no server passed or failed on which won the race. Here
+    the page runs on the real clock over DevTools (test/js_test.py's pipe) and
+    is read when it has done what the check is waiting for."""
+    from js_test import Chromium
+    prof = tempfile.mkdtemp()
+    c = Chromium(exe, prof, os.path.join(prof, "chromium.log"))
+    try:
+        p = c.page
+        p.attach(time.monotonic() + 15)
+        p.call("Page.navigate", {"url": url})
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            try:
+                if p.value(f"!!({done_js})"):
+                    break
+            except Exception:  # noqa: BLE001 -- mid-navigation: no context yet
+                pass
+            time.sleep(0.25)
+        return p.value("document.documentElement.outerHTML") or ""
+    finally:
+        c.close()
+        shutil.rmtree(prof, ignore_errors=True)
+
+
 def lost_server_check(exe):
     """Stop the OmaCar server mid-run and read what the app then claims."""
     import http.server
@@ -955,12 +986,8 @@ def lost_server_check(exe):
                     break
             except OSError:
                 continue
-        r = subprocess.run(
-            [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
-             f"--user-data-dir={prof}", "--virtual-time-budget=15000",
-             "--dump-dom", f"http://127.0.0.1:{port}/app.html"],
-            capture_output=True, text=True, timeout=180)
-        m = re.search(r"<title>LOST (\{.*?\})</title>", r.stdout or "", re.S)
+        dom = live_dom(exe, f"http://127.0.0.1:{port}/app.html", 'document.title.startsWith("LOST ")', 60)
+        m = re.search(r"<title>LOST (\{.*?\})</title>", dom, re.S)
         check("the server really was stopped partway through the run", bool(killed))
         if not m:
             bad("the lost-server probe returned nothing")
@@ -1150,12 +1177,12 @@ def main():
                         break
                 except OSError:
                     continue
-            r2 = subprocess.run(
-                [exe, "--headless=new", "--password-store=basic", "--disable-gpu", "--no-sandbox",
-                 f"--user-data-dir={prof2}", "--virtual-time-budget=12000",
-                 "--dump-dom", f"http://127.0.0.1:{static}/app.html"],
-                capture_output=True, text=True, timeout=120)
-            dead = r2.stdout or ""
+            # Read once the app has settled: the boot screen gone and Home's
+            # footer drawn. If it never settles the checks below say what is
+            # missing, at the timeout, rather than racing it.
+            dead = live_dom(exe, f"http://127.0.0.1:{static}/app.html",
+                            '!document.getElementById("boot") && document.getElementById("btn-daynight")'
+                            ' && document.body.innerHTML.includes("cannot reach its own server")', 30)
             check("with no server, the boot screen still lets go",
                   'id="boot"' not in dead)
             check("and the app names the server rather than the car",
