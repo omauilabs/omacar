@@ -1,0 +1,155 @@
+/* The back-seat screen. The house tokens (the same names and values as
+   css/app.css, which this page is not given), in a softer, rounder variant:
+   big cards, big radii, friendly type, nothing small. Landscape and portrait
+   phones; every target at least 72px. Nothing flashes and nothing makes a
+   sound. */
+:root {
+  color-scheme: dark;
+  --ground: #0A1314; --panel: #0E1519; --panel-2: #111A1F; --raise: #16222A;
+  --edge: #1E2A30;
+  --ink: #F6FCFF; --ink-2: #CAD4DA; --dim: #BDC7D1; --faint: #7C8B94;
+  --accent: #22CDEC; --accent-fill: #25B1BF; --on-accent: #041014;
+  --ok: #9BDE68; --warn: #E5B457; --bad: #E85D4E; --info: #4FA8E8;
+  --tap: 72px; --tap-lg: 88px;
+  --soft: 34px;
+  --font: ui-rounded, "SF Pro Rounded", "Nunito", "Quicksand", "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; min-height: 100%; background: var(--ground); color: var(--ink);
+  font-family: var(--font); font-size: 17px; }
+body { background:
+  radial-gradient(120% 80% at 10% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%),
+  radial-gradient(90% 70% at 100% 110%, color-mix(in srgb, #8B7CF0 14%, transparent), transparent 60%),
+  var(--ground);
+  background-attachment: fixed; }
+[hidden] { display: none !important; }
+
+.rear { min-height: 100vh; min-height: 100dvh; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  display: grid; gap: 14px; align-content: stretch;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto repeat(5, minmax(min-content, 1fr));
+  grid-template-areas: "hi" "how" "music" "calm" "cabin" "ask"; }
+.rear[data-cabin="0"] { grid-template-rows: auto repeat(4, minmax(min-content, 1fr));
+  grid-template-areas: "hi" "how" "music" "calm" "ask"; }
+.rear-hi { grid-area: hi; margin: 4px 6px 0; font-size: 1.05rem; font-weight: 600; color: var(--dim); letter-spacing: .02em; }
+
+/* Landscape phones and tablets: the cards fill the screen in a grid, no scrolling. */
+@media (min-width: 640px) and (orientation: landscape), (min-width: 900px) {
+  .rear { grid-template-columns: repeat(6, minmax(0, 1fr)); grid-template-rows: auto minmax(min-content, 1.35fr) minmax(min-content, 1fr);
+    grid-template-areas: "hi hi hi hi hi hi" "how how how how music music" "calm calm cabin cabin ask ask"; }
+  .rear[data-cabin="0"] { grid-template-areas: "hi hi hi hi hi hi" "how how how how music music" "calm calm calm ask ask ask"; }
+}
+.how { grid-area: how; } .music { grid-area: music; } .calm { grid-area: calm; }
+.cabin { grid-area: cabin; } .ask { grid-area: ask; }
+
+/* A card: raised from above, a caption over a value, a soft tinted wash. */
+.card { position: relative; isolation: isolate; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 6px;
+  min-height: 0; padding: 20px 24px; border: 0; border-radius: var(--soft); text-align: left; font: inherit; color: var(--ink);
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 18px 34px -22px #000; }
+.card::before { content: ""; position: absolute; inset: 0; z-index: -1; opacity: .9;
+  background:
+    radial-gradient(90% 120% at 100% 0%, color-mix(in srgb, var(--tint, var(--accent)) 36%, transparent), transparent 62%),
+    radial-gradient(70% 90% at 0% 110%, color-mix(in srgb, var(--tint, var(--accent)) 14%, transparent), transparent 70%); }
+.how { --tint: var(--accent); } .music { --tint: #8B7CF0; } .calm { --tint: #6fcf97; }
+.cabin { --tint: var(--warn); } .ask { --tint: var(--info); }
+.cabin[data-tone="info"] { --tint: var(--info); } .cabin[data-tone="ok"] { --tint: var(--ok); }
+.cabin[data-tone="warn"] { --tint: var(--warn); } .cabin[data-tone="bad"] { --tint: var(--bad); }
+
+.cap { font-size: .95rem; font-weight: 600; letter-spacing: .03em; color: var(--dim); }
+.big-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.big { font-size: clamp(3.4rem, 15vw, 6.4rem); font-weight: 800; line-height: .95; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.unit { font-size: 1.7rem; font-weight: 700; color: var(--ink-2); }
+.line { margin: 0; font-size: 1.25rem; color: var(--ink-2); }
+.sim { align-self: flex-start; margin-top: 4px; font-size: .8rem; font-weight: 700; letter-spacing: .04em; color: var(--warn); }
+.road { position: absolute; left: 0; right: 0; bottom: 14px; width: 100%; height: 16px; opacity: .5; z-index: -1; }
+.road-line { stroke: var(--accent); stroke-width: 3; stroke-dasharray: 2 16; stroke-linecap: round; fill: none; }
+@media (prefers-reduced-motion: no-preference) { .road-line { animation: dash 9s linear infinite; } }
+@keyframes dash { to { stroke-dashoffset: -180; } }
+
+/* Music */
+.song { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.note-ico { flex: none; width: 56px; height: 56px; border-radius: 20px; display: grid; place-items: center; color: #cfc8ff;
+  background: linear-gradient(180deg, color-mix(in srgb, #8B7CF0 40%, transparent), color-mix(in srgb, #8B7CF0 14%, transparent)); }
+.note-ico svg { width: 30px; height: 30px; }
+.song-text { display: grid; min-width: 0; }
+.song-text b { font-size: 1.5rem; line-height: 1.15; overflow-wrap: anywhere; }
+.song-text span { font-size: 1.05rem; color: var(--dim); }
+.skips { display: flex; gap: 14px; margin-top: 8px; }
+
+/* Keys: soft raised buttons, lit with the accent wash when they are the point. */
+.key { position: relative; display: inline-grid; place-items: center; min-height: var(--tap); min-width: var(--tap); padding: 0 24px;
+  border: 0; border-radius: 26px; font: inherit; font-size: 1.2rem; font-weight: 700; color: var(--ink); cursor: pointer; touch-action: manipulation;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent), 0 10px 18px -12px #000;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4); }
+.key:active { transform: scale(.94); }
+.key.round { width: var(--tap-lg); height: var(--tap); border-radius: 36px; padding: 0; }
+.key svg { width: 34px; height: 34px; }
+.key.wide { min-width: 160px; }
+.key.primary { color: var(--on-accent); background: linear-gradient(180deg, var(--accent), var(--accent-fill)); }
+.key.quiet { background: transparent; box-shadow: none; color: var(--dim); }
+
+/* Calm */
+.calm { cursor: pointer; }
+.calm:active { transform: scale(.985); }
+.orbs { display: flex; gap: 12px; align-items: flex-end; height: 56px; }
+.orbs i { display: block; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff9, #6fcf9740 70%); box-shadow: 0 0 22px #6fcf9755; }
+.orbs i:nth-child(1) { width: 34px; height: 34px; } .orbs i:nth-child(2) { width: 52px; height: 52px; } .orbs i:nth-child(3) { width: 26px; height: 26px; }
+@media (prefers-reduced-motion: no-preference) {
+  .orbs i { animation: bob 5s ease-in-out infinite; } .orbs i:nth-child(2) { animation-delay: -1.6s; } .orbs i:nth-child(3) { animation-delay: -3.1s; } }
+@keyframes bob { 50% { transform: translateY(-12px); } }
+.calm-word { font-size: 1.6rem; }
+
+/* Ask the driver */
+.ask-key { display: flex; align-items: center; gap: 16px; min-height: var(--tap-lg); padding: 0 22px; border: 0; border-radius: 28px;
+  font: inherit; font-size: 1.6rem; font-weight: 800; color: var(--ink); cursor: pointer; touch-action: manipulation; text-align: left;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--info) 50%, transparent), color-mix(in srgb, var(--info) 18%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--info) 55%, transparent), 0 14px 26px -16px var(--info);
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4); }
+.ask-key:active:not(:disabled) { transform: scale(.96); }
+.ask-key:disabled { opacity: .5; cursor: default; box-shadow: none; }
+.ask-key svg { width: 38px; height: 38px; flex: none; }
+
+/* Sheets */
+.sheet, .calm-stage { position: fixed; inset: 0; z-index: 10; }
+.sheet { display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--ground) 82%, transparent); backdrop-filter: blur(6px); }
+.sheet-body { width: min(560px, 100%); display: grid; gap: 14px; padding: 22px; border-radius: var(--soft);
+  background: linear-gradient(180deg, var(--raise), var(--panel-2)); box-shadow: 0 30px 60px -30px #000; }
+.sheet-body h2 { margin: 0 0 4px; font-size: 1.5rem; }
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.choices .key { min-height: var(--tap-lg); font-size: 1.3rem; }
+.calm-stage { background: #07121a; }
+.calm-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.calm-breath { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); text-align: center; pointer-events: none;
+  font-size: 1.7rem; font-weight: 700; color: #ffffffc0; text-shadow: 0 2px 18px #0008; }
+.calm-bar { position: absolute; left: 0; right: 0; bottom: max(18px, env(safe-area-inset-bottom)); display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; padding: 0 16px; }
+.calm-bar .key:not(.primary) { background: #ffffff1c; box-shadow: none; backdrop-filter: blur(6px); }
+
+.lost { position: fixed; left: 16px; right: 16px; bottom: max(14px, env(safe-area-inset-bottom)); margin: 0; padding: 14px 18px; border-radius: 22px; text-align: center;
+  background: var(--raise); color: var(--ink-2); box-shadow: 0 14px 30px -14px #000; }
+.rear[data-lost="1"] .card { opacity: .6; transition: opacity .6s; }
+
+/* Compact: short landscape phones, and portrait phones (kept last so they win). */
+@media (max-height: 440px) and (orientation: landscape) { .rear-hi { display: none; }
+  .rear { grid-template-rows: minmax(min-content, 1.2fr) minmax(min-content, 1fr); padding-top: 12px; padding-bottom: 12px; gap: 10px;
+    grid-template-areas: "how how how how music music" "calm calm cabin cabin ask ask"; }
+  .rear[data-cabin="0"] { grid-template-areas: "how how how how music music" "calm calm calm ask ask ask"; }
+  .card { padding: 10px 18px; gap: 2px; border-radius: 26px; }
+  .big { font-size: clamp(2.4rem, 12vh, 4rem) !important; } .line { font-size: 1rem; } .cap { font-size: .8rem; }
+  .unit { font-size: 1.3rem; } .note-ico { display: none; } .song-text b { font-size: 1.2rem; }
+  .skips { margin-top: 2px; gap: 10px; } .key.round { height: 52px; width: 72px; } .key.round svg { width: 26px; height: 26px; }
+  .orbs { height: 34px; } .orbs i:nth-child(2) { width: 34px; height: 34px; } .orbs i:nth-child(1) { width: 22px; height: 22px; } .orbs i:nth-child(3) { width: 18px; height: 18px; }
+  .calm-word { font-size: 1.2rem; } .ask-key { min-height: 56px; font-size: 1.25rem; padding: 0 16px; gap: 10px; } .ask-key svg { width: 28px; height: 28px; }
+  .sim { margin-top: 0; font-size: .7rem; } .road { display: none; } }
+@media (max-width: 639px) and (orientation: portrait) {
+  .rear { gap: 10px; } .rear-hi { display: none; }
+  .calm { flex-direction: row; align-items: center; align-content: center; flex-wrap: wrap; } .calm .cap { flex-basis: 100%; }
+  .calm-word { flex: 1; }
+  .card { padding: 12px 20px; gap: 2px; border-radius: 28px; }
+  .big { font-size: clamp(2.8rem, 13vw, 4.6rem); } .line { font-size: 1.1rem; }
+  .note-ico { width: 44px; height: 44px; border-radius: 16px; } .song-text b { font-size: 1.25rem; }
+  .skips { margin-top: 0; } .key.round { height: 56px; } .orbs { height: 40px; }
+  .orbs i:nth-child(2) { width: 38px; height: 38px; } .calm-word { font-size: 1.3rem; }
+  .ask-key { min-height: 72px; font-size: 1.4rem; } .sim { margin-top: 0; } .road { display: none; }
+}

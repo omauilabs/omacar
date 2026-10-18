@@ -8,6 +8,8 @@ Deliberately does no OBD work of its own. One process owns the serial
 connection, and it is the daemon.
 
     python3 serve.py <port> <share-dir> [--host H] [--token T] [--control]
+    python3 serve.py <port> <share-dir> --host 0.0.0.0 --rear   the back-seat
+                                         screen's door (lib/rear.py), nothing else
     python3 serve.py <port> <share-dir> --demo <demo-dir>    the meetup demo's
                                          server, which only `omacar demo on` starts
 
@@ -56,6 +58,11 @@ LOOPBACK_ONLY = True
 # change what you are looking at, never what the car is doing.
 # Naming a tyre sensor's wheel is a label in a config file: it is on the list.
 COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
+
+# `--rear`: the back-seat screen's server (lib/rear.py). A different door, not a
+# smaller key: in this mode every request is answered by lib/rear.py or refused,
+# and lib/api.py is never reached. See that file for the allow-list.
+REAR = False
 
 
 # ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
@@ -218,6 +225,10 @@ DEMO_ROUTES = {
     "/api/carkit/*": REFUSE,
     # The owner's outbox: the demo has nothing to tell anybody.
     "/api/notify": {"events": [], "demo": True},
+    # The back-seat screen's front half: the demo has no back seat, no notes
+    # and no skips.
+    "/api/rear": {"note": None, "alert": False, "music_cmd": None, "paired": False, "demo": True},
+    "/api/rear/*": {"ok": False, "demo": True},
     # The parking countdown would ask logind to suspend the machine.
     "/api/ignition": {"phase": "off", "running": False, "demo": True},
     # A child left in the car: the demo has no camera, no charger to follow
@@ -448,6 +459,8 @@ class Handler(SimpleHTTPRequestHandler):
         /api/... read the 404's headers rather than the API's, which is exactly
         how a security audit of this file briefly reached the wrong conclusion.
         """
+        if REAR:
+            return self._rear()
         path = self.path.partition("?")[0]
         if is_demo_path(path):
             # As its GET would answer, without the body: 404 on the live server.
@@ -669,7 +682,56 @@ class Handler(SimpleHTTPRequestHandler):
             return True
         return path in COCKPIT_WRITES
 
+    def _rear(self):
+        """Every request in --rear mode (GET, HEAD, POST). Token first (401),
+        then the exact-route allow-list (403); only then is anything run."""
+        import rear
+        method = self.command
+        path, _, query = self.path.partition("?")
+        tok = rear.token_from(self.headers.get("Authorization"), query,
+                              self.headers.get("Cookie"))
+        if not tok:
+            return self._json({"error": "a token is required"}, 401)
+        if path == "/":
+            path = "/rear.html"
+        if not rear.route_allowed(method, path):
+            return self._json({"error": "not available on this screen"}, 403)
+        body = ""
+        if method == "POST":
+            if not self._same_origin():
+                return self._json({"error": "cross-site requests are refused"}, 403)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length > 4096:
+                self.close_connection = True
+                return self._json({"error": "too large"}, 413)
+            body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        if path in rear.REAR_STATIC:
+            got = rear.static_file(os.getcwd(), path)
+            if got is None:
+                return self._json({"error": "not found"}, 404)
+            self.send_response(200)
+            self.send_header("Content-Type", got[1])
+            self.send_header("Content-Length", str(len(got[0])))
+            self.send_header("Cache-Control", "no-store")
+            if path == "/rear.html":
+                # The cookie is how the page's own stylesheet and scripts (which
+                # a bare <link> cannot sign) stay authorised. HttpOnly: the
+                # page's script never needs to read it.
+                self.send_header("Set-Cookie", f"{rear.COOKIE}={tok}; Path=/; HttpOnly; "
+                                 "SameSite=Strict; Max-Age=31536000")
+            self.end_headers()
+            if method != "HEAD":
+                self.wfile.write(got[0])
+            return
+        status, payload = rear.handle(method, path, body)
+        return self._json(payload, status)
+
     def do_GET(self):
+        if REAR:
+            return self._rear()
         if not self._local():
             return self._json({"error": "loopback only"}, 403)
         if not self._authorised():
@@ -987,6 +1049,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if REAR:
+            return self._rear()
         if not self._local():
             return self._json({"error": "loopback only"}, 403)
         if not self._authorised():
@@ -1111,7 +1175,14 @@ if __name__ == "__main__":
             signal.signal(_sig, _said_so)
     port, root, host, TOKEN, ALLOW_CONTROL = parse_args(sys.argv[1:])
     LOOPBACK_ONLY = host in ("127.0.0.1", "localhost", "::1")
-    if not LOOPBACK_ONLY and not TOKEN:
+    REAR = "--rear" in sys.argv[3:]
+    if REAR:
+        # The back-seat door takes its own token (rear-token, read on every
+        # request so `omacar rear revoke` bites at once) and nothing else.
+        if "--demo" in sys.argv or "--control" in sys.argv or "--token" in sys.argv:
+            sys.exit("serve.py: --rear takes no --demo, --control or --token")
+        TOKEN, ALLOW_CONTROL = "", False
+    elif not LOOPBACK_ONLY and not TOKEN:
         sys.exit("serve.py: refusing to bind to the network without --token")
     _demo = demo_arg(sys.argv[1:])
     if _demo is not None:

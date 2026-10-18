@@ -1717,6 +1717,12 @@ ok("and one built and never appended gives up rather than polling for ever",
 # fails nothing, which is exactly why it needs asserting.
 _html = (_share / "app.html").read_text(encoding="utf-8")
 _linked = set(re.findall(r'href="css/([a-z0-9-]+\.css)"', _html))
+# A separate page's own sheet counts as linked when that page links it: the
+# back-seat screen (share/rear.html, its own allow-listed server) never loads
+# app.html, and app.html must never load its sheet.
+for _page in _share.glob("*.html"):
+    if _page.name != "app.html":
+        _linked |= set(re.findall(r'href="(?:/)?css/([a-z0-9-]+\.css)', _page.read_text(encoding="utf-8")))
 _ondisk = {p.name for p in (_share / "css").glob("*.css")}
 _orphans = sorted(_ondisk - _linked)
 # The names go in the label rather than a third argument: ok() takes exactly
