@@ -247,6 +247,8 @@ DEMO_ROUTES = {
     # Where the car was parked: the owner's real places and photographs. Never in a demo.
     "/api/parking": {"present": False, "last": None, "history": [], "demo": True},
     "/api/parking/*": {"present": False, "last": None, "demo": True},
+    # The parked 12 V record is the real car's; the demo has none.
+    "/api/battery-watch": {"present": False, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},

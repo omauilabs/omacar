@@ -393,6 +393,21 @@ const MAKERS = {
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };
   },
+  // The 12 V while parked (share/js/bwatchcard.js, lib/batterywatch.py). Loaded
+  // only when the card is on Home; tapping it opens Vehicle → Care → 12 V.
+  battery: () => {
+    const node = h("div.card.hc");
+    let card = null, gone = false;
+    import("../bwatchcard.js").then((m) => {
+      if (gone) return;
+      card = m.watchCard(node);
+    }).catch((e) => {
+      console.warn("12 V card:", e);
+      if (!gone) node.appendChild(h("div.hc-ph-s", "The 12 V card could not load"));
+    });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
   // card is on Home. Tapping it opens the full Radar screen.
   radar: () => {

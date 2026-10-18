@@ -1,0 +1,18 @@
+[Unit]
+Description=OmaCar 12 V watch — a reading at ignition-off, ignition-on and while parked and awake
+Documentation=file:__ROOT__/doc/battery-watch.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The venv python: the one ATRV it asks goes through pyserial, and through the
+# same port hand-off as every other command (lib/connect.py), so it never takes
+# the adapter from the daemon or a recorder that has it.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/batterywatch.py run'
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=default.target

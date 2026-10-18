@@ -25,6 +25,7 @@ import appsView from "./views/apps.js";
 import appView from "./views/app.js";
 import pretripView from "./views/pretrip.js";
 import fuelLogView from "./views/fuel.js";
+import bwatchView from "./views/bwatch.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -245,6 +246,8 @@ const TABS = [
         { id: "pretrip",   label: "Pre-trip", title: "Ready for a long drive?",            mount: pretripView },
         // What the pump says the car gets (lib/fuel.py, doc/fuel-log.md).
         { id: "fuel",      label: "Fuel",    title: "Fuel log",                            mount: fuelLogView },
+        // The 12 V while parked and the tablet's battery (lib/batterywatch.py). Slow data, so not `fast`.
+        { id: "bwatch",    label: "12 V",    title: "12 V battery while parked",           mount: bwatchView },
         { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
         // Four tyre sensors heard by an RTL-SDR (lib/tpms.py). Also opened
         // from Home's tyre callout. Its learn panel is parked-only inside the view.
