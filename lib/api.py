@@ -49,6 +49,8 @@ what the car said.
     POST /api/tpms/assign       {id, wheel: "FL"|"FR"|"RL"|"RR"} or {unassign: wheel}: a label, nothing else
     GET  /api/calls             hands-free calls: phase, caller, duration, recent calls
     POST /api/calls             {action: answer|reject|hangup|mute|volume|dial, value, id}
+    GET  /api/learncar          the guided "learn my car" session: steps, the live step, results
+    POST /api/learncar          {action: start|go|confirm|next|retry|skip|abort, sim?, transmission?}
     GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
     GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
     GET  /api/ambient           the tablet's light sensor: lux, or {present: false} (read-only)
@@ -1239,6 +1241,12 @@ def handle_get(path, query):
         # sim`). A file older than a few seconds shows no call at all.
         import calls
         return 200, calls.read_public()
+    if path == "/api/learncar":
+        # The guided, parked, passive CAN-labelling session (lib/learncar.py),
+        # as its runner last wrote it. `source` says "sim" or "car"; the screen
+        # always shows which.
+        import learncar
+        return 200, learncar.read_public()
     if path == "/api/env":
         # The cabin and outdoor nodes (lib/envnode.py), as its service or the
         # simulator last wrote them. `source` says which, and the card shows it.
@@ -1686,6 +1694,18 @@ def handle_post(path, body):
         except PermissionError as e:
             return 403, {"error": str(e)}
         except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/learncar":
+        # Taps on the session: start it, begin a step, confirm the parking
+        # brake, move on, stop. Passive end to end (it only listens), and a
+        # start is refused with the reason unless the car is provably parked.
+        import learncar
+        try:
+            return 200, learncar.ask(str(data.get("action") or ""), sim=bool(data.get("sim")),
+                                     transmission=str(data.get("transmission") or "manual"))
+        except PermissionError as e:
+            return 409, {"error": str(e)}
+        except ValueError as e:
             return 400, {"error": str(e)}
     if path == "/api/v1":
         # One request, and it is not a cockpit write: Mute on the detector,

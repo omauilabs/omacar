@@ -28,6 +28,7 @@ import fuelLogView from "./views/fuel.js";
 import bwatchView from "./views/bwatch.js";
 import batteryScreen from "./views/battery.js";
 import callsScreen from "./views/calls.js";
+import learnCarView from "./views/learncar.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -233,6 +234,10 @@ const TABS = [
         { id: "live",   label: "Cluster",  title: "Cluster",                 mount: live,       fast: true },
         { id: "data",   label: "Live lab", title: "Data lab",                mount: data,       fast: true },
         { id: "replay", label: "Replay",   title: "Replay a recorded drive", mount: replayView, tier: "power" },
+        // A guided, parked, listen-only routine that labels the bus (lib/learncar.py).
+        // Not `write`: it sends nothing. It locks itself while the car moves
+        // (store.lockedAsMoving, read inside the view), greyed with the reason.
+        { id: "learncar", label: "Learn my car", title: "Learn my car", mount: learnCarView, tier: "power" },
         // Actuator commands. Two taps from the bar, never one, and the chip
         // greys out with the reason on it while the car is moving.
         { id: "tests",  label: "Tests",    title: "Functional tests",        mount: tests, fast: true, write: true, tier: "technician" },

@@ -11,6 +11,7 @@
 #   omacar live [PID...]      stream readings to the terminal
 #   omacar prospect [opts]    hunt for manufacturer-specific PIDs (read-only)
 #   omacar listen [marks]     listen to the bus and transmit nothing; find the byte a switch moves
+#   omacar learncar [run|mine|steps|status]  guided, parked, passive: label the bus (doc/learn-my-car.md)
 #   omacar drive [status|on|off]
 #                             record the bus for you, in legs, all the way home
 #   omacar preflight          is this machine ready to record a drive
@@ -1932,6 +1933,8 @@ case "${1:-open}" in
   live) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/live.py" "$@" ;;
   prospect) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/prospect.py" "$@" ;;
   listen) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/listen.py" "$@" ;;
+  # The guided "learn my car" session (lib/learncar.py): parked, listens, writes nothing.
+  learncar) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/learncar.py" "$@" ;;
   # THE SUPERVISOR THAT RUNS `listen` FOR YOU. Written, argued and then left
   # unreachable: nothing here dispatched to it and no unit started it, while
   # its own error text told you to run a service that did not exist. The one

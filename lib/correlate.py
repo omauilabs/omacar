@@ -362,3 +362,250 @@ def analyse(drives_rows, cand_id):
     if not by_decoding:
         return {"verdict": "insufficient", "why": "no aligned samples logged"}, []
     return best_decoding(by_decoding)
+
+
+# ---- labelled windows: what changes ONLY while a thing is being done ---------
+#
+# Everything above asks "what tracks a channel we already trust". Passive CAN
+# capture has no such channel for most of what the owner cares about (is the
+# brake down, which way is the wheel turned, is the IMA ready): nobody has said
+# which byte means it. "Learn my car" (lib/learncar.py) supplies the missing
+# yardstick as a person: it asks for ONE thing at a marked moment, listens, and
+# writes down when. This ranks, for each label, the identifier bytes that sit
+# still while nothing is being done and move when it is.
+#
+# THE RULE, AND WHY IT IS THIS STRICT.
+#   * Quiet outside. The byte takes at most LABEL_MAX_QUIET distinct values in
+#     the label's own rest windows. A rolling counter (16 values), a checksum
+#     (it follows the counter) and a wheel-speed jitter all fail here, which is
+#     exactly why they are not offered: they "change inside the window" too,
+#     and they change outside it just as much.
+#   * Novel inside. In an active window, at least LABEL_HIT_FRACTION of the
+#     frames carry a value the rest windows never showed. Not "a different
+#     average": a different value.
+#   * Every window, or nearly. Hits/windows is the confidence, printed as the
+#     fraction it is (18/18). Under LABEL_MIN_WINDOWS windows it is a hint, and
+#     says so. A byte that also goes novel while the person does OTHER things
+#     is reported with where else it moved, because a byte that moves whenever
+#     anything happens is "the car is busy", not "the brake".
+# Frames inside LABEL_SETTLE of a window's edge are dropped: a person presses a
+# pedal slightly after the marker, and a window that still holds the previous
+# state is how a clean switch gets reported as noise.
+
+LABEL_SETTLE = 0.4            # s trimmed from each window edge
+LABEL_MIN_FRAMES = 5          # frames an id needs in a window before it counts
+LABEL_MAX_QUIET = 3           # distinct rest values a byte may take
+LABEL_HIT_FRACTION = 0.4      # share of a window's frames that must be novel (a
+                              # flashing lamp is novel about half the time)
+LABEL_MIN_REST_FRAMES = 10    # rest frames needed before "quiet" means anything
+LABEL_MIN_WINDOWS = 3         # active windows heard before it is more than a hint
+LABEL_PASS = 0.75             # hits/windows needed to be listed at all
+
+
+def _trim(w, settle):
+    """The span of a window that is safely in its state. Capped at a quarter of
+    the window per side so a short window keeps its shape."""
+    span = w["t1"] - w["t0"]
+    cut = min(settle, max(0.0, span) * 0.25)
+    return w["t0"] + cut, w["t1"] - cut
+
+
+def _window_values(run, w, settle):
+    """{id: [bytes, ...]} for the frames inside one window of one run."""
+    import bisect
+    times = run.get("_times")
+    if times is None:
+        run["frames"] = sorted(run["frames"], key=lambda f: f[0])
+        times = run["_times"] = [f[0] for f in run["frames"]]
+    t0, t1 = _trim(w, settle)
+    lo, hi = bisect.bisect_left(times, t0), bisect.bisect_left(times, t1)
+    out = {}
+    for _t, fid, data in run["frames"][lo:hi]:
+        out.setdefault(fid, []).append(bytes(data))
+    return out
+
+
+def _bit_mask(a, b):
+    return a ^ b
+
+
+def rank_labelled(runs, settle=LABEL_SETTLE):
+    """Rank candidate signals per label.
+
+    `runs` is a list of {"frames": [(t, can_id, bytes)], "windows": [{"label",
+    "state", "active", "t0", "t1"}]}, with frames and windows on one time base
+    per run. Several runs (a capture per step, several sessions) pool: a label's
+    windows from every run count together, which is how confidence grows with
+    each session. Returns {label: [candidate, ...]}, best first; a label with
+    nothing to report maps to []. Pure: no files, no clock.
+    """
+    # Per label: the rest windows' values, and every active window's values.
+    labels = {}
+    for run in runs:
+        for w in run.get("windows") or []:
+            vals = _window_values(run, w, settle)
+            labels.setdefault(w["label"], {"rest": [], "act": []})[
+                "act" if w.get("active") else "rest"].append((w, vals))
+
+    # Per label: each byte's rest values (when it was quiet enough to mean
+    # something), and the frames behind them.
+    for label, L in labels.items():
+        rest = {}                      # (id, i) -> [values]
+        rest_frames = {}               # id -> frame count
+        for _w, vals in L["rest"]:
+            for fid, datas in vals.items():
+                rest_frames[fid] = rest_frames.get(fid, 0) + len(datas)
+                for d in datas:
+                    for i, b in enumerate(d):
+                        rest.setdefault((fid, i), []).append(b)
+        quiet = {}                     # (id, i) -> frozenset of rest values
+        for key, vs in rest.items():
+            if rest_frames.get(key[0], 0) < LABEL_MIN_REST_FRAMES:
+                continue
+            s = frozenset(vs)
+            if len(s) <= LABEL_MAX_QUIET:
+                quiet[key] = s
+        L["rest_vals"], L["rest_frames"], L["quiet"] = rest, rest_frames, quiet
+
+    result = {}
+    for label, L in labels.items():
+        rest, rest_frames, quiet = L["rest_vals"], L["rest_frames"], L["quiet"]
+
+        cands = {}
+        for w, vals in L["act"]:
+            for fid, datas in vals.items():
+                if len(datas) < LABEL_MIN_FRAMES:
+                    continue              # not heard enough to say anything
+                width = min(len(d) for d in datas)
+                for i in range(width):
+                    key = (fid, i)
+                    if key not in quiet:
+                        continue
+                    seen = [d[i] for d in datas]
+                    novel = [b for b in seen if b not in quiet[key]]
+                    c = cands.setdefault(key, {"heard": 0, "hits": 0, "modal": [],
+                                               "frames": 0, "states": set()})
+                    c["heard"] += 1
+                    c["frames"] += len(seen)
+                    if len(novel) / len(seen) >= LABEL_HIT_FRACTION:
+                        c["hits"] += 1
+                        c["modal"].append(max(set(novel), key=novel.count))
+                        c["states"].add(w.get("state") or "")
+        listed = []
+        for (fid, i), c in cands.items():
+            if c["heard"] < 1 or c["hits"] / c["heard"] < LABEL_PASS:
+                continue
+            rest_modal = max(set(rest[(fid, i)]), key=rest[(fid, i)].count)
+            switch = len(set(c["modal"])) == 1
+            listed.append({
+                "id": fid, "byte": i,
+                "kind": "switch" if switch else "analog",
+                "rest_value": rest_modal,
+                "active_value": c["modal"][0] if switch else None,
+                "active_values": sorted(set(c["modal"])),
+                "bits": _bit_mask(rest_modal, c["modal"][0]) if switch else None,
+                "hits": c["hits"], "windows": c["heard"],
+                "frames_active": c["frames"],
+                "frames_rest": rest_frames.get(fid, 0),
+                "states": sorted(s for s in c["states"] if s),
+                "strong": c["heard"] >= LABEL_MIN_WINDOWS and c["hits"] == c["heard"],
+                "also_in": [], "specific": True,
+            })
+
+        # Where ELSE does this byte move? Judged against that other label's own
+        # rest windows: a byte that merely sits at a different value in another
+        # context (engine off vs engine on) has not moved there. A byte that
+        # leaves its own rest values while some other thing is being done is
+        # a general "something is happening" byte, not this label's signal.
+        for cand in listed:
+            key = (cand["id"], cand["byte"])
+            for other, O in labels.items():
+                if other == label or key not in O["quiet"]:
+                    continue
+                oq = O["quiet"][key]
+                moved = 0
+                for _w, vals in O["act"]:
+                    datas = vals.get(cand["id"]) or []
+                    seen = [d[cand["byte"]] for d in datas if len(d) > cand["byte"]]
+                    if len(seen) >= LABEL_MIN_FRAMES and sum(
+                            1 for b in seen if b not in oq) / len(seen) >= LABEL_HIT_FRACTION:
+                        moved += 1
+                if moved:
+                    cand["also_in"].append(other)
+            cand["specific"] = not cand["also_in"]
+        listed.sort(key=lambda c: (len(c["also_in"]), not c["strong"],
+                                   -(c["hits"] / c["windows"]), -c["windows"],
+                                   c["kind"] != "switch", c["id"], c["byte"]))
+        result[label] = _join_adjacent(listed)
+    return result
+
+
+def _join_adjacent(cands):
+    """Two analog bytes side by side in one identifier are one 16-bit value (a
+    steering angle is not two findings). The pair keeps the better byte's
+    numbers and says which bytes it spans."""
+    out, used = [], set()
+    by = {(c["id"], c["byte"]): c for c in cands}
+    for c in cands:
+        key = (c["id"], c["byte"])
+        if key in used:
+            continue
+        c = dict(c, span=[c["byte"], c["byte"]])
+        nxt = by.get((c["id"], c["byte"] + 1))
+        if c["kind"] == "analog" and nxt and nxt["kind"] == "analog" \
+                and (c["id"], c["byte"] + 1) not in used:
+            used.add((c["id"], c["byte"] + 1))
+            c["span"] = [c["byte"], c["byte"] + 1]
+        out.append(c)
+    return out
+
+
+def load_labelled(captures_dir, labels_path=None, simulated=False):
+    """Runs for rank_labelled(), from what lib/learncar.py wrote.
+
+    `labels_path` defaults to labels.jsonl inside `captures_dir`. Each line
+    names a capture file (without .json) and one window in absolute time; the
+    capture's raw frames carry times relative to its `started`. Lines for a
+    capture that is missing or has no raw frames are skipped, and so is any
+    line whose `simulated` flag is not the one asked for -- a simulator's
+    frames must never rank against a real car's.
+    """
+    import json
+    import os
+    path = labels_path or os.path.join(captures_dir, "labels.jsonl")
+    by_cap = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                    float(r["t0"]), float(r["t1"]), r["label"], r["capture"]
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if bool(r.get("simulated")) != bool(simulated):
+                    continue
+                by_cap.setdefault(r["capture"], []).append(r)
+    except OSError:
+        return []
+    runs = []
+    for name, wins in sorted(by_cap.items()):
+        try:
+            with open(os.path.join(captures_dir, name + ".json"), encoding="utf-8") as f:
+                doc = json.load(f)
+            started = float(doc["started"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        frames = []
+        for fr in doc.get("raw") or []:
+            try:
+                frames.append((started + float(fr["t"]), str(fr["id"]).upper(),
+                               bytes.fromhex(fr["data"])))
+            except (ValueError, KeyError, TypeError):
+                continue
+        if not frames:
+            continue
+        runs.append({"capture": name, "frames": frames, "windows": [
+            {"label": r["label"], "state": r.get("state") or "",
+             "active": bool(r.get("active")), "t0": float(r["t0"]),
+             "t1": float(r["t1"])} for r in wins]})
+    return runs
