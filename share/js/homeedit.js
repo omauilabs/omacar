@@ -12,12 +12,13 @@
 import { h, clear, icon, store, toast } from "./core.js";
 import { ICONS } from "./icons.js";
 import { moveItem, nextSize } from "./homecards.js";
+import { valet, lockReason } from "./valet.js";
 
 export function startEditing({ grid, bar, cat, layout, orient, place, save, onEnd }) {
   // Driving or a hand-off: store.lockedAsMoving (lockOf() on the red-light
   // branch replaces it, here and below).
   if (store.lockedAsMoving) {
-    toast("Available when you stop");
+    toast(lockReason(valet.on, true));
     return null;
   }
   const o = orient();

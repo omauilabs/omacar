@@ -20,16 +20,28 @@
    into the clock: its six texts are the whole of what it says, so it is never
    ellipsised. It gives way first (flex-shrink 10), down to its longest word,
    so the car's name beside it, which main.js always shows, gives way last. */
-.tb-drowsy { flex: 0 10 auto; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 10px;
-             white-space: normal; text-align: left;
-             border: 1px solid var(--edge); border-radius: 999px; background: none;
-             color: var(--dim); font: inherit; font-size: .72rem; line-height: 1.15; letter-spacing: .04em; cursor: pointer; }
-.tb-drowsy-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+/* The left readout of the top bar's console (app.css, "THE READOUTS"): it
+   shares the car link's recessed well and is joined to it by a hairline. */
+.tb-drowsy { order: -1; flex: none; display: inline-flex; align-items: center; gap: 10px;
+             height: 44px; padding: 0 16px 0 14px; white-space: nowrap; text-align: left;
+             border: 0; border-right: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
+             border-radius: 14px 0 0 14px; background: var(--console);
+             box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+             color: var(--ink-2); font: inherit; font-size: .78rem; font-weight: 500; line-height: 1.25; cursor: pointer;
+             transition: background-color .14s; }
+.tb-drowsy-t { display: grid; }
+/* Joined to the car link: cancels the top bar's 10px gap (.tb-right). */
+.tb-drowsy { margin-right: -10px; }
+.tb-drowsy-t::before { content: "Drowsy watch"; font-size: .66rem; font-weight: 400; letter-spacing: .02em; color: var(--dim); }
+.tb-drowsy:active { background: var(--raise); }
+.tb-drowsy-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
 .tb-drowsy[data-tone="ok"] { color: var(--ok); }
-.tb-drowsy[data-tone="ok"] .tb-drowsy-dot { background: var(--ok); }
+.tb-drowsy[data-tone="ok"] .tb-drowsy-dot { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 10px color-mix(in srgb, var(--ok) 60%, transparent); }
 .tb-drowsy[data-tone="warn"] { color: var(--warn); }
-.tb-drowsy[data-tone="warn"] .tb-drowsy-dot { background: var(--warn); }
-@media (pointer: coarse) { .tb-drowsy { min-height: var(--tap); } }
+.tb-drowsy[data-tone="warn"] .tb-drowsy-dot { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 10px color-mix(in srgb, var(--warn) 60%, transparent); }
+@media (pointer: coarse) { .tb-drowsy { height: var(--tap); } }
 
 /* The alerts. Level 1 is a card above the navigation; 2 and 3 fill the screen. */
 .dz-layer { position: fixed; inset: 0; z-index: 300; display: grid; pointer-events: none; }

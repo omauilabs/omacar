@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar arrival — nearly home, and cooling the fridge for a pickup
+Documentation=file:__ROOT__/doc/arrival.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python, stdlib only. Reads location.json, writes the fridge's ask file.
+ExecStart=/usr/bin/python3 __ROOT__/lib/arrival.py run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,247 @@
+/* A child left in the car (share/js/childalert.js, views/childalert.js).
+
+   The redesign's language: raised surfaces lit from above, captions over
+   values, lamps with halos, no outlines, only the shared tokens -- so the card
+   reads right in every look, red night included. The full-screen card is the
+   one place in the app that is allowed to be loud: a warm wash over the whole
+   stage, the question at the size of a road sign, and two keys a hand finds
+   without looking. It rises in once, in answer to the car being switched off;
+   the only thing that keeps moving is the lamp in its head, which breathes
+   because it is asking. */
+
+/* ---- the full-screen card ------------------------------------------------ */
+.ca-layer { position: fixed; inset: 0; z-index: 310; display: grid; place-items: center; padding: 28px;
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--warn) 22%, var(--ground)),
+                                                     color-mix(in srgb, var(--warn) 6%, var(--ground))); }
+.ca-layer[hidden] { display: none; }
+.ca-layer:has(.ca-card[data-tone="bad"]) {
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--bad) 26%, var(--ground)),
+                                                     color-mix(in srgb, var(--bad) 8%, var(--ground))); }
+.ca-card {
+  --tone: var(--warn);
+  width: min(1200px, 100%); height: min(800px, 100%); overflow: auto;
+  display: grid; grid-template-rows: auto 1fr auto auto auto; gap: 18px;
+  padding: 32px 40px 36px; border-radius: 32px;
+  background: linear-gradient(180deg, var(--raise), var(--panel));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent),
+              0 40px 90px -30px rgba(0, 0, 0, .75), 0 2px 10px rgba(0, 0, 0, .35);
+  animation: ca-in .3s cubic-bezier(.2, .8, .2, 1) both;
+}
+.ca-card[data-tone="bad"] { --tone: var(--bad); }
+@keyframes ca-in { from { opacity: 0; transform: translateY(18px) scale(.985); } }
+
+.ca-head { display: flex; align-items: center; gap: 14px; }
+.ca-ico { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border-radius: 18px;
+  color: var(--tone);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tone) 26%, transparent),
+                                      color-mix(in srgb, var(--tone) 8%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--tone) 40%, transparent); }
+/* The asking lamp, on the icon's corner. */
+.ca-ico::after { content: ""; position: absolute; top: -3px; right: -3px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 18%, transparent), 0 0 14px var(--tone);
+  animation: ca-ask 2.4s ease-in-out infinite; }
+@keyframes ca-ask { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--tone) 0%, transparent), 0 0 20px var(--tone); } }
+.ca-kicker { font-size: .8rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--tone); }
+.ca-sim { margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+  font-size: .82rem; font-weight: 600; color: var(--warn); }
+.ca-sim::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 10px color-mix(in srgb, var(--warn) 60%, transparent); }
+.ca-sim[hidden] { display: none; }
+
+.ca-q { display: grid; align-content: center; gap: 14px; }
+.ca-title { margin: 0; font-size: clamp(2.6rem, 6.4vw, 5.2rem); line-height: 1.05; font-weight: 650;
+  letter-spacing: -.02em; color: var(--ink); text-wrap: balance; }
+.ca-urgent { margin: 0; font-size: 1.3rem; font-weight: 650; color: var(--bad); }
+.ca-urgent[hidden] { display: none; }
+.ca-why { margin: 0; font-size: 1.3rem; line-height: 1.45; color: var(--ink-2); max-width: 60ch; }
+.ca-next { margin: 0; font-size: .86rem; color: var(--dim); }
+
+/* The facts: one recessed well, four readouts, caption over value -- the top
+   bar's console, at the card's scale. */
+.ca-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-radius: 18px; overflow: hidden;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.ca-fact { display: grid; align-content: start; gap: 6px; padding: 16px 20px 18px; min-width: 0; }
+.ca-fact + .ca-fact { box-shadow: inset 1px 0 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+.ca-fk { font-size: .76rem; color: var(--dim); }
+.ca-fv { font-size: 1.15rem; font-weight: 600; color: var(--ink); line-height: 1.3; font-variant-numeric: tabular-nums; }
+.ca-fact:first-child .ca-fv { font-size: 2rem; font-weight: 650; line-height: 1; letter-spacing: -.01em; }
+.ca-fact[data-tone="warn"] .ca-fv { color: var(--warn); }
+.ca-fact[data-tone="bad"] .ca-fv { color: var(--bad); }
+.ca-fact[data-tone="ok"] .ca-fv { color: var(--ok); }
+
+.ca-acts { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
+.ca-btn { position: relative; isolation: isolate; min-height: 136px; padding: 0 24px; border: 0; border-radius: 24px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 1.45rem; font-weight: 600; cursor: pointer;
+  touch-action: manipulation; transition: transform .14s cubic-bezier(.3, .7, .4, 1.4); }
+.ca-btn::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 10px 24px -14px rgba(0, 0, 0, .6); }
+/* "I have my child" is the lit key: the dock's accent wash, at full size. */
+.ca-key { font-size: 2.1rem; }
+.ca-key::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 70%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 32%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 60%, transparent),
+              inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent),
+              0 14px 32px -12px color-mix(in srgb, var(--accent) 70%, transparent); }
+.ca-btn:active { transform: scale(.97); }
+
+@media (orientation: portrait), (max-width: 760px) {
+  .ca-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ca-fact:nth-child(3) { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+  .ca-fact:nth-child(4) { box-shadow: inset 1px 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+  .ca-acts { grid-template-columns: 1fr; }
+}
+
+/* ---- snoozed: a card above the dock -------------------------------------- */
+.ca-snooze {
+  --tone: var(--warn);
+  position: fixed; z-index: 265; left: 50%; bottom: calc(var(--nav) + 18px); transform: translateX(-50%);
+  width: min(700px, calc(100vw - 32px));
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 18px;
+  padding: 16px 16px 16px 22px; border-radius: 24px;
+  background: linear-gradient(180deg, var(--raise), var(--panel));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent),
+              0 24px 60px -18px rgba(0, 0, 0, .7), 0 2px 8px rgba(0, 0, 0, .35);
+}
+.ca-snooze[hidden] { display: none; }
+.ca-snooze[data-tone="bad"] { --tone: var(--bad); }
+.ca-sn-lamp { width: 10px; height: 10px; border-radius: 50%; background: var(--tone);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 16%, transparent), 0 0 12px var(--tone); }
+.ca-sn-words { display: grid; gap: 3px; min-width: 0; }
+.ca-sn-title { font-size: 1.15rem; font-weight: 600; color: var(--tone); font-variant-numeric: tabular-nums; }
+.ca-sn-sub { font-size: .86rem; color: var(--ink-2); line-height: 1.4; }
+.ca-sn-acts .ca-btn { min-height: var(--tap-lg); font-size: 1.05rem; border-radius: 18px; padding: 0 22px; }
+/* The parking card's "child alert" line steps aside while this one speaks. */
+#app:has(.ca-snooze:not([hidden])) .pk-card[data-kind="child"],
+#app:has(.ca-layer:not([hidden])) .pk-card[data-kind="child"] { display: none; }
+
+/* ---- the top bar's lamp: a third readout in the console -------------------- */
+/* Between the drowsy watch and the car link, sharing their well: no rounded
+   ends of its own, a hairline on its right, caption over state. */
+.tb-child { order: -1; flex: none; display: inline-flex; align-items: center; gap: 10px;
+  height: 44px; margin-right: -10px; padding: 0 16px 0 14px; white-space: nowrap; text-align: left;
+  border: 0; border-right: 1px solid color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 0;
+  background: var(--console); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--accent); font: inherit; font-size: .78rem; font-weight: 600; line-height: 1.25; cursor: pointer; }
+.tb-child[hidden] { display: none; }
+.tb-child-t { display: grid; }
+.tb-child-t::before { content: "Child seat"; font-size: .66rem; font-weight: 400; letter-spacing: .02em; color: var(--dim); }
+.tb-child-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent), 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent); }
+.tb-child[data-tone="warn"] { color: var(--warn); }
+.tb-child[data-tone="warn"] .tb-child-dot { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 10px color-mix(in srgb, var(--warn) 60%, transparent); }
+.tb-child:active { background: var(--raise); }
+@media (pointer: coarse) { .tb-child { height: var(--tap); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ca-card { animation: none; }
+  .ca-ico::after { animation: none; }
+  .ca-btn { transition: none; }
+}
+
+/* ---- Cabin → Child seat ---------------------------------------------------- */
+.wrap:has(> .cs) { max-width: none; display: block; height: 100%; }
+.stage:has(> .wrap > .cs) { padding-bottom: 8px; }
+.cs { height: 100%; display: grid; gap: 14px;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "hero set" "facts facts"; }
+.cs > section { border-radius: var(--r); background: var(--panel); min-height: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.cs-hero { grid-area: hero; display: grid; align-content: space-between; gap: 14px; padding: 24px 26px; }
+.cs-head { display: flex; align-items: center; gap: 12px; color: var(--ink-2); }
+.cs-ico { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; color: var(--accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 30%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 8%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+.cs-name { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--ink); }
+.cs-src { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: .76rem; color: var(--dim); }
+.cs-src::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.cs-src[data-tone="ok"] { color: var(--ok); }
+.cs-src[data-tone="ok"]::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.cs-src[data-tone="warn"] { color: var(--warn); }
+.cs-src[data-tone="warn"]::before { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+.cs-src[data-tone="bad"] { color: var(--bad); }
+.cs-src[data-tone="bad"]::before { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 16%, transparent), 0 0 9px var(--bad); }
+.cs-state { display: grid; gap: 6px; }
+.cs-k { font-size: .78rem; color: var(--dim); }
+.cs-word { font-size: clamp(2.6rem, 8vh, 4.4rem); line-height: 1; font-weight: 650; letter-spacing: -.03em; color: var(--ink); }
+.cs-hero[data-tone="on"] .cs-word { color: var(--accent); text-shadow: 0 0 40px color-mix(in srgb, var(--accent) 35%, transparent); }
+.cs-hero[data-tone="bad"] .cs-word { color: var(--bad); }
+.cs-line { margin: 0; font-size: 1rem; line-height: 1.45; color: var(--ink-2); max-width: 48ch; }
+.cs-mid { display: grid; gap: 12px; }
+.cs-read { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-radius: 16px; overflow: hidden;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.cs-r { display: grid; gap: 4px; padding: 12px 16px; min-width: 0; }
+.cs-r + .cs-r { box-shadow: inset 1px 0 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+.cs-rk2 { font-size: .7rem; color: var(--dim); }
+.cs-rv { font-size: 1.05rem; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-ladder { display: grid; gap: 2px; margin-top: auto; padding-top: 14px; }
+.cs-ladder .cs-set-t { margin-bottom: 6px; }
+.cs-step-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: baseline; gap: 12px; padding: 6px 0; }
+.cs-when { font-size: .86rem; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; }
+.cs-what { font-size: .86rem; color: var(--ink-2); line-height: 1.4; }
+.cs-cam { display: flex; align-items: center; gap: 10px; font-size: .9rem; color: var(--ink-2); }
+.cs-cam b { font-weight: 600; color: var(--ink); }
+.cs-cam[data-tone="ok"] b { color: var(--ok); }
+.cs-cam[data-tone="warn"] b { color: var(--warn); }
+.cs-acts { display: flex; gap: 12px; flex-wrap: wrap; }
+.cs-btn { position: relative; isolation: isolate; min-height: var(--tap-lg); padding: 0 24px; border: 0; border-radius: 18px;
+  background: transparent; color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4); }
+.cs-btn::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+.cs-btn.cs-key::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 58%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 22%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 55%, transparent),
+              0 8px 22px -10px color-mix(in srgb, var(--accent) 70%, transparent); }
+.cs-btn:active:not(:disabled) { transform: scale(.95); }
+.cs-btn:disabled { opacity: .4; cursor: default; }
+.cs-btn[hidden] { display: none; }
+
+.cs-set { grid-area: set; display: flex; flex-direction: column; gap: 4px; padding: 22px 24px; overflow: auto; }
+.cs-set-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.cs-set-t { font-size: .82rem; color: var(--ink-2); }
+.cs-lock { font-size: .76rem; color: var(--warn); }
+.cs-lock[hidden] { display: none; }
+.cs-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 10px 0; }
+.cs-row + .cs-row { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.cs-rk { display: grid; gap: 2px; }
+.cs-rt { font-size: .98rem; color: var(--ink); }
+.cs-rs { font-size: .76rem; color: var(--dim); line-height: 1.35; }
+.cs-track { display: flex; align-items: center; padding: 0 4px; border-radius: 16px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.cs-track .chip { min-width: 58px; padding: 0 12px; }
+.cs-step { display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 16px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.cs-step button { width: var(--tap); height: var(--tap); border: 0; border-radius: 12px; background: transparent;
+  color: var(--ink); font: inherit; font-size: 1.4rem; cursor: pointer; }
+.cs-step button:active:not(:disabled) { background: var(--raise); }
+.cs-step button:disabled { opacity: .35; cursor: default; }
+.cs-step span { min-width: 64px; text-align: center; font-size: 1.15rem; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+
+.cs-facts { grid-area: facts; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+.cs-fact { display: grid; gap: 4px; padding: 14px 20px; min-width: 0; }
+.cs-fact + .cs-fact { box-shadow: inset 1px 0 0 color-mix(in srgb, var(--ink) 7%, transparent); }
+.cs-fk { display: flex; align-items: center; gap: 8px; font-size: .72rem; color: var(--dim); }
+.cs-fk::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.cs-fact[data-tone="ok"] .cs-fk::before { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
+.cs-fact[data-tone="warn"] .cs-fk::before { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+.cs-fv { font-size: .86rem; color: var(--ink-2); line-height: 1.4; }
+
+@media (orientation: portrait) {
+  .cs { grid-template-columns: 1fr; grid-template-rows: auto auto auto;
+        grid-template-areas: "hero" "set" "facts"; height: auto; }
+  .cs-facts { grid-template-columns: 1fr; }
+  .cs-fact + .cs-fact { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent); }
+}

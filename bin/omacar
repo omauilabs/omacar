@@ -6,10 +6,12 @@
 #   omacar setup              build the Python environment (python-obd + emulator)
 #   omacar bench start|stop|status
 #                             the ELM327 bench emulator — develop without a car
+#   omacar ambient            the tablet's light sensor, read-only (lux, or none)
 #   omacar doctor             adapter, protocol, supported PIDs, stored faults
 #   omacar live [PID...]      stream readings to the terminal
 #   omacar prospect [opts]    hunt for manufacturer-specific PIDs (read-only)
 #   omacar listen [marks]     listen to the bus and transmit nothing; find the byte a switch moves
+#   omacar learncar [run|mine|steps|status]  guided, parked, passive: label the bus (doc/learn-my-car.md)
 #   omacar drive [status|on|off]
 #                             record the bus for you, in legs, all the way home
 #   omacar preflight          is this machine ready to record a drive
@@ -20,8 +22,10 @@
 #   omacar profile [cmd]      list, show, check, merge, promote, refute, correlate
 #   omacar candlog            log candidate PIDs against trusted channels
 #   omacar discover [status]  map identifiers automatically, safely, over time
+#   omacar fuel [cmd]         the fuel log: status | list | add | run | sim
 #   omacar plugins            what extends this install, and what each provides
 #   omacar mcp                serve the car to an agent harness over MCP
+#   omacar update [cmd]       status|check|apply|rollback|history|adopt: self-update, parked only
 #   omacar mode [tier]        simplified | power | technician | god
 #   omacar write arm|disarm   allow writes (clear codes, tests, settings)
 #   omacar write log          every write that left this machine, and what answered
@@ -41,16 +45,25 @@
 #   omacar prune [--keep=N]   roll old samples into daily figures, reclaim disk
 #   omacar hotplug [install]  start the daemon when the adapter is plugged in
 #   omacar kiosk              fullscreen drive mode, for a tablet in the car
+#   omacar rear pair|revoke|serve|music on|off|status
+#                             a kid-safe screen for the back seat (QR pairing)
 #   omacar cockpit [--control]
 #                             serve the gauge to any tablet on the network
-#   omacar cams status|on|off|sim
+#   omacar cams status|on|off|sim|rotate [ROLE DEG]|focus [ROLE auto|infinity|N]|flip [ROLE none|horizontal|vertical]
 #                             the dashcams: front, rear and cabin, in clips that loop
+#   omacar clips status|list|save|run|sim
+#                             incident clips: the minute around a hard stop, a jolt or a tap
 #   omacar audio status|on|off|pin
 #                             hold the tablet at 100% so alerts keep their headroom
+#   omacar eq status|on|off|preset NAME|apply
+#                             the AUX equalizer: ten bands, never past 0 dB
 #   omacar tablet [setup]     set this machine up as the in-car tablet
 #   omacar tablet awake       stop it suspending — for a tablet that lives in a car
 #   omacar power off|sleep|screen|status|allow
 #                             end the day, or just the screen, and say why not
+#   omacar child-alert status|sim|clear|aboard
+#                             a child left in the car: alert when it is switched
+#                             off with the car seat occupied
 #   omacar nursery [send HOST]
 #                             the baby, from the road — pushed from home, never
 #                             fetched here, and never a live feed while moving
@@ -67,6 +80,9 @@
 #   omacar battery [rebuild|report]
 #                             the hybrid battery's verdict, from the drives
 #                             already recorded; reads the database only
+#   omacar battery-watch [status|read|run|sim|install]
+#                             the 12 V while parked and the tablet's own battery:
+#                             readings, a projection to the 12.2 V floor
 #   omacar cheatsheet [--set]
 #                             every command as a picture, for the wallpaper
 #   omacar board [stop]       the same commands, behind your windows, tappable
@@ -1593,6 +1609,7 @@ tablet_setup() {
   echo "    · start the daemon when the adapter is plugged in"
   echo "    · switch to drive mode by itself when the car connects"
   echo "    · record the bus in legs, whenever the engine is running"
+  echo "    · watch for a child left in the car when it is switched off"
   echo
   read -r -p "  Do that? [y/N] " reply
   [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
@@ -1605,6 +1622,9 @@ tablet_setup() {
   # an in-car tablet" produced a tablet that showed the car beautifully and
   # kept none of it.
   systemctl --user enable --now omacar-drivelog.service 2>&1 | sed 's/^/  /'
+  # A child left in the car (doc/child-alert.md). Silent until a child seat is
+  # seen occupied; on by default, like the brief asks.
+  systemctl --user enable --now omacar-child-alert.service 2>&1 | sed 's/^/  /'
   python3 -c "
 import sys; sys.path.insert(0, '$ROOT/lib')
 import api; api.save_drive_layout({'auto': 'connect', 'auto_return': True})
@@ -1721,6 +1741,65 @@ tablet_sleep() {
   sudo systemctl restart systemd-logind 2>/dev/null
   echo "  done. It sleeps like an ordinary laptop again."
   echo
+}
+
+# --- ignition ---------------------------------------------------------------
+#
+# The tablet follows the car (lib/ignition.py, doc/ignition.md). `tablet awake`
+# masked every sleep target after the 8 September mid-drive suspend; this
+# unmasks exactly the one the ignition loop uses -- suspend -- and leaves the
+# rest of that setup alone: logind still ignores the power key, the lid and
+# idle, and the power button still belongs to the screensaver. So nothing but
+# a parked car with its charger off for 30 s ever asks for sleep.
+
+IGNITION_UDEV=/etc/udev/rules.d/71-omacar-charger-wake.rules
+
+ignition_install() {
+  echo
+  echo "  Letting the tablet follow the car: asleep 30 s after the charger goes"
+  echo "  off with the car parked, awake again when the charger comes back."
+  echo
+  echo "  It will:"
+  echo "    · unmask suspend (only suspend; the power key, lid and idle stay"
+  echo "      ignored, so nothing else can put it to sleep)"
+  echo "    · let the person at the screen suspend without a password prompt"
+  echo "    · mark the charger as a wakeup source, where the kernel allows it"
+  echo "    · start omacar-ignition at login"
+  echo
+  echo "  Undo with: omacar ignition uninstall"
+  echo
+  read -r -p "  Set it up? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || { echo "  nothing changed"; return 0; }
+  echo
+  echo "  This needs sudo."
+  sudo systemctl unmask sleep.target suspend.target 2>&1 | sed 's/^/  /'
+  # Whether the charger can wake a Surface from suspend is the question the
+  # driveway test answers; this only makes sure the kernel is not refusing it.
+  sudo tee "$IGNITION_UDEV" >/dev/null <<'RULE'
+# Written by `omacar ignition install`. Remove with `omacar ignition uninstall`.
+# The car's charger coming back is what wakes the tablet when the car starts.
+ACTION=="add|change", SUBSYSTEM=="power_supply", ATTR{type}=="Mains", TEST=="device/power/wakeup", ATTR{device/power/wakeup}="enabled"
+RULE
+  sudo udevadm control --reload 2>/dev/null
+  sudo udevadm trigger --subsystem-match=power_supply 2>/dev/null
+  python3 "$ROOT/lib/power.py" allow | sed 's/^/  /'
+  systemctl --user daemon-reload
+  systemctl --user enable --now omacar-ignition.service 2>&1 | sed 's/^/  /'
+  # Sleeping is only safe with the child alert able to veto it.
+  systemctl --user enable --now omacar-child-alert.service 2>&1 | sed 's/^/  /'
+  echo
+  python3 "$ROOT/lib/ignition.py" probe
+}
+
+ignition_uninstall() {
+  systemctl --user disable --now omacar-ignition.service 2>&1 | sed 's/^/  /'
+  sudo rm -f "$IGNITION_UDEV"
+  sudo udevadm control --reload 2>/dev/null
+  # Back to `tablet awake`'s state, if that is what this machine had.
+  if [[ -f "$SLEEP_DROPIN" ]]; then
+    sudo systemctl mask sleep.target suspend.target 2>&1 | sed 's/^/  /'
+  fi
+  echo "  done: the tablet no longer follows the car"
 }
 
 tablet_off() {
@@ -1852,8 +1931,18 @@ case "${1:-open}" in
     esac ;;
   doctor) omacar_need_env; exec "$OMACAR_PY" "$ROOT/lib/doctor.py" ;;
   live) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/live.py" "$@" ;;
+  work)
+    omacar_need_env; shift
+    case "${1:-status}" in
+      serve)  exec "$OMACAR_PY" "$ROOT/lib/workrelay.py" ;;
+      # Through the lib: the relay refuses a request without its token.
+      status) exec "$OMACAR_PY" "$ROOT/lib/workroutes.py" status ;;
+      *) echo "usage: omacar work serve|status" >&2; exit 2 ;;
+    esac ;;
   prospect) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/prospect.py" "$@" ;;
   listen) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/listen.py" "$@" ;;
+  # The guided "learn my car" session (lib/learncar.py): parked, listens, writes nothing.
+  learncar) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/learncar.py" "$@" ;;
   # THE SUPERVISOR THAT RUNS `listen` FOR YOU. Written, argued and then left
   # unreachable: nothing here dispatched to it and no unit started it, while
   # its own error text told you to run a service that did not exist. The one
@@ -1888,7 +1977,15 @@ case "${1:-open}" in
   drivemode) shift; exec python3 "$ROOT/lib/drivemode.py" "$@" ;;
   assets) shift; exec python3 "$ROOT/lib/assets.py" "$@" ;;
   cams) shift; exec python3 "$ROOT/lib/cams.py" "$@" ;;
+  # Incident clips (lib/clips.py): a second process beside the recorder.
+  clips)
+    case "${2:-status}" in
+      on)  systemctl --user daemon-reload; systemctl --user enable --now omacar-clips.service 2>&1 | sed 's/^/  /' ;;
+      off) systemctl --user disable --now omacar-clips.service 2>&1 | sed 's/^/  /' ;;
+      *) shift; exec python3 "$ROOT/lib/clips.py" "$@" ;;
+    esac ;;
   audio) shift; exec python3 "$ROOT/lib/audio.py" "$@" ;;
+  eq) shift; exec python3 "$ROOT/lib/eq.py" "$@" ;;
   daemon)
     case "${2:-status}" in
       start) daemon_start ;;
@@ -2016,15 +2113,120 @@ print()
   roadmap) shift; exec python3 "$ROOT/lib/roadmap.py" "$@" ;;
   # Reads the database and nothing else: no serial port, no adapter.
   battery) shift; exec "$OMACAR_PY" "$ROOT/lib/battery_health.py" "$@" ;;
+  # The 12 V while parked (lib/batterywatch.py, doc/battery-watch.md). Under the
+  # venv, where pyserial lives, for the one ATRV it asks the adapter.
+  battery-watch)
+    case "${2:-status}" in
+      install)
+        mkdir -p "$HOME/.config/systemd/user"
+        sed "s|__ROOT__|$ROOT|g" "$ROOT/share/systemd/omacar-batterywatch.service" \
+          > "$HOME/.config/systemd/user/omacar-batterywatch.service"
+        systemctl --user daemon-reload
+        systemctl --user enable --now omacar-batterywatch.service 2>&1 | sed 's/^/  /' ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/batterywatch.py" "$@" ;;
+    esac ;;
   cheatsheet|wallpaper) shift; exec python3 "$ROOT/lib/cheatsheet.py" "$@" ;;
   # SHUTTING DOWN IS A COMMAND, not two words buried in a button. The board
   # ran `systemctl poweroff` itself and looked at neither the exit code nor
   # the error, so a refusal was indistinguishable from a missed tap. Now the
   # button runs this, which means the failure can be reproduced from a shell.
   power) shift; exec python3 "$ROOT/lib/power.py" "$@" ;;
+  # Hybrid coaching: scores drives from the log, read-only (lib/coach.py).
+  coach) shift; exec python3 "$ROOT/lib/coach.py" "$@" ;;
+  # Ready for a long drive? The stored half of the pre-trip check and the
+  # maintenance gaps (lib/pretrip.py). Reads only; stdlib.
+  pretrip) shift; exec python3 "$ROOT/lib/pretrip.py" "$@" ;;
+  # The tablet's own battery: health, heat, the UEFI limit (doc/tablet-battery.md).
+  # Reads sysfs only; any python.
+  tabletbatt) shift; exec python3 "$ROOT/lib/tabletbatt.py" "$@" ;;
+  # The Dometic CFX3 over Bluetooth (lib/fridge.py). Under the venv, where
+  # bleak lives; `setup` puts it there.
+  fridge)
+    case "${2:-status}" in
+      setup)
+        omacar_need_env
+        "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/fridge.py" "$@" ;;
+    esac ;;
+  # Where the car is (lib/location.py) and what that means: arriving home,
+  # pre-cooling the fridge for a pickup (lib/arrival.py). Stdlib only, so any
+  # python; no radio and no car.
+  location) shift; exec python3 "$ROOT/lib/location.py" "$@" ;;
+  places) exec python3 "$ROOT/lib/location.py" "$@" ;;
+  arrival) shift; exec python3 "$ROOT/lib/arrival.py" "$@" ;;
+  # The posted speed limit from an offline OpenStreetMap database
+  # (lib/speedlimit.py). Stdlib only; the database is built on a desktop.
+  speedlimits) shift; exec python3 "$ROOT/lib/speedlimit.py" "$@" ;;
+  # The trip journal (lib/journal.py, doc/journal.md): one entry per drive.
+  # Plain python; no radio, no venv.
+  journal) shift; exec python3 "$ROOT/lib/journal.py" "$@" ;;
+  # The fuel log (lib/fuel.py, doc/fuel-log.md): fill-ups, real economy. Reads
+  # live.json and the record; no radio, no serial port, no network.
+  fuel) shift; exec "$OMACAR_PY" "$ROOT/lib/fuel.py" "$@" ;;
+  # Tyre pressures heard by an RTL-SDR running rtl_433 (lib/tpms.py). Plain
+  # python: it needs rtl_433 (a system package) and nothing from the venv.
+  tpms) shift; exec python3 "$ROOT/lib/tpms.py" "$@" ;;
+  # The Work dashboard's window on the Work relay (lib/workclient.py): `status`
+  # prints what the screen is told; `sim` writes a SIMULATED relay's answers.
+  workdash) shift; exec python3 "$ROOT/lib/workclient.py" "$@" ;;
+  # Hands-free calls: the phone as gateway, oFono as the hands-free unit
+  # (lib/calls.py). stdlib only, and busctl talks to oFono.
+  calls) shift; exec python3 "$ROOT/lib/calls.py" "$@" ;;
+  # The Valentine One radar detector over Bluetooth LE (lib/v1.py). Under the
+  # venv, where bleak lives; `setup` puts it there. `sim` and `status` need no
+  # radio, and run on any python.
+  v1)
+    case "${2:-status}" in
+      setup)
+        omacar_need_env
+        "$OMACAR_VENV/bin/pip" install -q bleak && echo "  bleak installed in $OMACAR_VENV" ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/v1.py" "$@" ;;
+    esac ;;
+  # Offline voice commands (lib/voice.py). Under the venv, where openwakeword
+  # and faster-whisper live; `setup` puts them there. `status`, `say` and `sim`
+  # need neither.
+  voice)
+    case "${2:-status}" in
+      setup)
+        omacar_need_env
+        "$OMACAR_VENV/bin/pip" install -q openwakeword faster-whisper numpy \
+          && "$OMACAR_PY" -c 'import openwakeword; openwakeword.utils.download_models()' \
+          && "$OMACAR_PY" -c 'from faster_whisper import WhisperModel; WhisperModel("tiny.en", device="cpu", compute_type="int8")' \
+          && echo "  openwakeword, its models and faster-whisper tiny.en installed in $OMACAR_VENV" ;;
+      *) shift; exec "$OMACAR_PY" "$ROOT/lib/voice.py" "$@" ;;
+    esac ;;
+  # The cabin and outdoor sensor nodes on USB (lib/envnode.py). pyserial lives
+  # in the venv with the daemon's.
+  env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
+  # Accessibility: what OmaCar follows from OmaAccess, or its own settings.
+  access) shift; exec "$OMACAR_PY" "$ROOT/lib/access.py" "$@" ;;
+  # The car widget kit: Omarchy apps and plugins on the car screen.
+  carkit) shift; exec python3 "$ROOT/lib/carkit.py" "$@" ;;
+  # The tablet's ambient light sensor, read-only (lib/ambient.py).
+  ambient) shift; exec python3 "$ROOT/lib/ambient.py" "$@" ;;
+  # The back-seat screen (lib/rear.py, doc/rear-screen.md): pair, revoke, serve.
+  rear) shift; exec python3 "$ROOT/lib/rear.py" "$@" ;;
+  # The owner's outbox, shared by every alert that has to reach a phone.
+  notify) shift; exec python3 "$ROOT/lib/notify.py" "$@" ;;
+  # Asleep when the car is parked, awake when it starts (doc/ignition.md).
+  ignition)
+    case "${2:-status}" in
+      install) ignition_install ;;
+      uninstall) ignition_uninstall ;;
+      *) shift; exec python3 "$ROOT/lib/ignition.py" "$@" ;;
+    esac ;;
+  # Valet mode: hand the car over, keep what is yours (lib/valet.py, doc/valet.md).
+  valet) shift; exec python3 "$ROOT/lib/valet.py" "$@" ;;
+  # Where did I park? (lib/parkspot.py, doc/parking.md.) Stdlib only.
+  parked) shift; exec python3 "$ROOT/lib/parkspot.py" "$@" ;;
+  # Self-update: fetch, build beside, prove, switch, watch, undo (doc/update.md).
+  update) shift; exec python3 "$ROOT/lib/update.py" "$@" ;;
   # Offline and credential-free by construction: it reads a file another
   # machine left here. `send` is the half that runs at home.
   nursery) shift; exec python3 "$ROOT/lib/nursery.py" "$@" ;;
+  # A child left in the car (lib/childalert.py, doc/child-alert.md): the card,
+  # the outbox and the chime after a switch-off with the car seat occupied.
+  child-alert) shift; exec python3 "$ROOT/lib/childalert.py" "$@" ;;
   board)
     # THE SAME REFERENCE, AS A SURFACE YOU CAN PRESS. A wallpaper is an image
     # and an image takes no input; what sits between the wallpaper and your

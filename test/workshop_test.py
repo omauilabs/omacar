@@ -1072,8 +1072,10 @@ _looks = (_share / "js" / "looks.js").read_text(encoding="utf-8")
 
 ok("the lasers effect is gone from the effects module", "lasers" not in _fx)
 ok("and no look still asks for it", "laser" not in _looks)
+# "lasers", the effect's own name: a radar detector's laser (lidar) alert
+# (share/js/radarui.js) is a different thing, and is allowed to say so.
 ok("nothing anywhere in the app still references it",
-   not any("laser" in (_share / "js" / f.name).read_text(encoding="utf-8")
+   not any("lasers" in (_share / "js" / f.name).read_text(encoding="utf-8")
            for f in (_share / "js").glob("*.js")))
 
 # A look names an effect by string. Point one at an effect that does not exist
@@ -1717,6 +1719,13 @@ ok("and one built and never appended gives up rather than polling for ever",
 # fails nothing, which is exactly why it needs asserting.
 _html = (_share / "app.html").read_text(encoding="utf-8")
 _linked = set(re.findall(r'href="css/([a-z0-9-]+\.css)"', _html))
+_in_app = set(_linked)      # app.html's own, for the order check below
+# A separate page's own sheet counts as linked when that page links it: the
+# back-seat screen (share/rear.html, its own allow-listed server) never loads
+# app.html, and app.html must never load its sheet.
+for _page in _share.glob("*.html"):
+    if _page.name != "app.html":
+        _linked |= set(re.findall(r'href="(?:/)?css/([a-z0-9-]+\.css)', _page.read_text(encoding="utf-8")))
 _ondisk = {p.name for p in (_share / "css").glob("*.css")}
 _orphans = sorted(_ondisk - _linked)
 # The names go in the label rather than a third argument: ok() takes exactly
@@ -1727,7 +1736,7 @@ ok("every stylesheet on disk is linked by app.html"
    not _orphans)
 ok("and app.css is first, since the rest build on its tokens",
    _html.index('href="css/app.css"')
-   == min(_html.index(f'href="css/{n}"') for n in _linked))
+   == min(_html.index(f'href="css/{n}"') for n in _in_app))
 
 head("A profile that says what the car is made of")
 

@@ -1,0 +1,17 @@
+[Unit]
+Description=OmaCar parked — save where the car was left, with two pictures, when it is turned off
+Documentation=file:__ROOT__/doc/parking.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python, stdlib only. Reads the charger, live.json, location.json and
+# the cameras' live pictures; writes parks.jsonl and parks/. Never touches the
+# recorder, never writes to the car.
+ExecStart=/usr/bin/python3 __ROOT__/lib/parkspot.py run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

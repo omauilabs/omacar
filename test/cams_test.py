@@ -95,7 +95,83 @@ check("a role's resolution cap comes from the file", _cfg["caps"]["rear"], (1280
 check("and a cap that is not three numbers is ignored", _cfg["caps"]["front"], (1920, 1080, 30))
 os.remove(camstore.config_path())
 
-# ------------------------------------------------------- a mistyped pattern
+# ------------------------------------------------------------ rotation
+head("a camera mounted upside down is turned back the right way up")
+
+check("with no file, nothing is turned", camstore.load_config()["rotate"],
+      {"front": 0, "rear": 0, "cabin": 0})
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"rotate": {"front": 180, "rear": 45, "cabin": True, "nope": 90}}, f)
+_cfg = camstore.load_config()
+check("a role's rotation comes from the file; 45, true and unknown roles are ignored",
+      _cfg["rotate"], {"front": 180, "rear": 0, "cabin": 0})
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"budget_gb": 12}, f)
+camstore.set_rotate("rear", 90)
+camstore.set_rotate("front", 180)
+with open(camstore.config_path(), encoding="utf-8") as f:
+    _saved = json.load(f)
+check("set_rotate() writes the role and keeps the rest of the file",
+      _saved, {"budget_gb": 12, "rotate": {"rear": 90, "front": 180}})
+camstore.set_rotate("rear", 0)
+camstore.set_rotate("front", 0)
+with open(camstore.config_path(), encoding="utf-8") as f:
+    check("and 0 takes it back out again", json.load(f), {"budget_gb": 12})
+try:
+    camstore.set_rotate("front", 45)
+    bad("set_rotate() refused 45 degrees")
+except ValueError:
+    ok("set_rotate() refused 45 degrees")
+os.remove(camstore.config_path())
+
+_m = {"fmt": "MJPG", "w": 1920, "h": 1080, "fps": 30.0}
+check("180 is a flip both ways, before the split, so clips and live agree",
+      "[0:v]hflip,vflip,split=2" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d", rotate=180)),
+      True)
+check("90 and 270 are a transpose each way",
+      ("[0:v]transpose=clock,split" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d", rotate=90))
+       and "[0:v]transpose=cclock,split" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d",
+                                                                      rotate=270))), True)
+check("and 0 adds nothing", "[0:v]split=2" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d")),
+      True)
+
+
+class _Alive:
+    def __init__(self, rotate):
+        self.rotate, self.stopped, self.error = rotate, False, None
+
+    def alive(self):
+        return not self.stopped
+
+    def stop(self):
+        self.stopped = True
+
+
+_r = cams.Recorder()
+_old = _Alive(0)
+_r.cams["front"] = _old
+_r.retry_at["front"] = time.time() + 60
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"rotate": {"front": 180}, "patterns": {"front": "", "rear": "", "cabin": ""}}, f)
+_r.discover()
+check("a new rotation stops the running camera, so discovery starts it turned",
+      (_old.stopped, "front" in _r.cams), (True, False))
+_same = _Alive(180)
+_r.cams["front"] = _same
+_r.discover()
+check("and a camera already turned the right way is left alone", _same.stopped, False)
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"rotate": {"front": 180}, "flip": {"front": "horizontal"},
+               "patterns": {"front": "", "rear": "", "cabin": ""}}, f)
+_r.discover()
+check("a new flip stops the running camera too (it had none)", _same.stopped, True)
+_flipped = _Alive(180)
+_flipped.flip = "horizontal"
+_r.cams["front"] = _flipped
+_r.discover()
+check("and one already flipped the right way is left alone", _flipped.stopped, False)
+os.remove(camstore.config_path())
+
 head("one mistyped pattern disables only that role, never the recorder")
 
 with open(camstore.config_path(), "w", encoding="utf-8") as f:
@@ -566,6 +642,130 @@ check("the same stop from the car does", len(camstore.load_events()["events"]), 
 cams._live = _real_live
 
 # ------------------------------------------------------------ the API's view
+# ------------------------------------------------------------ focus lock
+head("focus: a road camera does not hunt for raindrops")
+
+# `v4l2-ctl --list-ctrls` from a C920 on a recent kernel, and the older names.
+C920_CTRLS = """
+User Controls
+
+                     brightness 0x00980900 (int)    : min=0 max=255 step=1 default=128 value=128
+
+Camera Controls
+
+                  auto_exposure 0x009a0901 (menu)   : min=0 max=3 default=3 value=3 (Aperture Priority Mode)
+                 focus_absolute 0x009a090a (int)    : min=0 max=250 step=5 default=0 value=30 flags=inactive
+     focus_automatic_continuous 0x009a090c (bool)   : default=1 value=1
+"""
+OLD_CTRLS = """
+                 focus_absolute 0x009a090a (int)    : min=0 max=255 step=5 default=0 value=0 flags=inactive
+                     focus_auto 0x009a090c (bool)   : default=1 value=1
+"""
+FIXED_CTRLS = """
+                     brightness 0x00980900 (int)    : min=-64 max=64 step=1 default=0 value=0
+"""
+ctl = cams.parse_ctrls(C920_CTRLS)
+check("the controls are read, with their ranges",
+      (ctl["focus_absolute"]["min"], ctl["focus_absolute"]["max"], ctl["focus_absolute"]["step"],
+       ctl["focus_automatic_continuous"]["value"], ctl["brightness"]["min"]), (0, 250, 5, 1, 0))
+check("infinity: autofocus off first, then the far end",
+      cams.focus_plan(ctl, "infinity"),
+      (["focus_automatic_continuous=0", "focus_absolute=0"], "focus locked at infinity"))
+check("the older control name works the same",
+      cams.focus_plan(cams.parse_ctrls(OLD_CTRLS), "infinity")[0],
+      ["focus_auto=0", "focus_absolute=0"])
+check("a number is held to the camera's range and step",
+      [cams.focus_plan(ctl, 33)[0][-1], cams.focus_plan(ctl, 999)[0][-1]],
+      ["focus_absolute=35", "focus_absolute=250"])
+check("auto turns autofocus back on, and touches nothing else",
+      cams.focus_plan(ctl, "auto"), (["focus_automatic_continuous=1"], "focus: auto"))
+check("a fixed-focus camera is left alone, and said to be",
+      cams.focus_plan(cams.parse_ctrls(FIXED_CTRLS), "infinity"), ([], "fixed focus (nothing to lock)"))
+
+calls = []
+
+
+def fake_run(argv, **kw):
+    calls.append(argv[3] if len(argv) > 3 else argv[2])
+    out = C920_CTRLS if "--list-ctrls" in argv else ""
+    return subprocess.CompletedProcess(argv, 0, out, "")
+
+
+note = cams.apply_focus("/dev/v4l/by-id/x", "infinity", run=fake_run)
+check("one v4l2-ctl call per control, autofocus off before the focus is set",
+      (calls, note), (["--list-ctrls", "--set-ctrl=focus_automatic_continuous=0",
+                       "--set-ctrl=focus_absolute=0"], "focus locked at infinity"))
+
+
+def refusing_run(argv, **kw):
+    if "--list-ctrls" in argv:
+        return subprocess.CompletedProcess(argv, 0, C920_CTRLS, "")
+    return subprocess.CompletedProcess(argv, 1, "", "VIDIOC_S_EXT_CTRLS: failed: Permission denied")
+
+
+check("a refusal is a note, never an exception",
+      cams.apply_focus("/dev/x", "infinity", run=refusing_run).startswith("focus not set: VIDIOC_S_EXT_CTRLS"),
+      True)
+check("no v4l2-ctl at all is a note too",
+      cams.apply_focus("/dev/x", "infinity",
+                       run=lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("v4l2-ctl"))),
+      "focus not set: v4l2-ctl")
+
+check("by default the road cameras lock at infinity and the cabin stays auto",
+      camstore.load_config("/nonexistent")["focus"],
+      {"front": "infinity", "rear": "infinity", "cabin": "auto"})
+_fcfg = os.path.join(SCRATCH, "focus.json")
+with open(_fcfg, "w") as f:
+    json.dump({"budget_gb": 7, "focus": {"front": "auto", "cabin": 120, "rear": "sharp", "roof": 1}}, f)
+check("the file's setting wins; a bad value and an unknown role are ignored",
+      camstore.load_config(_fcfg)["focus"], {"front": "auto", "rear": "infinity", "cabin": 120})
+check("set_focus writes one role and keeps the rest of the file",
+      (camstore.set_focus("rear", "40", _fcfg), json.load(open(_fcfg))["budget_gb"],
+       json.load(open(_fcfg))["focus"]["rear"]), (40, 7, 40))
+for bad_role, bad_val in (("roof", "auto"), ("front", "sharp"), ("front", -1), ("front", True)):
+    try:
+        camstore.set_focus(bad_role, bad_val, _fcfg)
+        bad(f"set_focus({bad_role!r}, {bad_val!r}) was accepted")
+    except ValueError:
+        ok(f"set_focus({bad_role!r}, {bad_val!r}) is refused")
+
+
+# ------------------------------------------------------------ flip
+head("flip: a car's own backup camera, mirrored back")
+
+_m = {"fmt": "MJPG", "w": 640, "h": 480, "fps": 30.0}
+
+
+def _graph(**kw):
+    a = cams.ffmpeg_args("rear", _m, "/tmp/x", device="/dev/v", **kw)
+    return a[a.index("-filter_complex") + 1]
+
+
+check("no flip: the picture is split as it comes", _graph().startswith("[0:v]split=2"), True)
+check("horizontal mirrors it, before the split, so clips and live agree",
+      _graph(flip="horizontal").startswith("[0:v]hflip,split=2"), True)
+check("vertical mirrors it top to bottom; flip comes before a rotation",
+      [_graph(flip="vertical").split("split")[0], _graph(flip="horizontal", rotate=180).split("split")[0]],
+      ["[0:v]vflip,", "[0:v]hflip," + cams.ROTATE_FILTER[180]])
+check("an unknown flip does nothing rather than break the command",
+      _graph(flip="sideways").startswith("[0:v]split=2"), True)
+check("by default nothing is flipped", camstore.load_config("/nonexistent")["flip"],
+      {"front": "none", "rear": "none", "cabin": "none"})
+with open(_fcfg, "w") as f:
+    json.dump({"budget_gb": 7, "flip": {"rear": "Horizontal", "front": "both", "roof": "vertical"}}, f)
+check("the file's flip wins (any case); 'both' (now rotate 180) and an unknown role are ignored",
+      camstore.load_config(_fcfg)["flip"], {"front": "none", "rear": "horizontal", "cabin": "none"})
+check("set_flip writes one role and keeps the rest",
+      (camstore.set_flip("front", "vertical", _fcfg), json.load(open(_fcfg))["budget_gb"],
+       json.load(open(_fcfg))["flip"]), ("vertical", 7, {"rear": "Horizontal", "front": "vertical", "roof": "vertical"}))
+for bad_role, bad_val in (("roof", "none"), ("rear", "sideways"), ("rear", "both"), ("rear", 1)):
+    try:
+        camstore.set_flip(bad_role, bad_val, _fcfg)
+        bad(f"set_flip({bad_role!r}, {bad_val!r}) was accepted")
+    except ValueError:
+        ok(f"set_flip({bad_role!r}, {bad_val!r}) is refused")
+
+
 head("the recorder's own report, as the API reads it")
 
 
@@ -628,6 +828,17 @@ else:
               for c in _out), True)
     check("in H.264", _probe(_out[0], "-select_streams", "v", "-show_entries",
                              "stream=codec_name", "-of", "csv=p=0"), "h264")
+
+    _rdir = os.path.join(SCRATCH, "rotated")
+    os.makedirs(_rdir)
+    _p = subprocess.run(cams.ffmpeg_args("cabin", {"fmt": "SIM", "w": 640, "h": 480, "fps": 30.0},
+                                         _rdir, clip_secs=2, duration=3, rotate=90),
+                        capture_output=True, timeout=90)
+    _clip = sorted(os.listdir(_rdir))[0]
+    check("a camera turned 90 degrees records a portrait picture",
+          subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                          "stream=width,height", "-of", "csv=p=0", os.path.join(_rdir, _clip)],
+                         capture_output=True, text=True).stdout.strip(), "480,640")
 
 # ------------------------------------------------------------ the demo's cameras
 head("cams.py demo: footage on a loop, standing in for the live cameras")

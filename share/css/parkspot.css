@@ -1,0 +1,102 @@
+/* Where did I park: Home's card (share/js/parkspotcard.js) and the Parked
+   screen (share/js/views/parked.js). lib/parkspot.py is where it comes from.
+
+   The redesign's language: raised surfaces lit from above, captions over
+   values, status lamps with halos, no outlined capsules, tokens only so every
+   look follows. Prefix ps-/psc- (pk- is the sleep countdown, parking.css). */
+
+.ps [hidden], .hc-parkspot [hidden] { display: none !important; }
+
+/* ---- the source lamp ---------------------------------------------------- */
+.ps-src { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; flex: none;
+          font-size: .7rem; letter-spacing: .02em; color: var(--dim); white-space: nowrap; }
+.ps-lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.ps-src[data-tone="ok"] { color: var(--ok); }
+.ps-src[data-tone="ok"] .ps-lamp { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.ps-src[data-tone="warn"] { color: var(--warn); }
+.ps-src[data-tone="warn"] .ps-lamp { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+
+.ps-cap { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+
+/* ---- the screen --------------------------------------------------------- */
+.wrap:has(> .ps) { max-width: none; display: block; height: 100%; }
+.stage:has(> .wrap > .ps) { padding-bottom: 8px; }
+.ps { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px; min-height: 0; }
+.ps-head { display: flex; align-items: center; gap: 12px; color: var(--accent); }
+.ps-title { margin: 0; font-size: 1.15rem; font-weight: 600; color: var(--ink); }
+.ps-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; min-height: 0; }
+.ps-main { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 14px; min-height: 0; min-width: 0; }
+
+.ps-stills { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; min-height: 0; }
+.ps-still { position: relative; margin: 0; min-height: 0; overflow: hidden; border-radius: 18px;
+  background: linear-gradient(180deg, var(--raise), var(--panel));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 9%, transparent), 0 12px 30px -16px rgba(0, 0, 0, .65); }
+.ps-still img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.ps-still figcaption { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between;
+  padding: 26px 16px 12px; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .62)); font-variant-numeric: tabular-nums; }
+.ps-nostill { position: absolute; inset: 0; display: grid; place-items: center; font-size: .95rem; color: var(--dim); }
+
+.ps-facts { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1fr) minmax(0, 1.3fr); gap: 14px; }
+.ps-fact { display: grid; align-content: start; gap: 6px; padding: 14px 18px 16px; min-width: 0; }
+.ps-big { font-size: clamp(1.9rem, 5.2vh, 2.9rem); font-weight: 600; color: var(--ink); line-height: 1.05;
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-sub { font-size: .8rem; color: var(--ink-2); line-height: 1.35; }
+.ps-place { font-size: 1.35rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.15; }
+.ps-place[data-none="1"] { font-size: 1.1rem; font-weight: 500; color: var(--ink-2); }
+.ps-copy { justify-self: start; display: inline-flex; align-items: center; gap: 8px; margin-top: 4px;
+  min-height: var(--tap); padding: 0 16px; border: 0; border-radius: 14px; font: inherit; font-size: .9rem; color: var(--on-accent);
+  background: linear-gradient(180deg, var(--accent), var(--accent-fill)); cursor: pointer; touch-action: manipulation;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent); }
+.ps-copy:active { transform: scale(.97); }
+
+/* ---- the history -------------------------------------------------------- */
+.ps-side { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; min-height: 0; padding: 14px 10px 10px 14px;
+  border-radius: 18px; background: linear-gradient(180deg, var(--raise), var(--panel));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+.ps-list { display: grid; align-content: start; gap: 4px; overflow-y: auto; min-height: 0; padding-right: 4px; }
+.ps-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "t l" "p p" "s s"; gap: 1px 8px;
+  text-align: left; padding: 9px 12px; min-height: var(--tap); border: 0; border-radius: 12px; background: transparent;
+  color: var(--ink); font: inherit; cursor: pointer; touch-action: manipulation; }
+.ps-row[data-on="1"] { background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 26%, transparent),
+                                                            color-mix(in srgb, var(--accent-fill) 8%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 32%, transparent); }
+.ps-rt { grid-area: t; font-size: .92rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ps-rl { grid-area: l; font-size: .92rem; font-weight: 600; color: var(--accent); }
+.ps-rp { grid-area: p; font-size: .74rem; color: var(--dim); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-rs { grid-area: s; font-size: .68rem; color: var(--warn); letter-spacing: .04em; }
+
+.ps-empty { display: none; align-content: center; justify-items: center; gap: 8px; text-align: center; padding: 0 12%; }
+.ps[data-state="none"] .ps-grid { display: none; }
+.ps[data-state="none"] .ps-empty { display: grid; }
+.ps-empty-t { font-size: 1.5rem; font-weight: 600; color: var(--ink); }
+.ps-empty-s { font-size: .95rem; color: var(--ink-2); max-width: 46ch; line-height: 1.5; }
+
+@media (orientation: portrait) {
+  .ps-grid { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 190px; }
+  .ps-stills { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+  .ps-facts { grid-template-columns: 1fr 1fr; }
+  .ps-fact.ps-pl { grid-column: 1 / -1; }
+  .ps-list { grid-auto-flow: column; grid-auto-columns: 190px; overflow-x: auto; overflow-y: hidden; }
+}
+
+/* ---- Home's card -------------------------------------------------------- */
+.hc-parkspot { padding: 14px 16px 12px; display: grid; grid-template-rows: auto 1fr; gap: 8px; container-type: inline-size; }
+.psc-head { display: flex; align-items: center; gap: 8px; font-size: .78rem; color: var(--ink-2); }
+.hc-parkspot .ps-src { font-size: .66rem; }
+.psc-body { display: grid; grid-template-columns: minmax(0, 40%) 1fr; gap: 14px; min-height: 0; align-items: stretch; }
+.psc-pic { position: relative; min-height: 0; border-radius: 12px; overflow: hidden;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+.psc-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.psc-noimg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); }
+.psc-now { display: grid; align-content: center; gap: 3px; min-width: 0; }
+.psc-big { font-size: clamp(1.5rem, 9cqw, 2.3rem); font-weight: 600; color: var(--ink); line-height: 1.05;
+  white-space: nowrap; font-variant-numeric: tabular-nums; }
+.psc-line { font-size: .8rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.psc-lv { font-size: .8rem; font-weight: 600; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-parkspot[data-moving="1"] .psc-body { opacity: .55; }
+.hc-parkspot[data-state="none"] .psc-big { color: var(--dim); }

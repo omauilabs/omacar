@@ -17,6 +17,7 @@
 // citations and its confidence, so the reader can check the working.
 
 import { h, clear, store, api, toast, since, fullDate } from "../core.js";
+import { valet } from "../valet.js";
 
 // A recording handed over from the data lab. Stored in sessionStorage rather
 // than the hash so a long span does not end up in a URL, and cleared as soon
@@ -166,6 +167,8 @@ export default function advisor(root, { arg }) {
   }
 
   async function loadHistory() {
+    // Valet mode: the advisor's earlier answers are the owner's, not the valet's.
+    if (valet.on) { clear(past); return; }
     try {
       const { records } = await api.aiHistory();
       clear(past);

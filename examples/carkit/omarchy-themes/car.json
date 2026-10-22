@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "omarchy-themes",
+  "name": "Omarchy themes",
+  "icon": "themes",
+  "needs": { "network": false },
+  "data": { "command": ["./car-data"], "every_s": 10, "timeout_s": 3 },
+  "card": { "type": "metric", "label": "Current theme", "value": "$.current", "source": "omarchy" },
+  "screen": { "type": "stack", "children": [
+    { "type": "metric", "label": "Current theme", "value": "$.current", "source": "omarchy" },
+    { "type": "list", "items": "$.themes", "empty": "No Omarchy themes found",
+      "item": { "title": "$.name", "trailing": "$.mark", "action": "apply", "arg": "$.name" } }
+  ] },
+  "actions": {
+    "apply": { "label": "Apply theme", "command": ["omarchy-theme-set"], "arg": true, "moving": "parked" }
+  }
+}

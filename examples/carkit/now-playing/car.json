@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "id": "now-playing",
+  "name": "Now playing",
+  "icon": "music",
+  "needs": { "network": false },
+  "data": { "command": ["./car-data"], "every_s": 2, "timeout_s": 2 },
+  "card": { "type": "media", "title": "$.title", "artist": "$.artist", "playing": "$.playing",
+            "prev": "prev", "play": "toggle", "next": "next" },
+  "screen": { "type": "stack", "children": [
+    { "type": "media", "title": "$.title", "artist": "$.artist", "playing": "$.playing",
+      "prev": "prev", "play": "toggle", "next": "next" },
+    { "type": "text", "value": "$.player_line" }
+  ] },
+  "actions": {
+    "toggle": { "label": "Play / pause", "command": ["playerctl", "play-pause"], "moving": "allowed" },
+    "next":   { "label": "Next",         "command": ["playerctl", "next"],       "moving": "allowed" },
+    "prev":   { "label": "Previous",     "command": ["playerctl", "previous"],   "moving": "allowed" }
+  }
+}

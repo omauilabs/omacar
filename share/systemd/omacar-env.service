@@ -1,0 +1,16 @@
+[Unit]
+Description=OmaCar environment — reads the cabin and outdoor sensor nodes on USB
+Documentation=file:__ROOT__/doc/environment.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The venv's python: pyserial lives there, with the daemon's.
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/envnode.py run'
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target

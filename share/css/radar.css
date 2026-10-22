@@ -1,0 +1,170 @@
+/* Radar: Home's card, the banner across the stage, and the Radar view
+   (share/js/radar*.js). Same language as the dock and the console: a lit key
+   is a soft accent wash, tracks are soft and raised, captions sit over values,
+   status lamps carry a halo, nothing is an outlined capsule. Tokens only, so
+   Day and the red night look follow. Colour is never the only signal: the
+   band's name is always written beside its tone. */
+
+.rd-banner [hidden], .hc-radar [hidden], .rd-view [hidden] { display: none !important; }
+
+/* ---- shared parts ---------------------------------------------------- */
+[data-tone="bad"]  { --tn: var(--bad); }
+[data-tone="warn"] { --tn: var(--warn); }
+[data-tone="info"] { }
+.rd-cap { font-size: .68rem; letter-spacing: .02em; color: var(--dim); }
+.rd-dim { color: var(--dim); }
+.rd-line { font-size: .8rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.rd-src { display: inline-flex; align-items: center; gap: 7px; font-size: .68rem; letter-spacing: .02em;
+          color: var(--dim); white-space: nowrap; }
+.rd-lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.rd-src[data-tone="ok"] { color: var(--ok); }
+.rd-src[data-tone="ok"] .rd-lamp { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.rd-src[data-tone="warn"] { color: var(--warn); }
+.rd-src[data-tone="warn"] .rd-lamp { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+
+/* Eight segments, growing: a soft raised track, the lit ones in the tone. */
+.rd-bar { display: inline-flex; align-items: flex-end; gap: 3px; height: 34px; padding: 4px 6px; border-radius: 10px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.rd-bar i { display: block; width: 7px; border-radius: 2px; background: var(--track); }
+.rd-bar i:nth-child(1) { height: 22%; } .rd-bar i:nth-child(2) { height: 32%; } .rd-bar i:nth-child(3) { height: 42%; }
+.rd-bar i:nth-child(4) { height: 52%; } .rd-bar i:nth-child(5) { height: 64%; } .rd-bar i:nth-child(6) { height: 76%; }
+.rd-bar i:nth-child(7) { height: 88%; } .rd-bar i:nth-child(8) { height: 100%; }
+.rd-bar i[data-on="1"] { background: var(--tn, var(--info)); box-shadow: 0 0 8px color-mix(in srgb, var(--tn, var(--info)) 55%, transparent); }
+
+/* The V1's three arrows; the lit one in the tone. */
+.rd-arrows { flex: none; }
+.rd-ar { fill: var(--ghost); }
+.rd-ar[data-on="1"] { fill: var(--tn, var(--info)); filter: drop-shadow(0 0 5px color-mix(in srgb, var(--tn, var(--info)) 60%, transparent)); }
+
+/* Mute: a key. Lit (the dock's wash) while the detector is muted. */
+.rd-key { position: relative; isolation: isolate; display: inline-flex; align-items: center; gap: 8px; flex: none;
+  min-height: var(--tap); padding: 0 16px 0 12px; border: 0; border-radius: 14px; background: transparent;
+  color: var(--ink-2); font-size: .85rem; cursor: pointer; touch-action: manipulation;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4), color .14s; }
+.rd-key::before { content: ""; position: absolute; inset: 4px 2px; z-index: -1; border-radius: 11px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.rd-key[data-on="1"] { color: var(--ink); font-weight: 600; }
+.rd-key[data-on="1"]::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 52%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 18%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 50%, transparent),
+              0 6px 16px -8px color-mix(in srgb, var(--accent) 65%, transparent); }
+.rd-key:active:not(:disabled) { transform: scale(.94); }
+.rd-key:disabled { opacity: .4; cursor: default; }
+.rd-key-ico { display: grid; place-items: center; }
+
+/* ---- Home's card ---------------------------------------------------- */
+.hc-radar { display: grid; grid-template-rows: auto 1fr auto; gap: 6px; padding: 14px 16px 10px;
+            container-type: inline-size; isolation: isolate; }
+.hc-radar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--tn, var(--info)) 26%, transparent), transparent 62%);
+  transition: opacity .3s; }
+.hc-radar[data-state="alert"]::before { opacity: 1; }
+.rd-top { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--ink-2); min-width: 0; }
+.rd-top > svg { color: var(--info); flex: none; }
+.rd-top .rd-src { margin-left: auto; }
+.rd-body { min-height: 0; display: grid; align-items: center; }
+.rd-idle { display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: end; }
+.rd-today { display: grid; gap: 2px; }
+.rd-today-n { font-size: 3rem; font-weight: 600; line-height: .95; letter-spacing: -.03em; color: var(--ink); }
+.rd-today-k { font-size: .78rem; color: var(--dim); }
+.rd-idle-r { display: grid; gap: 3px; justify-items: end; min-width: 0; }
+.rd-active { display: grid; grid-template-columns: 1fr auto auto; gap: 18px; align-items: center; }
+.rd-pri { display: grid; gap: 0; min-width: 0; }
+.rd-head { display: flex; align-items: baseline; gap: 12px; line-height: .95; min-width: 0; }
+.rd-band { font-size: 3.4rem; font-weight: 700; letter-spacing: -.03em; color: var(--ink);
+           text-shadow: 0 0 26px color-mix(in srgb, var(--tn, var(--info)) 55%, transparent); }
+.rd-fq { display: inline-flex; align-items: baseline; gap: 5px; }
+.rd-freq { font-size: 1.9rem; font-weight: 600; color: var(--tn, var(--info)); font-variant-numeric: tabular-nums; }
+.rd-unit { font-size: .8rem; color: var(--dim); }
+.rd-dir { display: grid; justify-items: center; gap: 2px; }
+.rd-sig { display: grid; gap: 4px; justify-items: end; }
+.rd-sig .rd-bar { height: 52px; }
+.rd-others { font-size: .72rem; color: var(--ink-2); }
+.rd-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.rd-foot-l { color: var(--dim); font-size: .72rem; }
+.hc-radar[data-state="absent"] .rd-today-n, .hc-radar[data-state="offline"] .rd-today-n { color: var(--dim); }
+@container (max-width: 330px) {
+  .rd-idle { grid-template-columns: 1fr; }
+  .rd-idle-r { display: none; }
+  .rd-active { grid-template-columns: 1fr auto; }
+  .rd-sig { display: none; }
+  .rd-band { font-size: 2.6rem; }
+  .rd-freq { font-size: 1.4rem; }
+}
+
+/* ---- the banner ------------------------------------------------------ */
+.rd-banner { position: fixed; z-index: 80; height: 64px; display: flex; align-items: center; gap: 22px;
+  padding: 0 8px 0 18px; border-radius: 18px; pointer-events: none;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tn, var(--info)) 30%, var(--panel-2)), var(--panel-2) 70%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent),
+              0 12px 30px -12px color-mix(in srgb, var(--tn, var(--info)) 70%, black), 0 0 0 1px color-mix(in srgb, var(--tn, var(--info)) 22%, transparent);
+  opacity: 1; transition: opacity .6s ease; }
+.rd-banner[data-phase="fading"] { opacity: .55; }
+.rd-banner .rd-key { pointer-events: auto; margin-left: auto; }
+.rb-lamp { width: 10px; height: 10px; border-radius: 50%; background: var(--tn, var(--info)); flex: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tn, var(--info)) 18%, transparent), 0 0 14px color-mix(in srgb, var(--tn, var(--info)) 70%, transparent); }
+.rb-id { display: grid; line-height: 1.05; }
+.rb-cap { font-size: .68rem; color: var(--ink-2); }
+.rb-head { display: flex; align-items: baseline; gap: 10px; }
+.rb-band { font-size: 2rem; font-weight: 700; color: var(--ink); }
+.rb-freq { font-size: 1.3rem; font-weight: 600; color: var(--tn, var(--info)); font-variant-numeric: tabular-nums; }
+.rb-others { font-size: .9rem; color: var(--ink); font-weight: 600; }
+/* "Over the limit" (share/js/speedlimit.js): words in the warn tone, never a sound. */
+.rb-over { font-size: .95rem; font-weight: 600; color: var(--warn); letter-spacing: .02em; }
+.rd-banner .rd-bar { height: 40px; }
+
+/* ---- the Radar view --------------------------------------------------- */
+.wrap:has(> .rd-view) { max-width: none; display: block; height: 100%; }
+.rd-view { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+.rd-vhead { display: flex; align-items: center; gap: 12px; color: var(--info); }
+.rd-vtitle { margin: 0; font-size: 1.15rem; font-weight: 600; color: var(--ink); }
+.rd-vhead .rd-src { margin-left: auto; }
+.rd-vgrid { flex: 1; min-height: 0; display: grid; gap: 12px; grid-template-columns: 330px 1fr; }
+.rd-left, .rd-right { display: flex; flex-direction: column; gap: 12px; min-height: 0; min-width: 0; }
+.rd-vgrid .card { min-height: 0; min-width: 0; overflow: hidden; }
+.rd-c-compass { display: grid; align-content: start; justify-items: center; gap: 12px; }
+.rd-c-compass .rd-cap { justify-self: start; }
+.rd-c-table { flex: none; }
+.rd-c-log { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.rd-c-facts { flex: 1; display: grid; align-content: start; gap: 8px; }
+.rd-sech { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.rd-ring { fill: none; stroke: var(--hair); stroke-width: 1.5; }
+.rd-ring-in { stroke-dasharray: 2 6; }
+.rd-car { fill: var(--panel-2); stroke: var(--edge-2); stroke-width: 1.5; }
+.rd-glass { fill: var(--track); }
+.rd-wedge { fill: none; stroke: var(--track); stroke-width: 18; stroke-linecap: round; opacity: .55; }
+.rd-wedge[data-on="1"] { stroke: var(--tn, var(--info)); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--tn, var(--info)) 60%, transparent)); }
+.rd-count { font-size: 40px; font-weight: 600; fill: var(--dim); font-variant-numeric: tabular-nums; }
+.rd-count[data-on="1"] { fill: var(--ink); }
+.rd-bl-row { display: flex; gap: 14px; }
+.rd-bl { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--dim); }
+.rd-bl i { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); }
+.rd-bl[data-on="1"] { color: var(--ink); font-weight: 600; }
+.rd-bl[data-on="1"] i { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px var(--warn); }
+.rd-bl[data-band="Laser"][data-on="1"] i { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 16%, transparent), 0 0 9px var(--bad); }
+.rd-bl[data-band="K"][data-on="1"] i, .rd-bl[data-band="X"][data-on="1"] i { background: var(--info); box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 16%, transparent), 0 0 9px var(--info); }
+.rd-pl { font-size: .9rem; color: var(--ink-2); min-height: 1.2em; }
+.rd-rows, .rd-log { display: grid; gap: 4px; align-content: start; min-height: 0; }
+.rd-log { overflow-y: auto; }
+.rd-row, .rd-lrow { display: grid; align-items: center; gap: 14px; padding: 6px 10px; border-radius: 12px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground))); }
+.rd-row { grid-template-columns: 1fr 90px 40px auto; min-height: 50px; }
+.rd-row[data-pri="1"] { background: linear-gradient(90deg, color-mix(in srgb, var(--tn, var(--info)) 26%, var(--panel-2)), var(--panel-2) 80%); }
+.rd-rh { font-size: 1.35rem; font-weight: 600; color: var(--ink); }
+.rd-rd, .rd-ld, .rd-lt { font-size: .8rem; color: var(--dim); }
+.rd-lrow { grid-template-columns: 76px 1fr 80px auto; padding: 3px 10px; }
+.rd-lh { color: var(--ink); font-weight: 500; }
+.rd-lrow .rd-bar, .rd-row .rd-bar { height: 28px; }
+.rd-empty { padding: 18px 4px; color: var(--dim); font-size: .9rem; }
+.rd-facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: .8rem; }
+.rd-facts dt { color: var(--dim); } .rd-facts dd { margin: 0; color: var(--ink-2); text-align: right; }
+@media (orientation: portrait) {
+  .rd-vgrid { grid-template-columns: 1fr; overflow-y: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .rd-key, .rd-banner, .hc-radar::before { transition: none; } }

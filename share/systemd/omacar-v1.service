@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar radar — holds the Bluetooth link to the Valentine One
+Documentation=file:__ROOT__/doc/radar.md
+After=bluetooth.target graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The venv's python: bleak lives there (omacar v1 setup).
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/v1.py run'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -49,6 +49,38 @@ python3 "$ROOT/test/guards_test.py" || fails=$((fails + 1))
 # read as a refusal. Every hyprctl is a stand-in and is the whole of PATH, so no
 # real screen can go dark. Listed here on the day it was written.
 python3 "$ROOT/test/power_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/fridge_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/access_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/a11y_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/coach_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/pretrip_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/journal_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/fuel_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/tpms_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/clips_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/tabletbatt_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/calls_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/learncar_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/env_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/ambient_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/v1_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/envble_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/ignition_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/batterywatch_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/workdash_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/notify_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/carkit_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/childalert_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/valet_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/voice_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/arrival_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/parkspot_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/speedlimit_test.py" || fails=$((fails + 1))
+# The back-seat screen: the rear token's route allow-list (every other route
+# 403s), the note's rate limit, and ETA honesty. A real --rear server on a
+# scratch port. The page's words are test/js/rear.test.js, run by js_test.py.
+python3 "$ROOT/test/rear_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/update_test.py" || fails=$((fails + 1))
 
 python3 "$ROOT/test/calendar_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/shaders_test.py" || fails=$((fails + 1))
@@ -97,6 +129,11 @@ python3 "$ROOT/test/driveway_e2e_test.py" || fails=$((fails + 1))
 # real shell; Chromium is a stand-in and every port and directory is a scratch
 # one.
 python3 "$ROOT/test/srvwatch_test.py" || fails=$((fails + 1))
+
+# Work by voice: settings, gates, intent, sessions, relay, routes (doc/design/2026-10-13-work-voice-relay.md).
+for t in workcfg workgates workintent workpark workvoice worksession workrelay workroutes; do
+  python3 "$ROOT/test/${t}_test.py" || fails=$((fails + 1))
+done
 
 # The workshop's own logic — units, the service countdown, Mode 06 verdicts,
 # the advisor's evidence check, the theme derivation and the drive-mode gauges.
@@ -164,6 +201,7 @@ done
 python3 "$ROOT/test/cams_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/camserve_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/audio_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/eq_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/vendor_test.py" || fails=$((fails + 1))
 python3 "$ROOT/test/drowsy_test.py" || fails=$((fails + 1))
 # ---- end redesign/cameras -----------------------------------------------------

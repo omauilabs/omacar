@@ -12,9 +12,25 @@ import { record } from "./trail.js";
 import { ICONS } from "./icons.js";
 import { learn } from "./learn.js";
 import { savedLook, saveLook, applyLook, nextLook, lookById } from "./looks.js";
+import { startSunLooks, sunSettingsBlock } from "./sunui.js";
 import { privacy } from "./privacy.js";
+import { valet, hidesView, landing, lockReason } from "./valet.js";
+import { refreshValet, turnOn as valetOn, leave as valetLeave, showReport, valetLamp } from "./valetui.js";
 import { onboard, showOnboarding } from "./onboard.js";
+import { startAccess, accessScale, onAccess, say } from "./a11y.js";
+import { accessSettingsBlock } from "./a11yui.js";
 import home from "./views/home.js";
+import cabinView from "./views/cabin.js";
+import childAlertView from "./views/childalert.js";
+import fridgeScreen from "./views/fridge.js";
+import appsView from "./views/apps.js";
+import appView from "./views/app.js";
+import pretripView from "./views/pretrip.js";
+import fuelLogView from "./views/fuel.js";
+import bwatchView from "./views/bwatch.js";
+import batteryScreen from "./views/battery.js";
+import callsScreen from "./views/calls.js";
+import learnCarView from "./views/learncar.js";
 import vehicleView from "./views/vehicle.js";
 import documentsView from "./views/documents.js";
 import themesView from "./views/themes.js";
@@ -22,8 +38,12 @@ import replayView from "./views/replay.js";
 import resetsView from "./views/resets.js";
 import learnView from "./views/learnview.js";
 import imaView from "./views/ima.js";
+import coachScreen from "./views/coach.js";
 import launcherView from "./views/launcher.js";
 import effectsView from "./views/effects.js";
+import environmentView from "./views/environment.js";
+import eqView from "./views/eq.js";
+import tiresView from "./views/tires.js";
 import nurseryView from "./views/nursery.js";
 import { createOmaPlay } from "./omaplay/layer.js";
 import { mockSource, dongleSource } from "./omaplay/source.js";
@@ -128,6 +148,7 @@ import data from "./views/data.js";
 import health from "./views/health.js";
 import service from "./views/service.js";
 import history from "./views/history.js";
+import journalView from "./views/journal.js";
 import advisor from "./views/advisor.js";
 import tests from "./views/tests.js";
 import writeView from "./views/write.js";
@@ -138,8 +159,13 @@ import concernsView from "./views/concerns.js";
 import live from "./views/live.js";
 import navigationView from "./views/navigation.js";
 import roadcamsView from "./views/roadcams.js";
+import radarView from "./views/radar.js";
+import placesView from "./views/places.js";
+import parkedView from "./views/parked.js";
+import workView, { pollWork } from "./views/work.js";
 import camerasView from "./views/cameras.js";
-import workView from "./views/work.js";
+import clipsView from "./views/clips.js";
+import workDashView from "./views/workdash.js";
 import { badge } from "./provenance.js";
 
 
@@ -181,10 +207,19 @@ const TABS = [
     views: [
       { id: "roadcams",   label: "Road cameras", title: "Road cameras", mount: roadcamsView, fast: true },
       { id: "navigation", label: "Maps",         title: "Maps",         mount: navigationView },
+      // The Valentine One (lib/v1.py). Its own feed, so not FAST.
+      { id: "radar",      label: "Radar",        title: "Radar detector", mount: radarView },
+      // Home, the pickup places, and the one-tap "heading to a pickup"
+      // (lib/arrival.py). Editing is parked-only inside the view.
+      { id: "places",     label: "Places",       title: "Places",         mount: placesView },
+      // Where the car was left: the stills, the level, the place (lib/parkspot.py).
+      { id: "parked",     label: "Parked",       title: "Where I parked", mount: parkedView },
     ] },
   { id: "cameras", label: "Cameras", icon: ICONS.camera,
     views: [
       { id: "cameras", label: "Cameras", title: "Cameras", mount: camerasView },
+      // Incident clips (lib/clips.py): hard braking, a jolt or a tap, kept.
+      { id: "clips",   label: "Clips",   title: "Incident clips", mount: clipsView },
     ] },
   { id: "vehicle", label: "Vehicle", icon: ICONS.vehicle,
     groups: [
@@ -201,6 +236,10 @@ const TABS = [
         { id: "live",   label: "Cluster",  title: "Cluster",                 mount: live,       fast: true },
         { id: "data",   label: "Live lab", title: "Data lab",                mount: data,       fast: true },
         { id: "replay", label: "Replay",   title: "Replay a recorded drive", mount: replayView, tier: "power" },
+        // A guided, parked, listen-only routine that labels the bus (lib/learncar.py).
+        // Not `write`: it sends nothing. It locks itself while the car moves
+        // (store.lockedAsMoving, read inside the view), greyed with the reason.
+        { id: "learncar", label: "Learn my car", title: "Learn my car", mount: learnCarView, tier: "power" },
         // Actuator commands. Two taps from the bar, never one, and the chip
         // greys out with the reason on it while the car is moving.
         { id: "tests",  label: "Tests",    title: "Functional tests",        mount: tests, fast: true, write: true, tier: "technician" },
@@ -209,12 +248,24 @@ const TABS = [
       // NOT BEHIND A TIER. "How is my battery" is an owner's question.
       { id: "hybrid", label: "Hybrid", views: [
         { id: "ima", label: "Battery", title: "Battery, motor and regen", mount: imaView },
+        { id: "coach", label: "Coach", title: "Hybrid coach", mount: coachScreen },
       ] },
       { id: "care", label: "Care", views: [
         { id: "service",   label: "Service", title: "Service schedule",                    mount: service },
+        // Parked-only: the view itself says "Available when you stop".
+        { id: "pretrip",   label: "Pre-trip", title: "Ready for a long drive?",            mount: pretripView },
+        // What the pump says the car gets (lib/fuel.py, doc/fuel-log.md).
+        { id: "fuel",      label: "Fuel",    title: "Fuel log",                            mount: fuelLogView },
+        // The 12 V while parked and the tablet's battery (lib/batterywatch.py). Slow data, so not `fast`.
+        { id: "bwatch",    label: "12 V",    title: "12 V battery while parked",           mount: bwatchView },
         { id: "resets",    label: "Resets",  title: "Service resets and functional tests", mount: resetsView, write: true, fast: true, tier: "technician" },
+        // Four tyre sensors heard by an RTL-SDR (lib/tpms.py). Also opened
+        // from Home's tyre callout. Its learn panel is parked-only inside the view.
+        { id: "tpms",      label: "Tires",   title: "Tire pressures",                      mount: tiresView },
         { id: "concerns",  label: "Trends",  title: "Areas of concern",                    mount: concernsView, tier: "power" },
         { id: "history",   label: "Log",     title: "Drive history and records",           mount: history },
+        // One card per drive, days as sections (lib/journal.py). Slow data.
+        { id: "journal",   label: "Journal", title: "Trip journal",                        mount: journalView },
         { id: "documents", label: "Docs",    title: "Receipts, registrations and records", mount: documentsView },
       ] },
       { id: "car", label: "Car", views: [
@@ -222,6 +273,34 @@ const TABS = [
         { id: "dash",   label: "Summary", title: "Overview",          mount: dash, fast: true },
         { id: "report", label: "Report",  title: "Vehicle report",    mount: report },
       ] },
+    ] },
+  // THE CABIN: what is in and around the car that is not the car -- the
+  // fridge now; air, sound and the garage door as their screens land. Kept
+  // out of Vehicle on purpose: Vehicle is the car's own systems, and a fridge
+  // among the trouble codes would make both harder to find.
+  { id: "cabin", label: "Cabin", icon: ICONS.cabin,
+    views: [
+      { id: "cabin",  label: "Overview", title: "Cabin",  mount: cabinView },
+      { id: "fridge", label: "Fridge",   title: "Fridge", mount: fridgeScreen },
+      // The phone as a hands-free car kit (lib/calls.py). The call itself is
+      // drawn over every screen by callsui.js; this is the rest of the time.
+      { id: "calls", label: "Calls", title: "Hands-free calls", mount: callsScreen, fast: true },
+      // The cabin and outdoor sensors' day (lib/envnode.py). Slow data (a
+      // point a minute), so not `fast`. Also opened from Home's card.
+      { id: "environment", label: "Air", title: "Environment", mount: environmentView, askable: true },
+      // The AUX equalizer. Its editing locks while the car moves by the same
+      // rule Home's Customize uses (store.lockedAsMoving, read inside the
+      // view), so it is not `write`: presets and bypass stay one tap at speed.
+      // Also opened from Settings and Music.
+      { id: "eq", label: "Sound", title: "Equalizer", mount: eqView, fast: true },
+      // Omarchy apps and plugins with a car.json, drawn by the car widget kit
+      // (share/js/carkit.js; doc/design/2026-10-17-car-widget-kit.md). FAST,
+      // so glance mode applies the moment the car moves.
+      { id: "apps", label: "Apps", title: "Car apps", mount: appsView, fast: true },
+      // A child left in the car (lib/childalert.py). Its settings lock while
+      // the car moves (store.lockedAsMoving, read inside the view); "Child
+      // aboard" stays one tap, because it only ever makes the alert likelier.
+      { id: "child-alert", label: "Child seat", title: "Child seat", mount: childAlertView },
     ] },
   // THE ADVISOR IS NOT HIDDEN WITHOUT AI. Its own screen says, when there is
   // no `claude` CLI, that it is not set up and what it needs -- an honest
@@ -231,6 +310,7 @@ const TABS = [
     views: [
       { id: "advisor", label: "Car",  title: "Oma Agent", mount: advisor },
       { id: "work",    label: "Work", title: "Work",      mount: workView },
+      { id: "workdash", label: "Sessions", title: "Work sessions", mount: workDashView },
     ] },
 ];
 
@@ -252,6 +332,9 @@ for (const t of TABS) {
 // voice assistant may still open (see `screens()`). Anything reachable only
 // from inside another screen belongs in this list and nowhere else.
 const OFF_NAV = [
+  // One car app's own screen, #app/<id>; opened from Cabin → Apps.
+  { id: "app", label: "App", title: "Car app", mount: appView, fast: true,
+    off: "opened from Cabin → Apps" },
   { id: "learn",  label: "Learn",  title: "Learn the car, and the app",
     mount: learnView, off: "opened from Settings" },
   { id: "themes", label: "Themes", title: "Build a palette of your own",
@@ -273,6 +356,9 @@ const OFF_NAV = [
     mount: musicView, fast: true, off: "opened from Home's phone card", askable: true },
   { id: "nursery", label: "Nursery", title: "The baby, from the road",
     mount: nurseryView, nursery: true, fast: true, off: "opened from Home's phone card", askable: true },
+  // The tablet's own battery: health, heat, the UEFI limit (lib/tabletbatt.py).
+  { id: "battery", label: "Tablet battery", title: "The tablet's battery, in a hot car",
+    mount: batteryScreen, off: "opened from Settings" },
 ];
 
 // Old addresses that still have to land somewhere: a bookmark, the dock card,
@@ -375,8 +461,16 @@ let fastTimer = null;
 function route() {
   const asked = (location.hash || "#" + HOME).slice(1).split("/")[0];
   const id = ALIASES[asked] || asked;
+  // VALET MODE: a hidden screen is not routable either. A bookmark, a deep
+  // link or a stale hash lands on Home, and go() says why, quietly.
+  const land = landing(id, valet.on, HOME);
+  if (land.notice) {
+    if (VIEWS.some((v) => v.id === id)) valetNotice = land.notice;
+    return VIEWS.find((v) => v.id === HOME);
+  }
   return VIEWS.find((v) => v.id === id) || VIEWS.find((v) => v.id === HOME);
 }
+let valetNotice = null;
 
 const tabOf = (v) => (v && v.tab) || null;
 const hiddenView = (v) => !!(v.nursery && !store.nurseryOn)
@@ -385,7 +479,9 @@ const hiddenView = (v) => !!(v.nursery && !store.nurseryOn)
                        // a tab for it mid-drive is a button that stops the car
                        // being read in order to check whether it can be read.
                        || !!v.hidden
-                       || !tierAllows(v);
+                       || !tierAllows(v)
+                       // Valet mode (share/js/valet.js): personal screens vanish.
+                       || hidesView(v.id);
 
 // The one piece of history the app keeps.
 //
@@ -419,6 +515,13 @@ function go() {
   cameFrom = (!barTap && from && !from.hidden && tabOf(from) !== tabOf(view)) ? from : null;
   barTap = false;
 
+  if (valetNotice) {
+    // Put the address right without a navigation, then say why, once.
+    try { window.history.replaceState(null, "", "#" + view.id); } catch { /* kiosk with no history */ }
+    toast(valetNotice);
+    valetNotice = null;
+  }
+
   const stage = document.getElementById("stage");
   if (unmount) { try { unmount(); } catch { /* a view that fails to clean up must not block the next one */ } }
   unmount = null;
@@ -448,8 +551,17 @@ function go() {
   // keyboard user at the top of what they just asked for. When the tap came
   // from the tab bar the button survives, and stealing focus off it would
   // stop anybody tabbing along the bar.
+  //
+  // Every screen has one level-one heading, its title (WCAG 1.3.1, 2.4.6), so
+  // a screen reader can say where you are and jump back to the top. A view
+  // that draws its own <h1> keeps it; the rest get one only the reader sees.
+  // Focus lands on that heading, which also announces it.
+  let heading = wrap.querySelector("h1");
+  if (!heading) { heading = h("h1.sr-only", view.title); wrap.prepend(heading); }
+  heading.tabIndex = -1;
   const bar = document.getElementById("navbar");
-  if (!bar || !bar.contains(document.activeElement)) stage.focus();
+  if (!bar || !bar.contains(document.activeElement)) heading.focus({ preventScroll: true });
+  else say(view.title);
 
   // Only poll fast for views that show a live value.
   //
@@ -631,7 +743,7 @@ function paintNavState() {
     c.disabled = block;
     c.classList.toggle("chip-locked", block);
     c.setAttribute("aria-disabled", block ? "true" : "false");
-    const why = block ? "Available when you stop" : "";
+    const why = block ? lockReason(valet.on, true) : "";
     if (c.title !== why) c.title = why;
   }
   // Only when the current chip actually changed. This runs four times a
@@ -663,7 +775,7 @@ function paintLead() {
   if (cameFrom) {
     lead.style.visibility = "visible";
     lead.dataset.go = cameFrom.id;
-    lead.textContent = "← " + cameFrom.label;
+    setLead(lead, "Back to", cameFrom.label);
     lead.classList.remove("chip-link");
     return;
   }
@@ -679,10 +791,23 @@ function paintLead() {
   lead.style.visibility = show ? "visible" : "hidden";
   if (show) {
     lead.dataset.go = HOME;
-    lead.textContent = auto.mode === "moving" ? "Car moving — open Home"
-                                              : "Car connected — open Home";
+    setLead(lead, auto.mode === "moving" ? "Car moving" : "Car connected", "Open Home");
     lead.classList.add("chip-link");
   }
+}
+
+// The lead's two lines -- what it is, then where it goes -- beside a chevron
+// in its own well. Rebuilt only when the words change, so a repaint every
+// poll never restarts the press animation under a thumb.
+function setLead(lead, kicker, label) {
+  const key = kicker + "\n" + label;
+  if (lead.dataset.words === key) return;
+  lead.dataset.words = key;
+  clear(lead);
+  lead.setAttribute("aria-label", `${kicker} ${label}`);
+  lead.append(
+    h("span.lead-well", { "aria-hidden": "true" }, icon(ICONS.chevron, 18)),
+    h("span.lead-txt", h("span.lead-k", kicker), h("span.lead-v", label)));
 }
 
 // ------------------------------------------------------------- the top bar
@@ -715,6 +840,9 @@ function buildBar() {
     onclick: () => { privacy.on = false; paintBar(); go(); },
   }, "VIN hidden");
   right.append(els.name, els.src, els.priv);
+  // Valet mode's lamp, in the console's style; hidden unless valet is on.
+  els.valet = valetLamp();
+  right.appendChild(els.valet.node);
 
   els.daynight = h("button.vbar-btn", {
     type: "button", id: "btn-daynight", hidden: true,
@@ -843,7 +971,9 @@ function paintBar() {
   const who = car ? (car.title || car.name || "") : "";
   els.name.hidden = onHome || !who;
   if (els.name.textContent !== who) els.name.textContent = who;
-  els.priv.hidden = !privacy.on;
+  // Valet implies privacy; its own lamp says so, so the pill steps aside.
+  els.priv.hidden = !privacy.on || valet.on;
+  els.valet.paint();
   if (DEMO && DEMO.afterBar) DEMO.afterBar(document.getElementById("vbar"));
 }
 
@@ -865,6 +995,8 @@ const GEAR = [
 // --tap tokens, so moving this moves the targets with the type rather than
 // leaving small buttons wearing big labels.
 const TEXT_SIZES = { small: 15, normal: 16, large: 18, huge: 20 };
+// From here up, the text is too big for a screen that does not scroll.
+const LARGE_TEXT_PX = 20;
 const TEXT_LABEL = { small: "Small", normal: "Normal", large: "Large", huge: "Huge" };
 
 function textSize() {
@@ -878,12 +1010,20 @@ function setTextSize(name) {
   document.documentElement.style.fontSize = px + "px";
 }
 
+// OmaCar's own size, times OmaAccess's text size (share/js/a11y.js): a person
+// who made the whole desktop bigger gets a bigger dashboard too.
 function applyTextSize() {
-  document.documentElement.style.fontSize =
-    (TEXT_SIZES[textSize()] || TEXT_SIZES.normal) + "px";
+  const px = Math.round((TEXT_SIZES[textSize()] || TEXT_SIZES.normal) * accessScale());
+  document.documentElement.style.fontSize = px + "px";
+  // Large text: fixed-height layouts (Home's grid) let their rows grow and
+  // the stage scroll, so nothing is cut off (WCAG 1.4.4; access.css).
+  document.documentElement.toggleAttribute("data-a11y-large", px >= LARGE_TEXT_PX);
 }
 
 function openSettings() {
+  // LOCKED IN VALET MODE. Settings are not for the person holding the keys;
+  // the one thing here is the way out, which asks for the PIN.
+  if (valet.on) { valetLeave(); return; }
   const host = document.getElementById("modal-host");
   const close = () => {
     host.hidden = true; clear(host); host.onclick = null;
@@ -949,6 +1089,14 @@ function openSettings() {
         }
       }));
 
+    // ACCESSIBILITY, near the top: somebody who needs it should not have to
+    // read past six rows they cannot read to find it (share/js/a11yui.js).
+    rows.appendChild(accessSettingsBlock({ row, redraw, toast }));
+
+    // VALET MODE, first, because it is the one a person reaches for in a hurry.
+    rows.appendChild(row("Valet mode", "Hides your history and documents, locks settings, and logs how the car is driven. Parked only.",
+      "Turn on", () => { close(); valetOn(); }));
+
     // THE LOOK, which lived on the hub and would otherwise have gone with it.
     rows.appendChild(row("Look", lookById(savedLook()).note || "",
       lookById(savedLook()).label, () => {
@@ -957,6 +1105,10 @@ function openSettings() {
         applyLook(next);
         redraw();
       }));
+
+    // ---- looks by the sun (share/js/sunui.js, doc/night-mode.md) ----
+    rows.appendChild(sunSettingsBlock({ row, redraw, toast }));
+    // ---- end looks by the sun ----
 
     rows.appendChild(row("Units", "Shared with the dock card and the terminal",
       U.units.dist, async (e) => {
@@ -1015,8 +1167,22 @@ function openSettings() {
     rows.appendChild(row("Effects", "Scanner and Leviathan, full screen",
       "Open", () => { close(); goto("effects"); }));
 
+    rows.appendChild(row("Sound", "Equalizer for the AUX output",
+      "Open", () => { close(); goto("eq"); }));
+
+    rows.appendChild(row("Voice", "Wake phrase, quiet hours, spoken replies",
+      "Open", () => { close(); import("./voiceui.js").then((m) => m.openVoiceSheet()); }));
+
+    rows.appendChild(row("Tablet battery", "Health, heat, and the 50 % limit in the Surface firmware",
+      "Open", () => { close(); goto("battery"); }));
+
     rows.appendChild(row("Vehicle report", "The page you print for somebody else",
       "Open", () => { close(); goto("report"); }));
+
+    // Updates (share/js/updateui.js, lib/update.py): the updater decides; the
+    // sheet shows it, and its buttons are parked-only.
+    rows.appendChild(row("Updates", "What runs, what is waiting, and the last result",
+      "Open", () => { close(); import("./updateui.js").then((m) => m.openUpdateSheet()); }));
 
     // Plugin screens that did not say where they belong. Dropping them
     // silently into a tab would be guessing on the plugin author's behalf;
@@ -1201,6 +1367,8 @@ async function boot() {
   // The mode before the first paint, so a simplified tablet never flashes the
   // technician screens on its way to hiding them.
   await loadMode();
+  // And valet's, for the same reason: a hidden screen must never flash.
+  await refreshValet();
 
   window.addEventListener("hashchange", go);
 
@@ -1216,12 +1384,17 @@ async function boot() {
   // Before the first paint. A night-red look that arrives a beat late is a
   // flash of full-brightness white at the exact moment it matters most.
   applyLook(savedLook());
+  startSunLooks();   // a no-op until the owner turns "Looks by the sun" on
   // The button is painted once the theme has been applied, not before: the
   // mode it shows comes from the theme, which is only known after it loads.
   document.addEventListener("omacar:look", async () => { await applyTheme(); paintDayNight(); });
 
   await Promise.all([store.boot(), applyTheme(), loadAuto()]);
   document.getElementById("app").dataset.booting = "0";
+  // Tell the updater this release's page finished booting: its 90-second
+  // health check after a switch waits for exactly this (lib/update.py).
+  fetch(withToken("/api/update/booted"), { method: "POST", headers: { "Content-Type": "application/json" },
+    body: "{}" }).catch(() => { /* no server, no updater. Nothing depends on it. */ });
   // Plugin screens, loaded at boot.
   //
   // Dynamically imported rather than bundled, because there is no bundler and
@@ -1248,6 +1421,8 @@ async function boot() {
   } catch { /* no plugins, or the endpoint is unavailable */ }
 
   // Before the first paint that anybody measures a target against.
+  startAccess();
+  onAccess(() => applyTextSize());
   applyTextSize();
   paintBar();
   go();
@@ -1260,8 +1435,25 @@ async function boot() {
   }
 
   setInterval(() => store.refreshCar(), 20000);
+  // Valet mode is decided by the server (and can be turned off from another
+  // window or the terminal), so it is re-read. A change rebuilds the chip row,
+  // redraws the screen (a hidden one is left for Home) and tells the voice
+  // assistant which screens exist.
+  valet.onChange((on) => {
+    chipsFor = null; segFor = undefined;
+    paintBar(); paintNavState(); go(); screens();
+    // Turned off, by whatever route: the owner is shown how the car was driven.
+    if (!on && valet.report && !valet.report.seen) showReport(valet.report);
+  });
+  setInterval(async () => { if (await refreshValet()) paintBar(); }, 4000);
+  if (!valet.on && valet.report && !valet.report.seen) showReport(valet.report);
+  // Valet is on at boot (the tablet restarted mid-handover): nothing to do,
+  // the first paint below already respects it.
   // Cheap: one stat on the server and a no-op unless the theme actually moved.
   setInterval(applyTheme, 5000);
+  // Work's lines are heard on every tab, not only the Work tab. The view polls
+  // faster while it is open; the two share one in-flight request.
+  setInterval(() => { pollWork().catch(() => { /* Work is optional: never disturbs the app */ }); }, 5000);
 
   // ASKED FOR FROM OUTSIDE, WHICH IN A CAR MEANS SAID OUT LOUD.
   //

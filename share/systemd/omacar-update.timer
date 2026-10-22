@@ -1,0 +1,12 @@
+[Unit]
+Description=OmaCar — look for an update every 20 minutes
+Documentation=file:__ROOT__/doc/update.md
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=20min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

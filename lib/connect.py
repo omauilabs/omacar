@@ -254,6 +254,14 @@ def bench_port():
 # nobody has listed, is still offered exactly as before.
 NOT_ADAPTERS = {
     ("1209", "6668"),       # Proffieboard (ProffieOS), hubbe.net
+    # The environment nodes (firmware/envnode/, lib/envnode.py): a Raspberry
+    # Pi Pico (RP2040) or an ESP32-S3 on its own USB port is a CDC ACM device
+    # that lands on /dev/ttyACM0, which sorts BEFORE ttyUSB0, so resolve() would
+    # have offered the weather station to the ELM327 probe first. Neither
+    # vendor makes OBD adapters.
+    ("2e8a", "000a"),       # Raspberry Pi Pico, arduino-pico's default CDC
+    ("2e8a", "000b"),       # Raspberry Pi Pico 2 family default
+    ("303a", "1001"),       # Espressif ESP32-S3 built-in USB serial/JTAG
 }
 
 
@@ -284,11 +292,22 @@ def usb_ids(name, sysfs="/sys"):
     return None
 
 
+# Whole vendors that make no OBD adapters, for boards whose product id moves
+# with the firmware on them. Adafruit: the QT Py RP2040 the environment nodes
+# are built on (firmware/envnode/) reports a different product id under
+# arduino-pico than under CircuitPython, so listing one id would miss the other.
+NOT_ADAPTER_VENDORS = {"239a"}
+
+
+def _not_adapter(ids):
+    return ids in NOT_ADAPTERS or (ids is not None and ids[0] in NOT_ADAPTER_VENDORS)
+
+
 def wired_ports(dev="/dev", sysfs="/sys"):
     ports = sorted(glob.glob(os.path.join(dev, "ttyUSB*"))
                    + glob.glob(os.path.join(dev, "ttyACM*")))
     return [p for p in ports
-            if usb_ids(os.path.basename(p), sysfs) not in NOT_ADAPTERS]
+            if not _not_adapter(usb_ids(os.path.basename(p), sysfs))]
 
 
 def resolve():

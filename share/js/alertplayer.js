@@ -489,6 +489,15 @@ export function createAlertPlayer(stage) {
   }
 
   function play(cues, out) {
+    // Every sound is also a sight (share/js/a11y.js): a caption, and a flash
+    // when OmaAccess's "flash for sounds" is on, for a driver who cannot hear it.
+    if (typeof document !== "undefined") {
+      try {
+        document.dispatchEvent(new CustomEvent("omacar:sound", { detail: {
+          level: (out && out.level) || 0,
+          cues: (cues || []).filter(Boolean).map((c) => ({ kind: c.kind, clip: c.clip || null })) } }));
+      } catch { /* a caption must never stop the sound */ }
+    }
     Promise.resolve().then(() => stage.resume()).catch(() => {});
     if (stage.running()) return now(cues, out);
     hold(cues, out);

@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar rear screen — the back-seat page, on the network, behind its own token
+Documentation=file:__ROOT__/doc/rear-screen.md
+
+[Service]
+Type=simple
+# serve.py --rear: its own door (lib/rear.py), with an allow-list of routes and
+# nothing of the cockpit's. Enable it yourself: `systemctl --user enable --now
+# omacar-rear.service`, then `omacar rear pair`.
+ExecStart=/usr/bin/python3 __ROOT__/lib/serve.py 7571 __ROOT__/share --host 0.0.0.0 --rear
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

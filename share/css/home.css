@@ -22,7 +22,7 @@
    exists to absorb. */
 .wrap:has(> .home) { max-width: none; display: block; height: 100%; }
 .home {
-  display: flex; flex-direction: column; gap: 12px; height: 100%;
+  display: flex; flex-direction: column; gap: 8px; height: 100%;
   /* position + isolation: the look's animated background (.home-fx, below)
      is the one thing on this screen that should sit behind everything else
      drawn here, and isolating the stacking context keeps that negative
@@ -45,15 +45,21 @@
   .home-grid { grid-template-columns: repeat(6, minmax(0, 1fr));
                grid-auto-rows: minmax(84px, 1fr); gap: 8px; }
   .hc.sig { padding: 10px 14px; gap: 4px; }
-  /* Home does not scroll, so it needs none of the stage's 40 px run-out
-     under the last row; the same 22 px as above it. */
-  .stage:has(> .wrap > .home) { padding-bottom: 22px; }
 }
+/* HOME DOES NOT SCROLL, so it needs no run-out under its last row at all: the
+   footer line sits 8 px above the dock and every other pixel goes to the
+   cards. In both orientations -- landscape kept the full run-out until
+   2026-10-17 and showed ~100 px of empty stage above the dock. */
+.stage:has(> .wrap > .home) { padding-bottom: 8px; }
 .hc { position: relative; min-width: 0; min-height: 0; overflow: hidden; margin: 0; padding: 16px; }
-.hc[role="button"] { cursor: pointer; }
+.hc:has(> .hc-go) { cursor: pointer; }
+/* Its open button (.hc-go) is styled in access.css, with the car apps' tiles. */
 .home-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px;
              font-size: .75rem; color: var(--dim); }
-.home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap);
+/* A slim line, not a 56 px row: the editor is also one long press on any card
+   away, and it is parked-only, so this is never the target a moving thumb is
+   reaching for. 36 px still clears WCAG 2.2's 24 px target minimum. */
+.home-custom { display: inline-flex; align-items: center; gap: 8px; min-height: 36px;
                padding: 0 12px; background: none; border: 0; color: var(--ink-2); font: inherit; }
 /* Greyed while driving, never hidden: the same treatment as a locked chip. */
 .home-custom:disabled { opacity: .45; cursor: default; }
@@ -147,8 +153,8 @@
 .sig-note { font-size: .78rem; color: var(--dim); }
 .sig-spark { flex: 1; min-width: 60px; }
 .sig-spark svg { width: 100%; height: 28px; display: block; }
-.sig-spark path { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.sig[data-reading="charge"] .sig-spark path { stroke: var(--ok); }
+.sig-spark svg { color: var(--accent); }
+.sig[data-reading="charge"] .sig-spark svg { color: var(--ok); }
 .sig-scale { display: flex; justify-content: space-between; font-size: .62rem; color: var(--faint);
              font-variant-numeric: tabular-nums; }
 .sig[data-tone="warn"] .sig-v { color: var(--warn); }
@@ -186,3 +192,82 @@
   padding: 28px 16px 12px; background: linear-gradient(transparent, color-mix(in srgb, var(--ground) 88%, transparent));
 }
 .hc-road[data-road="still"] .hc-ph > svg { display: none; }
+
+/* ---- the fridge (share/js/fridgecard.js) ----------------------------------
+   The temperature is the card: large, cold-coloured, with the last hour as a
+   filled trail behind it and the set point ruled through the trail, so
+   "holding" and "drifting" read without a word. The controls sit on one
+   soft track at the foot -- the same lit-key language as the dock -- and the
+   source lamp says where the number came from, always. */
+.hc-fridge { display: grid; grid-template-rows: auto 1fr auto auto; gap: 6px;
+             padding: 14px 16px 12px; container-type: inline-size; }
+.fr-head { display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--ink-2); min-width: 0; }
+.fr-head > svg { color: var(--info); flex: none; }
+.fr-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fr-src { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; flex: none;
+          font-size: .68rem; letter-spacing: .02em; color: var(--dim); white-space: nowrap; }
+.fr-lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.fr-src[data-tone="ok"] { color: var(--ok); }
+.fr-src[data-tone="ok"] .fr-lamp { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.fr-src[data-tone="warn"] { color: var(--warn); }
+.fr-src[data-tone="warn"] .fr-lamp { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+
+.fr-body { display: grid; grid-template-columns: auto 1fr; align-items: end; gap: 14px; min-height: 0; }
+.fr-now { display: grid; gap: 2px; }
+.fr-big { display: flex; align-items: flex-start; gap: 2px; line-height: .9; }
+.fr-temp { font-size: 3rem; font-weight: 600; letter-spacing: -.03em; color: var(--ink);
+           text-shadow: 0 0 24px color-mix(in srgb, var(--info) 35%, transparent); }
+.fr-unit { font-size: 1rem; color: var(--ink-2); margin-top: .25em; }
+.fr-line { font-size: .78rem; color: var(--info); }
+.fr-spark { min-width: 0; align-self: stretch; display: flex; align-items: flex-end; }
+.fr-spark svg { width: 100%; height: 56px; display: block; color: var(--info); }
+.fr-setline { stroke: color-mix(in srgb, var(--ink) 45%, transparent); stroke-width: 1;
+              stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+
+.fr-alert { font-size: .78rem; font-weight: 600; color: var(--warn); }
+.fr-alert[hidden] { display: none; }
+
+.fr-foot { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fr-setbox { display: flex; align-items: center; gap: 2px; padding: 0 3px; border-radius: 16px; flex: none;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.fr-step, .fr-pwr {
+  min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: 14px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 1.35rem; line-height: 1;
+  display: grid; place-items: center; cursor: pointer; touch-action: manipulation;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4), background-color .14s, color .14s;
+}
+.fr-step:active:not(:disabled), .fr-pwr:active:not(:disabled) { transform: scale(.9); background: var(--raise); }
+.fr-step:disabled, .fr-pwr:disabled { opacity: .35; cursor: default; }
+.fr-setv { display: grid; justify-items: center; min-width: 52px; line-height: 1.15; }
+.fr-setk { font-size: .62rem; color: var(--dim); }
+.fr-set { font-size: 1.05rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums;
+          transition: color .2s; }
+/* Asked for, not yet confirmed by the fridge: the accent, until it agrees. */
+.fr-setbox[data-pending="1"] .fr-set { color: var(--accent); }
+.fr-meta { flex: 1; min-width: 0; font-size: .72rem; color: var(--dim); text-align: right;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+/* Power is a lit key while the fridge is on: the dock's own wash. */
+.fr-pwr { position: relative; isolation: isolate; flex: none; color: var(--ink-2); }
+.hc-fridge[data-on="on"] .fr-pwr { color: var(--ink); }
+.hc-fridge[data-on="on"] .fr-pwr::before {
+  content: ""; position: absolute; inset: 4px; z-index: -1; border-radius: 11px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 52%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 18%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 50%, transparent),
+              0 6px 16px -8px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+/* Off, or a reading that has gone stale: the number dims and loses its glow. */
+.hc-fridge[data-on="off"] .fr-temp, .hc-fridge[data-state="stale"] .fr-temp {
+  color: var(--dim); text-shadow: none; }
+.hc-fridge[data-on="off"] .fr-line { color: var(--dim); }
+.hc-fridge[data-state="stale"] .fr-spark svg, .hc-fridge[data-on="off"] .fr-spark svg { color: var(--faint); }
+/* Narrow (portrait's [3,2]): the trail gives way before the number does. */
+@container (max-width: 300px) {
+  .fr-body { grid-template-columns: 1fr; }
+  .fr-spark { display: none; }
+  .fr-meta { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .fr-step, .fr-pwr, .fr-set { transition: none; } }

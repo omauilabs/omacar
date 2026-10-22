@@ -10,6 +10,8 @@ what the car said.
     POST /api/daemon            start or stop the process that reads the car
     GET  /api/history           samples over a span, decimated to fit a graph
     GET  /api/service-history   what has actually been done, newest first
+    GET  /api/pretrip           ready for a long drive: trip, checklist ticks, maintenance gaps, tyres if any
+    POST /api/pretrip           {trip_km} | {tick, value} | {new_trip: true}
     GET  /api/documents         the document library for this vehicle
     POST /api/document          add, update, remove or parse one
     GET  /api/trips             drives, newest first, for replay
@@ -32,6 +34,46 @@ what the car said.
     POST /api/drive             change it
     GET  /api/home              Home's card layout
     POST /api/home              change it, or {action: "reset"}
+    GET  /api/fridge            the Dometic CFX3: temperature, set point, door, battery
+    GET  /api/coach             the last drive's hybrid score, its trend and its hint
+    POST /api/fridge            {name: "power"|"z0_set", value}
+    GET  /api/arrival           arriving home and the pickup pre-cool (lib/arrival.py)
+    POST /api/arrival           {do: "fridge_eco"|"house"|"garage"|"dismiss"|"pickup"|"pickup_cancel"}
+    GET  /api/places            home and saved pickups (lib/location.py)
+    GET  /api/speedlimit        the posted limit under the car, offline (lib/speedlimit.py)
+    POST /api/places            {home}, {add_pickup}, {remove_pickup}, {fridge_eco_c}
+    GET  /api/fuel              the fuel log: fill-ups, real economy, the question waiting
+    POST /api/fuel              {op: "answer"|"skip"|"add"|"remove", ...}: the log only
+    GET  /api/tpms              tyre pressures from the RTL-SDR (lib/tpms.py): four wheels, trends, alerts
+    GET  /api/tpms/heard        every tyre sensor id heard lately (strangers too): the learn list
+    POST /api/tpms/assign       {id, wheel: "FL"|"FR"|"RL"|"RR"} or {unassign: wheel}: a label, nothing else
+    GET  /api/calls             hands-free calls: phase, caller, duration, recent calls
+    POST /api/calls             {action: answer|reject|hangup|mute|volume|dial, value, id}
+    GET  /api/learncar          the guided "learn my car" session: steps, the live step, results
+    POST /api/learncar          {action: start|go|confirm|next|retry|skip|abort, sim?, transmission?}
+    GET  /api/env               cabin and outdoor sensors, the derived numbers, the CO2 prompt
+    GET  /api/env/history       the last 24 h, a point a minute (?hours=N)
+    GET  /api/ambient           the tablet's light sensor: lux, or {present: false} (read-only)
+    GET  /api/v1                the radar detector (a Valentine One): alerts, mute, today's log
+    POST /api/v1                {name: "mute", value: true|false}; nothing else is accepted
+    GET  /api/parking           where the car was parked: the last park and the last ten (lib/parkspot.py)
+    GET  /api/parking/last      the last park alone: place, level estimate, photo URLs (paired client)
+    GET  /api/parking/photo/<id>/<front|rear>   one saved still (binary, served by serve.py)
+    GET  /api/journal           one entry per drive, enriched from whatever else was running (?n=&imperial=)
+    POST /api/journal/note      {t0, text}: the owner's own words about a drive
+    POST /api/journal/settings  {places: bool}: place names, opt-in, off
+    GET  /api/tabletbatt        the tablet's own battery: health, heat, whether the UEFI limit looks on
+    GET  /api/ignition          the parking countdown: phase, seconds left, why held
+    POST /api/ignition          {ask: "stay"} or {ask: "now"}
+    GET  /api/child-alert       a child left in the car: the seat, the alert, the settings
+    POST /api/child-alert       {ask: "clear"|"snooze"|"aboard"}
+    POST /api/child-alert/seen  the page's camera watcher: {faces, state, luma, camera}
+    POST /api/child-alert/config {enabled, chime, heat_c, camera}; refused while moving
+    GET  /api/valet             Valet mode: on or off, the PIN lockout, the last report
+    POST /api/valet             {action: "on"|"off"|"ack"|"set_pin", pin}; off checks the PIN here
+    GET  /api/battery-watch     the 12 V while parked: readings, projection to the floor, the tablet's battery
+    GET  /api/update            self-update: what runs, what waits, what blocks it now
+    POST /api/update            {action: "check"|"apply"|"rollback"} (lib/update.py)
     GET  /api/assets            the private pictures, when they check out
     GET  /api/roadcams          road cameras: the list, the pins, the list's age
     POST /api/roadcams/pins     pin cameras, or {action: "reset"}
@@ -1153,6 +1195,133 @@ def handle_get(path, query):
         return 200, nursery.summary()
     if path == "/api/live":
         return 200, records.live()
+    if path == "/api/coach":
+        # Hybrid coaching (lib/coach.py): drives scored after they end, from
+        # the log, read-only. A simulated file says so (`source`).
+        import coach
+        return 200, coach.read_public(refresh_now=True)
+    if path == "/api/fridge":
+        # The CFX3 in the back (lib/fridge.py), as its link or the simulator
+        # last wrote it. `source` says which, and the card always shows it.
+        import fridge
+        return 200, fridge.read_public()
+    if path == "/api/arrival":
+        # Arrival and pickup pre-cool (lib/arrival.py), read from the files the
+        # location source and the arrival loop wrote. `location.source` says
+        # whether the position is gpsd, simulated or absent.
+        import arrival
+        return 200, arrival.read_public()
+    if path == "/api/places":
+        import location
+        return 200, location.public_places()
+    if path == "/api/speedlimit":
+        # The posted limit under the car, from the offline map (lib/speedlimit.py).
+        # `limit` is null unless the match is confident; `source` is "posted" or
+        # "default"; `location_source` says gpsd or Simulated.
+        import speedlimit
+        return 200, speedlimit.read_public()
+    if path == "/api/fuel":
+        # The fuel log (lib/fuel.py): fill-ups the watcher noticed, what the
+        # owner said they took, and the economy worked out from the two.
+        import fuel
+        return 200, fuel.read_public()
+    if path == "/api/tpms":
+        # The four tyres (lib/tpms.py), as its service or the simulator last
+        # wrote them. Only sensors the owner has assigned are in this; `source`
+        # says which, and the screens always show it.
+        import tpms
+        return 200, tpms.read_public()
+    if path == "/api/tpms/heard":
+        # The learn list: every sensor heard lately, strangers included. Only
+        # the Tires screen's learn panel asks for this.
+        import tpms
+        return 200, tpms.read_heard()
+    if path == "/api/calls":
+        # The phone as heard by lib/calls.py (the oFono link or `omacar calls
+        # sim`). A file older than a few seconds shows no call at all.
+        import calls
+        return 200, calls.read_public()
+    if path == "/api/learncar":
+        # The guided, parked, passive CAN-labelling session (lib/learncar.py),
+        # as its runner last wrote it. `source` says "sim" or "car"; the screen
+        # always shows which.
+        import learncar
+        return 200, learncar.read_public()
+    if path == "/api/env":
+        # The cabin and outdoor nodes (lib/envnode.py), as its service or the
+        # simulator last wrote them. `source` says which, and the card shows it.
+        import envnode
+        return 200, envnode.read_public()
+    if path == "/api/ambient":
+        # The tablet's ambient light sensor (lib/ambient.py), read straight
+        # from sysfs. Absent is a normal answer: the app then runs on the sun
+        # alone (share/js/sunlook.js).
+        import ambient
+        return 200, ambient.read_public()
+    if path == "/api/env/history":
+        import envnode
+        return 200, envnode.history(qint(query, "hours", 24, 1, 24))
+    if path == "/api/v1":
+        # The Valentine One on the dash (lib/v1.py), as its link or the
+        # simulator last wrote it. `source` says which, and the screens always
+        # show it. An alert that has gone stale is already gone from this.
+        import v1
+        return 200, v1.read_public()
+    if path == "/api/carkit":
+        # The car widget kit (lib/carkit.py): every car plugin, valid or not.
+        import carkit
+        return 200, carkit.public_list()
+    if path.startswith("/api/carkit/") and path.count("/") == 3:
+        # One plugin's spec, needs and current data (its data command runs
+        # here, with a timeout, at most every `every_s`).
+        import carkit
+        d = carkit.data_for(path.rsplit("/", 1)[1])
+        return (200, d) if d else (404, {"error": "no such car plugin"})
+    if path == "/api/location":
+        # The car's position for other features (looks by the sun), or honestly
+        # none: lib/location.py's fix, without the recent trail.
+        import location
+        p = location.read_public()
+        return 200, {k: p.get(k) for k in ("present", "fix", "lat", "lon", "age", "source")}
+    if path == "/api/notify":
+        # The owner's outbox (lib/notify.py): what a paired phone polls.
+        import notify
+        return 200, {"events": notify.since(qint(query, "since", 0, 0))}
+    if path == "/api/parking":
+        # Where the car was parked (lib/parkspot.py). The coordinates are in
+        # here and nowhere else: the phone's notification carries none.
+        import parkspot
+        return 200, parkspot.read_public()
+    if path == "/api/parking/last":
+        import parkspot
+        pub = parkspot.read_public()
+        return 200, {"present": pub["present"], "last": pub["last"]}
+    if path == "/api/tabletbatt":
+        # The tablet's own battery (lib/tabletbatt.py), read-only: its sampler
+        # or the simulator wrote it. `source` says which.
+        import tabletbatt
+        return 200, tabletbatt.read_public()
+    if path == "/api/ignition":
+        # The parking countdown (lib/ignition.py), read by the app once a
+        # second: the loop's last word, or {"phase": "off"} with no loop.
+        import ignition
+        return 200, ignition.read_public()
+    if path == "/api/child-alert":
+        # A child left in the car (lib/childalert.py), read by the app once a
+        # second: the loop's last word, or {"running": False} with no loop.
+        import childalert
+        return 200, childalert.read_public()
+    if path == "/api/valet":
+        # Valet mode (lib/valet.py): on or off, the PIN lockout, the report of
+        # the last session. Never the PIN's hash.
+        import valet
+        return 200, valet.read_public()
+    if path == "/api/battery-watch":
+        # The 12 V while parked (lib/batterywatch.py), from the readings kept
+        # at ignition-off, ignition-on and while awake. `source` says "sim"
+        # when the simulator is running, and the screens always show it.
+        import batterywatch
+        return 200, batterywatch.read_public()
     if path == "/api/history":
         db = records.connect()
         t0 = qstr(query, "from")
@@ -1308,6 +1477,12 @@ def handle_get(path, query):
         # key rather than letting a hand-edited drive log become a 500.
         import ima
         return 200, ima.summary()
+    if path == "/api/pretrip":
+        # The pre-trip check's stored half (lib/pretrip.py): the trip
+        # distance, the manual ticks, the maintenance gaps and, if another
+        # feature has landed a tyre source, the tyre pressures.
+        import pretrip
+        return 200, pretrip.read_public()
     if path == "/api/battery":
         # Same pattern as /api/ima: lazy import, and summary() is contracted
         # never to raise -- it carries an "error" key instead of a 500.
@@ -1450,6 +1625,153 @@ def handle_post(path, body):
             return 400, {"error": f"no screen called {want!r}",
                          "screens": sorted(seen)}
         return 200, screen.ask(want, str(data.get("who") or "somebody")[:40])
+    if path == "/api/pretrip":
+        # Harmless bookkeeping about the owner's own trip: no cockpit write,
+        # nothing near the car.
+        import pretrip
+        try:
+            if data.get("new_trip"):
+                pretrip.new_trip()
+            elif "tick" in data:
+                pretrip.set_tick(str(data.get("tick") or ""), bool(data.get("value")))
+            elif "trip_km" in data:
+                pretrip.set_trip_km(data.get("trip_km"))
+            else:
+                return 400, {"error": "trip_km, tick or new_trip"}
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+        return 200, pretrip.read_public()
+    if path == "/api/fridge":
+        # One setting: {"name": "z0_set", "value": 3.5} or {"name": "power",
+        # "value": false}. Validated and bounded here; sent by the link.
+        import fridge
+        try:
+            return 200, fridge.ask(str(data.get("name") or ""), data.get("value"))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/arrival":
+        # One tap each: nothing here runs by itself (lib/arrival.py).
+        import arrival
+        code, body = arrival.do(str(data.get("do") or ""), data)
+        return code, body
+    if path == "/api/places":
+        # Home and pickups only. The House command is never settable from here.
+        import arrival
+        code, body = arrival.places_post(data)
+        return code, body
+    if path == "/api/fuel":
+        # The fuel log's own file and nothing else: it never reaches the car.
+        # `answer` and `add` carry litres and the total cost (the app converts
+        # from gallons and $/gal at the edge); `skip` and `remove` an id.
+        import fuel
+        op = str(data.get("op") or "")
+        try:
+            if op == "answer":
+                fuel.answer(data.get("id"), data.get("litres"), data.get("cost"),
+                            bool(data.get("full", True)))
+            elif op == "skip":
+                fuel.skip(data.get("id"))
+            elif op == "add":
+                fuel.add(data.get("litres"), data.get("cost"), bool(data.get("full", True)))
+            elif op == "remove":
+                fuel.remove(data.get("id"))
+            else:
+                return 400, {"error": "op is answer, skip, add or remove"}
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+        return 200, fuel.read_public()
+    if path == "/api/tpms/assign":
+        # Naming which wheel a sensor is on. A label in the owner's own config
+        # (~/.config/omacar/tpms.json); the radio is never asked to do anything.
+        import tpms
+        try:
+            if data.get("unassign"):
+                return 200, tpms.unassign(str(data.get("unassign")))
+            return 200, tpms.assign(str(data.get("id") or ""), str(data.get("wheel") or ""))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/calls":
+        # Answer, decline, hang up, mute, volume: one tap each, allowed while
+        # moving (that is the point of hands-free). `dial` takes the id of an
+        # entry in the recent list, never a number, and only when parked.
+        import calls
+        try:
+            return 200, calls.ask(str(data.get("action") or ""), data.get("value"), data.get("id"))
+        except PermissionError as e:
+            return 403, {"error": str(e)}
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    if path == "/api/learncar":
+        # Taps on the session: start it, begin a step, confirm the parking
+        # brake, move on, stop. Passive end to end (it only listens), and a
+        # start is refused with the reason unless the car is provably parked.
+        import learncar
+        try:
+            return 200, learncar.ask(str(data.get("action") or ""), sim=bool(data.get("sim")),
+                                     transmission=str(data.get("transmission") or "manual"))
+        except PermissionError as e:
+            return 409, {"error": str(e)}
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/v1":
+        # One request, and it is not a cockpit write: Mute on the detector,
+        # the tap its own button is. The detector's settings are not here and
+        # lib/esp.py cannot encode them.
+        import v1
+        try:
+            return 200, v1.ask(str(data.get("name") or ""), data.get("value"))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    m = re.fullmatch(r"/api/carkit/([a-z0-9-]{1,40})/action/([A-Za-z0-9_-]{1,40})", path)
+    if m:
+        # A car plugin's action. lib/carkit.py re-checks motion and refuses
+        # writes to the car while it moves, whatever the page asked.
+        import carkit
+        return carkit.run_action(m.group(1), m.group(2), arg=data.get("arg"))
+    if path == "/api/ignition":
+        # Stay on, or sleep now. Only a request: the loop still refuses to
+        # sleep a car that is moving or answering, whatever the screen says.
+        import ignition
+        try:
+            return 200, ignition.ask(str(data.get("ask") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/child-alert":
+        # "I have my child", "Remind me in 2 min" or "Child aboard". Only a
+        # request, through a file the loop reads; the ignition loop also reads
+        # a "clear" here directly, so it is honoured even with this loop down.
+        import childalert
+        try:
+            return 200, childalert.ask(str(data.get("ask") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/child-alert/seen":
+        # What the page's camera watcher saw (share/js/childwatch.js).
+        import childalert
+        try:
+            return 200, childalert.report(data)
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/child-alert/config":
+        # Parked only: greyed on the screen while moving, and refused here too.
+        import childalert
+        import ignition
+        c = ignition.car()
+        if c["answering"] and (c["age"] or 99) < 15 and (c["speed"] or 0) > 0:
+            return 409, {"error": "the car is moving; change these when parked"}
+        try:
+            return 200, {"config": childalert.set_config(data)}
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    if path == "/api/valet":
+        # Not a write to the car: it changes what the app shows. "on" refuses a
+        # moving car and "off" checks the PIN, both HERE, so the browser's
+        # opinion is not the boundary.
+        import valet
+        try:
+            return 200, valet.ask(data)
+        except valet.ValetError as e:
+            return e.status, e.body
     if path == "/api/scan":
         return 200, scan()
     if path == "/api/record":
@@ -1742,6 +2064,22 @@ def handle_post(path, body):
                 interval_km=float(data.get("interval_km") or 0),
                 interval_days=int(data.get("interval_days") or 0),
                 note=data.get("note") or "")}
+        if act == "record":
+            # "Never recorded -- tap to set": a date for an item the schedule
+            # has only a placeholder for. The odometer at that date is not
+            # known, so the distance interval waits for the next "Done today"
+            # and the time interval counts from the date given.
+            try:
+                ago = int(data.get("days_ago"))
+            except (TypeError, ValueError):
+                return 400, {"error": "days_ago must be a whole number"}
+            if not 0 <= ago <= 3650:
+                return 400, {"error": "days_ago out of range"}
+            done = book.log_service(data.get("item") or "", km=0.0,
+                                    when=time.time() - ago * 86400)
+            if not done:
+                return 404, {"error": "no such item"}
+            return 200, {"logged": done}
         if act == "forget":
             return 200, {"removed": book.forget_item(data.get("item") or "")}
         if act == "start":
@@ -1943,3 +2281,278 @@ def handle_post(path, body):  # noqa: F811
     out = camroutes.handle_post(path, body)
     return out if out is not None else _base_post(path, body)
 # ---- end redesign/cameras -----------------------------------------------------
+
+
+# ---- incident clips -------------------------------------------------------------
+# lib/clipsroutes.py: the list, one incident, Save clip, delete (parked only)
+# and export. One block, tried before everything above it.
+_clips_get, _clips_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path.startswith("/api/clips"):
+        import clipsroutes
+        out = clipsroutes.handle_get(path, query)
+        if out is not None:
+            return out
+    return _clips_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path.startswith("/api/clips"):
+        import clipsroutes
+        out = clipsroutes.handle_post(path, body)
+        if out is not None:
+            return out
+    return _clips_post(path, body)
+# ---- end incident clips ---------------------------------------------------------
+
+
+# ---- aux equalizer -------------------------------------------------------------
+# GET /api/eq        the saved state, whether PipeWire runs it, the curve
+# POST /api/eq       the whole state, validated and clamped (lib/eq.py)
+# POST /api/eq/live  a slider moving: parameters only, never a restart
+# Not in serve.py's COCKPIT_WRITES, so a read-only cockpit cannot change the sound.
+_eq_get, _eq_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/eq":
+        import eq
+        return 200, eq.describe()
+    return _eq_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/eq", "/api/eq/live"):
+        import eq
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        try:
+            if path == "/api/eq/live":
+                return 200, eq.live(data)
+            return 200, eq.write_state(data)
+        except (ValueError, TypeError) as e:
+            return 400, {"error": str(e)}
+    return _eq_post(path, body)
+# ---- end aux equalizer ---------------------------------------------------------
+
+
+# ---- voice commands ------------------------------------------------------------
+# GET /api/voice   the config, whether the service is listening, what it last
+#                  heard and said (lib/voice.py)
+# POST /api/voice  {enabled, phrase, speak, threshold, quiet: {on, start, end}}:
+#                  settings only. Commands are never sent here: they are spoken
+#                  to the microphone. Not in serve.py's COCKPIT_WRITES.
+_voice_get, _voice_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/voice":
+        import voice
+        return 200, voice.read_public()
+    return _voice_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path == "/api/voice":
+        import voice
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        try:
+            return 200, voice.save_config(data)
+        except (ValueError, TypeError) as e:
+            return 400, {"error": str(e)}
+    return _voice_post(path, body)
+# ---- end voice commands --------------------------------------------------------
+
+
+# ---- trip journal --------------------------------------------------------------
+# GET /api/journal            one entry per drive (lib/journal.py)
+# POST /api/journal/note      a typed note on one drive (a cockpit write: harmless)
+# POST /api/journal/settings  the places switch (not a cockpit write)
+_jr_get, _jr_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/journal":
+        import journal
+        return 200, journal.read_public(qstr(query, "imperial", "1") != "0",
+                                        qint(query, "n", 60, 1, 200))
+    return _jr_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/journal/note", "/api/journal/settings"):
+        import journal
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        try:
+            if path == "/api/journal/note":
+                return 200, journal.set_note_any(data.get("t0"), data.get("text"))
+            return 200, journal.set_places(bool(data.get("places")))
+        except (TypeError, ValueError) as e:
+            return 400, {"error": str(e)}
+    return _jr_post(path, body)
+# ---- end trip journal ----------------------------------------------------------
+
+
+# ---- rear screen ---------------------------------------------------------------
+# The FRONT screen's side of the back-seat screen (lib/rear.py), loopback only:
+# GET /api/rear                the note to draw, whether an alert is up, a skip to apply
+# POST /api/rear/dismiss       the driver dismissed the note
+# POST /api/rear/nowplaying    what the player is playing, for the rear screen to show
+# POST /api/rear/music/done    a skip was applied
+# None of these is in serve.py's COCKPIT_WRITES. The rear screen itself is served
+# by `serve.py --rear`, which never imports this module.
+_rear_get, _rear_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/rear":
+        import rear
+        return 200, rear.front_get()
+    return _rear_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/rear/dismiss", "/api/rear/nowplaying", "/api/rear/music/done"):
+        import rear
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        if not isinstance(data, dict):
+            return 400, {"error": "the body must be an object"}
+        return rear.front_post(path, data)
+    return _rear_post(path, body)
+# ---- end rear screen -----------------------------------------------------------
+
+
+# ---- work dashboard --------------------------------------------------------------
+# GET  /api/workdash         read-only aggregate of the Work relay's sessions
+# GET  /api/workdash/diff    ?id=<session>: the relay's diffstat and summary
+# POST /api/workdash/action  the relay offers none over HTTP; says so
+# The relay is optional (lib/workclient.py); down is an honest "not running".
+# Not in serve.py's COCKPIT_WRITES: nothing here writes anything.
+_wd_get, _wd_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/workdash":
+        import workclient
+        return 200, workclient.read_public()
+    if path == "/api/workdash/diff":
+        import workclient
+        sid = next((p[3:] for p in str(query or "").split("&") if p.startswith("id=")), "")
+        return workclient.read_diff(sid)
+    return _wd_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path == "/api/workdash/action":
+        import workclient
+        return workclient.act({})
+    return _wd_post(path, body)
+# ---- end work dashboard ----------------------------------------------------------
+
+
+# ---- self-update -----------------------------------------------------------------
+# GET  /api/update         what runs, what waits, and what stops an update now
+# POST /api/update         {action: "check" | "apply" | "rollback"}, started detached
+# POST /api/update/booted  the page says it finished booting (the health check reads it)
+# Not in serve.py's COCKPIT_WRITES: a read-only cockpit cannot change what runs.
+_update_get, _update_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/update":
+        import update
+        return 200, update.read_public()
+    return _update_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/update", "/api/update/booted"):
+        import update
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        if path == "/api/update/booted":
+            return 200, update.record_boot(update.Paths(), os.path.realpath(update.ROOT))
+        try:
+            return update.request(str(data.get("action") or ""))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+    return _update_post(path, body)
+# ---- end self-update -------------------------------------------------------------
+
+
+# ---- accessibility (lib/access.py, share/js/a11y.js) -----------------------------
+# GET  /api/access         the settings in force, and whether OmaAccess owns them
+# POST /api/access         {name, value}: change one, through OmaAccess if present
+# POST /api/access/speak   {text, urgency}: say it in OmaAccess's voice, if allowed
+# Not in serve.py's COCKPIT_WRITES: a remote screen cannot change the tablet's
+# accessibility, and cannot make it speak.
+_access_get, _access_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/access":
+        import access
+        return 200, access.read_public()
+    return _access_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/access", "/api/access/speak"):
+        import access
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        if not isinstance(data, dict):
+            return 400, {"error": "the body must be a JSON object"}
+        if path == "/api/access/speak":
+            urgency = data.get("urgency") if data.get("urgency") in ("info", "safety") else "info"
+            return 200, access.speak(data.get("text"), urgency)
+        try:
+            return 200, access.write(str(data.get("name") or ""), data.get("value"))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        except RuntimeError as e:
+            return 502, {"error": str(e)}
+    return _access_post(path, body)
+# ---- end accessibility -------------------------------------------------------------
+
+
+# ---- Work by voice ------------------------------------------------------------
+# /api/work/* route through lib/workroutes.py, tried before everything above.
+# doc/design/2026-10-13-work-voice-relay.md.
+_work_get, _work_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path.startswith("/api/work"):
+        import workroutes
+        out = workroutes.handle_get(path, query)
+        if out is not None:
+            return out
+    return _work_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path.startswith("/api/work"):
+        import workroutes
+        out = workroutes.handle_post(path, body)
+        if out is not None:
+            return out
+    return _work_post(path, body)
+# ---- end Work by voice ----------------------------------------------------------

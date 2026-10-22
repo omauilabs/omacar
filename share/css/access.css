@@ -1,0 +1,132 @@
+/* Accessibility (share/js/a11y.js, lib/access.py).
+   OmaAccess's settings arrive as data-a11y-* on <html>; this file is what they
+   change. Colour filters, invert, zoom and the magnifying glass are not here:
+   OmaAccess draws those in the compositor, under the whole page. */
+
+/* Text for screen readers only: on the page, in the reading order, not drawn. */
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* A focus ring on every control, not only the ones app.css's focus rule names
+   (WCAG 2.4.7). var(--info), like that rule, because every look redefines it,
+   so the ring follows the palette into Night-red. */
+:focus-visible { outline: 3px solid var(--info); outline-offset: 2px; }
+h1[tabindex="-1"]:focus { outline: none; }
+
+/* Large targets: OmaAccess "bigTargets". Every control already sizes from these
+   tokens (app.css), so this one rule moves all of them. */
+:root[data-a11y-big] { --tap: 64px; --tap-lg: 72px; --tabbar: 104px; --subtabs: 64px; }
+
+/* Reduce motion: OmaAccess "still", the same as the system asking. Nothing
+   moves, nothing slides, nothing pulses; changes simply appear. */
+:root[data-a11y-still] *, :root[data-a11y-still] *::before, :root[data-a11y-still] *::after {
+  animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+}
+:root[data-a11y-still]::view-transition-group(*),
+:root[data-a11y-still]::view-transition-old(*),
+:root[data-a11y-still]::view-transition-new(*) { animation: none !important; }
+
+/* The dyslexia font: OmaAccess installs OpenDyslexic for the desktop; the page
+   uses it too, with the spacing the British Dyslexia Association asks for. */
+:root[data-a11y-dyslexia] body,
+:root[data-a11y-dyslexia] button, :root[data-a11y-dyslexia] input, :root[data-a11y-dyslexia] select {
+  font-family: "OpenDyslexic", "OpenDyslexic3", "Atkinson Hyperlegible", Verdana, sans-serif;
+  letter-spacing: .03em; word-spacing: .12em;
+}
+:root[data-a11y-dyslexia] p, :root[data-a11y-dyslexia] li { line-height: 1.7; }
+
+/* High contrast: OmaAccess "contrast". Secondary text becomes primary text,
+   panels become solid, edges become lines you can see in sunlight. */
+:root[data-a11y-contrast] {
+  --ink-2: var(--ink); --dim: var(--ink); --faint: color-mix(in srgb, var(--ink) 82%, var(--ground));
+  --edge: color-mix(in srgb, var(--ink) 55%, var(--ground));
+  --edge-2: color-mix(in srgb, var(--ink) 70%, var(--ground));
+  /* The two hues that sat under 7:1 (measured 2026-10-17): the status red, as
+     text (5.35:1) and under dark text (5.8:1), and the agent's violet (4.76:1).
+     Lightened, both clear 7:1 on every ground, so this mode is WCAG AAA. */
+  --bad: #FF9A90; --ai: #BDB4FF;
+}
+:root[data-a11y-contrast] .card { border: 2px solid var(--edge); backdrop-filter: none; }
+/* The Data screen's pressed channel chips are filled with the chart's own
+   series colours (charts.js PALETTE, fixed hex, set inline), and red holds dark
+   text at only 5.8:1. Under high contrast a pressed chip is ink on a panel
+   instead, ringed thickly in its series colour, which still says which line
+   is which. */
+:root[data-a11y-contrast] .chanpick button[aria-pressed="true"] {
+  background: var(--panel-2) !important; color: var(--ink) !important; border-width: 3px;
+}
+:root[data-a11y-contrast] :focus-visible { outline-width: 4px; }
+
+/* The caption strip: every sound OmaCar makes, in words, for a driver who
+   cannot hear it. Above the navigation, out of the way of the readings. */
+.a11y-caption {
+  position: fixed; left: 50%; bottom: calc(var(--nav) + 12px); transform: translateX(-50%);
+  z-index: 90; max-width: min(90vw, 760px); padding: 10px 18px; border-radius: 14px;
+  background: var(--ground); color: var(--ink); border: 2px solid var(--edge-2);
+  font-size: 1.15rem; font-weight: 600; text-align: center; pointer-events: none;
+}
+.a11y-caption[data-level="3"], .a11y-caption[data-level="safety"] { border-color: var(--bad, #F55240); }
+
+/* The flash for sounds: one soft edge glow per sound, never a strobe. At most
+   one every 2 s (a11y.js), far under WCAG 2.3.1's three flashes a second, and
+   an edge, not the whole screen, so it is never a "general flash" at all. */
+.a11y-flash {
+  position: fixed; inset: 0; z-index: 89; pointer-events: none;
+  box-shadow: inset 0 0 0 10px var(--warn); opacity: 0;
+  animation: a11y-flash 900ms ease-out 1;
+}
+.a11y-flash[data-level="3"], .a11y-flash[data-level="safety"] { box-shadow: inset 0 0 0 14px var(--bad, #F55240); }
+@keyframes a11y-flash { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
+/* Still means still: the glow appears and goes without fading. */
+:root[data-a11y-still] .a11y-flash { animation: none; opacity: 1; }
+
+/* The Accessibility sheet's controls (Settings). */
+.a11y-src { margin: 0 0 12px; color: var(--dim); }
+.a11y-scale { display: flex; gap: 8px; flex-wrap: wrap; }
+.a11y-scale button { min-width: var(--tap); min-height: var(--tap); }
+.sheet-h { margin: 18px 4px 2px; font-size: 1rem; font-weight: 700; color: var(--ink); }
+
+/* ---- touch targets: 44 px at least, everywhere (WCAG 2.5.5, AAA) ----
+   The audit of 2026-10-17 measured 1,094 controls; these were the ones under
+   44 px, each with a size of its own rather than the --tap token. Where the
+   drawn shape should stay small (a switch, a callout on the car picture), an
+   invisible ::after makes the part that answers a tap 44 px, and the drawing
+   is unchanged. Each rule leads with :root so it outranks the component's own
+   sheet, whichever is linked later. */
+:root input[type="text"], :root input[type="search"], :root input[type="number"], :root input:not([type]),
+:root select, :root textarea {
+  min-height: max(44px, calc(var(--tap) - 4px));
+}
+:root .eq-seg { min-height: max(44px, calc(var(--tap) - 8px)); }
+:root .eq-well-sm { width: max(44px, calc(var(--tap) - 14px)); height: max(44px, calc(var(--tap) - 14px)); }
+:root .eq-range { height: max(44px, calc(var(--tap) - 4px)); }
+:root .home-custom { min-height: max(44px, var(--tap)); }
+.jr-switch::after, .callout[role="button"]::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  min-width: 100%; min-height: 100%; width: 48px; height: 48px;
+}
+.callout[role="button"] { cursor: pointer; }
+
+/* The open button over a card that holds buttons of its own (home.js
+   tappable(), views/apps.js): it takes no taps (the card does), and shows only
+   as a focus ring round the whole card. */
+.hc-go { position: absolute; inset: 0; z-index: 0; opacity: 0; pointer-events: none;
+         border: 0; padding: 0; margin: 0; background: none; border-radius: inherit; }
+.ck-tile { position: relative; }
+.hc:has(> .hc-go:focus-visible), .ck-tile:has(> .hc-go:focus-visible) {
+  outline: 3px solid var(--info); outline-offset: 2px;
+}
+.ck-tile:has(> .hc-go) { cursor: pointer; }
+
+/* ---- large text: nothing is cut off (WCAG 1.4.4, AA) ----
+   main.js sets data-a11y-large once the page's text is 20 px or more (OmaCar's
+   Huge, or OmaAccess at 130%+). Home is otherwise a fixed grid that never
+   scrolls (home.css), and its cards clip; here its rows grow to fit what is in
+   them and the stage scrolls, as every other screen already does. */
+:root[data-a11y-large] .wrap:has(> .home),
+:root[data-a11y-large] .home { height: auto; }
+:root[data-a11y-large] .home-grid { flex: none; grid-auto-rows: minmax(120px, auto); }
+:root[data-a11y-large] .home-grid > .hc { overflow: visible; }

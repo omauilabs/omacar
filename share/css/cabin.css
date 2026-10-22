@@ -1,0 +1,136 @@
+/* The Cabin tab (views/cabin.js) and the fridge's own screen (views/fridge.js).
+
+   The same language as the rest of the redesign: raised surfaces lit from
+   above, captions over values, status lamps, no outlines. Cabin's overview is
+   one hero (the fridge, the device with something to say) beside a column of
+   doors; the fridge screen is the number, the hour and the controls, sized
+   for a thumb and readable from the back seat. Both fill the stage. */
+
+/* ---- overview ---------------------------------------------------------- */
+.wrap:has(> .cabin), .wrap:has(> .fz) { max-width: none; display: block; height: 100%; }
+.stage:has(> .wrap > .cabin) { padding-bottom: 8px; }
+.cabin { height: 100%; display: grid; gap: 14px;
+         grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); }
+.cabin .cb-fridge { cursor: pointer; min-height: 0; padding: 22px 24px 18px; }
+.cabin .cb-fridge .fr-temp { font-size: clamp(3.5rem, 9vh, 6.5rem); }
+.cabin .cb-fridge .fr-unit { font-size: 1.4rem; }
+.cabin .cb-fridge .fr-line { font-size: .95rem; }
+.cabin .cb-fridge .fr-head { font-size: 1rem; }
+/* The hour fills the card: the trail stretches to the full height between the
+   title and the controls, with the number standing in front of its start. */
+.cabin .cb-fridge .fr-body { grid-template-columns: auto 1fr; gap: 28px; align-items: stretch; }
+.cabin .cb-fridge .fr-now { align-self: end; }
+.cabin .cb-fridge .fr-spark { position: relative; min-height: 120px; }
+.cabin .cb-fridge .fr-spark svg { position: absolute; inset: 8px 0 0; width: 100%; height: calc(100% - 8px); }
+
+.cb-tiles { display: grid; gap: 14px; grid-auto-rows: minmax(0, 1fr); min-height: 0; }
+.cb-tile {
+  position: relative; display: grid; align-content: space-between; gap: 8px; text-align: left;
+  padding: 18px 20px; min-height: 0; overflow: hidden; font: inherit; color: inherit;
+}
+button.cb-tile { cursor: pointer; border: 0; }
+.cb-tile-head { display: flex; align-items: center; gap: 12px; }
+.cb-tile-ico { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px;
+  color: var(--accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 30%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 8%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 35%, transparent); }
+.cb-tile-t { font-size: 1.15rem; font-weight: 600; color: var(--ink); }
+.cb-tile-line { margin: 0; font-size: .86rem; color: var(--ink-2); line-height: 1.45; max-width: 36ch; }
+.cb-tile-need { display: flex; align-items: center; gap: 8px; font-size: .74rem; color: var(--dim); }
+.cb-lamp { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+/* Pending tiles are quieter, never hidden: the tab says what is coming. */
+.cb-tile[data-state="pending"] .cb-tile-ico { color: var(--dim);
+  background: color-mix(in srgb, var(--ink) 5%, transparent); box-shadow: none; }
+button.cb-tile:active { transform: scale(.985); }
+.cb-chev { margin-left: auto; color: var(--dim); }
+/* A live tile's line is a reading, so it reads like one. */
+button.cb-tile .cb-tile-line { font-size: 1.05rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+.cb-tile[data-tone="ok"] .cb-lamp { background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent), 0 0 9px color-mix(in srgb, var(--ok) 60%, transparent); }
+.cb-tile[data-tone="ok"] .cb-tile-need { color: var(--ok); }
+.cb-tile[data-tone="warn"] .cb-lamp { background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent), 0 0 9px color-mix(in srgb, var(--warn) 60%, transparent); }
+.cb-tile[data-tone="warn"] .cb-tile-need { color: var(--warn); }
+
+@media (orientation: portrait) {
+  .cabin { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1.3fr) minmax(0, 1fr); }
+  .cb-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: auto; }
+  .cb-tiles:has(> :nth-child(4)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---- the fridge's own screen ------------------------------------------- */
+.stage:has(> .wrap > .fz) { padding-bottom: 8px; }
+.fz { height: 100%; display: grid; gap: 14px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-areas: "hero chart" "facts facts"; }
+.fz > section { border-radius: var(--r); background: var(--panel);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); min-height: 0; }
+.fz-hero { grid-area: hero; display: grid; align-content: space-between; gap: 10px; padding: 24px 26px; }
+.fz-head { display: flex; align-items: center; gap: 10px; color: var(--ink-2); }
+.fz-head > svg { color: var(--info); }
+.fz-name { margin: 0; font-size: 1.1rem; font-weight: 600; color: var(--ink); }
+.fz-head .fr-src { margin-left: auto; font-size: .76rem; }
+.fz-big { display: flex; align-items: flex-start; gap: 6px; line-height: .85; }
+.fz-temp { font-size: clamp(5rem, 16vh, 9.5rem); font-weight: 600; letter-spacing: -.04em; color: var(--ink);
+           text-shadow: 0 0 40px color-mix(in srgb, var(--info) 35%, transparent); }
+.fz-unit { font-size: 1.8rem; color: var(--ink-2); margin-top: .3em; }
+.fz-line { font-size: 1.05rem; color: var(--info); }
+.fz-alert { font-weight: 600; color: var(--warn); }
+.fz-alert[hidden] { display: none; }
+.fz-ctl { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fz-setbox { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 20px;
+  background: linear-gradient(180deg, var(--panel-2), color-mix(in srgb, var(--panel-2) 55%, var(--ground)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent); }
+.fz-step { width: var(--tap-lg); height: var(--tap-lg); border: 0; border-radius: 16px; background: transparent;
+  color: var(--ink); font: inherit; font-size: 1.8rem; line-height: 1; cursor: pointer; touch-action: manipulation;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4), background-color .14s; }
+.fz-step:active:not(:disabled) { transform: scale(.9); background: var(--raise); }
+.fz-step:disabled { opacity: .35; cursor: default; }
+.fz-setv { display: grid; justify-items: center; min-width: 88px; line-height: 1.1; }
+.fz-setk { font-size: .68rem; color: var(--dim); }
+.fz-set { font-size: 1.7rem; font-weight: 600; color: var(--ink); transition: color .2s; }
+.fz-set[data-pending="1"] { color: var(--accent); }
+.fz-pwr { position: relative; isolation: isolate; display: inline-flex; align-items: center; gap: 10px;
+  min-height: var(--tap-lg); padding: 0 22px; border: 0; border-radius: 18px; background: transparent;
+  color: var(--ink); font: inherit; font-weight: 600; cursor: pointer;
+  transition: transform .14s cubic-bezier(.3, .7, .4, 1.4); }
+.fz-pwr::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  background: linear-gradient(180deg, var(--raise), var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 8%, transparent); }
+/* Off: the key lights, because turning it on is the thing to do next. */
+.fz-pwr[data-on="off"]::before {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 58%, transparent),
+                                      color-mix(in srgb, var(--accent-fill) 22%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 55%, transparent),
+              0 8px 22px -10px color-mix(in srgb, var(--accent) 70%, transparent); }
+.fz-pwr:active:not(:disabled) { transform: scale(.95); }
+.fz-pwr:disabled { opacity: .4; }
+.fz-note { font-size: .78rem; color: var(--dim); min-height: 1em; }
+
+.fz-chart { grid-area: chart; display: grid; grid-template-rows: auto 1fr auto; gap: 10px; padding: 22px 24px 16px; }
+.fz-chart-k { font-size: .82rem; color: var(--ink-2); }
+.fz-plot { display: grid; grid-template-columns: auto 1fr; gap: 10px; min-height: 0; }
+.fz-y { display: flex; flex-direction: column; justify-content: space-between; font-size: .7rem;
+        color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+.fz-svg { min-height: 0; position: relative; }
+.fz-svg svg { position: absolute; inset: 0; width: 100%; height: 100%; color: var(--info); }
+.fz-x { display: flex; justify-content: space-between; padding-left: 34px; font-size: .7rem; color: var(--faint); }
+
+.fz-facts { grid-area: facts; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 2px; padding: 6px; }
+.fz-fact { display: grid; gap: 4px; padding: 12px 16px; border-radius: 12px; min-width: 0; }
+.fz-fk { font-size: .68rem; color: var(--dim); }
+.fz-fv { font-size: .98rem; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden;
+         text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+
+.fz[data-on="off"] .fz-temp, .fz[data-state="stale"] .fz-temp { color: var(--dim); text-shadow: none; }
+.fz[data-state="stale"] .fz-svg svg, .fz[data-on="off"] .fz-svg svg { color: var(--faint); }
+
+@media (orientation: portrait) {
+  .fz { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto;
+        grid-template-areas: "hero" "chart" "facts"; }
+  .fz-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { .fz-step, .fz-pwr, .fz-set { transition: none; } }

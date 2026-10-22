@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar voice — wake phrase, offline speech, spoken replies
+Documentation=file:__ROOT__/doc/voice.md
+After=pipewire.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The venv's python: openwakeword and faster-whisper live there (omacar voice setup).
+ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/voice.py run'
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

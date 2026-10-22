@@ -8,6 +8,8 @@ Deliberately does no OBD work of its own. One process owns the serial
 connection, and it is the daemon.
 
     python3 serve.py <port> <share-dir> [--host H] [--token T] [--control]
+    python3 serve.py <port> <share-dir> --host 0.0.0.0 --rear   the back-seat
+                                         screen's door (lib/rear.py), nothing else
     python3 serve.py <port> <share-dir> --demo <demo-dir>    the meetup demo's
                                          server, which only `omacar demo on` starts
 
@@ -54,7 +56,13 @@ LOOPBACK_ONLY = True
 
 # The only writes a cockpit is ever allowed, even with --control: things that
 # change what you are looking at, never what the car is doing.
+# Naming a tyre sensor's wheel is a label in a config file: it is on the list.
 COCKPIT_WRITES = {"/api/units", "/api/roadcams/pins"}
+
+# `--rear`: the back-seat screen's server (lib/rear.py). A different door, not a
+# smaller key: in this mode every request is answered by lib/rear.py or refused,
+# and lib/api.py is never reached. See that file for the allow-list.
+REAR = False
 
 
 # ---- the meetup demo (doc/design/2026-09-30-meetup-demo.md, §2 and §3) --------
@@ -109,6 +117,12 @@ DEMO_ROUTES = {
     # clips into the demo's own locked/.
     "/api/cams": ALLOW,
     "/api/cams/*": ALLOW,
+    # Incident clips: the demo has no clip service, so the list is empty and
+    # the toast's poll is quiet; everything else (Save, delete, export, the
+    # video) is refused.
+    "/api/clips": {"running": False, "incidents": [], "totals": {"count": 0, "bytes": 0}, "demo": True},
+    "/api/clips/last": {"running": False, "last": None, "demo": True},
+    "/api/clips/*": REFUSE,
     # Drowsy mode: its settings in the demo's config, its events and measures in
     # the demo's state.
     "/api/drowsy": ALLOW,
@@ -159,9 +173,102 @@ DEMO_ROUTES = {
     "/api/plugins": READ,
 
     # --- STUB: background calls, answered without running anything
+    # The radar detector: the demo has no Bluetooth and no detector, so it
+    # answers "none", and the card, the banner and the Radar screen say so.
+    "/api/v1": {"present": False, "demo": True},
     # The live page's volume pin (§2.6): it would hold the tablet's speakers at
     # 100% every 30 s. The demo never touches the volume.
     "/api/audio": {"managed": False, "demo": True},
+    # The coach scores drives from the car's log; the demo has none of its own.
+    "/api/coach": {"present": False, "demo": True},
+    # The fridge would send Bluetooth writes to a real Dometic.
+    "/api/fridge": {"present": False, "demo": True},
+    # The pre-trip check's stored half: the demo keeps no trip, no ticks and
+    # no maintenance gaps (its service book is read-only), and has no tyre
+    # source, so the tyres say "Not measured".
+    "/api/pretrip": {"trip_km": None, "ticks": {}, "trip_started": None,
+                     "checklist": [], "gaps": [], "tpms": None,
+                     "simulated": True, "demo": True},
+    # Arrival and pickup pre-cool would run the owner's House command and move
+    # the fridge; places is the owner's real home address. None of it in a demo.
+    "/api/arrival": {"demo": True, "location": {"source": "none", "fix": False},
+                     "arrival": {"phase": "no_home"}, "places": {"home": None, "pickups": []},
+                     "actions": {}, "pickup": None, "watching": False},
+    "/api/places": {"home": None, "pickups": [], "demo": True},
+    # The speed limit would read the real position; the demo has none.
+    "/api/speedlimit": {"present": False, "limit": None, "confidence": "none", "demo": True},
+    # The fuel log is the real car's: the demo has none, and a POST must not
+    # write a fill-up into the real record.
+    "/api/fuel": {"present": False, "demo": True, "fills": [], "intervals": [],
+                  "pending": None},
+    # The tyre sensors: the demo has no radio, and assigning a sensor would
+    # write the owner's config.
+    "/api/tpms": {"present": False, "demo": True},
+    "/api/tpms/heard": {"present": False, "heard": [], "demo": True},
+    "/api/tpms/assign": {"ok": False, "demo": True},
+    # The tablet battery screen reads this; the demo has no tablet battery.
+    "/api/tabletbatt": {"present": False, "demo": True},
+    # The Work dashboard would ask the owner's real Work relay about real sessions.
+    # Accessibility: the defaults, read-only. The demo never runs `omaaccess
+    # set` on the machine it is shown on, and never speaks.
+    "/api/access": {"source": "omacar", "demo": True, "settings": {
+        "scale": 1.0, "contrast": False, "still": False, "dyslexia": False, "big": False,
+        "flash": False, "captions": False, "reader": False, "speak": False,
+        "filter": "none", "lang": "auto"}},
+    "/api/access/speak": {"spoken": False, "why": "not in the demo", "demo": True},
+    "/api/workdash": {"present": False, "demo": True, "sessions": [], "actions": []},
+    "/api/workdash/diff": {"error": "demo", "demo": True},
+    "/api/workdash/action": {"error": "demo", "demo": True, "actions": []},
+    # Calls would answer a real phone: the demo has none.
+    "/api/calls": {"present": False, "demo": True},
+    # Learn my car takes the adapter to listen to the bus; the demo has none.
+    "/api/learncar": {"present": False, "status": "idle", "steps": [], "demo": True},
+    # The Environment card and screen poll these. The demo has no sensor nodes
+    # and must never open a serial port, so: not present, and the card says
+    # how to plug one in.
+    "/api/env": {"present": False, "demo": True},
+    "/api/env/history": {"present": False, "series": {}, "demo": True},
+    # The voice service config: the demo has no microphone and never listens.
+    "/api/voice": {"present": False, "enabled": False, "demo": True},
+    # The light sensor is a sysfs read, but the demo is siloed from the host's
+    # hardware: no sensor, so looks by the sun run on the sun alone.
+    "/api/ambient": {"present": False, "lux": None, "demo": True},
+    # Looks by the sun probes this optional route (another feature's) for a GPS
+    # fix; the demo has none, so the sun is worked out from the time zone.
+    "/api/location": {"present": False, "demo": True},
+    # The trip journal: the demo has no drives of its own to annotate.
+    "/api/journal": {"present": False, "entries": [], "demo": True},
+    "/api/journal/note": {"ok": False, "demo": True},
+    "/api/journal/settings": {"ok": False, "demo": True},
+    # The equalizer would rewrite a PipeWire config and restart a user unit.
+    "/api/eq": {"present": False, "why": "the demo has no PipeWire", "demo": True},
+    "/api/eq/live": {"ok": False, "demo": True},
+    # The car widget kit: the demo runs no plugin code at all.
+    "/api/carkit": {"plugins": [], "demo": True},
+    "/api/carkit/*": REFUSE,
+    # The owner's outbox: the demo has nothing to tell anybody.
+    "/api/notify": {"events": [], "demo": True},
+    # The back-seat screen's front half: the demo has no back seat, no notes
+    # and no skips.
+    "/api/rear": {"note": None, "alert": False, "music_cmd": None, "paired": False, "demo": True},
+    "/api/rear/*": {"ok": False, "demo": True},
+    # The parking countdown would ask logind to suspend the machine.
+    "/api/ignition": {"phase": "off", "running": False, "demo": True},
+    # A child left in the car: the demo has no camera, no charger to follow
+    # and nobody to tell. Off, so the page shows no card and watches nothing.
+    "/api/child-alert": {"running": False, "phase": "off", "enabled": False, "demo": True},
+    "/api/child-alert/seen": {"ok": False, "demo": True},
+    "/api/child-alert/config": {"error": "not in the demo", "demo": True},
+    # Valet mode keeps a PIN in the real config. The demo has no valet.
+    "/api/valet": {"on": False, "demo": True},
+    # Where the car was parked: the owner's real places and photographs. Never in a demo.
+    "/api/parking": {"present": False, "last": None, "history": [], "demo": True},
+    "/api/parking/*": {"present": False, "last": None, "demo": True},
+    # The parked 12 V record is the real car's; the demo has none.
+    "/api/battery-watch": {"present": False, "demo": True},
+    # Self-update would fetch, switch releases and restart the real units.
+    "/api/update": {"present": False, "adopted": False, "demo": True},
+    "/api/update/booted": {"ok": True, "demo": True},
     # The advisor runs the real claude CLI. Boot asks whether it is there, and
     # Home and Vehicle ask for its last answer.
     "/api/ai/available": {"available": False},
@@ -202,6 +309,10 @@ DEMO_ROUTES = {
     # Android Auto are drawn by the demo.
     "/api/phone": REFUSE,
     "/api/phone/*": REFUSE,
+    # --- REFUSE: Work by voice reaches a real machine's coding sessions; the
+    # demo is siloed and has no business there.
+    "/api/work": REFUSE,
+    "/api/work/*": REFUSE,
 }
 
 # The cues the demo world acts on (lib/demoworld.py). `quiet` is `demo off`'s:
@@ -380,6 +491,8 @@ class Handler(SimpleHTTPRequestHandler):
         /api/... read the 404's headers rather than the API's, which is exactly
         how a security audit of this file briefly reached the wrong conclusion.
         """
+        if REAR:
+            return self._rear()
         path = self.path.partition("?")[0]
         if is_demo_path(path):
             # As its GET would answer, without the body: 404 on the live server.
@@ -601,7 +714,56 @@ class Handler(SimpleHTTPRequestHandler):
             return True
         return path in COCKPIT_WRITES
 
+    def _rear(self):
+        """Every request in --rear mode (GET, HEAD, POST). Token first (401),
+        then the exact-route allow-list (403); only then is anything run."""
+        import rear
+        method = self.command
+        path, _, query = self.path.partition("?")
+        tok = rear.token_from(self.headers.get("Authorization"), query,
+                              self.headers.get("Cookie"))
+        if not tok:
+            return self._json({"error": "a token is required"}, 401)
+        if path == "/":
+            path = "/rear.html"
+        if not rear.route_allowed(method, path):
+            return self._json({"error": "not available on this screen"}, 403)
+        body = ""
+        if method == "POST":
+            if not self._same_origin():
+                return self._json({"error": "cross-site requests are refused"}, 403)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = 0
+            if length > 4096:
+                self.close_connection = True
+                return self._json({"error": "too large"}, 413)
+            body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        if path in rear.REAR_STATIC:
+            got = rear.static_file(os.getcwd(), path)
+            if got is None:
+                return self._json({"error": "not found"}, 404)
+            self.send_response(200)
+            self.send_header("Content-Type", got[1])
+            self.send_header("Content-Length", str(len(got[0])))
+            self.send_header("Cache-Control", "no-store")
+            if path == "/rear.html":
+                # The cookie is how the page's own stylesheet and scripts (which
+                # a bare <link> cannot sign) stay authorised. HttpOnly: the
+                # page's script never needs to read it.
+                self.send_header("Set-Cookie", f"{rear.COOKIE}={tok}; Path=/; HttpOnly; "
+                                 "SameSite=Strict; Max-Age=31536000")
+            self.end_headers()
+            if method != "HEAD":
+                self.wfile.write(got[0])
+            return
+        status, payload = rear.handle(method, path, body)
+        return self._json(payload, status)
+
     def do_GET(self):
+        if REAR:
+            return self._rear()
         if not self._local():
             return self._json({"error": "loopback only"}, 403)
         if not self._authorised():
@@ -827,6 +989,20 @@ class Handler(SimpleHTTPRequestHandler):
             kind = {"jpg": "image/jpeg", "png": "image/png",
                     "webp": "image/webp"}.get(real.rsplit(".", 1)[-1], "application/octet-stream")
             return self._send(blob, kind)
+        if path.startswith("/api/parking/photo/"):
+            # A saved parking still (lib/parkspot.py): the id and role are
+            # matched and looked up in its own list, never joined into a path.
+            m = re.fullmatch(r"/api/parking/photo/([0-9]{1,9})/(front|rear)", path)
+            import parkspot
+            real = parkspot.photo_path(m.group(1), m.group(2)) if m else None
+            if real is None:
+                return self._json({"error": "no such photograph"}, 404)
+            try:
+                with open(real, "rb") as f:
+                    blob = f.read()
+            except OSError:
+                return self._json({"error": "unreadable"}, 404)
+            return self._send(blob, "image/jpeg")
         if path.startswith("/api/cams/"):
             # THE TWO CAMERA ROUTES THAT ARE NOT JSON. The others go through
             # api.handle_get like everything else (lib/camroutes.py).
@@ -844,6 +1020,15 @@ class Handler(SimpleHTTPRequestHandler):
                 if f is None:
                     return self._json({"error": "no such clip"}, 404)
                 return self._ranged(f, "video/mp4")
+        m = re.fullmatch(r"/api/clips/media/(\d{8}-\d{6}-[a-z]+)/([a-z]+(?:-\d{8}-\d{6})?\.mp4)", path)
+        if m:
+            import camstore
+            import clips
+            real = clips.media_path(m.group(1), m.group(2))
+            f = camstore.open_clip(real) if real is not None else None
+            if f is None:
+                return self._json({"error": "no such clip"}, 404)
+            return self._ranged(f, "video/mp4")
         if path.startswith("/api/"):
             out = api.handle_get(path, query)
             if out is None:
@@ -905,6 +1090,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if REAR:
+            return self._rear()
         if not self._local():
             return self._json({"error": "loopback only"}, 403)
         if not self._authorised():
@@ -1029,7 +1216,14 @@ if __name__ == "__main__":
             signal.signal(_sig, _said_so)
     port, root, host, TOKEN, ALLOW_CONTROL = parse_args(sys.argv[1:])
     LOOPBACK_ONLY = host in ("127.0.0.1", "localhost", "::1")
-    if not LOOPBACK_ONLY and not TOKEN:
+    REAR = "--rear" in sys.argv[3:]
+    if REAR:
+        # The back-seat door takes its own token (rear-token, read on every
+        # request so `omacar rear revoke` bites at once) and nothing else.
+        if "--demo" in sys.argv or "--control" in sys.argv or "--token" in sys.argv:
+            sys.exit("serve.py: --rear takes no --demo, --control or --token")
+        TOKEN, ALLOW_CONTROL = "", False
+    elif not LOOPBACK_ONLY and not TOKEN:
         sys.exit("serve.py: refusing to bind to the network without --token")
     _demo = demo_arg(sys.argv[1:])
     if _demo is not None:

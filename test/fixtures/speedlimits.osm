@@ -1,0 +1,74 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- A made-up neighbourhood, not real map data (so nothing here is under the
+     ODbL): five roads placed to exercise lib/speedlimit.py.
+       Main St      E-W, 35 mph posted
+       Frontage Rd  E-W, 20 m north of Main St, 25 mph posted (the frontage-road trap)
+       Oak Ave      N-S across Main St, no maxspeed: residential default 25 "default"
+       Hwy 101      two one-way carriageways 15 m apart: north 65, south 55
+       Rural Rd     N-S, bare maxspeed=50 (km/h) -> 31 mph
+       Split Rd     E-W, maxspeed:forward 45 mph, maxspeed:backward 35 mph
+       Back Lane    unclassified with no maxspeed: no default, so nothing at all
+       Signal Rd    maxspeed=signals: unparseable, so nothing at all -->
+<osm version="0.6" generator="hand">
+  <node id="1" lat="37.77000" lon="-122.43000"/>
+  <node id="2" lat="37.77000" lon="-122.42800"/>
+  <node id="3" lat="37.77000" lon="-122.42600"/>
+  <node id="4" lat="37.77000" lon="-122.42500"/>
+  <node id="5" lat="37.77000" lon="-122.42400"/>
+  <node id="6" lat="37.77000" lon="-122.42200"/>
+  <node id="11" lat="37.77018" lon="-122.42900"/>
+  <node id="12" lat="37.77018" lon="-122.42600"/>
+  <node id="13" lat="37.77018" lon="-122.42300"/>
+  <node id="21" lat="37.76800" lon="-122.42500"/>
+  <node id="22" lat="37.77300" lon="-122.42500"/>
+  <node id="31" lat="37.76500" lon="-122.41000"/>
+  <node id="32" lat="37.77500" lon="-122.41000"/>
+  <node id="33" lat="37.77500" lon="-122.41017"/>
+  <node id="34" lat="37.76500" lon="-122.41017"/>
+  <node id="41" lat="37.75000" lon="-122.43000"/>
+  <node id="42" lat="37.76000" lon="-122.43000"/>
+  <node id="51" lat="37.76000" lon="-122.42000"/>
+  <node id="52" lat="37.76000" lon="-122.41500"/>
+  <node id="53" lat="37.76000" lon="-122.41000"/>
+  <node id="61" lat="37.78000" lon="-122.43000"/>
+  <node id="62" lat="37.78000" lon="-122.42500"/>
+  <node id="71" lat="37.79000" lon="-122.43000"/>
+  <node id="72" lat="37.79000" lon="-122.42500"/>
+  <way id="1000">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/><nd ref="4"/><nd ref="5"/><nd ref="6"/>
+    <tag k="highway" v="secondary"/><tag k="name" v="Main St"/><tag k="maxspeed" v="35 mph"/>
+  </way>
+  <way id="1001">
+    <nd ref="11"/><nd ref="12"/><nd ref="13"/>
+    <tag k="highway" v="residential"/><tag k="name" v="Frontage Rd"/><tag k="maxspeed" v="25 mph"/>
+  </way>
+  <way id="1002">
+    <nd ref="21"/><nd ref="4"/><nd ref="22"/>
+    <tag k="highway" v="residential"/><tag k="name" v="Oak Ave"/>
+  </way>
+  <way id="1003">
+    <nd ref="31"/><nd ref="32"/>
+    <tag k="highway" v="motorway"/><tag k="name" v="Hwy 101 northbound"/><tag k="oneway" v="yes"/><tag k="maxspeed" v="65 mph"/>
+  </way>
+  <way id="1004">
+    <nd ref="33"/><nd ref="34"/>
+    <tag k="highway" v="motorway"/><tag k="name" v="Hwy 101 southbound"/><tag k="oneway" v="yes"/><tag k="maxspeed" v="55 mph"/>
+  </way>
+  <way id="1005">
+    <nd ref="41"/><nd ref="42"/>
+    <tag k="highway" v="tertiary"/><tag k="name" v="Rural Rd"/><tag k="maxspeed" v="50"/>
+  </way>
+  <way id="1006">
+    <nd ref="51"/><nd ref="52"/><nd ref="53"/>
+    <tag k="highway" v="secondary"/><tag k="name" v="Split Rd"/>
+    <tag k="maxspeed:forward" v="45 mph"/><tag k="maxspeed:backward" v="35 mph"/>
+  </way>
+  <way id="1007">
+    <nd ref="61"/><nd ref="62"/>
+    <tag k="highway" v="unclassified"/><tag k="name" v="Back Lane"/>
+  </way>
+  <way id="1008">
+    <nd ref="71"/><nd ref="72"/>
+    <tag k="highway" v="secondary"/><tag k="name" v="Signal Rd"/><tag k="maxspeed" v="signals"/>
+  </way>
+</osm>

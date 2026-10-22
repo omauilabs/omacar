@@ -6,7 +6,7 @@
 // readings catalogue drive mode uses and says where it came from: a tile that
 // has no value draws words, never a zero.
 
-import { h, clear, icon, store, api } from "../core.js";
+import { h, clear, icon, store, api, U } from "../core.js";
 import { ICONS } from "../icons.js";
 import { READINGS, readingState, pausedNote } from "../readings.js";
 import { makeGauge } from "../gauges.js";
@@ -14,9 +14,12 @@ import { makeSignalTile } from "../sigtile.js";
 import { footerLine, sourceKey } from "../provenance.js";
 import { asset } from "../assets.js";
 import { tyreState } from "../systems.js";
+import { tpmsFeed } from "../tpmsfeed.js";
+import { homeTyre, mergeTyre } from "../tpmsview.js";
 import { loadCatalogue, orientation, spanOf, defaultLayout } from "../homecards.js";
 import { savedLook, mountLookEffect } from "../looks.js";
 import { startEditing } from "../homeedit.js";
+import { valet, hidesCard, lockReason } from "../valet.js";
 import { latestAdvice } from "../advice.js";
 import { carOrPicture } from "../car3d.js";
 import { firstPinnedStill, ageText } from "../roadcams.js";
@@ -25,11 +28,23 @@ const text = (el, s) => { if (el.textContent !== s) el.textContent = s; };
 // Only ever called from a tap: the routing rule in main.js.
 const go = (id) => { location.hash = "#" + id; };
 
-function tappable(node, id) {
-  node.setAttribute("role", "button");
-  node.tabIndex = 0;
-  node.addEventListener("click", () => { if (!node.closest(".editing")) go(id); });
-  node.addEventListener("keydown", (e) => { if (e.key === "Enter") go(id); });
+// A card opens its screen when tapped. It is not itself a button: some cards
+// hold their own buttons (the dial's Begin, the dashcam's), and a button inside
+// a button is announced as nonsense and one of them cannot be reached (WCAG
+// 4.1.2, axe "nested-interactive"). So a real <button> lies over the card for
+// keyboard and screen-reader users, invisible until it has focus, and a tap
+// anywhere on the card that is not one of its own controls still opens it.
+const OPENS = {
+  drive: "Drive", roadcams: "Road cameras", advisor: "Oma Agent", cameras: "Dashcams",
+  environment: "Cabin air and weather", coach: "Hybrid coach", parked: "Where I parked",
+  fuel: "Fuel log", radar: "Radar detector", fridge: "Fridge",
+};
+
+function tappable(node, id, label) {
+  const open = () => { if (!node.closest(".editing")) go(id); };
+  node.prepend(h("button.hc-go", { type: "button", "aria-label": `Open ${label || OPENS[id] || id}`,
+    onclick: (e) => { e.stopPropagation(); open(); } }));
+  node.addEventListener("click", (e) => { if (!e.target.closest("button, a, input, select, [role=button]")) open(); });
   return node;
 }
 
@@ -49,6 +64,11 @@ function dialCard() {
   const begin = h("button.btn.dial-begin", { type: "button", style: { visibility: "hidden" },
     onclick: (e) => { e.stopPropagation(); go("launcher"); } }, "Begin");
   const node = tappable(h("div.card.hc.hc-dial", g.el, h("div.dial-words", rpm, mode, begin)), "drive");
+  // The posted limit beside the speed, and the speed's tone when over it
+  // (share/js/speedlimit.js, lib/speedlimit.py). Loaded on its own so a fault
+  // there can never take the dial with it.
+  let lim = null, limGone = false;
+  import("../speedlimit.js").then((m) => { if (!limGone) lim = { m, mount: m.mountSign(node) }; }).catch(() => {});
   const paintMode = (m) => {
     mode.hidden = !m;
     if (m) { text(mode, String(m).toUpperCase()); mode.dataset.mode = m; }
@@ -78,6 +98,8 @@ function dialCard() {
       g.el.dataset.state = speedState;
       if (speedState === "live") g.el.dataset.src = sourceKey(car, s);
       else delete g.el.dataset.src;
+      if (lim && speedState === "live" && lim.m.overNow()) g.el.dataset.over = "1";
+      else delete g.el.dataset.over;
       const rpmState = readingState(rpmReading, s);
       rpm.dataset.state = rpmState;
       if (rpmState === "live") rpm.dataset.src = sourceKey(car, s);
@@ -109,7 +131,11 @@ function dialCard() {
         api.driveMode().then((d) => paintMode(d && d.mode)).catch(() => {});
       }
     },
-    destroy() { document.removeEventListener("omacar:drivemode", onMode); },
+    destroy() {
+      document.removeEventListener("omacar:drivemode", onMode);
+      limGone = true;
+      if (lim) lim.mount.destroy();
+    },
   };
 }
 
@@ -139,14 +165,24 @@ function carCard() {
     tyre.style.top = (at[1] * 100) + "%";
   });
   const unmount3d = carOrPicture(stage3d, (on) => { threeD = on; show(); });
+  // The four tyre sensors (lib/tpms.py), when there are any heard; the car's
+  // own deflation warning otherwise, and whichever is worse if both speak.
+  // Tapping the callout opens the Tires screen.
+  let radio = null;
+  const offTpms = tpmsFeed.subscribe((s) => { radio = s; });
+  tyre.setAttribute("role", "button");
+  tyre.tabIndex = 0;
+  tyre.style.cursor = "pointer";
+  tyre.addEventListener("click", () => go("tpms"));
+  tyre.addEventListener("keydown", (e) => { if (e.key === "Enter") go("tpms"); });
   return {
     node,
     paint() {
-      const st = tyreState(store.car);
+      const st = mergeTyre(homeTyre(radio, { imperial: U.imperial }), tyreState(store.car));
       tyre.dataset.tone = st.tone;
       text(tyre.querySelector(".co-v"), st.text);
     },
-    destroy() { unmount3d(); },
+    destroy() { unmount3d(); offTpms(); },
   };
 }
 
@@ -201,7 +237,7 @@ function roadCard() {
 
 function soonCard(ico, title, line, id) {
   const node = tappable(h("div.card.hc",
-    h("div.hc-ph", icon(ico, 28), h("div.hc-ph-t", title), h("div.hc-ph-s", line))), id);
+    h("div.hc-ph", icon(ico, 28), h("div.hc-ph-t", title), h("div.hc-ph-s", line))), id, title);
   return { node, paint() {} };
 }
 
@@ -253,6 +289,18 @@ function agentCard() {
   };
 }
 
+// What holds the place of a card Valet mode hides. The Agent's simply goes (it
+// sits last, so nothing is left with a hole); the Navigation card's slot is in
+// the first row and would leave a dead band, so it says what is going on.
+function valetStandIn(id) {
+  if (id !== "nav") return null;
+  return { node: h("div.card.hc.hc-valet",
+    h("div.hc-title", icon(ICONS.valet, 18), "Valet mode"),
+    h("p.hc-valet-t", "Your history, documents and settings are out of sight, and the drive is being logged."),
+    h("p.hc-valet-s", "Tap Valet at the top to turn it off.")),
+    paint() {} };
+}
+
 const MAKERS = {
   dial: dialCard,
   car: carCard,
@@ -267,14 +315,124 @@ const MAKERS = {
       .catch((e) => {
         // Words, never a black card: whatever it had drawn is replaced.
         console.warn("Dashcams card:", e);
-        if (!gone) { clear(node); node.appendChild(h("div.dc-why", "The Dashcams card could not load")); }
+        if (!gone) node.replaceChildren(node.querySelector(".hc-go"), h("div.dc-why", "The Dashcams card could not load"));
       });
     return { node, paint: () => { if (card) card.paint(); },
              destroy: () => { gone = true; if (card) card.destroy(); } };
   },
   // ---- end redesign/cameras ---------------------------------------------------
   phone: phoneCard,
+  // The cabin and outdoor sensors (share/js/envcard.js, lib/envnode.py).
+  // Loaded only when the card is on Home; a tap opens the day's charts.
+  env: () => {
+    const node = tappable(h("div.card.hc"), "environment");
+    let card = null, gone = false;
+    import("../envcard.js").then((m) => {
+      if (gone) return;
+      card = m.envCard(node);
+    }).catch((e) => {
+      console.warn("Environment card:", e);
+      if (!gone) node.appendChild(h("div.hc-ph-s", "The environment card could not load"));
+    });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
   agent: agentCard,
+  // The Dometic CFX3 (share/js/fridgecard.js, lib/fridge.py). Loaded only when
+  // the card is on Home, like the dashcam card above.
+  fridge: () => {
+    const node = h("div.card.hc");
+    let card = null, gone = false;
+    import("../fridgecard.js").then((m) => {
+      if (gone) return;
+      card = m.fridgeCard(node);
+    }).catch((e) => {
+      console.warn("Fridge card:", e);
+      if (!gone) node.appendChild(h("div.hc-ph-s", "The fridge card could not load"));
+    });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // Hybrid coach (share/js/coachcard.js, lib/coach.py). Loaded only when the
+  // card is on Home; tapping it opens Vehicle -> Hybrid -> Coach.
+  coach: () => {
+    const node = tappable(h("div.card.hc"), "coach");
+    let card = null, gone = false;
+    import("../coachcard.js").then((m) => { if (!gone) card = m.coachCard(node); })
+      .catch((e) => {
+        console.warn("Coach card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The coach card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // Arriving home and the fridge for a pickup (share/js/arrivalcard.js,
+  // lib/arrival.py). Loaded only when the card is on Home.
+  arrival: () => {
+    const node = h("div.card.hc");   // not tappable: it holds keys of its own
+    let card = null, gone = false;
+    import("../arrivalcard.js").then((m) => { if (!gone) card = m.arrivalCard(node); })
+      .catch((e) => {
+        console.warn("Arrival card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The arrival card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // Where the car was left (share/js/parkspotcard.js, lib/parkspot.py). Loaded
+  // only when the card is on Home. Tapping it opens Navigation -> Parked.
+  parking: () => {
+    const node = tappable(h("div.card.hc"), "parked");
+    let card = null, gone = false;
+    import("../parkspotcard.js").then((m) => { if (!gone) card = m.parkspotCard(node); })
+      .catch((e) => {
+        console.warn("Parking card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The parking card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // The fuel log (share/js/fuelcard.js, lib/fuel.py): last tank's real
+  // economy and cost per mile. A tap opens Vehicle -> Care -> Fuel.
+  "fuel-log": () => {
+    const node = tappable(h("div.card.hc"), "fuel");
+    let card = null, gone = false;
+    import("../fuelcard.js").then((m) => { if (!gone) card = m.fuelLogCard(node); })
+      .catch((e) => {
+        console.warn("Fuel log card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The fuel log card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // The 12 V while parked (share/js/bwatchcard.js, lib/batterywatch.py). Loaded
+  // only when the card is on Home; tapping it opens Vehicle → Care → 12 V.
+  battery: () => {
+    const node = h("div.card.hc");
+    let card = null, gone = false;
+    import("../bwatchcard.js").then((m) => {
+      if (gone) return;
+      card = m.watchCard(node);
+    }).catch((e) => {
+      console.warn("12 V card:", e);
+      if (!gone) node.appendChild(h("div.hc-ph-s", "The 12 V card could not load"));
+    });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
+  // The Valentine One (share/js/radarcard.js, lib/v1.py). Loaded only when the
+  // card is on Home. Tapping it opens the full Radar screen.
+  radar: () => {
+    const node = tappable(h("div.card.hc"), "radar");
+    let card = null, gone = false;
+    import("../radarcard.js").then((m) => { if (!gone) card = m.radarCard(node); })
+      .catch((e) => {
+        console.warn("Radar card:", e);
+        if (!gone) node.appendChild(h("div.hc-ph-s", "The radar card could not load"));
+      });
+    return { node, paint: () => { if (card) card.paint(); },
+             destroy: () => { gone = true; if (card) card.destroy(); } };
+  },
 };
 
 function makeCard(id, cat) {
@@ -307,7 +465,11 @@ export default function home(root) {
   const prov = h("span.home-prov");
   const custom = h("button.home-custom", { type: "button" },
     icon(ICONS.layout, 18), "Customize layout");
-  root.appendChild(h("div.home", fx, editBar, grid, h("div.home-foot", prov, custom)));
+  // A quiet note when an update is waiting (share/js/updateui.js); hidden otherwise.
+  const upNote = h("button.up-note", { type: "button", hidden: true });
+  let upStop = null;
+  import("../updateui.js").then((m) => { if (alive) upStop = m.mountHomeNote(upNote); }).catch(() => {});
+  root.appendChild(h("div.home", fx, editBar, grid, h("div.home-foot", prov, upNote, custom)));
 
   // ---- the look's background, behind the grid, while parked -----------------
   //
@@ -350,9 +512,12 @@ export default function home(root) {
     const o = orientation();
     const want = [];
     for (const [id, size] of lay[o].cards) {
+      // Valet mode: the cards that carry personal data are not placed at all.
       let c = made.get(id);
       if (!c) {
-        c = makeCard(id, cat);
+        // The Navigation card keeps its place, so the stage stays filled, but
+        // says why it is quiet instead of showing the owner's pinned camera.
+        c = hidesCard(id) ? valetStandIn(id) : makeCard(id, cat);
         if (!c) continue;
         made.set(id, c);
       }
@@ -378,7 +543,7 @@ export default function home(root) {
     const moving = store.lockedAsMoving;
     if (custom.disabled !== moving) {
       custom.disabled = moving;
-      custom.title = moving ? "Available when you stop" : "";
+      custom.title = moving ? lockReason(valet.on, true) : "";
       custom.setAttribute("aria-disabled", moving ? "true" : "false");
     }
     if (!alive || !layout) return;
@@ -446,6 +611,7 @@ export default function home(root) {
   return () => {
     if (editor) editor.finish(false);
     alive = false;
+    if (upStop) upStop();
     offLive();
     offCar();
     mq.removeEventListener("change", onTurn);

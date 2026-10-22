@@ -1,0 +1,15 @@
+[Unit]
+Description=OmaCar location — follows gpsd, or says there is no fix
+Documentation=file:__ROOT__/doc/arrival.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# System python, stdlib only. Without gpsd it writes "no fix" and keeps trying.
+ExecStart=/usr/bin/python3 __ROOT__/lib/location.py run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

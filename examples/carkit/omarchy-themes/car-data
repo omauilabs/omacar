@@ -1,0 +1,16 @@
+#!/usr/bin/env python3
+"""Omarchy's installed themes and the current one, from ~/.config/omarchy."""
+import json, os
+base = os.path.expanduser("~/.config/omarchy")
+def current():
+    p = os.path.join(base, "current", "theme")
+    try:
+        return os.path.basename(os.path.realpath(p)) if os.path.exists(p) else None
+    except OSError:
+        return None
+cur = current()
+try:
+    names = sorted(n for n in os.listdir(os.path.join(base, "themes")) if not n.startswith("."))
+except OSError:
+    names = []
+print(json.dumps({"current": cur, "themes": [{"name": n, "mark": "current" if n == cur else ""} for n in names]}))

@@ -1584,9 +1584,10 @@ _imports = _re.findall(r'from "\./(views/[a-z0-9_]+\.js)"', _main)
 _missing = [m for m in _imports if not os.path.exists(os.path.join(ROOT, "share", "js", m))]
 check(f"all {len(_imports)} view modules main.js imports exist", _missing, [])
 _mounts = set(_re.findall(r'mount:\s*([A-Za-z_]+)', _main))
-# A mount is an imported view, a function main.js defines itself, or -- for
-# a plugin screen -- the module object the loader just imported.
-_bound = (set(_re.findall(r'^import\s+([A-Za-z_]+)\s+from', _main, _re.M))
+# A mount is an imported view (a default import, with or without named ones
+# beside it: `import workView, { pollWork } from`), a function main.js
+# defines itself, or -- for a plugin screen -- the module object the loader just imported.
+_bound = (set(_re.findall(r'^import\s+([A-Za-z_]+)\s*(?:,\s*\{[^}]*\})?\s+from', _main, _re.M))
           | set(_re.findall(r'^function\s+([A-Za-z_]+)\s*\(', _main, _re.M))
           | {"mod"})
 check("every mount the registry names is a view main.js can reach", sorted(_mounts - _bound), [])
@@ -2319,12 +2320,15 @@ _css = open(os.path.join(ROOT, "share", "css", "app.css"), encoding="utf-8").rea
 # every hue collapses to a lightness, so "the current one is the blue one" does
 # not survive to 2am on a dark road. Restyling the dock is exactly the kind of
 # change that quietly takes one of these away.
-check("the current tab still takes the ink colour",
+#
+# Since 2026-10-17 the signals are a lit key (a fill, not a hue), the full
+# ink colour, and a heavier label.
+check("the current tab's key is lit",
+      '.tab[aria-current="page"] .tab-in::before { opacity: 1; }' in _css, True)
+check("it takes the ink colour",
       '.tab[aria-current="page"] { color: var(--ink); }' in _css, True)
-check("it still carries its own edge",
-      '.tab[aria-current="page"]::before' in _css, True)
-check("and its pill is still filled",
-      '.tab[aria-current="page"] .tab-in { background: var(--raise); }' in _css, True)
+check("and its label is heavier",
+      '.tab[aria-current="page"] .tab-lbl { font-weight: 600; }' in _css, True)
 _main = open(os.path.join(ROOT, "share", "js", "main.js"), encoding="utf-8").read()
 check("and it is still announced to a screen reader",
       'setAttribute("aria-current", "page")' in _main, True)
@@ -3328,9 +3332,12 @@ _OLD = ["hub", "drive", "live", "ima", "launcher", "omaplay", "music", "effects"
         "nursery", "advisor", "report", "learn", "themes"]
 check("every old view still routes, itself or through an alias",
       [v for v in _OLD if v not in _ids and _alias.get(v) not in _ids], [])
-check("the tabs are the mockups' five, in their order",
+# The mockups' five, plus Cabin (owner, 2026-10-17: "build another tab for the
+# extra stuff such as the fridge, environment sensors data"), between Vehicle
+# and Agent. A seventh still has to come through here on purpose.
+check("the tabs are the mockups' five plus Cabin, in their order",
       _re_nav.findall(r'^  \{ id: "([a-z]+)", label: "[A-Za-z]+", icon:', _main, _re_nav.M),
-      ["home", "navigation", "cameras", "vehicle", "agent"])
+      ["home", "navigation", "cameras", "vehicle", "cabin", "agent"])
 # `=(?!=)`: an assignment, not the `===` comparisons in goto() and honourAsk().
 # One writer today (a623a17: goto()), and it must stay one.
 check("nothing but a tap writes the hash: goto() is the only writer in main.js",

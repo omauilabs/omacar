@@ -1,0 +1,13 @@
+[Unit]
+Description=OmaCar trip journal — notes the fridge lid and files each drive once it has settled
+Documentation=file:__ROOT__/doc/journal.md
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 __ROOT__/lib/journal.py run
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

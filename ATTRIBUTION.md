@@ -43,6 +43,53 @@ copyrightable table, and because they are the cheapest useful thing to ask a
 module nobody has mapped. The standard itself is paywalled at around CHF 221;
 nothing here reproduces it.
 
+## KESPL — the Valentine One's Bluetooth protocol
+
+<https://github.com/DeveloprOfThings/KESPL> · **MIT**
+
+The exception to "nothing is bundled": `lib/esp.py` carries numbers, not
+files. The LE service and characteristic UUIDs, the ESP device and packet
+identifiers, the band, arrow and seven-segment bit values, the layouts of the
+alert and display-data packets, and the rule for assembling an alert table were
+read from KESPL's Kotlin (`Constants.kt`, `ESPPacketId.kt`, `ESPDevice.kt`,
+`bluetooth/EspUUID.kt`, `packet/*`, `packet/data/alert/*`,
+`packet/data/displayData/*`) and re-expressed as this project's own Python.
+They are the protocol's facts, but they are credited, and the MIT notice that
+asks for it is reproduced here:
+
+> MIT License
+>
+> Copyright (c) 2025 Develpr Of Things
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+Where KESPL disagrees with itself (the Ku band's bit) or says nothing (what a
+raw signal level means in bars), `lib/esp.py` says so and does not guess; see
+`doc/radar.md`.
+
+**tz1/bluev** (<https://github.com/tz1/bluev>, GPL-3) was read to cross-check
+the frame format (SOF, destination and originator, the checksum) and nothing
+was taken from it. It is listed here so nobody wonders.
+
+Valentine One and V1connection are Valentine Research, Inc.'s names. OmaCar is
+not affiliated with or endorsed by them.
+
 ## Deliberately not used
 
 **Ross-Tech VCDS label files.** Copyright, all rights reserved, and the `.clb`
@@ -74,3 +121,23 @@ and the **Face Landmarker** model, by Google, under the Apache License 2.0.
 `omacar assets fetch` downloads them into `share/js/vendor/mediapipe/` and
 checks them against the pins in `share/assets/manifest.json`. Drowsy mode reads
 the cabin camera with them, in the page, with nothing fetched on the road.
+
+Protocol knowledge ported (no code copied verbatim) from two MIT-licensed
+projects, for the ready-made cabin monitors in `lib/envble.py`:
+
+- **qingping-ble**, © Bluetooth-Devices contributors (itself from Ernst79's
+  bleparser): the Qingping Air Monitor Lite advertisement layout.
+  https://github.com/Bluetooth-Devices/qingping-ble
+- **Aranet4-Python**, © Anrijs Jargans and contributors: the Aranet4
+  advertisement layout and scaling. https://github.com/Anrijs/Aranet4-Python
+
+## OpenStreetMap — posted speed limits
+
+<https://www.openstreetmap.org/copyright> · **ODbL 1.0**, © OpenStreetMap contributors
+
+The speed-limit sign (`doc/speed-limits.md`) reads a small database built from
+an OpenStreetMap extract (Geofabrik's `california-latest.osm.pbf`). The database
+is a derived database under the ODbL: it is never committed here, it carries its
+attribution in its own `meta` table, and the sign credits OpenStreetMap on the
+screen. `test/fixtures/speedlimits.osm` is made up by hand and is not
+OpenStreetMap data. Building uses `pyosmium` (osmium on PyPI, BSD-2-Clause).

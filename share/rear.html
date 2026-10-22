@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<!-- OmaCar — the back-seat screen. Served only by `serve.py --rear` (lib/rear.py),
+     which gives it this page, its stylesheet and two scripts and nothing else.
+     It is told what a child may see and no more: see doc/rear-screen.md. -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Back seat</title>
+<link rel="icon" href="icon.svg">
+<link rel="stylesheet" href="css/rear.css">
+
+<main class="rear" id="rear" data-cabin="0" data-lost="0">
+  <h1 class="rear-hi">Back seat</h1>
+
+  <section class="card how" id="how" aria-live="polite">
+    <span class="cap">How long?</span>
+    <div class="big-row"><span class="big" id="how-big">—</span><span class="unit" id="how-unit"></span></div>
+    <p class="line" id="how-line">Waiting for the car to get going</p>
+    <span class="sim" id="how-sim" hidden>Simulated</span>
+    <svg class="road" viewBox="0 0 400 24" aria-hidden="true" preserveAspectRatio="none">
+      <path d="M0 14 H400" class="road-line"/>
+    </svg>
+  </section>
+
+  <section class="card music" id="music">
+    <span class="cap">Music</span>
+    <div class="song">
+      <div class="note-ico" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="7" cy="18" r="2.6" fill="currentColor"/><circle cx="17" cy="16" r="2.6" fill="currentColor"/></svg>
+      </div>
+      <div class="song-text"><b id="song-title">Music is off</b><span id="song-artist"></span></div>
+    </div>
+    <div class="skips" id="skips" hidden>
+      <button class="key round" id="prev" type="button" aria-label="Previous song"><svg viewBox="0 0 24 24"><path d="M18 5v14L8 12zM6 5v14" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
+      <button class="key round" id="next" type="button" aria-label="Next song"><svg viewBox="0 0 24 24"><path d="M6 5v14l10-7zM18 5v14" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button>
+    </div>
+    <span class="sim" id="music-sim" hidden>Simulated</span>
+  </section>
+
+  <button class="card calm" id="calm-open" type="button">
+    <span class="cap">Calm time</span>
+    <span class="orbs" aria-hidden="true"><i></i><i></i><i></i></span>
+    <b class="calm-word">Watch the bubbles</b>
+  </button>
+
+  <section class="card cabin" id="cabin" hidden>
+    <span class="cap">Temperature</span>
+    <div class="big-row"><span class="big" id="cabin-big"></span></div>
+    <p class="line" id="cabin-line"></p>
+    <span class="sim" id="cabin-sim" hidden>Simulated</span>
+  </section>
+
+  <section class="card ask" id="ask">
+    <button class="ask-key" id="ask-open" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0-6 6v3.5L4.5 16h15L18 12.5V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span id="ask-label">Ask the driver</span>
+    </button>
+    <p class="line" id="ask-note">Tap to tell the driver what you need</p>
+  </section>
+
+  <p class="lost" id="lost" role="status" hidden>Lost the car for a moment. Trying again…</p>
+</main>
+
+<!-- What do you need? Four big choices; a fixed list, never typed words. -->
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-label="What do you need?">
+  <div class="sheet-body">
+    <h2>What do you need?</h2>
+    <div class="choices" id="choices"></div>
+    <button class="key wide quiet" id="sheet-close" type="button">Never mind</button>
+  </div>
+</div>
+
+<!-- Calm time: slow bubbles, a breathing circle. Nothing flashes. -->
+<div class="calm-stage" id="calm" hidden role="dialog" aria-modal="true" aria-label="Calm time">
+  <canvas id="calm-canvas"></canvas>
+  <div class="calm-breath" id="breath" aria-live="off"></div>
+  <div class="calm-bar">
+    <button class="key wide" id="calm-colors" type="button">Change colours</button>
+    <button class="key wide primary" id="calm-close" type="button">All done</button>
+  </div>
+</div>
+
+<script type="module" src="js/rear.js"></script>

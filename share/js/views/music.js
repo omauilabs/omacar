@@ -485,6 +485,7 @@ export default function music(root) {
   const pausedEl = h("div.music-k", { hidden: true });
   const dock = h("div.music-dock",
     h("button.btn.music-btn", { onclick: () => { location.hash = "#home"; } }, "Home"),
+    h("button.btn.music-btn", { onclick: () => { location.hash = "#eq"; } }, "Equalizer"),
     cell("speed", "speed"),
     cell("rpm", "engine"),
     cell("soc", "charge"),

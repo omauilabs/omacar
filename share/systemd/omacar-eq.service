@@ -1,0 +1,21 @@
+[Unit]
+Description=OmaCar equalizer — ten bands in front of the AUX output
+Documentation=file:__ROOT__/doc/eq.md
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# The config is generated from ~/.config/omacar/eq.json (lib/eq.py); writing it
+# first means it exists whatever started this unit.
+ExecStartPre=/usr/bin/env python3 __ROOT__/lib/eq.py write
+# Its own pipewire process: reshaping the bands never restarts the session's
+# PipeWire. The input node is a WirePlumber smart filter, so the default sink is
+# untouched (lib/audio.py still holds and reads that one).
+ExecStart=/usr/bin/pipewire -c %h/.local/state/omacar/eq/omacar-eq.conf
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

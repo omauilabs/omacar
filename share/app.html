@@ -1,4 +1,5 @@
 <!doctype html>
+<html lang="en">
 <!-- OmaCar — the workshop.
      One page, no build step, served over http://127.0.0.1 by lib/serve.py.
 
@@ -37,8 +38,28 @@
 <link rel="stylesheet" href="css/ima.css">
 <link rel="stylesheet" href="css/omaplay.css">
 <link rel="stylesheet" href="css/home.css">
+<link rel="stylesheet" href="css/cabin.css">
+<link rel="stylesheet" href="css/carkit.css">
+<link rel="stylesheet" href="css/pretrip.css">
+<link rel="stylesheet" href="css/journal.css">
+<link rel="stylesheet" href="css/fuel.css">
+<link rel="stylesheet" href="css/radar.css">
+<link rel="stylesheet" href="css/arrival.css">
+<link rel="stylesheet" href="css/speedlimit.css">
+<link rel="stylesheet" href="css/calls.css">
 <link rel="stylesheet" href="css/vehicle.css">
 <link rel="stylesheet" href="css/roadcams.css">
+<link rel="stylesheet" href="css/access.css">
+<link rel="stylesheet" href="css/env.css">
+<link rel="stylesheet" href="css/eq.css">
+<link rel="stylesheet" href="css/valet.css">
+<link rel="stylesheet" href="css/coach.css">
+<link rel="stylesheet" href="css/tires.css">
+<link rel="stylesheet" href="css/bwatch.css">
+<link rel="stylesheet" href="css/battery.css">
+<link rel="stylesheet" href="css/workdash.css">
+<link rel="stylesheet" href="css/learncar.css">
+<link rel="stylesheet" href="css/work.css">
 <!-- The boot screen, last, so it can rely on every token above it and cover
      every layer below it. It is markup and CSS on purpose: a splash drawn by a
      module arrives after the frame it was meant to cover. -->
@@ -106,7 +127,7 @@
        Built by main.js, hidden whenever the group has only one screen. -->
   <div class="segbar" id="segbar" hidden></div>
 
-  <main class="stage" id="stage" tabindex="-1"></main>
+  <main class="stage" id="stage" tabindex="0"></main>
 
   <!-- THE NAVIGATION COMES AFTER THE STAGE, AND THAT IS DELIBERATE.
        It is placed by grid area, not by position:fixed on a DOM-first
@@ -132,6 +153,11 @@
   </nav>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
+  <!-- What a screen reader hears that the eye gets from movement: a screen
+       opening, a reading crossing a line, an alert. Filled by share/js/a11y.js
+       say(); polite waits its turn, urgent interrupts (WCAG 4.1.3). -->
+  <div class="sr-only" id="say-polite" aria-live="polite" aria-atomic="true"></div>
+  <div class="sr-only" id="say-urgent" role="alert" aria-atomic="true"></div>
   <div class="modal-host" id="modal-host" hidden></div>
 </div>
 
@@ -154,6 +180,14 @@
      only decides when the boot screen goes away and what it says while it is
      there. -->
 <script type="module" src="js/bootscreen.js"></script>
+<!-- The radar banner: a strip over the stage while the detector has an alert. Its own module, like awake.js; no view knows it. -->
+<script type="module" src="js/radarbanner.js"></script>
+<!-- The arrival prompt: a calm strip while the car is nearly home, with three one-tap keys and nothing automatic. -->
+<script type="module" src="js/arrivalbanner.js"></script>
+<!-- The tyre banner: only for a tyre losing air fast (share/js/tpmsbanner.js). Its own module; no view knows it. -->
+<script type="module" src="js/tpmsbanner.js"></script>
+<!-- The call card and bar, over every screen while the phone has a call (hands-free, lib/calls.py). -->
+<script type="module" src="js/callsui.js"></script>
 <!-- ---- redesign/cameras ------------------------------------------------------
      The Cameras tab, Home's Dashcams card, the audio stage and drowsy mode
      (doc/design/2026-09-28-cameras-drowsy.md). One block at the end of the
@@ -163,4 +197,26 @@
 <link rel="stylesheet" href="css/cameras.css">
 <link rel="stylesheet" href="css/drowsy.css">
 <script type="module" src="js/alertness.js"></script>
+<!-- The calm "cabin air is stale" word (share/js/envprompt.js): a quiet toast, never a sound. -->
+<script type="module" src="js/envprompt.js"></script>
+<!-- "Fill-up: how much?" (share/js/fuelprompt.js): a calm card once parked, never a sound. -->
+<script type="module" src="js/fuelprompt.js"></script>
+<link rel="stylesheet" href="css/parking.css">
+<link rel="stylesheet" href="css/voice.css">
+<script type="module" src="js/voiceui.js"></script>
+<link rel="stylesheet" href="css/parkspot.css">
+<script type="module" src="js/ignitionui.js"></script>
+<!-- A child left in the car (share/js/childalert.js, doc/child-alert.md): the
+     full-screen card, the console lamp, the chime and the seat camera's watcher. -->
+<link rel="stylesheet" href="css/childalert.css">
+<script type="module" src="js/childalertui.js"></script>
+<!-- The back seat's note, and what the radio tells the back-seat screen (share/js/rearlink.js). Silent. -->
+<link rel="stylesheet" href="css/rearnote.css">
+<script type="module" src="js/rearlink.js"></script>
+<!-- Incident clips (lib/clips.py): the Clips view's sheet and the silent "Clip saved" toast. -->
+<link rel="stylesheet" href="css/clips.css">
+<script type="module" src="js/clipsboot.js"></script>
+<!-- The calm "tablet battery is hot while charging" word (share/js/battwarn.js): a quiet toast, never a sound. -->
+<script type="module" src="js/battwarn.js"></script>
+<link rel="stylesheet" href="css/update.css">
 <!-- ---- end redesign/cameras ------------------------------------------------ -->

@@ -5,6 +5,8 @@
 // an element is simpler than anything that would replace it, and a diagnostic
 // tool should not stop working the day a dependency does.
 
+import { valet } from "./valet.js";
+
 // ---------------------------------------------------------------- DOM
 // h("div.card", {onclick}, child, child) — the terse constructor the views use.
 export function h(spec, props, ...kids) {
@@ -255,7 +257,14 @@ async function req(path, opts) {
 
 export const api = {
   snapshot: () => req("/api/snapshot"),
+  // Work by voice (lib/workroutes.py).
+  workStatus: () => req("/api/work/status"),
+  workEvents: (after) => req("/api/work/events?after=" + after),
+  workDiff: (id) => req("/api/work/diff/" + id),
+  workClip: (name) => req("/api/work/clip/" + name),
+  workSay: (body) => req("/api/work/utterance", { method: "POST", body: JSON.stringify(body) }),
   nursery: () => req("/api/nursery"),
+  rear: () => req("/api/rear"),
   live: () => req("/api/live"),
   // The two routes the Connect button rests on. Everything that knows their
   // shape is in the "connecting" section below, so a change on the server side
@@ -282,6 +291,10 @@ export const api = {
   procedures: () => req("/api/procedures"),
   documents: (kind) => req("/api/documents" + (kind ? "?kind=" + kind : "")),
   serviceHistory: () => req("/api/service-history"),
+  // The pre-trip check's stored half (lib/pretrip.py): the trip distance, the
+  // ticks and the maintenance gaps. Bookkeeping only; nothing reaches the car.
+  pretrip: () => req("/api/pretrip"),
+  setPretrip: (body) => req("/api/pretrip", { method: "POST", body: JSON.stringify(body) }),
   plugins: () => req("/api/plugins"),
   // No timeout wrapper: a parse OCRs a page and then asks the advisor.
   document: (body) => req("/api/document", { method: "POST", body: JSON.stringify(body) }),
@@ -323,6 +336,11 @@ export const api = {
   roadcams: () => req("/api/roadcams"),
   saveRoadcamPins: (pins) => req("/api/roadcams/pins", { method: "POST", body: JSON.stringify({ pins }) }),
   roadcamImage: (id, cached) => roadcamStill(id, cached),
+  // The AUX equalizer (lib/eq.py). The whole state is written when a gesture
+  // ends; eqLive carries a slider on its way, parameters only.
+  eq: () => req("/api/eq"),
+  saveEq: (state) => req("/api/eq", { method: "POST", body: JSON.stringify(state) }),
+  eqLive: (body) => req("/api/eq/live", { method: "POST", body: JSON.stringify(body) }),
   aiAvailable: () => req("/api/ai/available"),
   aiStart: (body) => req("/api/ai", { method: "POST", body: JSON.stringify(body) }),
   aiPoll: (id) => req("/api/ai?job=" + encodeURIComponent(id)),
@@ -618,7 +636,11 @@ class Store extends EventTarget {
   //
   // SUPERSEDED ON MERGE: the red-light branch (safety/parked-confirm) replaces
   // these locks with lockOf(). Where the two meet, lockOf wins and this goes.
-  get lockedAsMoving() { return this.state === "driving" || !!this.sample.handover; }
+  //
+  // VALET MODE LOCKS THE SAME THINGS (share/js/valet.js): the controls that
+  // are only for a stopped car are, by the same reasoning, not for someone
+  // you handed the keys to.
+  get lockedAsMoving() { return this.state === "driving" || !!this.sample.handover || valet.on; }
 
   get state() {
     if (!this.connected) return "offline";
@@ -764,12 +786,12 @@ export async function connectCar(onStep) {
 }
 
 // ---------------------------------------------------------------- toasts
-export function toast(msg, tone) {
+export function toast(msg, tone, ms = 4200) {
   const host = document.getElementById("toasts");
   const el = h("div.toast" + (tone ? "." + tone : ""), msg);
   host.appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, 4200);
-  setTimeout(() => el.remove(), 4600);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, ms);
+  setTimeout(() => el.remove(), ms + 400);
 }
 
 export function confirmDialog({ title, body, confirm = "Confirm", tone = "danger" }) {
@@ -787,6 +809,8 @@ export function confirmDialog({ title, body, confirm = "Confirm", tone = "danger
     document.addEventListener("keydown", function esc(e) {
       if (e.key === "Escape") { document.removeEventListener("keydown", esc); close(false); }
     });
-    box.querySelector(".btn." + tone).focus();
+    // An action that cannot be undone does not get the focus: Enter on a
+    // dialog that just appeared must not be the thing that deletes.
+    box.querySelector(tone === "danger" ? ".btn:not(." + tone + ")" : ".btn." + tone).focus();
   });
 }
