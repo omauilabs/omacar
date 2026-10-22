@@ -42,6 +42,45 @@ DEFAULT_CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (6
 # action cameras turn their own output to match how they are held, so turning
 # the camera over does not always help; this turns the picture instead.
 ROTATIONS = (0, 90, 180, 270)
+# Focus: "infinity" locks it on the road, "auto" leaves the camera to it, a
+# number is the camera's own focus_absolute value. Front and rear only ever
+# look at the road, and a webcam's autofocus there hunts for raindrops, dirt
+# on the glass and the wipers; the cabin looks at a face at arm's length.
+# lib/cams.py focus_plan() turns this into v4l2 controls, and leaves a camera
+# with no focus controls (a fixed-focus lens) alone.
+DEFAULT_FOCUS = {"front": "infinity", "rear": "infinity", "cabin": "auto"}
+# Flip: a car's own backup camera sends its picture mirrored, so it reads like
+# a mirror on the stereo's screen; through a USB capture dongle it arrives the
+# same way. "horizontal" mirrors it back, "vertical" mirrors it top to bottom.
+# A camera mounted upside down is a half turn, which is "rotate" (below), not
+# a flip. lib/cams.py applies the flip, then the turn, before the split, so the
+# clips and the live view agree.
+DEFAULT_FLIP = {"front": "none", "rear": "none", "cabin": "none"}
+FLIPS = ("none", "horizontal", "vertical")
+FOCUS_MAX = 1023     # no UVC camera here has a focus_absolute range wider than this
+
+
+def clean_flip(value):
+    """A flip setting, or ValueError saying what is allowed."""
+    v = value.strip().lower() if isinstance(value, str) else value
+    if v not in FLIPS:
+        raise ValueError("flip is one of " + ", ".join(FLIPS))
+    return v
+
+
+def clean_focus(value):
+    """A focus setting, or ValueError saying what is allowed."""
+    if isinstance(value, str) and value.strip().lower() in ("auto", "infinity"):
+        return value.strip().lower()
+    if isinstance(value, bool):
+        raise ValueError("focus is auto, infinity or a number")
+    try:
+        n = int(str(value).strip())
+    except ValueError:
+        raise ValueError("focus is auto, infinity or a number from 0 to %d" % FOCUS_MAX) from None
+    if not 0 <= n <= FOCUS_MAX:
+        raise ValueError("focus is auto, infinity or a number from 0 to %d" % FOCUS_MAX)
+    return n
 
 
 def videos():
@@ -60,13 +99,16 @@ def load_config(path=None):
                                               turns the role off
          "caps": {"rear": [1280, 720, 30]},   a role's largest mode
          "rotate": {"front": 180},            a role's picture, turned clockwise
+         "focus": {"front": "infinity"},      auto, infinity, or focus_absolute
+         "flip": {"rear": "horizontal"},      none, horizontal, vertical
          "budget_gb": 40}
 
     Anything for a role that does not exist, a cap that is not three positive
     numbers, a rotation that is not 0, 90, 180 or 270, or a budget that is not a positive number is ignored rather than
     trusted."""
     cfg = {"patterns": dict(DEFAULT_PATTERNS), "budget_gb": DEFAULT_BUDGET_GB,
-           "caps": dict(DEFAULT_CAPS), "rotate": {r: 0 for r in ROLES}}
+           "caps": dict(DEFAULT_CAPS), "rotate": {r: 0 for r in ROLES},
+           "focus": dict(DEFAULT_FOCUS), "flip": dict(DEFAULT_FLIP)}
     try:
         with open(path or config_path(), encoding="utf-8") as f:
             user = json.load(f)
@@ -91,6 +133,22 @@ def load_config(path=None):
         for role, deg in rot.items():
             if role in ROLES and not isinstance(deg, bool) and deg in ROTATIONS:
                 cfg["rotate"][role] = int(deg)
+    focus = user.get("focus")
+    if isinstance(focus, dict):
+        for role, val in focus.items():
+            if role in ROLES:
+                try:
+                    cfg["focus"][role] = clean_focus(val)
+                except ValueError:
+                    pass
+    flip = user.get("flip")
+    if isinstance(flip, dict):
+        for role, val in flip.items():
+            if role in ROLES:
+                try:
+                    cfg["flip"][role] = clean_flip(val)
+                except ValueError:
+                    pass
     gb = user.get("budget_gb")
     if isinstance(gb, (int, float)) and not isinstance(gb, bool) and gb > 0:
         cfg["budget_gb"] = gb
@@ -125,6 +183,41 @@ def set_rotate(role, deg, path=None):
         json.dump(user, f, indent=2)
         f.write("\n")
     os.replace(tmp, path)
+
+
+def set_focus(role, value, path=None):
+    """Write one role's focus into omacar-cameras.json, keeping everything else
+    in it. Returns the cleaned value; ValueError for a bad role or value."""
+    return _set_role("focus", clean_focus, role, value, path)
+
+
+def set_flip(role, value, path=None):
+    """The same, for a role's flip."""
+    return _set_role("flip", clean_flip, role, value, path)
+
+
+def _set_role(key, clean, role, value, path=None):
+    if role not in ROLES:
+        raise ValueError(f"no camera role called {role!r} (front, rear or cabin)")
+    value = clean(value)
+    path = path or config_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
+    if not isinstance(doc.get(key), dict):
+        doc[key] = {}
+    doc[key][role] = value
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    return value
 
 
 def budget_bytes(cfg=None):
