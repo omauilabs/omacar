@@ -376,8 +376,11 @@ def apply_focus(device, setting, run=subprocess.run):
 
 # ---- the command ------------------------------------------------------------
 
+FLIP_FILTER = {"horizontal": "hflip,", "vertical": "vflip,", "both": "hflip,vflip,"}
+
+
 def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
-                duration=None, vaapi=VAAPI):
+                duration=None, vaapi=VAAPI, flip=None):
     """One ffmpeg for one camera: decode once, split two ways.
 
       recording  hwupload -> h264_vaapi. -fps_mode passthrough, so a camera
@@ -391,7 +394,9 @@ def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
                  into files.
 
     With `device` None, the input is a test picture (lavfi testsrc2) in the
-    role's mode, at real time. `duration` stops it (tests only).
+    role's mode, at real time. `duration` stops it (tests only). `flip`
+    (camstore's setting) turns the picture before the split, so the clips and
+    the live view agree.
     """
     w, h, fps = mode["w"], mode["h"], mode["fps"]
     rate = f"{fps:g}"
@@ -406,7 +411,7 @@ def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats",
         "-progress", "pipe:2", "-vaapi_device", vaapi, *src,
         "-filter_complex",
-        f"[0:v]split=2[rec][live];[rec]format=nv12,hwupload[recv];"
+        f"[0:v]{FLIP_FILTER.get(flip, '')}split=2[rec][live];[rec]format=nv12,hwupload[recv];"
         f"[live]fps={LIVE_FPS},scale={LIVE_WIDTH}:-2[livev]",
         "-map", "[recv]", "-c:v", "h264_vaapi", "-b:v", BITRATE[role],
         "-maxrate", BITRATE[role], "-g", gop, "-fps_mode", "passthrough",
@@ -470,9 +475,10 @@ class Camera:
     instance the stalled one; that would need a live frame it has not had
     the chance to send."""
 
-    def __init__(self, role, device, mode, sim=False, restarted=None, focus=None):
+    def __init__(self, role, device, mode, sim=False, restarted=None, focus=None, flip=None):
         self.role, self.device, self.mode, self.sim = role, device, mode, sim
         self.focus = focus           # camstore's setting for this role, or None
+        self.flip = flip
         self.focus_note = None
         self.proc = None
         self.error = None
@@ -486,7 +492,7 @@ class Camera:
         os.makedirs(clip_dir, exist_ok=True)
         os.makedirs(run_dir(), exist_ok=True)
         args = ffmpeg_args(self.role, self.mode, clip_dir,
-                           device=None if self.sim else self.device)
+                           device=None if self.sim else self.device, flip=self.flip)
         if self.focus and not self.sim:
             self.focus_note = apply_focus(self.device, self.focus)
         self.proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
@@ -670,7 +676,8 @@ class Recorder:
                     self.cams.pop(role, None)
                     continue
                 new = Camera(role, dev, mode, restarted=restart_note,
-                             focus=cfg.get("focus", {}).get(role))
+                             focus=cfg.get("focus", {}).get(role),
+                             flip=cfg.get("flip", {}).get(role))
             elif self.sim:
                 new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note)
             else:
@@ -829,6 +836,7 @@ def overview():
             "starting": bool(r.get("starting")), "live": bool(r.get("live")),
             "fps": r.get("fps"), "clips": use["clips"][role], "used": use["by_role"][role],
             "focus": r.get("focus"), "focus_setting": cfg["focus"][role],
+            "flip": cfg["flip"][role],
             "error": why,
         }
     return {"running": running_now, "sim": bool(running_now and st.get("sim")),
@@ -888,8 +896,41 @@ def _print_status():
         if r["error"]:
             print(f"         {r['error']}")
         print(f"         focus: {r['focus'] or r['focus_setting']}"
-              + ("" if r["focus"] else " (applied when the camera starts)"))
+              + ("" if r["focus"] else " (applied when the camera starts)")
+              + ("" if r["flip"] == "none" else f"   flip: {r['flip']}"))
     print()
+    return 0
+
+
+def flip_main(args):
+    """omacar cams flip                                    every role's setting
+       omacar cams flip ROLE none|horizontal|vertical|both  set it; a running
+                                                            recorder restarts"""
+    if not args:
+        cfg = camstore.load_config()
+        for role in ROLES:
+            print(f"  {role:<6} {cfg['flip'][role]}")
+        return 0
+    if len(args) != 2:
+        print("usage: omacar cams flip [ROLE none|horizontal|vertical|both]", file=sys.stderr)
+        return 2
+    try:
+        value = camstore.set_flip(*args)
+    except ValueError as e:
+        print(f"omacar cams: {e}", file=sys.stderr)
+        return 2
+    # The flip is in ffmpeg's filter, so it takes a new ffmpeg. Restarting the
+    # recorder costs every camera a few seconds of recording; said so.
+    st = _read_status()
+    if running(st):
+        r = subprocess.run(["systemctl", "--user", "try-restart", "omacar-cams.service"],
+                           capture_output=True, text=True)
+        how = ("the recorder restarted to apply it (a few seconds' gap in every camera's clips)"
+               if r.returncode == 0 else
+               "restart the recorder to apply it: omacar cams off && omacar cams on")
+    else:
+        how = "it applies when the recorder starts"
+    print(f"  {args[0]} flip: {value}. {how.capitalize()}.")
     return 0
 
 
@@ -1566,6 +1607,8 @@ def main(argv):
         return demo_main(argv[2:])
     if cmd == "focus":
         return focus_main(argv[2:])
+    if cmd == "flip":
+        return flip_main(argv[2:])
     if cmd in ("run", "sim"):
         st = _read_status()
         if running(st) and st.get("pid") != os.getpid():

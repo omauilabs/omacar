@@ -654,6 +654,42 @@ for bad_role, bad_val in (("roof", "auto"), ("front", "sharp"), ("front", -1), (
         ok(f"set_focus({bad_role!r}, {bad_val!r}) is refused")
 
 
+# ------------------------------------------------------------ flip
+head("flip: a car's own backup camera, mirrored back")
+
+_m = {"fmt": "MJPG", "w": 640, "h": 480, "fps": 30.0}
+
+
+def _graph(**kw):
+    a = cams.ffmpeg_args("rear", _m, "/tmp/x", device="/dev/v", **kw)
+    return a[a.index("-filter_complex") + 1]
+
+
+check("no flip: the picture is split as it comes", _graph().startswith("[0:v]split=2"), True)
+check("horizontal mirrors it, before the split, so clips and live agree",
+      _graph(flip="horizontal").startswith("[0:v]hflip,split=2"), True)
+check("vertical turns it over; both is a half turn",
+      [_graph(flip="vertical").split("split")[0], _graph(flip="both").split("split")[0]],
+      ["[0:v]vflip,", "[0:v]hflip,vflip,"])
+check("an unknown flip does nothing rather than break the command",
+      _graph(flip="sideways").startswith("[0:v]split=2"), True)
+check("by default nothing is flipped", camstore.load_config("/nonexistent")["flip"],
+      {"front": "none", "rear": "none", "cabin": "none"})
+with open(_fcfg, "w") as f:
+    json.dump({"budget_gb": 7, "flip": {"rear": "Horizontal", "front": "sideways", "roof": "both"}}, f)
+check("the file's flip wins (any case); a bad one and an unknown role are ignored",
+      camstore.load_config(_fcfg)["flip"], {"front": "none", "rear": "horizontal", "cabin": "none"})
+check("set_flip writes one role and keeps the rest",
+      (camstore.set_flip("front", "both", _fcfg), json.load(open(_fcfg))["budget_gb"],
+       json.load(open(_fcfg))["flip"]), ("both", 7, {"rear": "Horizontal", "front": "both", "roof": "both"}))
+for bad_role, bad_val in (("roof", "none"), ("rear", "sideways"), ("rear", 1)):
+    try:
+        camstore.set_flip(bad_role, bad_val, _fcfg)
+        bad(f"set_flip({bad_role!r}, {bad_val!r}) was accepted")
+    except ValueError:
+        ok(f"set_flip({bad_role!r}, {bad_val!r}) is refused")
+
+
 head("the recorder's own report, as the API reads it")
 
 

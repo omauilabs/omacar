@@ -45,7 +45,22 @@ DEFAULT_CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (6
 # lib/cams.py focus_plan() turns this into v4l2 controls, and leaves a camera
 # with no focus controls (a fixed-focus lens) alone.
 DEFAULT_FOCUS = {"front": "infinity", "rear": "infinity", "cabin": "auto"}
+# Flip: a car's own backup camera sends its picture mirrored, so it reads like
+# a mirror on the stereo's screen; through a USB capture dongle it arrives the
+# same way. "horizontal" mirrors it back, "vertical" turns it over, "both" is a
+# half turn (a camera mounted upside down). lib/cams.py ffmpeg_args() applies
+# it before the picture is split, so the clips and the live view agree.
+DEFAULT_FLIP = {"front": "none", "rear": "none", "cabin": "none"}
+FLIPS = ("none", "horizontal", "vertical", "both")
 FOCUS_MAX = 1023     # no UVC camera here has a focus_absolute range wider than this
+
+
+def clean_flip(value):
+    """A flip setting, or ValueError saying what is allowed."""
+    v = value.strip().lower() if isinstance(value, str) else value
+    if v not in FLIPS:
+        raise ValueError("flip is one of " + ", ".join(FLIPS))
+    return v
 
 
 def clean_focus(value):
@@ -79,13 +94,15 @@ def load_config(path=None):
                                               turns the role off
          "caps": {"rear": [1280, 720, 30]},   a role's largest mode
          "focus": {"front": "infinity"},      auto, infinity, or focus_absolute
+         "flip": {"rear": "horizontal"},      none, horizontal, vertical, both
          "budget_gb": 40}
 
     Anything for a role that does not exist, a cap that is not three positive
     numbers, or a budget that is not a positive number is ignored rather than
     trusted."""
     cfg = {"patterns": dict(DEFAULT_PATTERNS), "budget_gb": DEFAULT_BUDGET_GB,
-           "caps": dict(DEFAULT_CAPS), "focus": dict(DEFAULT_FOCUS)}
+           "caps": dict(DEFAULT_CAPS), "focus": dict(DEFAULT_FOCUS),
+           "flip": dict(DEFAULT_FLIP)}
     try:
         with open(path or config_path(), encoding="utf-8") as f:
             user = json.load(f)
@@ -113,6 +130,14 @@ def load_config(path=None):
                     cfg["focus"][role] = clean_focus(val)
                 except ValueError:
                     pass
+    flip = user.get("flip")
+    if isinstance(flip, dict):
+        for role, val in flip.items():
+            if role in ROLES:
+                try:
+                    cfg["flip"][role] = clean_flip(val)
+                except ValueError:
+                    pass
     gb = user.get("budget_gb")
     if isinstance(gb, (int, float)) and not isinstance(gb, bool) and gb > 0:
         cfg["budget_gb"] = gb
@@ -122,9 +147,18 @@ def load_config(path=None):
 def set_focus(role, value, path=None):
     """Write one role's focus into omacar-cameras.json, keeping everything else
     in it. Returns the cleaned value; ValueError for a bad role or value."""
+    return _set_role("focus", clean_focus, role, value, path)
+
+
+def set_flip(role, value, path=None):
+    """The same, for a role's flip."""
+    return _set_role("flip", clean_flip, role, value, path)
+
+
+def _set_role(key, clean, role, value, path=None):
     if role not in ROLES:
         raise ValueError(f"no camera role called {role!r} (front, rear or cabin)")
-    value = clean_focus(value)
+    value = clean(value)
     path = path or config_path()
     try:
         with open(path, encoding="utf-8") as f:
@@ -133,9 +167,9 @@ def set_focus(role, value, path=None):
         doc = {}
     if not isinstance(doc, dict):
         doc = {}
-    if not isinstance(doc.get("focus"), dict):
-        doc["focus"] = {}
-    doc["focus"][role] = value
+    if not isinstance(doc.get(key), dict):
+        doc[key] = {}
+    doc[key][role] = value
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
