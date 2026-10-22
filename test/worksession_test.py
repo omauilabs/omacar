@@ -275,6 +275,16 @@ check("symlinked /var/run: skipped, /run still hidden",
 check("missing path skipped", GH + "/.aws" in argv, False)
 check("ends with the split command", argv[-3:], ["--", "test/all.sh", "--fast"])
 check("--chdir worktree before --", argv[argv.index("--chdir") + 1], "/wt")
+os.makedirs(GH + "/Projects/omacar/share/assets/private")
+os.makedirs(GH + "/Projects/.omacar-wt/foundation")
+argv_p = ws.gate_argv("c", GH + "/Projects/.omacar-work/omacar-x", GH, workgates.protected_places(GH))
+check("the live checkout and the app's worktrees are hidden too (and with them its private images)",
+      [argv_p[argv_p.index(GH + "/Projects/omacar") - 1], argv_p[argv_p.index(GH + "/Projects/.omacar-wt") - 1]],
+      ["--tmpfs", "--tmpfs"])
+argv_in = ws.gate_argv("c", GH + "/Projects/omacar/sub", GH, [GH + "/Projects/omacar"])
+check("but never a place the worktree itself is in", argv_in.count(GH + "/Projects/omacar"), 0)
+check("the gate passes protected_places, not only the credentials",
+      "workgates.protected_places(home))" in open(os.path.join(ROOT, "lib", "worksession.py")).read(), True)
 shutil.rmtree(GH, ignore_errors=True)
 orig = ws.shutil.which; ws.shutil.which = lambda n: None
 try:

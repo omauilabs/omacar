@@ -122,6 +122,11 @@ def gate_argv(cmd, worktree, home, hide, is_real_dir=_real_dir):
     argv += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
             "--bind", worktree, worktree]
     for path in hide:
+        # Never a place the worktree is in: that would hide the gate's own
+        # checkout. Session worktrees live in ~/Projects/.omacar-work, outside
+        # every protected place, so this only guards a future layout change.
+        if worktree == path or worktree.startswith(path.rstrip("/") + "/"):
+            continue
         if os.path.isdir(path):
             argv += ["--tmpfs", path]
         elif os.path.exists(path):
@@ -132,6 +137,8 @@ def gate_argv(cmd, worktree, home, hide, is_real_dir=_real_dir):
 CREDENTIAL_NAMES = {".git-credentials", ".netrc", "credentials.json",
                     ".credentials.json", "id_rsa", "id_ed25519"}
 CREDENTIAL_WHY = "the branch adds a credential file"
+# share/assets/private holds the Honda-badged images, which never go in git.
+PRIVATE_WHY = "the branch adds files under share/assets/private"
 SYMLINK_WHY = "the branch has a symlinked CI workflow"
 
 
@@ -200,7 +207,11 @@ class Git:
         if not shutil.which("bwrap"):
             return False, "sandbox unavailable: bwrap missing"
         home = os.path.expanduser("~")
-        argv = gate_argv(cmd, worktree, home, workgates.SECRET_PATHS(home))
+        # The same places the agent itself is denied (workgates.protected_places:
+        # the credentials, the live checkout, the app's worktrees), not only the
+        # credentials: the gate runs code the agent can edit, and anything it
+        # can read it can copy into the worktree, which is pushed.
+        argv = gate_argv(cmd, worktree, home, workgates.protected_places(home))
         self._proc = proc = await asyncio.create_subprocess_exec(
             *argv, cwd=worktree, env=session_env(), stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
@@ -250,6 +261,8 @@ class Git:
         for name in filter(None, names):
             if credential_name(name):
                 return CREDENTIAL_WHY
+            if name.startswith("share/assets/private/"):
+                return PRIVATE_WHY
         # A symlinked .github or workflow would hide the real file from the read below.
         for entry in (self._git(*base, "ls-tree", "-z", branch, "--", ".github").split("\0")
                       + self._git(*base, "ls-tree", "-r", "-z", branch, "--",
