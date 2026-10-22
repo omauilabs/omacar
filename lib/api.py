@@ -2531,3 +2531,28 @@ def handle_post(path, body):  # noqa: F811
             return 502, {"error": str(e)}
     return _access_post(path, body)
 # ---- end accessibility -------------------------------------------------------------
+
+
+# ---- Work by voice ------------------------------------------------------------
+# /api/work/* route through lib/workroutes.py, tried before everything above.
+# doc/design/2026-10-13-work-voice-relay.md.
+_work_get, _work_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path.startswith("/api/work"):
+        import workroutes
+        out = workroutes.handle_get(path, query)
+        if out is not None:
+            return out
+    return _work_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path.startswith("/api/work"):
+        import workroutes
+        out = workroutes.handle_post(path, body)
+        if out is not None:
+            return out
+    return _work_post(path, body)
+# ---- end Work by voice ----------------------------------------------------------

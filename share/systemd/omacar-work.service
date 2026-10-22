@@ -1,0 +1,12 @@
+[Unit]
+Description=OmaCar Work relay (voice to coding sessions)
+After=network-online.target
+
+[Service]
+ExecStart=%h/Projects/omacar/bin/omacar work serve
+Restart=on-failure
+RestartSec=10
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=default.target

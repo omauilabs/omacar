@@ -1931,6 +1931,14 @@ case "${1:-open}" in
     esac ;;
   doctor) omacar_need_env; exec "$OMACAR_PY" "$ROOT/lib/doctor.py" ;;
   live) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/live.py" "$@" ;;
+  work)
+    omacar_need_env; shift
+    case "${1:-status}" in
+      serve)  exec "$OMACAR_PY" "$ROOT/lib/workrelay.py" ;;
+      # Through the lib: the relay refuses a request without its token.
+      status) exec "$OMACAR_PY" "$ROOT/lib/workroutes.py" status ;;
+      *) echo "usage: omacar work serve|status" >&2; exit 2 ;;
+    esac ;;
   prospect) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/prospect.py" "$@" ;;
   listen) omacar_need_env; shift; exec "$OMACAR_PY" "$ROOT/lib/listen.py" "$@" ;;
   # The guided "learn my car" session (lib/learncar.py): parked, listens, writes nothing.

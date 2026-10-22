@@ -309,6 +309,10 @@ DEMO_ROUTES = {
     # Android Auto are drawn by the demo.
     "/api/phone": REFUSE,
     "/api/phone/*": REFUSE,
+    # --- REFUSE: Work by voice reaches a real machine's coding sessions; the
+    # demo is siloed and has no business there.
+    "/api/work": REFUSE,
+    "/api/work/*": REFUSE,
 }
 
 # The cues the demo world acts on (lib/demoworld.py). `quiet` is `demo off`'s:

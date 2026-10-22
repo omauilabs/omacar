@@ -1584,9 +1584,10 @@ _imports = _re.findall(r'from "\./(views/[a-z0-9_]+\.js)"', _main)
 _missing = [m for m in _imports if not os.path.exists(os.path.join(ROOT, "share", "js", m))]
 check(f"all {len(_imports)} view modules main.js imports exist", _missing, [])
 _mounts = set(_re.findall(r'mount:\s*([A-Za-z_]+)', _main))
-# A mount is an imported view, a function main.js defines itself, or -- for
-# a plugin screen -- the module object the loader just imported.
-_bound = (set(_re.findall(r'^import\s+([A-Za-z_]+)\s+from', _main, _re.M))
+# A mount is an imported view (a default import, with or without named ones
+# beside it: `import workView, { pollWork } from`), a function main.js
+# defines itself, or -- for a plugin screen -- the module object the loader just imported.
+_bound = (set(_re.findall(r'^import\s+([A-Za-z_]+)\s*(?:,\s*\{[^}]*\})?\s+from', _main, _re.M))
           | set(_re.findall(r'^function\s+([A-Za-z_]+)\s*\(', _main, _re.M))
           | {"mod"})
 check("every mount the registry names is a view main.js can reach", sorted(_mounts - _bound), [])
