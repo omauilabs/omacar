@@ -301,6 +301,79 @@ def probe_modes(device):
     return parse_formats(r.stdout)
 
 
+# ---- focus ------------------------------------------------------------------
+#
+# A webcam on the windscreen with autofocus on hunts: it settles on raindrops,
+# dirt on the glass or the wipers, and the road goes soft. camstore's "focus"
+# setting locks it. v4l2 names the controls two ways (focus_automatic_continuous
+# since Linux 5.x, focus_auto before), and a fixed-focus camera -- most cheap
+# modules, the Arducams included -- has neither, so it is left alone and said
+# to be fixed. "infinity" is focus_absolute's minimum: on Logitech's UVC
+# cameras the far end of the range is 0.
+
+AUTO_FOCUS_CTRLS = ("focus_automatic_continuous", "focus_auto")
+_CTRL = re.compile(r"^\s*(\w+)\s+0x[0-9a-fA-F]+\s+\((\w+)\)\s*:\s*(.*)$")
+
+
+def parse_ctrls(text):
+    """`v4l2-ctl --list-ctrls` as {name: {"type", "min", "max", "step", "default", "value"}}."""
+    out = {}
+    for line in (text or "").splitlines():
+        m = _CTRL.match(line)
+        if not m:
+            continue
+        info = {"type": m.group(2)}
+        for k, v in re.findall(r"(\w+)=(-?\d+)", m.group(3)):
+            info[k] = int(v)
+        out[m.group(1)] = info
+    return out
+
+
+def focus_plan(ctrls, setting):
+    """([control=value, ...] to set, in order, one per call; a note for status).
+
+    Autofocus goes off in its own call before focus_absolute is set: a camera
+    refuses an absolute focus while autofocus is still on, and v4l2-ctl applies
+    one call's controls in no promised order."""
+    auto = next((c for c in AUTO_FOCUS_CTRLS if c in ctrls), None)
+    absolute = ctrls.get("focus_absolute")
+    if setting == "auto":
+        if not auto:
+            return [], "fixed focus" if not absolute else "focus: manual only on this camera"
+        return [f"{auto}=1"], "focus: auto"
+    if not auto and not absolute:
+        return [], "fixed focus (nothing to lock)"
+    steps = [f"{auto}=0"] if auto else []
+    if not absolute:
+        return steps, "autofocus off (this camera has no manual focus)"
+    lo, hi = absolute.get("min", 0), absolute.get("max", 255)
+    step = max(1, absolute.get("step", 1))
+    if setting == "infinity":
+        target = lo
+    else:
+        target = min(hi, max(lo, int(setting)))
+        target = lo + round((target - lo) / step) * step
+    steps.append(f"focus_absolute={target}")
+    return steps, ("focus locked at infinity" if setting == "infinity"
+                   else f"focus locked at {target}")
+
+
+def apply_focus(device, setting, run=subprocess.run):
+    """Lock (or free) one camera's focus. Returns the note for status; never raises."""
+    try:
+        r = run(["v4l2-ctl", "-d", device, "--list-ctrls"],
+                capture_output=True, text=True, timeout=5)
+        steps, note = focus_plan(parse_ctrls(r.stdout), setting)
+        for ctrl in steps:
+            r = run(["v4l2-ctl", "-d", device, f"--set-ctrl={ctrl}"],
+                    capture_output=True, text=True, timeout=5)
+            if r.returncode != 0:
+                return f"focus not set: {(r.stderr or r.stdout or ctrl).strip()[:80]}"
+        return note
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"focus not set: {e}"
+
+
 # ---- the command ------------------------------------------------------------
 
 def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
@@ -397,8 +470,10 @@ class Camera:
     instance the stalled one; that would need a live frame it has not had
     the chance to send."""
 
-    def __init__(self, role, device, mode, sim=False, restarted=None):
+    def __init__(self, role, device, mode, sim=False, restarted=None, focus=None):
         self.role, self.device, self.mode, self.sim = role, device, mode, sim
+        self.focus = focus           # camstore's setting for this role, or None
+        self.focus_note = None
         self.proc = None
         self.error = None
         self.started = None
@@ -412,11 +487,21 @@ class Camera:
         os.makedirs(run_dir(), exist_ok=True)
         args = ffmpeg_args(self.role, self.mode, clip_dir,
                            device=None if self.sim else self.device)
+        if self.focus and not self.sim:
+            self.focus_note = apply_focus(self.device, self.focus)
         self.proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.started = time.time()
+        if self.focus and not self.sim:
+            # And again once it is streaming: some UVC cameras put their
+            # controls back to the defaults when a stream starts.
+            threading.Timer(3.0, self._refocus).start()
         threading.Thread(target=self._frames, daemon=True).start()
         threading.Thread(target=self._progress, daemon=True).start()
+
+    def _refocus(self):
+        if self.alive():
+            self.focus_note = apply_focus(self.device, self.focus)
 
     # A reader that dies leaves ffmpeg blocked on a full pipe; the error is
     # kept, and the stall watchdog restarts the camera.
@@ -515,6 +600,7 @@ class Camera:
                 "live": alive and fresh and not stalled,
                 "fps": self.meter.fps(now) if alive and not stalled else None,
                 "since": self.started,
+                "focus": self.focus_note,
                 "error": error}
 
 
@@ -583,7 +669,8 @@ class Recorder:
                     self.notes[role] = "no mode at or under 1080p30"
                     self.cams.pop(role, None)
                     continue
-                new = Camera(role, dev, mode, restarted=restart_note)
+                new = Camera(role, dev, mode, restarted=restart_note,
+                             focus=cfg.get("focus", {}).get(role))
             elif self.sim:
                 new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note)
             else:
@@ -626,7 +713,7 @@ class Recorder:
             doc["roles"][role] = cam.status() if cam else {
                 "device": None, "mode": None, "sim": False, "recording": False, "stalled": False,
                 "starting": False, "live": False, "fps": None, "since": None,
-                "error": self.notes.get(role)}
+                "focus": None, "error": self.notes.get(role)}
         os.makedirs(run_dir(), exist_ok=True)
         tmp = status_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -741,6 +828,7 @@ def overview():
             "recording": bool(r.get("recording")), "stalled": bool(r.get("stalled")),
             "starting": bool(r.get("starting")), "live": bool(r.get("live")),
             "fps": r.get("fps"), "clips": use["clips"][role], "used": use["by_role"][role],
+            "focus": r.get("focus"), "focus_setting": cfg["focus"][role],
             "error": why,
         }
     return {"running": running_now, "sim": bool(running_now and st.get("sim")),
@@ -799,7 +887,35 @@ def _print_status():
               f"{r['clips']:>4} clips  {os.path.basename(r['device'] or '') or '(none)'}")
         if r["error"]:
             print(f"         {r['error']}")
+        print(f"         focus: {r['focus'] or r['focus_setting']}"
+              + ("" if r["focus"] else " (applied when the camera starts)"))
     print()
+    return 0
+
+
+def focus_main(args):
+    """omacar cams focus                      every role's setting
+       omacar cams focus ROLE auto|infinity|N  set it, and apply it now if that
+                                               camera is plugged in"""
+    if not args:
+        cfg = camstore.load_config()
+        for role in ROLES:
+            print(f"  {role:<6} {cfg['focus'][role]}")
+        return 0
+    if len(args) != 2:
+        print("usage: omacar cams focus [ROLE auto|infinity|NUMBER]", file=sys.stderr)
+        return 2
+    role, value = args
+    try:
+        value = camstore.set_focus(role, value)
+    except ValueError as e:
+        print(f"omacar cams: {e}", file=sys.stderr)
+        return 2
+    dev = find_cameras().get(role)
+    if not dev:
+        print(f"  {role} focus: {value}. No {role} camera is plugged in; it applies when one is.")
+        return 0
+    print(f"  {role} focus: {value}. {apply_focus(dev, value)} on {os.path.basename(dev)}.")
     return 0
 
 
@@ -1059,7 +1175,7 @@ class DemoFeed:
                 "recording": recording, "stalled": stalled, "starting": starting,
                 "live": recording and now - lf < 3,
                 "fps": mode["fps"] if mode and recording else None,
-                "since": self.started, "error": error}
+                "since": self.started, "focus": None, "error": error}
 
 
 class DemoRecorder:
@@ -1292,7 +1408,7 @@ class DemoRecorder:
             doc["roles"][role] = feed.status(t, self.modes.get(role)) if feed else {
                 "device": None, "mode": None, "sim": False, "recording": False, "stalled": False,
                 "starting": False, "live": False, "fps": None, "since": None,
-                "error": f"no demo clip: {role}.mp4"}
+                "focus": None, "error": f"no demo clip: {role}.mp4"}
         os.makedirs(run_dir(), exist_ok=True)
         tmp = status_path() + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -1448,6 +1564,8 @@ def main(argv):
         return subprocess.run(["systemctl", "--user", *how, "omacar-cams.service"]).returncode
     if cmd == "demo":
         return demo_main(argv[2:])
+    if cmd == "focus":
+        return focus_main(argv[2:])
     if cmd in ("run", "sim"):
         st = _read_status()
         if running(st) and st.get("pid") != os.getpid():

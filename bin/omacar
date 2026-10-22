@@ -49,7 +49,7 @@
 #                             a kid-safe screen for the back seat (QR pairing)
 #   omacar cockpit [--control]
 #                             serve the gauge to any tablet on the network
-#   omacar cams status|on|off|sim
+#   omacar cams status|on|off|sim|focus [ROLE auto|infinity|N]
 #                             the dashcams: front, rear and cabin, in clips that loop
 #   omacar clips status|list|save|run|sim
 #                             incident clips: the minute around a hard stop, a jolt or a tap

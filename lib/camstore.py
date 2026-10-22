@@ -38,6 +38,29 @@ DEFAULT_BUDGET_GB = 40      # of the tablet's 93 GB free
 # resolution. omacar-cameras.json may lower any of them ("caps"): Tuesday's
 # fallback, if the tablet cannot carry two 1080p cameras, is a file edit.
 DEFAULT_CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (640, 480, 30)}
+# Focus: "infinity" locks it on the road, "auto" leaves the camera to it, a
+# number is the camera's own focus_absolute value. Front and rear only ever
+# look at the road, and a webcam's autofocus there hunts for raindrops, dirt
+# on the glass and the wipers; the cabin looks at a face at arm's length.
+# lib/cams.py focus_plan() turns this into v4l2 controls, and leaves a camera
+# with no focus controls (a fixed-focus lens) alone.
+DEFAULT_FOCUS = {"front": "infinity", "rear": "infinity", "cabin": "auto"}
+FOCUS_MAX = 1023     # no UVC camera here has a focus_absolute range wider than this
+
+
+def clean_focus(value):
+    """A focus setting, or ValueError saying what is allowed."""
+    if isinstance(value, str) and value.strip().lower() in ("auto", "infinity"):
+        return value.strip().lower()
+    if isinstance(value, bool):
+        raise ValueError("focus is auto, infinity or a number")
+    try:
+        n = int(str(value).strip())
+    except ValueError:
+        raise ValueError("focus is auto, infinity or a number from 0 to %d" % FOCUS_MAX) from None
+    if not 0 <= n <= FOCUS_MAX:
+        raise ValueError("focus is auto, infinity or a number from 0 to %d" % FOCUS_MAX)
+    return n
 
 
 def videos():
@@ -55,13 +78,14 @@ def load_config(path=None):
         {"patterns": {"rear": "Insta360"},    a role's by-id pattern; "" or null
                                               turns the role off
          "caps": {"rear": [1280, 720, 30]},   a role's largest mode
+         "focus": {"front": "infinity"},      auto, infinity, or focus_absolute
          "budget_gb": 40}
 
     Anything for a role that does not exist, a cap that is not three positive
     numbers, or a budget that is not a positive number is ignored rather than
     trusted."""
     cfg = {"patterns": dict(DEFAULT_PATTERNS), "budget_gb": DEFAULT_BUDGET_GB,
-           "caps": dict(DEFAULT_CAPS)}
+           "caps": dict(DEFAULT_CAPS), "focus": dict(DEFAULT_FOCUS)}
     try:
         with open(path or config_path(), encoding="utf-8") as f:
             user = json.load(f)
@@ -81,10 +105,44 @@ def load_config(path=None):
                     and all(isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0
                             for x in cap)):
                 cfg["caps"][role] = (int(cap[0]), int(cap[1]), cap[2])
+    focus = user.get("focus")
+    if isinstance(focus, dict):
+        for role, val in focus.items():
+            if role in ROLES:
+                try:
+                    cfg["focus"][role] = clean_focus(val)
+                except ValueError:
+                    pass
     gb = user.get("budget_gb")
     if isinstance(gb, (int, float)) and not isinstance(gb, bool) and gb > 0:
         cfg["budget_gb"] = gb
     return cfg
+
+
+def set_focus(role, value, path=None):
+    """Write one role's focus into omacar-cameras.json, keeping everything else
+    in it. Returns the cleaned value; ValueError for a bad role or value."""
+    if role not in ROLES:
+        raise ValueError(f"no camera role called {role!r} (front, rear or cabin)")
+    value = clean_focus(value)
+    path = path or config_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
+    if not isinstance(doc.get("focus"), dict):
+        doc["focus"] = {}
+    doc["focus"][role] = value
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+    return value
 
 
 def budget_bytes(cfg=None):

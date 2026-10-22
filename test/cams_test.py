@@ -566,6 +566,94 @@ check("the same stop from the car does", len(camstore.load_events()["events"]), 
 cams._live = _real_live
 
 # ------------------------------------------------------------ the API's view
+# ------------------------------------------------------------ focus lock
+head("focus: a road camera does not hunt for raindrops")
+
+# `v4l2-ctl --list-ctrls` from a C920 on a recent kernel, and the older names.
+C920_CTRLS = """
+User Controls
+
+                     brightness 0x00980900 (int)    : min=0 max=255 step=1 default=128 value=128
+
+Camera Controls
+
+                  auto_exposure 0x009a0901 (menu)   : min=0 max=3 default=3 value=3 (Aperture Priority Mode)
+                 focus_absolute 0x009a090a (int)    : min=0 max=250 step=5 default=0 value=30 flags=inactive
+     focus_automatic_continuous 0x009a090c (bool)   : default=1 value=1
+"""
+OLD_CTRLS = """
+                 focus_absolute 0x009a090a (int)    : min=0 max=255 step=5 default=0 value=0 flags=inactive
+                     focus_auto 0x009a090c (bool)   : default=1 value=1
+"""
+FIXED_CTRLS = """
+                     brightness 0x00980900 (int)    : min=-64 max=64 step=1 default=0 value=0
+"""
+ctl = cams.parse_ctrls(C920_CTRLS)
+check("the controls are read, with their ranges",
+      (ctl["focus_absolute"]["min"], ctl["focus_absolute"]["max"], ctl["focus_absolute"]["step"],
+       ctl["focus_automatic_continuous"]["value"], ctl["brightness"]["min"]), (0, 250, 5, 1, 0))
+check("infinity: autofocus off first, then the far end",
+      cams.focus_plan(ctl, "infinity"),
+      (["focus_automatic_continuous=0", "focus_absolute=0"], "focus locked at infinity"))
+check("the older control name works the same",
+      cams.focus_plan(cams.parse_ctrls(OLD_CTRLS), "infinity")[0],
+      ["focus_auto=0", "focus_absolute=0"])
+check("a number is held to the camera's range and step",
+      [cams.focus_plan(ctl, 33)[0][-1], cams.focus_plan(ctl, 999)[0][-1]],
+      ["focus_absolute=35", "focus_absolute=250"])
+check("auto turns autofocus back on, and touches nothing else",
+      cams.focus_plan(ctl, "auto"), (["focus_automatic_continuous=1"], "focus: auto"))
+check("a fixed-focus camera is left alone, and said to be",
+      cams.focus_plan(cams.parse_ctrls(FIXED_CTRLS), "infinity"), ([], "fixed focus (nothing to lock)"))
+
+calls = []
+
+
+def fake_run(argv, **kw):
+    calls.append(argv[3] if len(argv) > 3 else argv[2])
+    out = C920_CTRLS if "--list-ctrls" in argv else ""
+    return subprocess.CompletedProcess(argv, 0, out, "")
+
+
+note = cams.apply_focus("/dev/v4l/by-id/x", "infinity", run=fake_run)
+check("one v4l2-ctl call per control, autofocus off before the focus is set",
+      (calls, note), (["--list-ctrls", "--set-ctrl=focus_automatic_continuous=0",
+                       "--set-ctrl=focus_absolute=0"], "focus locked at infinity"))
+
+
+def refusing_run(argv, **kw):
+    if "--list-ctrls" in argv:
+        return subprocess.CompletedProcess(argv, 0, C920_CTRLS, "")
+    return subprocess.CompletedProcess(argv, 1, "", "VIDIOC_S_EXT_CTRLS: failed: Permission denied")
+
+
+check("a refusal is a note, never an exception",
+      cams.apply_focus("/dev/x", "infinity", run=refusing_run).startswith("focus not set: VIDIOC_S_EXT_CTRLS"),
+      True)
+check("no v4l2-ctl at all is a note too",
+      cams.apply_focus("/dev/x", "infinity",
+                       run=lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("v4l2-ctl"))),
+      "focus not set: v4l2-ctl")
+
+check("by default the road cameras lock at infinity and the cabin stays auto",
+      camstore.load_config("/nonexistent")["focus"],
+      {"front": "infinity", "rear": "infinity", "cabin": "auto"})
+_fcfg = os.path.join(SCRATCH, "focus.json")
+with open(_fcfg, "w") as f:
+    json.dump({"budget_gb": 7, "focus": {"front": "auto", "cabin": 120, "rear": "sharp", "roof": 1}}, f)
+check("the file's setting wins; a bad value and an unknown role are ignored",
+      camstore.load_config(_fcfg)["focus"], {"front": "auto", "rear": "infinity", "cabin": 120})
+check("set_focus writes one role and keeps the rest of the file",
+      (camstore.set_focus("rear", "40", _fcfg), json.load(open(_fcfg))["budget_gb"],
+       json.load(open(_fcfg))["focus"]["rear"]), (40, 7, 40))
+for bad_role, bad_val in (("roof", "auto"), ("front", "sharp"), ("front", -1), ("front", True)):
+    try:
+        camstore.set_focus(bad_role, bad_val, _fcfg)
+        bad(f"set_focus({bad_role!r}, {bad_val!r}) was accepted")
+    except ValueError:
+        ok(f"set_focus({bad_role!r}, {bad_val!r}) is refused")
+
+
 head("the recorder's own report, as the API reads it")
 
 

@@ -137,3 +137,33 @@ exists to make it possible.
 
 Roughly $585–935 for the core build, though every price in the research note is
 marked unconfirmed and worth re-checking on the day.
+
+## Focus lock
+
+A webcam with autofocus behind the windscreen hunts: it settles on raindrops,
+dirt on the glass or the wipers, and the road goes soft. So the recorder locks
+it. Each role has a focus setting in `~/.config/omarchy/omacar-cameras.json`:
+
+| Role | Default | Why |
+|---|---|---|
+| front | `infinity` | it only ever looks at the road |
+| rear | `infinity` | the same |
+| cabin | `auto` | a face at arm's length, which moves |
+
+A setting is `auto`, `infinity` or the camera's own `focus_absolute` number.
+The recorder applies it when the camera starts, and again three seconds into
+the stream, because some UVC cameras reset their controls when a stream
+starts. A fixed-focus camera (most small modules, the Arducams included) has
+no focus controls; it is left alone, and `omacar cams status` says "fixed
+focus".
+
+```
+omacar cams focus                     # every role's setting
+omacar cams focus front infinity      # set it, and apply it now if plugged in
+omacar cams focus front 40            # a fixed distance, in the camera's units
+```
+
+"Infinity" is the lowest `focus_absolute` value, which is the far end on
+Logitech's cameras (the C920: 0 to 250, step 5). Another make could run the
+other way; if a locked camera looks soft, try `omacar cams focus front 250`.
+Measured on hardware: not yet.
