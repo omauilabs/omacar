@@ -803,6 +803,8 @@ export function confirmDialog({ title, body, confirm = "Confirm", tone = "danger
     document.addEventListener("keydown", function esc(e) {
       if (e.key === "Escape") { document.removeEventListener("keydown", esc); close(false); }
     });
-    box.querySelector(".btn." + tone).focus();
+    // An action that cannot be undone does not get the focus: Enter on a
+    // dialog that just appeared must not be the thing that deletes.
+    box.querySelector(tone === "danger" ? ".btn:not(." + tone + ")" : ".btn." + tone).focus();
   });
 }

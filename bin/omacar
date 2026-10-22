@@ -2190,6 +2190,8 @@ print()
   # The cabin and outdoor sensor nodes on USB (lib/envnode.py). pyserial lives
   # in the venv with the daemon's.
   env) shift; exec "$OMACAR_PY" "$ROOT/lib/envnode.py" "$@" ;;
+  # Accessibility: what OmaCar follows from OmaAccess, or its own settings.
+  access) shift; exec "$OMACAR_PY" "$ROOT/lib/access.py" "$@" ;;
   # The car widget kit: Omarchy apps and plugins on the car screen.
   carkit) shift; exec python3 "$ROOT/lib/carkit.py" "$@" ;;
   # The tablet's ambient light sensor, read-only (lib/ambient.py).

@@ -585,11 +585,11 @@ button { font: inherit; color: inherit; }
   grid-area: stage; padding: var(--stage-pad-t) 26px var(--stage-pad-b); overflow-y: auto; min-height: 0;
   overscroll-behavior: contain; transition: opacity .2s;
 }
-/* No visible ring on the stage itself: go() moves focus here after a
-   navigation so the next Tab starts at the top of the new screen, and that is
-   a bookkeeping move rather than something the user did. Every control in the
-   app keeps its ring -- see the focus rule in the navigation block. */
-.stage:focus { outline: none; }
+/* The stage is a Tab stop of its own (app.html), so a keyboard can scroll a
+   long screen (WCAG 2.1.1, axe "scrollable-region-focusable"), and it shows a
+   ring when it has one. go() now puts focus on the screen's heading instead,
+   which is the bookkeeping move that used to land here. */
+.stage:focus-visible { outline: 2px solid var(--info); outline-offset: -3px; }
 /* Canvases have an intrinsic 300x150 and no CSS width, so a chart measured
    before this rule existed drew itself into a 300px box in the corner of a
    1200px card. Every canvas in the tool fills its parent. */
@@ -760,7 +760,7 @@ textarea { resize: vertical; min-height: 66px; }
             padding: 10px 0; border-bottom: 1px solid var(--hair); }
 .scanline:last-child { border-bottom: 0 }
 .scanline .mname { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.scanline .maddr { color: var(--ghost); font-size: .64rem; }
+.scanline .maddr { color: var(--faint); font-size: .64rem; }
 .scan-prog { height: 2px; background: var(--hair); border-radius: 2px; overflow: hidden; }
 .scan-prog > i { display: block; height: 100%; background: var(--info); width: 0; transition: width .3s linear; }
 
@@ -1081,10 +1081,10 @@ textarea { resize: vertical; min-height: 66px; }
     color-mix(in srgb, var(--ground) 55%, transparent) 6px 10px);
 }
 .g-bar-tag { margin-left: auto; font-weight: 700; letter-spacing: .08em;
-             font-size: clamp(.8rem, 3cqh, 1.4rem); color: var(--ghost); }
+             font-size: clamp(.8rem, 3cqh, 1.4rem); color: var(--faint); }
 .g-bar-ends {
   display: flex; justify-content: space-between; margin-top: .3em;
-  font-size: clamp(.5rem, 1.2cqh, .7rem); color: var(--ghost);
+  font-size: clamp(.5rem, 1.2cqh, .7rem); color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 

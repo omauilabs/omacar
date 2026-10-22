@@ -2493,3 +2493,41 @@ def handle_post(path, body):  # noqa: F811
             return 400, {"error": str(e)}
     return _update_post(path, body)
 # ---- end self-update -------------------------------------------------------------
+
+
+# ---- accessibility (lib/access.py, share/js/a11y.js) -----------------------------
+# GET  /api/access         the settings in force, and whether OmaAccess owns them
+# POST /api/access         {name, value}: change one, through OmaAccess if present
+# POST /api/access/speak   {text, urgency}: say it in OmaAccess's voice, if allowed
+# Not in serve.py's COCKPIT_WRITES: a remote screen cannot change the tablet's
+# accessibility, and cannot make it speak.
+_access_get, _access_post = handle_get, handle_post
+
+
+def handle_get(path, query):  # noqa: F811
+    if path == "/api/access":
+        import access
+        return 200, access.read_public()
+    return _access_get(path, query)
+
+
+def handle_post(path, body):  # noqa: F811
+    if path in ("/api/access", "/api/access/speak"):
+        import access
+        try:
+            data = json.loads(body or "{}")
+        except ValueError:
+            return 400, {"error": "the body must be JSON"}
+        if not isinstance(data, dict):
+            return 400, {"error": "the body must be a JSON object"}
+        if path == "/api/access/speak":
+            urgency = data.get("urgency") if data.get("urgency") in ("info", "safety") else "info"
+            return 200, access.speak(data.get("text"), urgency)
+        try:
+            return 200, access.write(str(data.get("name") or ""), data.get("value"))
+        except ValueError as e:
+            return 400, {"error": str(e)}
+        except RuntimeError as e:
+            return 502, {"error": str(e)}
+    return _access_post(path, body)
+# ---- end accessibility -------------------------------------------------------------

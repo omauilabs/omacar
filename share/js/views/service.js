@@ -106,7 +106,7 @@ export default function service(root) {
     h("thead", h("tr",
       h("th", "Item"), h("th", "Minder"), h("th.num", "Life"),
       h("th.num", "Remaining"), h("th", "Due"), h("th", "Last done"),
-      h("th", "Notes"), h("th.noprint", ""))));
+      h("th", "Notes"), h("th.noprint", h("span.sr-only", "Mark done")))));
   const tb = h("tbody");
   for (const it of s.items) {
     const tone = lifeTone(it.life);
