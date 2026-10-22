@@ -5,6 +5,10 @@
     omacar cams on | off    enable and start, or stop and disable, omacar-cams.service
     omacar cams sim         the recorder, here, with lavfi test pictures for
                             every role that has no camera (SIMULATED in the app)
+    omacar cams rotate [ROLE DEGREES]
+                            turn a camera's picture 90, 180 or 270 degrees
+                            clockwise (0 to undo); with no arguments, says how
+                            each is turned
     omacar cams run [--sim] the recorder itself; what the unit runs
     omacar cams demo [--from DIR]
                             the meetup demo's cameras: footage on a loop, in
@@ -54,6 +58,9 @@ CAPS = camstore.DEFAULT_CAPS
 BITRATE = {"front": "6M", "rear": "6M", "cabin": "1M"}
 FORMAT_ORDER = ("MJPG", "H264", "YUYV")
 INPUT_FORMAT = {"MJPG": "mjpeg", "H264": "h264", "YUYV": "yuyv422"}
+# Clockwise degrees -> the filter that turns the picture, before the split, so
+# the clips and the live picture agree.
+ROTATE_FILTER = {90: "transpose=clock,", 180: "hflip,vflip,", 270: "transpose=cclock,"}
 # What `sim` stands up for a role with no camera. 720p rather than 1080p, so
 # three test pictures cost the box no more than real cameras would.
 SIM_MODE = {"front": {"fmt": "SIM", "w": 1280, "h": 720, "fps": 30.0},
@@ -376,11 +383,11 @@ def apply_focus(device, setting, run=subprocess.run):
 
 # ---- the command ------------------------------------------------------------
 
-FLIP_FILTER = {"horizontal": "hflip,", "vertical": "vflip,", "both": "hflip,vflip,"}
+FLIP_FILTER = {"horizontal": "hflip,", "vertical": "vflip,"}
 
 
 def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
-                duration=None, vaapi=VAAPI, flip=None):
+                duration=None, vaapi=VAAPI, rotate=0, flip=None):
     """One ffmpeg for one camera: decode once, split two ways.
 
       recording  hwupload -> h264_vaapi. -fps_mode passthrough, so a camera
@@ -394,9 +401,9 @@ def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
                  into files.
 
     With `device` None, the input is a test picture (lavfi testsrc2) in the
-    role's mode, at real time. `duration` stops it (tests only). `flip`
-    (camstore's setting) turns the picture before the split, so the clips and
-    the live view agree.
+    role's mode, at real time. `duration` stops it (tests only). `flip` then
+    `rotate` (camstore's settings) turn the picture, on the CPU, before it is
+    split, so the clips and the live view agree.
     """
     w, h, fps = mode["w"], mode["h"], mode["fps"]
     rate = f"{fps:g}"
@@ -411,7 +418,7 @@ def ffmpeg_args(role, mode, clip_dir, device=None, clip_secs=camstore.CLIP_SECS,
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-nostats",
         "-progress", "pipe:2", "-vaapi_device", vaapi, *src,
         "-filter_complex",
-        f"[0:v]{FLIP_FILTER.get(flip, '')}split=2[rec][live];[rec]format=nv12,hwupload[recv];"
+        f"[0:v]{FLIP_FILTER.get(flip, '')}{ROTATE_FILTER.get(rotate, '')}split=2[rec][live];[rec]format=nv12,hwupload[recv];"
         f"[live]fps={LIVE_FPS},scale={LIVE_WIDTH}:-2[livev]",
         "-map", "[recv]", "-c:v", "h264_vaapi", "-b:v", BITRATE[role],
         "-maxrate", BITRATE[role], "-g", gop, "-fps_mode", "passthrough",
@@ -475,8 +482,9 @@ class Camera:
     instance the stalled one; that would need a live frame it has not had
     the chance to send."""
 
-    def __init__(self, role, device, mode, sim=False, restarted=None, focus=None, flip=None):
+    def __init__(self, role, device, mode, sim=False, restarted=None, rotate=0, focus=None, flip=None):
         self.role, self.device, self.mode, self.sim = role, device, mode, sim
+        self.rotate = rotate
         self.focus = focus           # camstore's setting for this role, or None
         self.flip = flip
         self.focus_note = None
@@ -492,7 +500,8 @@ class Camera:
         os.makedirs(clip_dir, exist_ok=True)
         os.makedirs(run_dir(), exist_ok=True)
         args = ffmpeg_args(self.role, self.mode, clip_dir,
-                           device=None if self.sim else self.device, flip=self.flip)
+                           device=None if self.sim else self.device,
+                           rotate=self.rotate, flip=self.flip)
         if self.focus and not self.sim:
             self.focus_note = apply_focus(self.device, self.focus)
         self.proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
@@ -639,6 +648,17 @@ class Recorder:
         now = time.time()
         for role in ROLES:
             cam = self.cams.get(role)
+            # A NEW ROTATION OR FLIP RESTARTS THE CAMERA, so `omacar cams
+            # rotate` and `flip` take effect within two seconds, without
+            # restarting the recorder. Stopped cleanly, so the clip it was
+            # writing stays playable.
+            if cam and cam.alive() and (cam.rotate != cfg["rotate"][role]
+                                        or (getattr(cam, "flip", None) or "none")
+                                        != cfg["flip"][role]):
+                cam.stop()
+                self.cams.pop(role, None)
+                self.retry_at.pop(role, None)
+                cam = None
             if cam and cam.alive():
                 continue
             replacing = cam is not None       # a Camera existed here and died: this is a restart
@@ -676,10 +696,12 @@ class Recorder:
                     self.cams.pop(role, None)
                     continue
                 new = Camera(role, dev, mode, restarted=restart_note,
+                             rotate=cfg["rotate"][role],
                              focus=cfg.get("focus", {}).get(role),
                              flip=cfg.get("flip", {}).get(role))
             elif self.sim:
-                new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note)
+                new = Camera(role, None, SIM_MODE[role], sim=True, restarted=restart_note,
+                             rotate=cfg["rotate"][role], flip=cfg["flip"][role])
             else:
                 # A by-id match that exists but was refused (an IPU6 node, a
                 # non-USB one, or one below the floor with no way to tell)
@@ -903,33 +925,26 @@ def _print_status():
 
 
 def flip_main(args):
-    """omacar cams flip                                    every role's setting
-       omacar cams flip ROLE none|horizontal|vertical|both  set it; a running
-                                                            recorder restarts"""
+    """omacar cams flip                              every role's setting
+       omacar cams flip ROLE none|horizontal|vertical  set it; a running recorder
+                                                      restarts that camera"""
     if not args:
         cfg = camstore.load_config()
         for role in ROLES:
             print(f"  {role:<6} {cfg['flip'][role]}")
         return 0
     if len(args) != 2:
-        print("usage: omacar cams flip [ROLE none|horizontal|vertical|both]", file=sys.stderr)
+        print("usage: omacar cams flip [ROLE none|horizontal|vertical]", file=sys.stderr)
         return 2
     try:
         value = camstore.set_flip(*args)
     except ValueError as e:
         print(f"omacar cams: {e}", file=sys.stderr)
         return 2
-    # The flip is in ffmpeg's filter, so it takes a new ffmpeg. Restarting the
-    # recorder costs every camera a few seconds of recording; said so.
-    st = _read_status()
-    if running(st):
-        r = subprocess.run(["systemctl", "--user", "try-restart", "omacar-cams.service"],
-                           capture_output=True, text=True)
-        how = ("the recorder restarted to apply it (a few seconds' gap in every camera's clips)"
-               if r.returncode == 0 else
-               "restart the recorder to apply it: omacar cams off && omacar cams on")
-    else:
-        how = "it applies when the recorder starts"
+    # The recorder re-reads the file and restarts only this camera, as it does
+    # for a rotation (Recorder.discover()).
+    how = ("the camera restarts with it within two seconds" if running(_read_status())
+           else "it applies when the recorder starts")
     print(f"  {args[0]} flip: {value}. {how.capitalize()}.")
     return 0
 
@@ -1596,6 +1611,27 @@ def demo_main(args):
     return 0
 
 
+def rotate_main(args):
+    if not args:
+        rot = camstore.load_config()["rotate"]
+        for role in ROLES:
+            print(f"  {role:<6} {rot[role]}°")
+        return 0
+    role, deg = args[0], None
+    try:
+        deg = int(args[1]) if len(args) == 2 else None
+    except ValueError:
+        pass
+    if role not in ROLES or deg not in camstore.ROTATIONS:
+        print("usage: omacar cams rotate [front|rear|cabin 0|90|180|270]", file=sys.stderr)
+        return 2
+    camstore.set_rotate(role, deg)
+    st = _read_status()
+    when = "now" if running(st) else "when the recorder starts"
+    print(f"  {role} turned {deg}° clockwise; it takes effect {when}")
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "status"
     if cmd == "status":
@@ -1605,6 +1641,8 @@ def main(argv):
         return subprocess.run(["systemctl", "--user", *how, "omacar-cams.service"]).returncode
     if cmd == "demo":
         return demo_main(argv[2:])
+    if cmd == "rotate":
+        return rotate_main(argv[2:])
     if cmd == "focus":
         return focus_main(argv[2:])
     if cmd == "flip":

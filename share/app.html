@@ -1,4 +1,5 @@
 <!doctype html>
+<html lang="en">
 <!-- OmaCar — the workshop.
      One page, no build step, served over http://127.0.0.1 by lib/serve.py.
 
@@ -48,6 +49,7 @@
 <link rel="stylesheet" href="css/calls.css">
 <link rel="stylesheet" href="css/vehicle.css">
 <link rel="stylesheet" href="css/roadcams.css">
+<link rel="stylesheet" href="css/access.css">
 <link rel="stylesheet" href="css/env.css">
 <link rel="stylesheet" href="css/eq.css">
 <link rel="stylesheet" href="css/valet.css">
@@ -124,7 +126,7 @@
        Built by main.js, hidden whenever the group has only one screen. -->
   <div class="segbar" id="segbar" hidden></div>
 
-  <main class="stage" id="stage" tabindex="-1"></main>
+  <main class="stage" id="stage" tabindex="0"></main>
 
   <!-- THE NAVIGATION COMES AFTER THE STAGE, AND THAT IS DELIBERATE.
        It is placed by grid area, not by position:fixed on a DOM-first
@@ -150,6 +152,11 @@
   </nav>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
+  <!-- What a screen reader hears that the eye gets from movement: a screen
+       opening, a reading crossing a line, an alert. Filled by share/js/a11y.js
+       say(); polite waits its turn, urgent interrupts (WCAG 4.1.3). -->
+  <div class="sr-only" id="say-polite" aria-live="polite" aria-atomic="true"></div>
+  <div class="sr-only" id="say-urgent" role="alert" aria-atomic="true"></div>
   <div class="modal-host" id="modal-host" hidden></div>
 </div>
 

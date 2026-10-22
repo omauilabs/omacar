@@ -173,17 +173,19 @@ Measured on hardware: not yet.
 A car's own backup camera sends its picture mirrored, so it reads like a
 mirror on the stereo's screen, and a USB capture dongle passes it on the same
 way. Each role has a flip setting in `omacar-cameras.json`: `none` (the
-default), `horizontal` (mirror it back), `vertical`, or `both` (a half turn,
-for a camera mounted upside down). The recorder turns the picture before it
-splits it, so the saved clips and the live view always agree.
+default), `horizontal` (mirror it back) or `vertical`. A camera mounted upside
+down is a half turn, not a flip: `omacar cams rotate front 180`. The recorder
+applies the flip, then the turn, before it splits the picture, so the saved
+clips and the live view always agree.
 
 ```
 omacar cams flip                      # every role's setting
 omacar cams flip rear horizontal      # a factory backup camera through a dongle
 ```
 
-The flip lives in ffmpeg's filter, so changing it restarts a running recorder:
-every camera's clips get a gap of a few seconds. Checked with ffmpeg on the
+The flip lives in ffmpeg's filter. As with a rotation, the running recorder
+notices a change within two seconds and restarts only that camera; its clip
+gets a gap of a second or two. Checked with ffmpeg on the
 Mac (2026-10-22): a mirrored frame is the original reversed row for row, and
 the live view's frame is identical to the recording's. Not yet run on the
 tablet.

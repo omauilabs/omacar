@@ -64,7 +64,11 @@ export default function apps(root) {
       const spec = p.spec;
       const body = d ? render(spec.card || spec.screen, d.data || {}, spec, ctxFor(p.id))
         : h("div.ck-empty", "Not answering");
-      const tile = h("div.card.ck-tile", { role: "button", tabindex: "0", data: { state: d && d.error ? "stale" : "ok" } },
+      // Not itself a button: a tile can hold its own action buttons. The
+      // keyboard's and screen reader's way in is a real button over it (the
+      // same as Home's cards, home.js tappable()).
+      const tile = h("div.card.ck-tile", { data: { state: d && d.error ? "stale" : "ok" } },
+        h("button.hc-go", { type: "button", "aria-label": `Open ${p.name}`, onclick: () => go("app/" + p.id) }),
         h("div.ck-tile-head", appIcon(spec.icon), h("span.ck-tile-t", p.name),
           h("span.ck-tile-kind", p.kind === "omarchy" ? "Omarchy" : "OmaCar")),
         h("div.ck-tile-body", body),

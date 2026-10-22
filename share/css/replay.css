@@ -74,7 +74,7 @@
 .rp-transport { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
                 margin-top: 14px; }
 .rp-spacer { flex: 1 1 auto; }
-.rp-hint { font-size: .74rem; color: var(--ghost); white-space: nowrap; }
+.rp-hint { font-size: .74rem; color: var(--faint); white-space: nowrap; }
 @media (max-width: 720px) { .rp-hint { display: none; } }
 
 /* Which list a span came from, said plainly. A trip is segmented by movement, a
@@ -86,7 +86,7 @@
    to two lines to avoid it -- the tag cost more room than it was worth. */
 .rp-span-kind {
   font-size: .6rem; letter-spacing: .14em; text-transform: uppercase;
-  color: var(--ghost); margin-right: .6em;
+  color: var(--faint); margin-right: .6em;
 }
 .rp-span-kind[data-kind="recording"] { color: var(--ai); }
 .rp-span-kind[data-kind="drive"] { color: var(--info); }
@@ -135,7 +135,7 @@
 
 .rp-ev-none {
   position: absolute; left: 0; bottom: 4px;
-  font-size: .72rem; color: var(--ghost);
+  font-size: .72rem; color: var(--faint);
 }
 
 /* ---- the two canvases ----
@@ -183,7 +183,7 @@
 .rp-gauge .g-bar { margin-top: .5em; }
 
 .rp-missing {
-  margin-top: 12px; font-size: .78rem; color: var(--ghost); line-height: 1.5;
+  margin-top: 12px; font-size: .78rem; color: var(--faint); line-height: 1.5;
 }
 
 @media (prefers-reduced-motion: reduce) {

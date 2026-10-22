@@ -33,7 +33,7 @@
 .ima-q-dash {
   margin-top: 10px;
   font-size: 1.7rem; font-weight: 600; line-height: 1.25;
-  color: var(--ghost); letter-spacing: -.02em;
+  color: var(--faint); letter-spacing: -.02em;
 }
 .ima-q-unit {
   font-size: .62rem; color: var(--faint); font-weight: 400;
@@ -228,12 +228,12 @@
 .hybrid-live .hl-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; }
 @media (max-width: 720px) { .hybrid-live .hl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .hl-cell { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
-.hl-k { font-size: .8rem; color: var(--ghost); }
+.hl-k { font-size: .8rem; color: var(--faint); }
 .hl-val { display: flex; align-items: baseline; gap: .5em; }
 .hl-v { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
-.hl-src { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ghost); }
+.hl-src { font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
 .hl-cell svg { width: 100%; height: 28px; }
 .hl-cell svg { color: var(--accent); }
 .hl-note { margin: 0; font-size: .78rem; }
-.hl-cell[data-found="no"] { opacity: .55; }
-.hybrid-live[data-state="paused"] .hl-v { color: var(--ghost); }
+.hl-cell[data-found="no"] svg { opacity: .45; }
+.hybrid-live[data-state="paused"] .hl-v { color: var(--faint); }

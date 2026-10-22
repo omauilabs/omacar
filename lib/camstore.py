@@ -38,6 +38,10 @@ DEFAULT_BUDGET_GB = 40      # of the tablet's 93 GB free
 # resolution. omacar-cameras.json may lower any of them ("caps"): Tuesday's
 # fallback, if the tablet cannot carry two 1080p cameras, is a file edit.
 DEFAULT_CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (640, 480, 30)}
+# Clockwise degrees, for a camera mounted on its side or upside down. Some
+# action cameras turn their own output to match how they are held, so turning
+# the camera over does not always help; this turns the picture instead.
+ROTATIONS = (0, 90, 180, 270)
 # Focus: "infinity" locks it on the road, "auto" leaves the camera to it, a
 # number is the camera's own focus_absolute value. Front and rear only ever
 # look at the road, and a webcam's autofocus there hunts for raindrops, dirt
@@ -47,11 +51,12 @@ DEFAULT_CAPS = {"front": (1920, 1080, 30), "rear": (1920, 1080, 30), "cabin": (6
 DEFAULT_FOCUS = {"front": "infinity", "rear": "infinity", "cabin": "auto"}
 # Flip: a car's own backup camera sends its picture mirrored, so it reads like
 # a mirror on the stereo's screen; through a USB capture dongle it arrives the
-# same way. "horizontal" mirrors it back, "vertical" turns it over, "both" is a
-# half turn (a camera mounted upside down). lib/cams.py ffmpeg_args() applies
-# it before the picture is split, so the clips and the live view agree.
+# same way. "horizontal" mirrors it back, "vertical" mirrors it top to bottom.
+# A camera mounted upside down is a half turn, which is "rotate" (below), not
+# a flip. lib/cams.py applies the flip, then the turn, before the split, so the
+# clips and the live view agree.
 DEFAULT_FLIP = {"front": "none", "rear": "none", "cabin": "none"}
-FLIPS = ("none", "horizontal", "vertical", "both")
+FLIPS = ("none", "horizontal", "vertical")
 FOCUS_MAX = 1023     # no UVC camera here has a focus_absolute range wider than this
 
 
@@ -93,16 +98,17 @@ def load_config(path=None):
         {"patterns": {"rear": "Insta360"},    a role's by-id pattern; "" or null
                                               turns the role off
          "caps": {"rear": [1280, 720, 30]},   a role's largest mode
+         "rotate": {"front": 180},            a role's picture, turned clockwise
          "focus": {"front": "infinity"},      auto, infinity, or focus_absolute
-         "flip": {"rear": "horizontal"},      none, horizontal, vertical, both
+         "flip": {"rear": "horizontal"},      none, horizontal, vertical
          "budget_gb": 40}
 
     Anything for a role that does not exist, a cap that is not three positive
-    numbers, or a budget that is not a positive number is ignored rather than
+    numbers, a rotation that is not 0, 90, 180 or 270, or a budget that is not a positive number is ignored rather than
     trusted."""
     cfg = {"patterns": dict(DEFAULT_PATTERNS), "budget_gb": DEFAULT_BUDGET_GB,
-           "caps": dict(DEFAULT_CAPS), "focus": dict(DEFAULT_FOCUS),
-           "flip": dict(DEFAULT_FLIP)}
+           "caps": dict(DEFAULT_CAPS), "rotate": {r: 0 for r in ROLES},
+           "focus": dict(DEFAULT_FOCUS), "flip": dict(DEFAULT_FLIP)}
     try:
         with open(path or config_path(), encoding="utf-8") as f:
             user = json.load(f)
@@ -122,6 +128,11 @@ def load_config(path=None):
                     and all(isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0
                             for x in cap)):
                 cfg["caps"][role] = (int(cap[0]), int(cap[1]), cap[2])
+    rot = user.get("rotate")
+    if isinstance(rot, dict):
+        for role, deg in rot.items():
+            if role in ROLES and not isinstance(deg, bool) and deg in ROTATIONS:
+                cfg["rotate"][role] = int(deg)
     focus = user.get("focus")
     if isinstance(focus, dict):
         for role, val in focus.items():
@@ -142,6 +153,36 @@ def load_config(path=None):
     if isinstance(gb, (int, float)) and not isinstance(gb, bool) and gb > 0:
         cfg["budget_gb"] = gb
     return cfg
+
+
+def set_rotate(role, deg, path=None):
+    """Write one role's rotation into omacar-cameras.json, keeping everything
+    else in the file. The running recorder notices within two seconds."""
+    if role not in ROLES or deg not in ROTATIONS:
+        raise ValueError(f"no such rotation: {role} {deg}")
+    path = path or config_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            user = json.load(f)
+    except (OSError, ValueError):
+        user = {}
+    if not isinstance(user, dict):
+        user = {}
+    rot = user.get("rotate") if isinstance(user.get("rotate"), dict) else {}
+    if deg:
+        rot[role] = deg
+    else:
+        rot.pop(role, None)
+    if rot:
+        user["rotate"] = rot
+    else:
+        user.pop("rotate", None)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(user, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
 
 
 def set_focus(role, value, path=None):

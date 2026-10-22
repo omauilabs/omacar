@@ -95,7 +95,83 @@ check("a role's resolution cap comes from the file", _cfg["caps"]["rear"], (1280
 check("and a cap that is not three numbers is ignored", _cfg["caps"]["front"], (1920, 1080, 30))
 os.remove(camstore.config_path())
 
-# ------------------------------------------------------- a mistyped pattern
+# ------------------------------------------------------------ rotation
+head("a camera mounted upside down is turned back the right way up")
+
+check("with no file, nothing is turned", camstore.load_config()["rotate"],
+      {"front": 0, "rear": 0, "cabin": 0})
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"rotate": {"front": 180, "rear": 45, "cabin": True, "nope": 90}}, f)
+_cfg = camstore.load_config()
+check("a role's rotation comes from the file; 45, true and unknown roles are ignored",
+      _cfg["rotate"], {"front": 180, "rear": 0, "cabin": 0})
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"budget_gb": 12}, f)
+camstore.set_rotate("rear", 90)
+camstore.set_rotate("front", 180)
+with open(camstore.config_path(), encoding="utf-8") as f:
+    _saved = json.load(f)
+check("set_rotate() writes the role and keeps the rest of the file",
+      _saved, {"budget_gb": 12, "rotate": {"rear": 90, "front": 180}})
+camstore.set_rotate("rear", 0)
+camstore.set_rotate("front", 0)
+with open(camstore.config_path(), encoding="utf-8") as f:
+    check("and 0 takes it back out again", json.load(f), {"budget_gb": 12})
+try:
+    camstore.set_rotate("front", 45)
+    bad("set_rotate() refused 45 degrees")
+except ValueError:
+    ok("set_rotate() refused 45 degrees")
+os.remove(camstore.config_path())
+
+_m = {"fmt": "MJPG", "w": 1920, "h": 1080, "fps": 30.0}
+check("180 is a flip both ways, before the split, so clips and live agree",
+      "[0:v]hflip,vflip,split=2" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d", rotate=180)),
+      True)
+check("90 and 270 are a transpose each way",
+      ("[0:v]transpose=clock,split" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d", rotate=90))
+       and "[0:v]transpose=cclock,split" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d",
+                                                                      rotate=270))), True)
+check("and 0 adds nothing", "[0:v]split=2" in " ".join(cams.ffmpeg_args("front", _m, "/v", "/d")),
+      True)
+
+
+class _Alive:
+    def __init__(self, rotate):
+        self.rotate, self.stopped, self.error = rotate, False, None
+
+    def alive(self):
+        return not self.stopped
+
+    def stop(self):
+        self.stopped = True
+
+
+_r = cams.Recorder()
+_old = _Alive(0)
+_r.cams["front"] = _old
+_r.retry_at["front"] = time.time() + 60
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"rotate": {"front": 180}, "patterns": {"front": "", "rear": "", "cabin": ""}}, f)
+_r.discover()
+check("a new rotation stops the running camera, so discovery starts it turned",
+      (_old.stopped, "front" in _r.cams), (True, False))
+_same = _Alive(180)
+_r.cams["front"] = _same
+_r.discover()
+check("and a camera already turned the right way is left alone", _same.stopped, False)
+with open(camstore.config_path(), "w", encoding="utf-8") as f:
+    json.dump({"rotate": {"front": 180}, "flip": {"front": "horizontal"},
+               "patterns": {"front": "", "rear": "", "cabin": ""}}, f)
+_r.discover()
+check("a new flip stops the running camera too (it had none)", _same.stopped, True)
+_flipped = _Alive(180)
+_flipped.flip = "horizontal"
+_r.cams["front"] = _flipped
+_r.discover()
+check("and one already flipped the right way is left alone", _flipped.stopped, False)
+os.remove(camstore.config_path())
+
 head("one mistyped pattern disables only that role, never the recorder")
 
 with open(camstore.config_path(), "w", encoding="utf-8") as f:
@@ -668,21 +744,21 @@ def _graph(**kw):
 check("no flip: the picture is split as it comes", _graph().startswith("[0:v]split=2"), True)
 check("horizontal mirrors it, before the split, so clips and live agree",
       _graph(flip="horizontal").startswith("[0:v]hflip,split=2"), True)
-check("vertical turns it over; both is a half turn",
-      [_graph(flip="vertical").split("split")[0], _graph(flip="both").split("split")[0]],
-      ["[0:v]vflip,", "[0:v]hflip,vflip,"])
+check("vertical mirrors it top to bottom; flip comes before a rotation",
+      [_graph(flip="vertical").split("split")[0], _graph(flip="horizontal", rotate=180).split("split")[0]],
+      ["[0:v]vflip,", "[0:v]hflip," + cams.ROTATE_FILTER[180]])
 check("an unknown flip does nothing rather than break the command",
       _graph(flip="sideways").startswith("[0:v]split=2"), True)
 check("by default nothing is flipped", camstore.load_config("/nonexistent")["flip"],
       {"front": "none", "rear": "none", "cabin": "none"})
 with open(_fcfg, "w") as f:
-    json.dump({"budget_gb": 7, "flip": {"rear": "Horizontal", "front": "sideways", "roof": "both"}}, f)
-check("the file's flip wins (any case); a bad one and an unknown role are ignored",
+    json.dump({"budget_gb": 7, "flip": {"rear": "Horizontal", "front": "both", "roof": "vertical"}}, f)
+check("the file's flip wins (any case); 'both' (now rotate 180) and an unknown role are ignored",
       camstore.load_config(_fcfg)["flip"], {"front": "none", "rear": "horizontal", "cabin": "none"})
 check("set_flip writes one role and keeps the rest",
-      (camstore.set_flip("front", "both", _fcfg), json.load(open(_fcfg))["budget_gb"],
-       json.load(open(_fcfg))["flip"]), ("both", 7, {"rear": "Horizontal", "front": "both", "roof": "both"}))
-for bad_role, bad_val in (("roof", "none"), ("rear", "sideways"), ("rear", 1)):
+      (camstore.set_flip("front", "vertical", _fcfg), json.load(open(_fcfg))["budget_gb"],
+       json.load(open(_fcfg))["flip"]), ("vertical", 7, {"rear": "Horizontal", "front": "vertical", "roof": "vertical"}))
+for bad_role, bad_val in (("roof", "none"), ("rear", "sideways"), ("rear", "both"), ("rear", 1)):
     try:
         camstore.set_flip(bad_role, bad_val, _fcfg)
         bad(f"set_flip({bad_role!r}, {bad_val!r}) was accepted")
@@ -752,6 +828,17 @@ else:
               for c in _out), True)
     check("in H.264", _probe(_out[0], "-select_streams", "v", "-show_entries",
                              "stream=codec_name", "-of", "csv=p=0"), "h264")
+
+    _rdir = os.path.join(SCRATCH, "rotated")
+    os.makedirs(_rdir)
+    _p = subprocess.run(cams.ffmpeg_args("cabin", {"fmt": "SIM", "w": 640, "h": 480, "fps": 30.0},
+                                         _rdir, clip_secs=2, duration=3, rotate=90),
+                        capture_output=True, timeout=90)
+    _clip = sorted(os.listdir(_rdir))[0]
+    check("a camera turned 90 degrees records a portrait picture",
+          subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                          "stream=width,height", "-of", "csv=p=0", os.path.join(_rdir, _clip)],
+                         capture_output=True, text=True).stdout.strip(), "480,640")
 
 # ------------------------------------------------------------ the demo's cameras
 head("cams.py demo: footage on a loop, standing in for the live cameras")
