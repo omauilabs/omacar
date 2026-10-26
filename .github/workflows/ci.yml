@@ -1,25 +1,24 @@
 # OmaCar CI.
 #
-# THE OWNER'S OWN RUNNERS, NEVER GITHUB'S (the owner's decision, 2026-09-29:
-# "I never want to use GitHub CI when I have the runners"). Every job runs on
-# the omauilabs self-hosted runners on the Beelink: [self-hosted, Linux].
-# Never ubuntu-latest, and never a bare `self-hosted`.
+# GITHUB-HOSTED RUNNERS (the owner's decision, 2026-10-26). This repository is
+# public, and GitHub-hosted standard runners are free for public repositories
+# and run in a throwaway VM, so every job here runs on `ubuntu-latest`. This
+# supersedes the 2026-09-29 rule that sent every job to the self-hosted
+# runners.
 #
-# THE RISK, STATED ONCE, AND WHAT HOLDS IT. This repository is public, and a
-# self-hosted runner executes whatever a workflow run tells it to, on the
-# owner's hardware, where the runner user has passwordless sudo. So:
-#   - no job runs for a pull request from a fork: every job's `if:` below
-#     requires the pull request's head to be this repository;
-#   - nothing here uses pull_request_target, which would run with secrets;
-#   - the token is read-only (`permissions: contents: read`);
-#   - the org's runner group must allow public repositories, and the repo
-#     should require approval for workflows from outside collaborators. Both
-#     are the owner's settings, set by hand.
+# NO SELF-HOSTED JOB LIVES IN THIS FILE, because nothing here needs hardware:
+# no GPU, no Metal, no Asahi, no car. If a hardware lane is ever added, it must
+# keep a labelled `runs-on` (never a bare `self-hosted`), must never run for a
+# pull request from a fork (gate it on
+# `github.event.pull_request.head.repo.full_name == github.repository`, or on
+# push / workflow_dispatch / a maintainer-applied label), and nothing here may
+# use pull_request_target.
 #
-# THE FOUR RUNNERS SHARE ONE $HOME. A job that builds the venv or writes a
-# cache there can pull it out from under a neighbour, so the jobs that run
-# OmaCar's own tools first point HOME at a folder of their own under
-# $RUNNER_TEMP.
+# The token is read-only (`permissions: contents: read`).
+#
+# EACH JOB HAS ITS OWN VM, so the old shared-$HOME hazard is gone; the
+# "A HOME of this job's own" steps are kept because they are harmless and keep
+# OmaCar's venv and state out of the runner user's real home.
 #
 # Nothing here needs a car or an adapter: the ELM327 emulator stands in for a
 # vehicle and the guard suite stubs pyserial.
@@ -44,17 +43,15 @@ concurrency:
 jobs:
   tests:
     name: Tests — needs no car
-    runs-on: [self-hosted, Linux]
-    # Never for a fork's pull request (see the header).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     # A REAL CHROME, NEVER A SNAP WRAPPER. On GitHub's ubuntu-latest,
-    # /usr/bin/chromium was the snap shim, and headless Chromium under it hung
-    # every app test for 120 s from 2026-09-08 (76b3e93, the first test that
-    # ran the app) on. The Beelink has Google Chrome installed as a plain
-    # package. The browser tests take OMACAR_CHROME first, and fail rather than
-    # skip if it names nothing runnable, so this can never go green by quietly
-    # not running.
+    # /usr/bin/chromium is the snap shim, and headless Chromium under it hung
+    # every app test for 120 s (seen 2026-09-08, 76b3e93). The hosted image
+    # also ships Google Chrome as a plain package, so we name that one. The
+    # browser tests take OMACAR_CHROME first, and fail rather than skip if it
+    # names nothing runnable, so this can never go green by quietly not
+    # running. The "What we are running on" step prints its version.
     env:
       OMACAR_CHROME: google-chrome
     steps:
@@ -113,16 +110,8 @@ jobs:
 
   syntax:
     name: Everything parses
-    # A light job (12 s median, never above 21 s; python ast, bash -n, grep):
-    # the light runner on the NUC takes it when the org variable
-    # OMAUILABS_LIGHT is 'on', so it does not queue behind 20-minute test runs
-    # for a slot it uses for seconds. Unset or off, it runs where it always
-    # did, which is what keeps it from waiting on a label no runner carries
-    # when the light runner is down. omauilabs/omaui, docs/ci.md, "The
-    # light-jobs lane". Never a GitHub-hosted runner, never a bare self-hosted.
-    runs-on: ${{ fromJSON(vars.OMAUILABS_LIGHT == 'on' && '["Linux","X64","omauilabs-light"]' || '["self-hosted","Linux"]') }}
-    # Never for a fork's pull request (see the header).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # A light job (12 s median; python ast, bash -n, grep).
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -162,9 +151,7 @@ jobs:
 
   roadmap:
     name: Roadmap drift (reports, does not block)
-    runs-on: [self-hosted, Linux]
-    # Never for a fork's pull request (see the header).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # Every commit moves a line count, so the generated half of the roadmap is
     # stale the moment anything lands. Gating a merge on that would mean every
