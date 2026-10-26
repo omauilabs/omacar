@@ -62,6 +62,14 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # A hosted image has no ffmpeg, and the demo suites that make a recording
+      # (test/demo_silo_test.py) need one that writes H.264; the self-hosted box
+      # always had it. Ubuntu's ffmpeg package includes libx264.
+      - name: ffmpeg (the demo-recording suites need it)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
       - name: What we are running on
         run: |
           echo "python3: $(python3 --version 2>&1)"
