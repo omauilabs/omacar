@@ -1034,7 +1034,8 @@ def publish(payload):
     # sample is their car's. See records.live().
     os.makedirs(STATE, exist_ok=True)
     payload = dict(payload, vehicle=garage.SIM_KEY)
-    tmp = LIVE + ".tmp"
+    # Per-process temp name: the daemon writes this same file. See daemon.publish().
+    tmp = "%s.%d.tmp" % (LIVE, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f)
     os.replace(tmp, LIVE)

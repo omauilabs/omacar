@@ -114,10 +114,23 @@ def publish(payload):
         payload = dict(payload, vehicle=garage.current())
     except Exception:                                         # noqa: BLE001
         pass
-    tmp = LIVE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
-    os.replace(tmp, LIVE)
+    # THE TEMP NAME CARRIES THE PID, as card.py's does. On 28 October a second
+    # writer renamed a shared "live.json.tmp" away between this process's write
+    # and its rename; os.replace() raised FileNotFoundError, the daemon exited,
+    # and with Restart=no the gauges stayed dead for the rest of the drive.
+    # One missed publish is nothing -- the next is a fifth of a second away --
+    # so a failure here is logged and survived, never fatal.
+    tmp = "%s.%d.tmp" % (LIVE, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, LIVE)
+    except OSError as e:
+        print("omacar-daemon: live.json not published: %s" % e, file=sys.stderr)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def value_of(result):
