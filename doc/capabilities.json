@@ -88,6 +88,10 @@
   ],
 
   "hardware": {
+    "cabin-sensor": {
+      "title": "A cabin environment sensor",
+      "notes": "Not chosen yet (2026-11-06). Wanted: temperature, humidity, NDIR CO2, VOCs and PM2.5 over USB or Bluetooth with a documented protocol and no vendor cloud. See safe.cabin-environment."
+    },
     "obd-usb": {"title": "Wired USB OBD-II adapter, ELM327- or STN-based", "notes": "The only transport OmaCar speaks today. OBDLink SX and EX are the adapters it was developed on (lib/connect.py knows both defaults). Cheap clones answer to the same commands and often lie about their firmware version; see the hardware guide."},
     "obd-wireless": {"title": "Bluetooth or Wi-Fi OBD-II adapter", "notes": "Not supported yet. The cheapest adapters people already own are these."},
     "j2534": {"title": "SAE J2534 pass-thru device", "notes": "A published standard, and the transport professional hardware already speaks. Not supported yet."},
@@ -1343,6 +1347,32 @@
       "depends": ["safe.dashcam", "safe.alert-audio"],
       "evidence": [],
       "notes": "Opt-in and off by default. The cabin camera's microphone gives a level, never words. It never judges the driver, and never repeats or nags; the response is offered once. No audio is recorded by default, as the Cameras tab already says. Recording cabin audio needs every party's consent in California, where the owner lives (Penal Code s632, all-party consent for confidential communications), so recording stays off unless the owner turns it on with that warning shown. A warning, not a refusal: the owner decides."
+    },
+    {
+      "id": "safe.cabin-environment",
+      "domain": "safety",
+      "title": "The conditions inside the car",
+      "user": "Know how hot, humid and stuffy it is inside the car, now and over a drive, and be told when it is getting unsafe, especially with the kids aboard.",
+      "agent": "Reads a cabin environment sensor and logs temperature, humidity and air quality beside the drive data, with thresholds that warn the driver.",
+      "status": "later",
+      "tier": "none",
+      "needs": ["cabin-sensor"],
+      "depends": [],
+      "evidence": [],
+      "notes": "Asked for by the owner on 2026-11-06. The device is not chosen yet. The candidates to compare: a USB or Bluetooth sensor for temperature and humidity, CO2 (NDIR, not an estimated eCO2), VOCs and particulates (PM2.5), with a documented protocol that needs no vendor cloud. Readings are logged with the drive so they line up with speed, the cameras and events, and Home shows them as a small, calm callout. Warnings come from cited guidance, not guesses: heat, and CO2 high enough to make a driver drowsy, which also feeds safe.drowsy. Pairs with safe.rear-seat-reminder: a hot cabin after the engine is off is when a child left behind is in the most danger. The OBD intake and ambient readings are outside air, not the cabin, so this needs its own device."
+    },
+    {
+      "id": "hw.sensor-telemetry",
+      "domain": "hardware",
+      "title": "See the tablet's own sensors working",
+      "user": "Before trusting the tablet to notice a jolt, a hard stop or which way it is mounted, see its sensors live and know they are working.",
+      "agent": "Shows the tablet's accelerometer, gyroscope, gravity, rotation and light readings as live traces, with each sensor's rate, scale and last-read age, and flags a sensor that is silent, stuck or noisy.",
+      "status": "later",
+      "tier": "none",
+      "needs": [],
+      "depends": [],
+      "evidence": [],
+      "notes": "Asked for by the owner on 2026-11-06, so the sensors that driving features will rely on can be checked before they are trusted. On the owner's Surface Pro 7+ (checked 2026-11-06) /sys/bus/iio lists accel_3d, gyro_3d, gravity, dev_rotation and apds9960 (light and proximity), read directly as safe.impact does, since iio-sensor-proxy gives only orientation. The screen draws a short rolling trace per axis and the measured sample rate, which is the open question safe.impact already notes (10 Hz by default). A health check fails a sensor that is missing, has not updated, reads a flat line, or reads gravity far from 9.8 m/s^2 at rest. It is a diagnostics screen, shown while parked; while driving, only a pass or fail goes on preflight. It is what safe.impact, safe.crash and safe.parking-watch are calibrated against."
     },
     {
       "id": "safe.rear-seat-reminder",
