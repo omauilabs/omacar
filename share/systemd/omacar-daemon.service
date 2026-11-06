@@ -22,17 +22,25 @@ Type=simple
 # watchdog only reads live.json; the daemon imports obd and cannot.
 ExecStart=/bin/sh -c '. __ROOT__/lib/env.sh; exec "$OMACAR_PY" __ROOT__/lib/daemon.py'
 
-# Restart=no, and this was corrected by testing rather than by reasoning.
+# Restart after a crash, never after "there is no car".
 #
-# "No adapter" is not a clean exit: daemon.py exits status=1 for it, which is
-# indistinguishable from a real failure. With Restart=on-failure that meant an
-# unplugged cable spun a fresh Python interpreter every five seconds forever --
-# observed here as `activating (auto-restart)` with no adapter attached, which
-# is precisely the background-CPU behaviour that crashed the compositor last
-# night.
+# This was Restart=no, corrected by testing: "no adapter" used to exit 1, the
+# same as a crash, and Restart=on-failure then spun a fresh Python interpreter
+# every five seconds with the cable unplugged -- observed as `activating
+# (auto-restart)` with no adapter attached, the background-CPU behaviour that
+# crashed the compositor. But Restart=no meant a real crash mid-drive left the
+# gauges dead until the adapter was replugged, which happened on 2026-10-28.
 #
-# udev starts this when an adapter appears. That is the only trigger it needs.
-Restart=no
+# So daemon.py now exits 3 (EXIT_NO_CAR) for no adapter, no car answering or
+# the simulator holding the port, and only that status is spared a restart.
+# A crash restarts after 5 s, and StartLimitBurst above stops a crash loop
+# after three tries in a minute.
+#
+# udev starts this when an adapter appears. That is still the only trigger.
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=3
+SuccessExitStatus=3
 
 # The car is not urgent work. Last night a background poll saturating this
 # 2-core CPU starved the compositor badly enough to crash it; nothing that

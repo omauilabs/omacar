@@ -188,6 +188,53 @@ def _recorder(sheet):
                   "omacar drive on")
 
 
+DAEMON_UNIT = "omacar-daemon.service"
+
+
+def _gauges(sheet):
+    """How the gauge daemon's last run ended.
+
+    On 28 October it crashed 38 seconds into a drive and this sheet still said
+    "Nothing here will stop a recording": it asked about the recorder, and the
+    daemon is the other half -- the gauges and the `samples` table the drive
+    is later read back from. systemd remembers how a unit last ended, so ask
+    it. Exit 3 is the daemon saying there was no car to read (EXIT_NO_CAR in
+    lib/daemon.py), which is not a fault.
+    """
+    if not _unit_present(DAEMON_UNIT):
+        return
+    code, out, _ = _run(["systemctl", "--user", "show", DAEMON_UNIT,
+                         "-p", "ActiveState", "-p", "Result",
+                         "-p", "ExecMainStatus", "-p", "NRestarts",
+                         "-p", "ExecMainExitTimestamp"])
+    if code != 0:
+        return
+    p = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    state, result = p.get("ActiveState", ""), p.get("Result", "")
+    status, restarts = p.get("ExecMainStatus", "0"), p.get("NRestarts", "0")
+    when = p.get("ExecMainExitTimestamp", "").strip()
+    logs = "journalctl --user -u " + DAEMON_UNIT + " -n 40"
+
+    if state in ("active", "activating", "reloading"):
+        said = "running"
+        if restarts not in ("", "0"):
+            said += f", after {restarts} restart(s) — it has crashed since it started"
+        sheet.row("the gauges", restarts in ("", "0"), said, logs, blocking=False)
+    elif result == "start-limit-hit":
+        sheet.row("the gauges", False,
+                  "crashed three times in a minute and systemd gave up on it",
+                  "systemctl --user reset-failed " + DAEMON_UNIT
+                  + "   then: " + logs)
+    elif result not in ("", "success"):
+        sheet.row("the gauges", False,
+                  f"the last run crashed ({result}, status {status}"
+                  + (f", {when}" if when else "") + ")",
+                  logs, blocking=False)
+    else:
+        sheet.row("the gauges", True,
+                  "not running — it starts when the adapter is plugged in")
+
+
 def _power(sheet):
     """Both the buttons and the thing that ends a drive by itself."""
     try:
@@ -305,6 +352,7 @@ def main(argv=None):
     sheet = Sheet()
     _code(sheet)
     _recorder(sheet)
+    _gauges(sheet)
     _port(sheet)
     _power(sheet)
     _disk(sheet)

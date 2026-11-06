@@ -158,9 +158,30 @@ def decode_dtc(b0, b1, b2):
     return "%s%X%X%02X-%02X" % (letter, (b0 >> 4) & 0x03, b0 & 0x0F, b1, b2)
 
 
+# THE BITS THAT SAY SOMETHING FAILED. The other two, 0x10 and 0x40, only say a
+# test has not run, since the last clear or since the key went on. A mask of
+# FF reports every code with ANY bit set, so on a healthy car straight after
+# key-on the "stored" list is every monitor that has not run yet: on 26
+# October the CR-Z's hybrid module listed seven codes, every one 0x40, and
+# this tool printed "7 stored". That read as seven hybrid faults on a hybrid
+# system with none.
+FAULT_BITS = 0x01 | 0x02 | 0x04 | 0x08 | 0x20 | 0x80
+
+
+def is_fault(byte):
+    """True if any bit says this code failed, is pending or lit the lamp."""
+    return bool(byte & FAULT_BITS)
+
+
 def decode_status(byte):
     on = [name for bit, name in STATUS_BITS if byte & bit]
     return ", ".join(on) if on else "clean"
+
+
+def tally(dtcs):
+    """(faults, not_run) for a [(code, status)] list from a status-mask read."""
+    faults = sum(1 for _, s in dtcs if is_fault(s))
+    return faults, len(dtcs) - faults
 
 
 def parse_dtc_list(data, skip):
@@ -664,9 +685,23 @@ def main(argv):
                 mark = f"{DIM}{row['detail'] or 'silent'}{RESET}"
             print(f"    19{row['sub']:<5} {row['name']:<33} {mark}")
             if "count" in row:
-                print(f"      {DIM}-> {row['count']} stored{RESET}")
+                # A count by status mask, not a count of faults: see FAULT_BITS.
+                print(f"      {DIM}-> {row['count']} with a status bit set"
+                      f" (faults and not-yet-run tests alike){RESET}")
             for code, status in row["dtcs"]:
                 print(f"      {BOLD}{code}{RESET}  {DIM}{decode_status(status)}{RESET}")
+            # Only for the status-mask list. 0A is the catalogue of codes the
+            # module CAN set, so "faults" there would be the wrong question.
+            if row["kind"] == "positive" and row["sub"] == "02FF":
+                faults, not_run = tally(row["dtcs"])
+                if faults:
+                    print(f"      {YELLOW}-> {faults} fault(s){RESET}"
+                          + (f"{DIM}, {not_run} test(s) only not run yet{RESET}"
+                             if not_run else ""))
+                else:
+                    print(f"      {GREEN}-> no faults{RESET}"
+                          + (f"{DIM}: {not_run} test(s) have not run yet, "
+                             f"which is not a fault{RESET}" if not_run else ""))
 
         def show_record(row):
             nonlocal answered
