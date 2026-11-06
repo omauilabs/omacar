@@ -1298,12 +1298,12 @@
       "title": "Open recalls for this car",
       "user": "Know if the car has an open safety recall.",
       "agent": "Checks the decoded VIN against the public recall database and cites it.",
-      "status": "next",
+      "status": "shipped",
       "tier": "none",
       "needs": ["internet"],
       "depends": ["own.vin-decode"],
-      "evidence": [],
-      "notes": "Moved into Next on 2026-09-28. NHTSA's recall data is free and public for US vehicles; the VIN decode already uses NHTSA. Cheap to build."
+      "evidence": ["lib/knowledge.py", "lib/mcp.py", "lib/share.py", "test/recalls_test.py"],
+      "notes": "Shipped 2026-11-06 as `omacar recalls`, the car_recalls agent tool and a section of the share report. NHTSA's public recall API is per make, model and year, not per VIN, so every answer says the recall was issued for cars like this one and points to nhtsa.gov/recalls, or a dealer, for whether it is still open on this car. Only make, model and year are sent to the recall lookup. The share report reads the cached answer and never fetches. Proven on a 2015 Honda CR-Z: two Takata driver inflator campaigns, 16V061000 and 19V500000."
     },
     {
       "id": "safe.crash",
@@ -2602,6 +2602,19 @@
       "depends": ["diag.live-data"],
       "evidence": ["lib/serve.py", "bin/omacar"],
       "notes": "A browser reached over the LAN cannot use a camera; that is the browser's rule."
+    },
+    {
+      "id": "ui.hud",
+      "domain": "interface",
+      "title": "A spare phone or tablet as a head-up display",
+      "user": "Lay an old phone or tablet on the dash and see speed, directions and warnings reflected in the windscreen, laid out the way I choose.",
+      "agent": "Serves a mirrored, high-contrast HUD page to a device on the car's network, built from widgets the owner picks and arranges.",
+      "status": "later",
+      "tier": "none",
+      "needs": ["car-network"],
+      "depends": ["hw.cockpit", "oplug.safety-rules"],
+      "evidence": [],
+      "notes": "Asked for by the owner on 2026-11-06. Any phone or tablet that joins through cockpit mode, read-only, so nothing on it can touch the car. The page flips horizontally so its reflection in the glass reads the right way round, and a plain mode is offered for a device viewed directly. The owner customises the screen on the tablet while parked: which widgets (speed, rpm, gear or drive mode, the next turn once navigation exists, fuel or hybrid charge, alerts), where each sits, size, colour and brightness. A layout can be saved per device. Rules: big type and few elements, no text entry or touch targets, no motion that is not information, dims at night, and alerts always win the screen. Later by default; the owner can move it up."
     },
     {
       "id": "hw.guide",

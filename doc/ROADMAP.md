@@ -1207,9 +1207,12 @@ texture), with the owner's chrome and carbon-fibre logos. An optional 3D model
 of the owner's own car can replace the picture, and the viewer for it already
 exists. Honda-badged art stays in the private assets folder, out of git.
 
-**9. Recalls by VIN.** It checks the decoded VIN against NHTSA's free public
-recall data and cites the result. The VIN decode already asks NHTSA, so this
-is small. Moved into Next on 2026-09-28.
+**9. Recalls by VIN.** Shipped 2026-11-06: `omacar recalls`, the
+`car_recalls` agent tool and a section of the share report. NHTSA's public
+recall data is per make, model and year, not per VIN, so it says which
+recalls were issued for cars like this one, cites them, and sends the owner to
+nhtsa.gov/recalls or a dealer to learn whether one is still open on this car.
+Only the make, model and year go to the recall lookup.
 
 ### Later
 
@@ -1246,6 +1249,16 @@ The larger pieces are:
   library that work offline, and how long until we're there. None of it can
   touch the car. The driver can pause, dim or set the volume with one tap or
   by voice, and anything more waits until the car is parked. It is opt-in.
+- **A spare phone or tablet as a head-up display** (`ui.hud`, asked for by
+  the owner on 2026-11-06). A device laid on the dash joins through the
+  read-only cockpit mode and shows a mirrored, high-contrast page whose
+  reflection in the windscreen reads the right way round, with a plain mode
+  for a device viewed directly. The owner lays the screen out on the tablet
+  while parked: which widgets (speed, rpm, drive mode, the next turn once
+  navigation exists, fuel or hybrid charge, alerts), where each sits, size,
+  colour and brightness, saved per device. It follows the driving-safety
+  rules: big type, no text entry or touch targets, no motion that is not
+  information, dimmed at night, and alerts always win the screen.
 - **Impacts felt by the tablet itself** (`safe.impact`). It reads the tablet's
   own accelerometer, which on the Surface Pro 7+ is an IIO device through the
   Intel ISH, checked on the tablet on 2026-09-28. On a jolt it locks the same

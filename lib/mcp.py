@@ -294,6 +294,25 @@ TOOLS = [
         },
     },
     {
+        "name": "car_recalls",
+        "description":
+            "The safety recalls NHTSA lists for this car's make, model and "
+            "year, with consequence and remedy, citing the source. NHTSA's "
+            "public data is per model, not per car: it cannot say whether a "
+            "recall is still open on THIS car, so never report one as open. "
+            "Say it was issued for cars like this, and that the owner can "
+            "check the VIN at nhtsa.gov/recalls or ask a dealer, who does "
+            "recall work free. Any entry marked park_it or park_outside "
+            "matters more than anything else in the answer.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "vin": {"type": "string",
+                        "description": "17 characters. Omit to use the current vehicle's."},
+            },
+        },
+    },
+    {
         "name": "decode_vin",
         "description":
             "Ask NHTSA what a VIN is. OBD-II reports a VIN and nothing else: "
@@ -1075,6 +1094,25 @@ def t_decode_vin(args):
     return as_json(body)
 
 
+def t_recalls(args):
+    import knowledge
+    vin = (str(args.get("vin") or "").strip()
+           or (records.snapshot().get("vehicle") or {}).get("vin") or "")
+    try:
+        entries, meta = knowledge.recalls_for_vin(vin)
+    except Exception as why:                                  # noqa: BLE001
+        return failed(f"could not reach NHTSA: {why}")
+    if meta.get("error"):
+        return failed(meta["error"])
+    # No VIN in the answer, for the reason t_decode_vin gives: the make, model
+    # and year are what the list is about, and all it needs.
+    return as_json({"vehicle": {k: meta[k] for k in ("year", "make", "model")},
+                    "count": len(entries), "recalls": entries,
+                    "source": {k: meta[k] for k in ("source", "licence", "cached",
+                                                    "vin_lookup")},
+                    "note": meta["note"]})
+
+
 def t_standard_dids(_):
     import knowledge
     return as_json({
@@ -1119,6 +1157,7 @@ HANDLERS = {
     "request_write": t_request_write,
     "lookup_signals": t_lookup,
     "decode_vin": t_decode_vin,
+    "car_recalls": t_recalls,
     "standard_dids": t_standard_dids,
     "show_screen": t_show_screen,
 }
