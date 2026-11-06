@@ -1259,6 +1259,27 @@ The larger pieces are:
   colour and brightness, saved per device. It follows the driving-safety
   rules: big type, no text entry or touch targets, no motion that is not
   information, dimmed at night, and alerts always win the screen.
+- **The conditions inside the car** (`safe.cabin-environment`, asked for by
+  the owner on 2026-11-06). Temperature, humidity and air quality in the
+  cabin, from a sensor that has not been chosen yet. The candidates are USB
+  or Bluetooth devices that measure CO2 directly (NDIR, not an estimate),
+  VOCs and PM2.5, with a documented protocol and no vendor cloud. Readings
+  are logged with the drive, so they line up with speed, the cameras and
+  events. Warnings come from cited guidance: heat, and CO2 high enough to
+  make a driver drowsy, which also feeds drowsy mode. It pairs with the
+  back-seat reminder, because a hot cabin after the engine is off is when a
+  child left behind is in the most danger. The car's own intake and ambient
+  readings measure the outside air, so this needs its own device.
+- **The tablet's own sensors, seen working** (`hw.sensor-telemetry`, asked
+  for by the owner on 2026-11-06). Before driving features trust the tablet
+  to notice a jolt, a hard stop or how it is mounted, a parked-only
+  diagnostics screen shows each sensor live: the accelerometer, gyroscope,
+  gravity, rotation and light sensors the Surface Pro 7+ lists under
+  `/sys/bus/iio`. Each gets a rolling trace per axis, its measured sample
+  rate, its scale and the age of its last reading. A health check fails a
+  sensor that is missing, silent, stuck on a flat line, or far from 9.8 m/s²
+  at rest, and the pass or fail joins the pre-drive check. Impact, crash
+  and parking-watch thresholds are calibrated against it.
 - **Impacts felt by the tablet itself** (`safe.impact`). It reads the tablet's
   own accelerometer, which on the Surface Pro 7+ is an IIO device through the
   Intel ISH, checked on the tablet on 2026-09-28. On a jolt it locks the same

@@ -171,10 +171,26 @@ def _unwind(_signum, _frame):
     raise KeyboardInterrupt
 
 
+# THE EXIT STATUS FOR "THERE IS NO CAR TO READ", and only for that.
+#
+# The unit used to be Restart=no because "no adapter" exited 1, the same as a
+# crash, and Restart=on-failure then spun a fresh interpreter every few
+# seconds with the cable unplugged. So a real crash mid-drive -- 28 October,
+# 38 seconds in -- left the gauges dead until the adapter was replugged.
+# Giving the expected exits their own status lets the unit restart after a
+# crash (RestartPreventExitStatus) without ever spinning on an empty port.
+EXIT_NO_CAR = 3
+
+
+def no_car(message):
+    print(message, file=sys.stderr)
+    sys.exit(EXIT_NO_CAR)
+
+
 def main():
     if sim_running():
-        sys.exit("omacar daemon: the simulator is running — stop it first "
-                 "(omacar sim stop)")
+        no_car("omacar daemon: the simulator is running — stop it first "
+               "(omacar sim stop)")
 
     os.makedirs(connect.STATE, exist_ok=True)
 
@@ -216,8 +232,11 @@ def main():
         try:
             conn, port, kind = connect.connect(timeout=1.0, fast=True,
                                                lease=False)
-        except SystemExit:
-            raise
+        except SystemExit as e:
+            # connect() exits on its own for no adapter, or a port this user
+            # may not open. Neither is a crash, and a restart cures neither.
+            no_car(str(e.code) if e.code not in (None, 0) else
+                   "omacar daemon: no adapter")
         except Exception:                                     # noqa: BLE001
             conn = None
         if conn is not None and conn.status() == obd.OBDStatus.CAR_CONNECTED:
@@ -237,8 +256,8 @@ def main():
     if conn is None or conn.status() != obd.OBDStatus.CAR_CONNECTED:
         status = str(conn.status()) if conn is not None else "no connection"
         publish({"connected": False, "status": status, "port": port})
-        sys.exit(f"omacar daemon: not connected ({status}) "
-                 f"after {STARTUP_TRIES} attempts")
+        no_car(f"omacar daemon: not connected ({status}) "
+               f"after {STARTUP_TRIES} attempts")
 
     # THE PIDFILE GOES DOWN BEFORE THE CAR ANSWERS, NOT AFTER.
     #

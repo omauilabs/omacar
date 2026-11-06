@@ -43,6 +43,8 @@ fi
 # The guards: every safety check that was written, looked right, and did not
 # hold. Stubs pyserial itself, so it runs with or without a venv, always.
 python3 "$ROOT/test/guards_test.py" || fails=$((fails + 1))
+"$VENV/bin/python" "$ROOT/test/dtc_status_test.py" || fails=$((fails + 1))
+python3 "$ROOT/test/gauges_test.py" || fails=$((fails + 1))
 
 # `omacar power screen` on both Hyprlands: the Lua dispatch the tablet's 0.56
 # needs, then the `dpms off` a hyprlang config needs, and a refusal that exits 0

@@ -2024,10 +2024,12 @@ for _verb in ("enable", "start", "restart", "install"):
           f'"systemctl", "--user", "{_verb}"' in _src, False)
 # `cat` joined the list when the recorder learned to tell a unit that is off
 # from a unit that is not there. It is a question like the other two: it reads
-# a file and changes nothing.
+# a file and changes nothing. `show` joined it when the sheet learned to ask
+# how the gauge daemon's last run ended: it reads properties and changes
+# nothing either.
 check("it only ever asks systemctl questions",
       sorted(set(_re.findall(r'"systemctl",\s*(?:"--user",\s*)?"([a-z-]+)"', _src))),
-      ["cat", "is-active", "is-enabled"])
+      ["cat", "is-active", "is-enabled", "show"])
 
 # THE RECORDER GOES FIRST, because it is the one that was never on.
 check("the recorder is checked before anything about the car",
