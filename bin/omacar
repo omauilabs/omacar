@@ -40,6 +40,7 @@
 #   omacar snapshot [label]   freeze the whole state, for comparing later
 #   omacar vehicle [use VIN]  the garage — one record per car, keyed by VIN
 #   omacar odometer [set N]   the reading; OBD-II has no odometer, so you set it
+#   omacar recalls [VIN]      safety recalls NHTSA lists for this make, model and year
 #   omacar service [log X]    the maintenance book and what has been done to it
 #   omacar survey             read codes, readiness and on-board tests from the car
 #   omacar prune [--keep=N]   roll old samples into daily figures, reclaim disk
@@ -2031,6 +2032,7 @@ if '--quiet' not in sys.argv:
   snapshots) exec python3 "$ROOT/lib/concerns.py" snapshots ;;
   vehicle) shift; exec python3 "$ROOT/lib/garage.py" "$@" ;;
   odometer) shift; exec python3 "$ROOT/lib/book.py" "$@" ;;
+  recalls) shift; exec python3 "$ROOT/lib/knowledge.py" recalls "$@" ;;
   service)
     shift
     case "${1:-show}" in

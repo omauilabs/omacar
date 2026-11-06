@@ -27,6 +27,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import concerns  # noqa: E402
+import knowledge  # noqa: E402
 import photos    # noqa: E402
 import records   # noqa: E402
 
@@ -112,6 +113,29 @@ def build(note=None, include_photos=True):
           f"{sum(1 for m in m6 if m['pass'] is not False and (m.get('headroom') or 0) > 0.85)} close to it"],
          ["Service", f"{svc.get('due', 0)} due or due soon" if svc else "—"],
          ["Areas of concern", str(len(found))]]))
+
+    # Recalls come from NHTSA's last answer on this machine, never a fetch:
+    # this document is built offline like the rest. A car never looked up says
+    # so, because a missing section would read as "no recalls".
+    vin = (s.get("vehicle") or {}).get("vin")
+    if vin and not s.get("simulated"):
+        try:
+            recalled, rmeta = knowledge.recalls_for_vin(vin, offline=True)
+        except Exception:                                     # noqa: BLE001
+            recalled, rmeta = [], {"error": "the recall list could not be read"}
+        if rmeta.get("error"):
+            body = f"<p class=q>{esc(rmeta['error'])}.</p>"
+        else:
+            body = table(
+                ["Campaign", "Reported", "Component", "Consequence", "Remedy"],
+                [[f"<b>{esc(r['campaign'])}</b>"
+                  + ("<br>Do not drive" if r["park_it"] else "")
+                  + ("<br>Park outside" if r["park_outside"] else ""),
+                  esc(r["reported"]), esc(r["component"]),
+                  esc(r["consequence"]), esc(r["remedy"])] for r in recalled]
+            ) if recalled else "<p>None issued.</p>"
+            body += f"<p class=q>{esc(rmeta['note'])} Source: {esc(rmeta['source'])}</p>"
+        section("Safety recalls for this model", body)
 
     if active:
         section("Faults stored", table(

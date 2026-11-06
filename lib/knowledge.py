@@ -52,6 +52,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -69,6 +70,22 @@ OBDB_LICENCE = "CC BY-SA 4.0"
 VPIC = ("https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/"
         "{vin}?format=json")
 VPIC_LICENCE = "US public domain (NHTSA vPIC)"
+
+# Recalls are published per make, model and year, NOT per VIN. Whether a recall
+# is still open on one particular car is only on NHTSA's own VIN search page
+# and the maker's, neither of which is a public API. So what this can say is
+# "these recalls were issued for cars like yours", and it says so every time:
+# a list that reads as "your car's open recalls" would tell an owner whose
+# airbag was replaced years ago that it was not, and one whose was not that
+# the list must be someone else's.
+RECALLS = ("https://api.nhtsa.gov/recalls/recallsByVehicle"
+           "?make={make}&model={model}&modelYear={year}")
+RECALL_VIN_LOOKUP = "https://www.nhtsa.gov/recalls"
+RECALLS_LICENCE = "US public domain (NHTSA recalls)"
+RECALLS_NOTE = ("Issued for this make, model and year. NHTSA does not say "
+                "here whether a recall is still open on this car: enter the "
+                "VIN at " + RECALL_VIN_LOOKUP + ", or ask a dealer, who can see "
+                "it and does recall work free.")
 
 # ISO 14229-1 identification identifiers. A fact about the protocol, so it is
 # written down rather than fetched, and it is the cheapest useful thing to ask
@@ -98,17 +115,22 @@ ISO_IDENT_DIDS = {
 }
 
 
-def _cached(key, fetch, max_age=86400):
+def _cached(key, fetch, max_age=86400, offline=False):
     """Fetch once a day. A signal set does not change hourly and a lookup that
-    hits the network on every call is one somebody turns off."""
+    hits the network on every call is one somebody turns off.
+
+    offline=True never fetches: it returns whatever was last stored, however
+    old, or (None, False) when nothing was. That is for the share report,
+    which promises to need no network."""
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, key + ".json")
     try:
-        if time.time() - os.path.getmtime(path) < max_age:
+        if offline or time.time() - os.path.getmtime(path) < max_age:
             with open(path, encoding="utf-8") as f:
                 return json.load(f), True
     except (OSError, ValueError):
-        pass
+        if offline:
+            return None, False
     doc = fetch()
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -178,7 +200,7 @@ def signals(make, model):
                          "car. Send one with car_request and see."}
 
 
-def decode_vin(vin):
+def decode_vin(vin, offline=False):
     """What NHTSA says this VIN is.
 
     OBD-II reports a VIN and nothing else. The make and the year are derivable
@@ -190,7 +212,9 @@ def decode_vin(vin):
     if len(vin) != 17:
         return {}, {"error": f"a VIN is 17 characters; got {len(vin)}"}
     doc, hit = _cached("vpic-" + vin, lambda: _get(VPIC.format(vin=vin)),
-                       max_age=86400 * 30)
+                       max_age=86400 * 30, offline=offline)
+    if doc is None:
+        return {}, {"error": "this VIN has not been decoded on this machine yet"}
     rows = doc.get("Results") or []
     r = rows[0] if rows else {}
     keep = ("Make", "Model", "ModelYear", "Series", "Trim", "BodyClass",
@@ -200,6 +224,66 @@ def decode_vin(vin):
     out = {k: r[k] for k in keep if r.get(k) not in (None, "", "Not Applicable")}
     return out, {"source": "https://vpic.nhtsa.dot.gov/", "cached": hit,
                  "licence": VPIC_LICENCE}
+
+
+def _recall_date(ddmmyyyy):
+    """NHTSA writes 27/06/2019. Everything else here writes 2019-06-27."""
+    try:
+        d, m, y = str(ddmmyyyy).split("/")
+        return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+    except ValueError:
+        return str(ddmmyyyy or "")
+
+
+def recalls(make, model, year, offline=False):
+    """The safety recalls NHTSA lists for this make, model and year.
+
+    Returns (entries, meta). An empty list is a real answer: most cars have
+    no recall at all. Entries that tell the owner to park the car, or park it
+    outside, come first, then the newest. See RECALLS_NOTE for what this list
+    cannot say.
+    """
+    make, model, year = (str(x or "").strip() for x in (make, model, year))
+    if not (make and model and year):
+        return [], {"error": "a recall lookup needs the make, model and year"}
+    url = RECALLS.format(make=urllib.parse.quote(make),
+                         model=urllib.parse.quote(model),
+                         year=urllib.parse.quote(year))
+    key = "recalls-" + "-".join(slug_for(make, model).lower().split()) + "-" + year
+    doc, hit = _cached(key, lambda: _get(url), offline=offline)
+    if doc is None:
+        return [], {"error": "recalls for this car have not been looked up on "
+                             "this machine yet: run `omacar recalls`"}
+    out = []
+    for r in doc.get("results") or []:
+        out.append({
+            "campaign": r.get("NHTSACampaignNumber") or "",
+            "reported": _recall_date(r.get("ReportReceivedDate")),
+            "component": r.get("Component") or "",
+            "summary": r.get("Summary") or "",
+            "consequence": r.get("Consequence") or "",
+            "remedy": r.get("Remedy") or "",
+            "park_it": str(r.get("parkIt")).lower() == "true",
+            "park_outside": str(r.get("parkOutSide")).lower() == "true",
+            "over_the_air": str(r.get("overTheAirUpdate")).lower() == "true",
+        })
+    out.sort(key=lambda e: e["reported"], reverse=True)
+    out.sort(key=lambda e: not (e["park_it"] or e["park_outside"]))
+    return out, {"source": url, "licence": RECALLS_LICENCE, "cached": hit,
+                 "make": make, "model": model, "year": year,
+                 "vin_lookup": RECALL_VIN_LOOKUP, "note": RECALLS_NOTE}
+
+
+def recalls_for_vin(vin, offline=False):
+    """recalls(), for the make, model and year NHTSA decodes this VIN as.
+
+    Only the make, model and year leave this machine for the recall lookup;
+    the VIN itself goes only to the decode, as it already did."""
+    decoded, meta = decode_vin(vin, offline=offline)
+    if meta.get("error"):
+        return [], meta
+    return recalls(decoded.get("Make"), decoded.get("Model"),
+                   decoded.get("ModelYear"), offline=offline)
 
 
 def ident_dids():
@@ -213,9 +297,37 @@ def ident_dids():
             for did, what in sorted(ISO_IDENT_DIDS.items())]
 
 
+def print_recalls(vin=None):
+    if not vin:
+        import garage
+        vin = garage.current() or ""
+    try:
+        entries, meta = recalls_for_vin(vin)
+    except (OSError, ValueError) as why:
+        print(f"  could not reach NHTSA: {why}")
+        return 1
+    if meta.get("error"):
+        print("  " + meta["error"])
+        return 1
+    print(f"\n  \033[1mSafety recalls\033[0m  {meta['year']} {meta['make']} {meta['model']}")
+    print(f"  \033[2m{meta['source']}  ({meta['licence']})\033[0m\n")
+    if not entries:
+        print("  None issued.\n")
+    for e in entries:
+        flag = ("  \033[31mDO NOT DRIVE\033[0m" if e["park_it"] else
+                "  \033[31mPARK OUTSIDE\033[0m" if e["park_outside"] else "")
+        print(f"  \033[1m{e['campaign']}\033[0m  {e['reported']}  {e['component']}{flag}")
+        for label in ("consequence", "remedy"):
+            if e[label]:
+                print(f"    {label:12} {e[label]}")
+        print()
+    print("  " + meta["note"] + "\n")
+    return 0
+
+
 def main(argv):
     if not argv:
-        print("  usage: knowledge.py signals <make> <model> | vin <VIN> | dids")
+        print("  usage: knowledge.py signals <make> <model> | vin <VIN> | recalls [VIN] | dids")
         return 1
     if argv[0] == "signals" and len(argv) >= 3:
         entries, meta = signals(argv[1], " ".join(argv[2:]))
@@ -240,11 +352,13 @@ def main(argv):
             print(f"    {k:22} {v}")
         print()
         return 0
+    if argv[0] == "recalls":
+        return print_recalls(argv[1] if len(argv) >= 2 else None)
     if argv[0] == "dids":
         for d in ident_dids():
             print(f"    {d['request']:8} {d['name']}")
         return 0
-    print("  usage: knowledge.py signals <make> <model> | vin <VIN> | dids")
+    print("  usage: knowledge.py signals <make> <model> | vin <VIN> | recalls [VIN] | dids")
     return 1
 
 
